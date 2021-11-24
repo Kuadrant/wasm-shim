@@ -1,0 +1,3 @@
+[submodule "authorino-operator"]
+	path = authorino-operator
+	url = https://github.com/Kuadrant/authorino-operator.git
