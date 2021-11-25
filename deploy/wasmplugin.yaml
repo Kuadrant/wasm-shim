@@ -1,0 +1,12 @@
+ apiVersion: extensions.istio.io/v1alpha1
+ kind: WasmPlugin
+ metadata:
+   name: demo
+   namespace: istio-system
+ spec:
+    selector:
+      matchLabels:
+        app: toystore
+    url: <replace-with-wasm-oci-or-remote-url>
+    pluginConfig:
+      auth_cluster: "outbound|50051||authorino-authorino-authorization.default.svc.cluster.local"

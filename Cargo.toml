@@ -1,0 +1,23 @@
+[package]
+name = "wasm-shim"
+version = "0.1.0"
+edition = "2021"
+authors = ["Rahul Anand <rahulanand16nov@gmail.com>"]
+description = "shim connecting envoy and authorino/limitador"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+proxy-wasm = "0.1"
+serde_json = "1.0"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+prost = "0.6"
+prost-types = "0.6"
+protobuf = "2.0"
+thiserror = "1.0"
+
+[build-dependencies]
+protoc-rust = "2.0"
