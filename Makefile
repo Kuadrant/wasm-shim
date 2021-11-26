@@ -30,12 +30,12 @@ uninstall-authorino: submodule
 	make uninstall
 
 # Deploys authorino
-deploy-authorino: install-authorino
+deploy-authorino:
 	cd authorino-operator && make deploy
 	kubectl apply -f deploy/authorino.yaml
 
 # Undeploys authorino
-undeploy-authoriono: uninstall-authorino
+undeploy-authoriono:
 	cd authorino-operator && make undeploy
 	kubectl delete -f deploy/authorino.yaml
 
@@ -48,6 +48,7 @@ example-up:
 #   Istio-system resource
 	kubectl apply -f deploy/gateway.yaml
 	kubectl apply -f deploy/http-route.yaml
+	kubectl apply -f deploy/authorino-simple-api.yaml
 
 # Clean up the example
 example-down:
@@ -56,6 +57,7 @@ example-down:
 	kubectl delete -f deploy/gateway-class.yaml
 	kubectl delete -f deploy/gateway.yaml
 	kubectl delete -f deploy/http-route.yaml
+	kubectl delete -f deploy/authorino-simple-api.yaml
 
 # builds the module and move to deploy folder
 build: export BUILD?=debug
