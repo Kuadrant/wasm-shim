@@ -153,7 +153,10 @@ impl HttpContext for Filter {
             Duration::from_secs(5),
         ) {
             Ok(_) => info!("GRPC CALL SUCCESS!"),
-            Err(e) => warn!("GRPC CALL FAILED! {:?}", e),
+            Err(e) => {
+                warn!("GRPC CALL FAILED! {:?}", e);
+                request_process_failure(self.config().failure_mode_deny());
+            }
         }
         Action::Pause
     }
