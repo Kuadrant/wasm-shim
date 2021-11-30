@@ -75,7 +75,7 @@ build:
 cleanup: kind
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
-# Remove old ones and fetch the latest third-part protobufs
+# Remove old ones and fetch the latest third-party protobufs
 update-protobufs:
 	rm -rf vendor-protobufs/* || true
 	cd vendor-protobufs && \
@@ -91,7 +91,8 @@ update-protobufs:
 	cd protobuf/src/google/protobuf/ && \
 	mv timestamp.proto descriptor.proto duration.proto wrappers.proto any.proto struct.proto ../../../../googleapis/google/protobuf/
 	rm -rf vendor-protobufs/protobuf
-	cd vendor-protobufs/data-plane-api/envoy && rm -rf admin watchdog api data extensions
+	cd vendor-protobufs/data-plane-api/envoy && rm -rf admin watchdog api data && \
+	cd service && find . -maxdepth 1 ! -name auth ! -name ratelimit ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/googleapis/google && find . -maxdepth 1 ! -name protobuf ! -name rpc ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/protoc-gen-validate/ && find . -maxdepth 1 ! -name validate ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/udpa/ && find . -maxdepth 1 ! -name udpa ! -name xds ! -name '.' -exec rm -rf {} \;
