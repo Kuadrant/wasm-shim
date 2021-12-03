@@ -9,5 +9,7 @@
         app: toystore
     url: https://raw.githubusercontent.com/Kuadrant/wasm-shim/main/deploy/wasm_shim.wasm
     pluginConfig:
-      auth_cluster: "outbound|50051||authorino-authorino-authorization.default.svc.cluster.local"
+      operations:
+        - Authenticate:
+            upstream_cluster: "outbound|50051||authorino-authorino-authorization.default.svc.cluster.local"
       failure_mode_deny: true
