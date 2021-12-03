@@ -1,3 +1,6 @@
 [submodule "authorino-operator"]
 	path = authorino-operator
 	url = https://github.com/Kuadrant/authorino-operator.git
+[submodule "limitador-operator"]
+	path = limitador-operator
+	url = https://github.com/Kuadrant/limitador-operator.git
