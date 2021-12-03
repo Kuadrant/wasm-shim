@@ -19,12 +19,12 @@ cluster-up: kind
 submodule:
 	git submodule update --init
 
-# Install CRDs into a cluster
+# Install Authorino CRDs into a cluster
 install-authorino: submodule
 	cd authorino-operator && \
 	make install
 
-# Uninstall CRDs from a cluster
+# Uninstall Authorino CRDs from a cluster
 uninstall-authorino: submodule
 	cd authorino-operator && \
 	make uninstall
@@ -38,6 +38,26 @@ deploy-authorino:
 undeploy-authoriono:
 	cd authorino-operator && make undeploy
 	kubectl delete -f deploy/authorino.yaml
+
+# Install Limitador CRDs into a cluster
+install-limitador: submodule
+	cd limitador-operator && \
+	make install
+
+# Uninstall Limitador CRDs from a cluster
+uninstall-limitador: submodule
+	cd limitador-operator && \
+	make uninstall
+
+# Deploys authorino
+deploy-limitador:
+	cd limitador-operator && make deploy
+	kubectl apply -f deploy/limitador.yaml
+
+# Undeploys authorino
+undeploy-limitador:
+	cd limitador-operator && make undeploy
+	kubectl delete -f deploy/limitador.yaml
 
 # Deploys the example
 example-up:
