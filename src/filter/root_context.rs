@@ -1,12 +1,12 @@
-struct FilterRoot {
-    context_id: u32,
-    config: FilterConfig,
-}
+use crate::configuration::FilterConfig;
+use crate::filter::http_context::Filter;
+use log::{info, warn};
+use proxy_wasm::traits::{Context, HttpContext, RootContext};
+use proxy_wasm::types::ContextType;
 
-impl FilterRoot {
-    fn config(&self) -> &FilterConfig {
-        &self.config
-    }
+pub struct FilterRoot {
+    pub context_id: u32,
+    pub config: FilterConfig,
 }
 
 impl RootContext for FilterRoot {
@@ -18,7 +18,7 @@ impl RootContext for FilterRoot {
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         Some(Box::new(Filter {
             context_id,
-            config: self.config().clone(),
+            config: self.config.clone(),
         }))
     }
 
@@ -31,16 +31,21 @@ impl RootContext for FilterRoot {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
                 self.config = config;
-                true
             }
             Err(e) => {
                 warn!("failed to parse plugin config: {}", e);
-                false
+                return false;
             }
         }
+
+        // Stack based operations require reversal to be in correct order.
+        self.config.mut_operations().reverse();
+        true
     }
 
     fn get_type(&self) -> Option<ContextType> {
         Some(ContextType::HttpContext)
     }
 }
+
+impl Context for FilterRoot {}
