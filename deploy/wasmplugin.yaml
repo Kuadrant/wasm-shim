@@ -7,9 +7,19 @@
     selector:
       matchLabels:
         app: toystore
-    url: https://raw.githubusercontent.com/Kuadrant/wasm-shim/main/deploy/wasm_shim.wasm
+    url: https://raw.githubusercontent.com/rahulanand16nov/wasm-shim/dev/limitador-integration/deploy/wasm_shim.wasm
     pluginConfig:
       operations:
         - Authenticate:
-            upstream_cluster: "outbound|50051||authorino-authorino-authorization.default.svc.cluster.local"
+            upstream_cluster: "outbound|50051||authorino-authorino-authorization.rahul-test.svc.cluster.local"
+            exclude_pattern: "^/avoid-auth"
+        - RateLimit:
+            domain: "envoy"
+            upstream_cluster: "rate_limit_cluster"
+            exclude_pattern: "^/avoid-ratelimit"
+            actions:
+              - request_headers:
+                  header_name: ":path"
+                  descriptor_key: "req.path"
+                  skip_if_absent: true
       failure_mode_deny: true

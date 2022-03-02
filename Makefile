@@ -104,15 +104,20 @@ update-protobufs:
 	git clone https://github.com/googleapis/googleapis.git && \
 	git clone https://github.com/cncf/udpa.git && \
 	git clone https://github.com/protocolbuffers/protobuf.git && \
+	git clone https://github.com/cncf/xds.git && \
 	find . -type f ! -name '*.proto' -delete && \
 	find ./data-plane-api -mindepth 1 ! -regex '^./data-plane-api/envoy\(/.*\)?' -delete && \
 	find ./googleapis -mindepth 1 ! -regex '^./googleapis/google\(/.*\)?' -delete && \
+	find ./xds -mindepth 1 ! -regex '^./xds/xds\(/.*\)?' -delete && \
 	mkdir -p googleapis/google/protobuf/ && \
 	cd protobuf/src/google/protobuf/ && \
-	mv timestamp.proto descriptor.proto duration.proto wrappers.proto any.proto struct.proto ../../../../googleapis/google/protobuf/
+	mv timestamp.proto descriptor.proto duration.proto wrappers.proto any.proto struct.proto empty.proto ../../../../googleapis/google/protobuf/
 	rm -rf vendor-protobufs/protobuf
 	cd vendor-protobufs/data-plane-api/envoy && rm -rf admin watchdog api data && \
 	cd service && find . -maxdepth 1 ! -name auth ! -name ratelimit ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/googleapis/google && find . -maxdepth 1 ! -name protobuf ! -name rpc ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/protoc-gen-validate/ && find . -maxdepth 1 ! -name validate ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/udpa/ && find . -maxdepth 1 ! -name udpa ! -name xds ! -name '.' -exec rm -rf {} \;
+# Rust protobuf support doesn't allow multiple files with same name and diff dir to merge so we have to create one our own.
+#	cd vendor-protobufs/data-plane-api/envoy/type/ && \
+#	touch tmp && git merge-file ./matcher/v3/metadata.proto ./tmp ./metadata/v3/metadata.proto --own && rm tmp
