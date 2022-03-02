@@ -19,12 +19,12 @@ cluster-up: kind
 submodule:
 	git submodule update --init
 
-# Install CRDs into a cluster
+# Install Authorino CRDs into a cluster
 install-authorino: submodule
 	cd authorino-operator && \
 	make install
 
-# Uninstall CRDs from a cluster
+# Uninstall Authorino CRDs from a cluster
 uninstall-authorino: submodule
 	cd authorino-operator && \
 	make uninstall
@@ -38,6 +38,26 @@ deploy-authorino:
 undeploy-authoriono:
 	cd authorino-operator && make undeploy
 	kubectl delete -f deploy/authorino.yaml
+
+# Install Limitador CRDs into a cluster
+install-limitador: submodule
+	cd limitador-operator && \
+	make install
+
+# Uninstall Limitador CRDs from a cluster
+uninstall-limitador: submodule
+	cd limitador-operator && \
+	make uninstall
+
+# Deploys authorino
+deploy-limitador:
+	cd limitador-operator && make deploy
+	kubectl apply -f deploy/limitador.yaml
+
+# Undeploys authorino
+undeploy-limitador:
+	cd limitador-operator && make undeploy
+	kubectl delete -f deploy/limitador.yaml
 
 # Deploys the example
 example-up:
@@ -75,7 +95,7 @@ build:
 cleanup: kind
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
-# Remove old ones and fetch the latest third-part protobufs
+# Remove old ones and fetch the latest third-party protobufs
 update-protobufs:
 	rm -rf vendor-protobufs/* || true
 	cd vendor-protobufs && \
@@ -84,14 +104,20 @@ update-protobufs:
 	git clone https://github.com/googleapis/googleapis.git && \
 	git clone https://github.com/cncf/udpa.git && \
 	git clone https://github.com/protocolbuffers/protobuf.git && \
+	git clone https://github.com/cncf/xds.git && \
 	find . -type f ! -name '*.proto' -delete && \
 	find ./data-plane-api -mindepth 1 ! -regex '^./data-plane-api/envoy\(/.*\)?' -delete && \
 	find ./googleapis -mindepth 1 ! -regex '^./googleapis/google\(/.*\)?' -delete && \
+	find ./xds -mindepth 1 ! -regex '^./xds/xds\(/.*\)?' -delete && \
 	mkdir -p googleapis/google/protobuf/ && \
 	cd protobuf/src/google/protobuf/ && \
-	mv timestamp.proto descriptor.proto duration.proto wrappers.proto any.proto struct.proto ../../../../googleapis/google/protobuf/
+	mv timestamp.proto descriptor.proto duration.proto wrappers.proto any.proto struct.proto empty.proto ../../../../googleapis/google/protobuf/
 	rm -rf vendor-protobufs/protobuf
-	cd vendor-protobufs/data-plane-api/envoy && rm -rf admin watchdog api data extensions
+	cd vendor-protobufs/data-plane-api/envoy && rm -rf admin watchdog api data && \
+	cd service && find . -maxdepth 1 ! -name auth ! -name ratelimit ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/googleapis/google && find . -maxdepth 1 ! -name protobuf ! -name rpc ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/protoc-gen-validate/ && find . -maxdepth 1 ! -name validate ! -name '.' -exec rm -rf {} \;
 	cd vendor-protobufs/udpa/ && find . -maxdepth 1 ! -name udpa ! -name xds ! -name '.' -exec rm -rf {} \;
+# Rust protobuf support doesn't allow multiple files with same name and diff dir to merge so we have to create one our own.
+#	cd vendor-protobufs/data-plane-api/envoy/type/ && \
+#	touch tmp && git merge-file ./matcher/v3/metadata.proto ./tmp ./metadata/v3/metadata.proto --own && rm tmp

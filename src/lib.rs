@@ -1,3 +1,4 @@
-mod envoy_ext_auth;
+mod configuration;
+mod envoy;
 mod filter;
 mod utils;
