@@ -58,7 +58,7 @@ impl Filter {
         let path_bytes = self.get_property(vec!["request", "path"]).unwrap();
         let path = String::from_utf8(path_bytes).unwrap();
 
-        let method_bytes = self.get_property(vec!["request", "host"]).unwrap();
+        let method_bytes = self.get_property(vec!["request", "method"]).unwrap();
         let method = String::from_utf8(method_bytes).unwrap();
 
         RequestInfo { host, path, method }
