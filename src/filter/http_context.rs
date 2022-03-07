@@ -16,6 +16,7 @@ use std::time::Duration;
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
+#[cfg(not(test))] // Added because of conflict with similar fnx in gcc lib.
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
@@ -96,7 +97,7 @@ impl HttpContext for Filter {
         for (rlp_name, rlp) in self.config().ratelimitpolicies() {
             let mut rule_matched = false;
             for rule in rlp.rules() {
-                let operation = &rule.opertion;
+                let operation = &rule.operation;
                 
                 if !operation.hosts.is_match(&req_info.host) ||
                    !operation.paths.is_match(&req_info.path) ||

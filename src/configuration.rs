@@ -12,7 +12,7 @@ pub struct Operation {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
-    pub opertion: Operation,
+    pub operation: Operation,
     pub actions: Vec<RLA_action_specifier>,
 }
 
@@ -67,5 +67,48 @@ impl FilterConfig {
 
     pub fn failure_mode_deny(&self) -> bool {
         self.failure_mode_deny
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_config() {
+        const CONFIG: &str = r#"{
+            "failure_mode_deny": true,
+            "ratelimitpolicies": {
+                "default-toystore": {
+                    "rules": [{
+                        "operation": {
+                            "paths": ["/toy*"],
+                            "hosts": ["*.toystore.com"],
+                            "methods": ["GET"]
+                        },
+                        "actions": [{
+                            "generic_key": {
+                                "descriptor_value": "yes",
+                                "descriptor_key": "get-toy"
+                            }
+                        }]
+                    }],
+                    "global_actions": [{
+                        "generic_key": {
+                            "descriptor_value": "yes",
+                            "descriptor_key": "vhost-level"
+                        }
+                    }],
+                    "upstream_cluster": "outbound|8080||limitador.kuadrant-system.svc.cluster.local",
+                    "domain": "toystore"
+                }
+            }
+        }"#;
+
+        let res = serde_json::from_str::<FilterConfig>(CONFIG);
+        if let Err(ref e) = res {
+            eprintln!("{}", e);
+        }
+        assert!(res.is_ok());
     }
 }
