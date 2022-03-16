@@ -1,7 +1,6 @@
 use crate::envoy::{
-    HeaderMatcher,
-    HeaderMatcher_specifier, RLA_action_specifier, RateLimitDescriptor, RateLimitDescriptor_Entry,
-    StringMatcher_pattern,
+    HeaderMatcher, HeaderMatcher_specifier, RLA_action_specifier, RateLimitDescriptor,
+    RateLimitDescriptor_Entry, StringMatcher_pattern,
 };
 use log::warn;
 use proxy_wasm::hostcalls::{resume_http_request, send_http_response};

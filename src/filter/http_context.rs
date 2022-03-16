@@ -1,12 +1,9 @@
-use crate::configuration::{FilterConfig};
-use crate::envoy::{RLA_action_specifier, RateLimitRequest,
-    RateLimitResponse, RateLimitResponse_Code,
+use crate::configuration::FilterConfig;
+use crate::envoy::{
+    RLA_action_specifier, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code,
 };
 use crate::filter::root_context::FilterRoot;
-use crate::utils::{
-    descriptor_from_actions, request_process_failure,
-    UtilsErr,
-};
+use crate::utils::{descriptor_from_actions, request_process_failure, UtilsErr};
 use log::{info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -15,6 +12,10 @@ use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
+
+// we cannot determine using Istio's naming scheme because this cluster is patched
+// by the kuadrant-controller and should match whatever value is patched.
+const DEFAULT_UPSTREAM_CLUSTER: &str = "rate-limit-cluster";
 
 #[cfg(not(test))] // Added because of conflict with similar fnx in gcc lib.
 #[no_mangle]
@@ -90,45 +91,60 @@ impl HttpContext for Filter {
         info!("context #{}: on_http_request_headers called", context_id);
 
         let req_info = self.fetch_request_info();
-        let mut actions: Vec<RLA_action_specifier>  = Vec::new();
+        let mut actions: Vec<RLA_action_specifier> = Vec::new();
         let mut upstream_cluster = "";
         let mut domain = "";
 
         for (rlp_name, rlp) in self.config().ratelimitpolicies() {
             let mut rule_matched = false;
-            for rule in rlp.rules() {
-                let operation = &rule.operation;
-                
-                if !operation.hosts.is_match(&req_info.host) ||
-                   !operation.paths.is_match(&req_info.path) ||
-                   !operation.methods.is_match(&req_info.method){
-                    continue
-                }
 
-                // we have a match now!
-                actions.append(&mut rule.actions.clone());
-                rule_matched = true;
-                break;
+            if let Some(rules) = rlp.rules() {
+                for rule in rules {
+                    if rule.operation.is_none() {
+                        continue; // without operation match action won't be included.
+                    }
+                    let operation = rule.operation.as_ref().unwrap();
+
+                    if !operation.hosts.is_match(&req_info.host)
+                        || !operation.paths.is_match(&req_info.path)
+                        || !operation.methods.is_match(&req_info.method)
+                    {
+                        continue;
+                    }
+
+                    // we have a match now!
+                    if let Some(ref matched_actions) = rule.actions {
+                        actions.append(&mut matched_actions.clone());
+                    }
+                    rule_matched = true;
+                    break;
+                }
             }
+
             if rule_matched {
-                info!("context #{}: match found in {} RateLimitPolicy", context_id, rlp_name);
-                actions.append(&mut rlp.global_actions().to_vec());
-                upstream_cluster = rlp.upstream_cluster();
-                domain = rlp.domain();
+                info!(
+                    "context #{}: match found in {} RateLimitPolicy",
+                    context_id, rlp_name
+                );
+                if let Some(global_actions) = rlp.global_actions() {
+                    actions.append(&mut global_actions.to_vec());
+                }
+                upstream_cluster = rlp.upstream_cluster().unwrap_or(DEFAULT_UPSTREAM_CLUSTER);
+                domain = rlp.domain().unwrap_or(rlp_name);
                 break;
             }
         }
 
         if actions.is_empty() {
-            info!("context #{}: Allowing request to pass because zero descriptors generated", context_id);
-            return Action::Continue
+            info!(
+                "context #{}: Allowing request to pass because zero descriptors generated",
+                context_id
+            );
+            return Action::Continue;
         }
 
-
         // Initiate a call to the limitador
-        let rl_request = self
-        .create_ratelimit_request(domain, &actions)
-        .unwrap(); // TODO(rahulanand16nov): Error Handling
+        let rl_request = self.create_ratelimit_request(domain, &actions).unwrap(); // TODO(rahulanand16nov): Error Handling
         let rl_req_serialized = Message::write_to_bytes(&rl_request).unwrap(); // TODO(rahulanand16nov): Error Handling
 
         match self.dispatch_grpc_call(
@@ -181,11 +197,11 @@ impl Context for Filter {
             RateLimitResponse_Code::UNKNOWN => {
                 request_process_failure(self.config().failure_mode_deny());
                 return;
-            },
+            }
             RateLimitResponse_Code::OVER_LIMIT => {
                 self.send_http_response(429, vec![], Some(b"Too Many Requests\n"));
                 return;
-            },
+            }
             RateLimitResponse_Code::OK => {}
         }
         self.resume_http_request();

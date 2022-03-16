@@ -1,44 +1,47 @@
-use std::collections::HashMap;
-use crate::glob::GlobPatternSet;
 use crate::envoy::RLA_action_specifier;
+use crate::glob::GlobPatternSet;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Operation {
+    #[serde(default)]
     pub paths: GlobPatternSet,
+    #[serde(default)]
     pub hosts: GlobPatternSet,
+    #[serde(default)]
     pub methods: GlobPatternSet,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
-    pub operation: Operation,
-    pub actions: Vec<RLA_action_specifier>,
+    pub operation: Option<Operation>,
+    pub actions: Option<Vec<RLA_action_specifier>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct RateLimitPolicy {
-    rules: Vec<Rule>,
-    global_actions: Vec<RLA_action_specifier>,
-    upstream_cluster: String,
-    domain: String,
+    rules: Option<Vec<Rule>>,
+    global_actions: Option<Vec<RLA_action_specifier>>,
+    upstream_cluster: Option<String>,
+    domain: Option<String>,
 }
 
 impl RateLimitPolicy {
-    pub fn rules(&self) -> &[Rule] {
-        self.rules.as_ref()
+    pub fn rules(&self) -> Option<&[Rule]> {
+        self.rules.as_deref()
     }
 
-    pub fn global_actions(&self) -> &[RLA_action_specifier] {
-        &self.global_actions
+    pub fn global_actions(&self) -> Option<&[RLA_action_specifier]> {
+        self.global_actions.as_deref()
     }
 
-    pub fn upstream_cluster(&self) -> &str {
-        &self.upstream_cluster
+    pub fn upstream_cluster(&self) -> Option<&str> {
+        self.upstream_cluster.as_deref()
     }
 
-    pub fn domain(&self) -> &str {
-        &self.domain
+    pub fn domain(&self) -> Option<&str> {
+        self.domain.as_deref()
     }
 }
 
@@ -56,8 +59,8 @@ pub struct FilterConfig {
 impl FilterConfig {
     pub fn new() -> Self {
         FilterConfig {
-            ratelimitpolicies: HashMap::new(), 
-            failure_mode_deny: true, 
+            ratelimitpolicies: HashMap::new(),
+            failure_mode_deny: true,
         }
     }
 

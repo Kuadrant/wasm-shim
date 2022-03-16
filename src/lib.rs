@@ -1,5 +1,5 @@
 mod configuration;
 mod envoy;
 mod filter;
-mod utils;
 mod glob;
+mod utils;
