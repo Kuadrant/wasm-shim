@@ -15,7 +15,7 @@ pub struct Operation {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
-    pub operation: Option<Operation>,
+    pub operation: Option<Vec<Operation>>,
     pub actions: Option<Vec<RLA_action_specifier>>,
 }
 
@@ -84,11 +84,11 @@ mod test {
             "ratelimitpolicies": {
                 "default-toystore": {
                     "rules": [{
-                        "operation": {
+                        "operation": [{
                             "paths": ["/toy*"],
                             "hosts": ["*.toystore.com"],
                             "methods": ["GET"]
-                        },
+                        }],
                         "actions": [{
                             "generic_key": {
                                 "descriptor_value": "yes",

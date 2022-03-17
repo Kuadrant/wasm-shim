@@ -17,7 +17,7 @@ const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 // by the kuadrant-controller and should match whatever value is patched.
 const DEFAULT_UPSTREAM_CLUSTER: &str = "rate-limit-cluster";
 
-#[cfg(not(test))] // Added because of conflict with similar fnx in gcc lib.
+#[cfg(not(test))] // Added because of conflict with similar fxn in gcc lib.
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
@@ -103,15 +103,16 @@ impl HttpContext for Filter {
                     if rule.operation.is_none() {
                         continue; // without operation match action won't be included.
                     }
-                    let operation = rule.operation.as_ref().unwrap();
+                    let operations = rule.operation.as_ref().unwrap();
 
-                    if !operation.hosts.is_match(&req_info.host)
-                        || !operation.paths.is_match(&req_info.path)
-                        || !operation.methods.is_match(&req_info.method)
-                    {
-                        continue;
+                    for operation in operations {
+                        if !operation.hosts.is_match(&req_info.host)
+                            || !operation.paths.is_match(&req_info.path)
+                            || !operation.methods.is_match(&req_info.method)
+                        {
+                            continue;
+                        }
                     }
-
                     // we have a match now!
                     if let Some(ref matched_actions) = rule.actions {
                         actions.append(&mut matched_actions.clone());
