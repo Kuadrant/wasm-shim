@@ -2,12 +2,11 @@ use crate::configuration::FilterConfig;
 use crate::envoy::{
     RLA_action_specifier, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code,
 };
-use crate::filter::root_context::FilterRoot;
 use crate::utils::{descriptor_from_actions, request_process_failure, UtilsErr};
 use log::{info, warn};
 use protobuf::Message;
-use proxy_wasm::traits::{Context, HttpContext, RootContext};
-use proxy_wasm::types::{Action, LogLevel};
+use proxy_wasm::traits::{Context, HttpContext};
+use proxy_wasm::types::Action;
 use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
@@ -16,21 +15,6 @@ const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 // we cannot determine using Istio's naming scheme because this cluster is patched
 // by the kuadrant-controller and should match whatever value is patched.
 const DEFAULT_UPSTREAM_CLUSTER: &str = "rate-limit-cluster";
-
-#[cfg(not(test))] // Added because of conflict with similar fxn in gcc lib.
-#[no_mangle]
-pub fn _start() {
-    proxy_wasm::set_log_level(LogLevel::Trace);
-    std::panic::set_hook(Box::new(|panic_info| {
-        proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string()).unwrap();
-    }));
-    proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
-        Box::new(FilterRoot {
-            context_id,
-            config: FilterConfig::new(),
-        })
-    });
-}
 
 struct RequestInfo {
     pub host: String,
