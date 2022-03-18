@@ -100,10 +100,10 @@ impl HttpContext for Filter {
 
             if let Some(rules) = rlp.rules() {
                 for rule in rules {
-                    if rule.operation.is_none() {
-                        continue; // without operation match action won't be included.
+                    if rule.operations.is_none() {
+                        continue; // Without the operation match, actions won't be included.
                     }
-                    let operations = rule.operation.as_ref().unwrap();
+                    let operations = rule.operations.as_ref().unwrap();
 
                     for operation in operations {
                         if !operation.hosts.is_match(&req_info.host)
