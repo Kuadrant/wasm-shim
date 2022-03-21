@@ -3,7 +3,7 @@ use crate::envoy::{
     RLA_action_specifier, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code,
 };
 use crate::utils::{descriptor_from_actions, request_process_failure, UtilsErr};
-use log::{info, warn};
+use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
@@ -80,31 +80,38 @@ impl HttpContext for Filter {
         let mut domain = "";
 
         for (rlp_name, rlp) in self.config().ratelimitpolicies() {
-            let mut rule_matched = false;
-
-            if let Some(rules) = rlp.rules() {
+            let rule_matched = rlp.rules().map_or(false, |rules| {
                 for rule in rules {
-                    if rule.operations.is_none() {
-                        continue; // Without the operation match, actions won't be included.
-                    }
-                    let operations = rule.operations.as_ref().unwrap();
+                    let operation_match = rule.operations().map_or(false, |operations| {
+                        for operation in operations {
+                            if !operation.hosts.is_match(&req_info.host)
+                                || !operation.paths.is_match(&req_info.path)
+                                || !operation.methods.is_match(&req_info.method)
+                            {
+                                continue;
+                            }
 
-                    for operation in operations {
-                        if !operation.hosts.is_match(&req_info.host)
-                            || !operation.paths.is_match(&req_info.path)
-                            || !operation.methods.is_match(&req_info.method)
-                        {
-                            continue;
+                            debug!(
+                                "context #{}: matched operation: {:?}",
+                                context_id, operation
+                            );
+                            return true;
                         }
+                        false
+                    });
+
+                    // Without the operation match, actions won't be included.
+                    if !operation_match {
+                        continue;
                     }
-                    // we have a match now!
-                    if let Some(ref matched_actions) = rule.actions {
-                        actions.append(&mut matched_actions.clone());
+
+                    if let Some(ref matched_actions) = rule.actions() {
+                        actions.append(&mut matched_actions.to_vec());
                     }
-                    rule_matched = true;
-                    break;
+                    return true;
                 }
-            }
+                false
+            });
 
             if rule_matched {
                 info!(

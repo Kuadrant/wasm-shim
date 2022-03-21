@@ -19,6 +19,16 @@ pub struct Rule {
     pub actions: Option<Vec<RLA_action_specifier>>,
 }
 
+impl Rule {
+    pub fn operations(&self) -> Option<&[Operation]> {
+        self.operations.as_deref()
+    }
+
+    pub fn actions(&self) -> Option<&[RLA_action_specifier]> {
+        self.actions.as_deref()
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct RateLimitPolicy {
     rules: Option<Vec<Rule>>,

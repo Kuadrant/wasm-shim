@@ -19,9 +19,9 @@ mod root_context;
 )]
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
+    use crate::configuration::FilterConfig;
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
-    use crate::configuration::FilterConfig;
     use root_context::FilterRoot;
 
     proxy_wasm::set_log_level(LogLevel::Trace);
