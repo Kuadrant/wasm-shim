@@ -80,51 +80,49 @@ impl HttpContext for Filter {
         let mut domain = "";
 
         for (rlp_name, rlp) in self.config().ratelimitpolicies() {
-            let rule_matched = rlp.rules().map_or(false, |rules| {
-                for rule in rules {
-                    let operation_match = rule.operations().map_or(false, |operations| {
-                        for operation in operations {
-                            if !operation.hosts.is_match(&req_info.host)
-                                || !operation.paths.is_match(&req_info.path)
-                                || !operation.methods.is_match(&req_info.method)
-                            {
-                                continue;
-                            }
+            if !rlp.hosts().is_match(&req_info.host) {
+                continue;
+            }
+            info!(
+                "context #{}: match found in {} RateLimitPolicy",
+                context_id, rlp_name
+            );
 
-                            debug!(
-                                "context #{}: matched operation: {:?}",
-                                context_id, operation
-                            );
-                            return true;
-                        }
-                        false
-                    });
+            if let Some(rules) = rlp.rules() {
+                for rule in rules {
+                    let matched_operation = rule
+                        .operations()
+                        .map(|operations| {
+                            operations.iter().find(|operation| {
+                                operation.paths.is_match(&req_info.path)
+                                    && operation.methods.is_match(&req_info.method)
+                            })
+                        })
+                        .flatten();
 
                     // Without the operation match, actions won't be included.
-                    if !operation_match {
+                    if matched_operation.is_none() {
                         continue;
                     }
+
+                    debug!(
+                        "context #{}: matched operation: {:?}",
+                        context_id, matched_operation
+                    );
 
                     if let Some(ref matched_actions) = rule.actions() {
                         actions.append(&mut matched_actions.to_vec());
                     }
-                    return true;
+                    break; // only first match is allowed.
                 }
-                false
-            });
-
-            if rule_matched {
-                info!(
-                    "context #{}: match found in {} RateLimitPolicy",
-                    context_id, rlp_name
-                );
-                if let Some(global_actions) = rlp.global_actions() {
-                    actions.append(&mut global_actions.to_vec());
-                }
-                upstream_cluster = rlp.upstream_cluster().unwrap_or(DEFAULT_UPSTREAM_CLUSTER);
-                domain = rlp.domain().unwrap_or(rlp_name);
-                break;
             }
+
+            if let Some(global_actions) = rlp.global_actions() {
+                actions.append(&mut global_actions.to_vec());
+            }
+            upstream_cluster = rlp.upstream_cluster().unwrap_or(DEFAULT_UPSTREAM_CLUSTER);
+            domain = rlp.domain().unwrap_or(rlp_name);
+            break;
         }
 
         if actions.is_empty() {

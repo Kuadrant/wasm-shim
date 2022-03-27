@@ -8,8 +8,6 @@ pub struct Operation {
     #[serde(default)]
     pub paths: GlobPatternSet,
     #[serde(default)]
-    pub hosts: GlobPatternSet,
-    #[serde(default)]
     pub methods: GlobPatternSet,
 }
 
@@ -31,6 +29,8 @@ impl Rule {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct RateLimitPolicy {
+    #[serde(default)]
+    hosts: GlobPatternSet,
     rules: Option<Vec<Rule>>,
     global_actions: Option<Vec<RLA_action_specifier>>,
     upstream_cluster: Option<String>,
@@ -40,6 +40,10 @@ pub struct RateLimitPolicy {
 impl RateLimitPolicy {
     pub fn rules(&self) -> Option<&[Rule]> {
         self.rules.as_deref()
+    }
+
+    pub fn hosts(&self) -> &GlobPatternSet {
+        &self.hosts
     }
 
     pub fn global_actions(&self) -> Option<&[RLA_action_specifier]> {
@@ -93,10 +97,10 @@ mod test {
             "failure_mode_deny": true,
             "ratelimitpolicies": {
                 "default-toystore": {
+                    "hosts": ["*.toystore.com"],
                     "rules": [{
                         "operations": [{
                             "paths": ["/toy*"],
-                            "hosts": ["*.toystore.com"],
                             "methods": ["GET"]
                         }],
                         "actions": [{
