@@ -39,7 +39,11 @@ impl Filter {
     fn fetch_request_info(&self) -> RequestInfo {
         // TODO(rahulanand16nov): Handle error
         let host_bytes = self.get_property(vec!["request", "host"]).unwrap();
-        let host = String::from_utf8(host_bytes).unwrap();
+        let mut host = String::from_utf8(host_bytes).unwrap();
+
+        // make sure port is removed from host before processing the request.
+        let split_host = host.split(':').collect::<Vec<_>>();
+        host = split_host[0].to_owned();
 
         let path_bytes = self.get_property(vec!["request", "path"]).unwrap();
         let path = String::from_utf8(path_bytes).unwrap();
