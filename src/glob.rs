@@ -159,7 +159,7 @@ impl From<GlobPatternSet> for Vec<String> {
 impl Default for GlobPatternSet {
     fn default() -> Self {
         // panic: won't panic since "*" is always valid
-        Self::new(["*"].iter()).unwrap()
+        Self::new([".*"].iter()).unwrap()
     }
 }
 
@@ -188,6 +188,13 @@ impl GlobPatternSet {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn default_global_pattern_set() -> Result<(), Error> {
+        let pattern_set = GlobPatternSet::default();
+        assert_eq!(pattern_set.is_match("should_match_all"), true);
+        Ok(())
+    }
 
     #[test]
     fn glob_pattern_matches() -> Result<(), Error> {
