@@ -18,7 +18,7 @@ impl RootContext for FilterRoot {
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         Some(Box::new(Filter {
             context_id,
-            config: self.config.clone(),
+            config: self.config.clone(), // TODO(rahulanand16nov): Potential optimization target
         }))
     }
 
@@ -37,9 +37,6 @@ impl RootContext for FilterRoot {
                 return false;
             }
         }
-
-        // Stack based operations require reversal to be in correct order.
-        self.config.mut_operations().reverse();
         true
     }
 

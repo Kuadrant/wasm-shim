@@ -1,108 +1,131 @@
 use crate::envoy::RLA_action_specifier;
-use regex::Regex;
+use crate::glob::GlobPatternSet;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Deserialize, Debug, Clone)]
-pub enum Operation {
-    Authenticate(Authentication),
-    RateLimit(RateLimit),
-}
-
-impl Operation {
-    pub fn is_excluded(&self, path: &str) -> bool {
-        let exclude_pattern = match self {
-            Operation::Authenticate(inner) => inner.exclude_pattern(),
-            Operation::RateLimit(inner) => inner.exclude_pattern(),
-        };
-
-        if let Some(pattern) = exclude_pattern {
-            return pattern.is_match(path);
-        }
-        false
-    }
+pub struct Operation {
+    #[serde(default)]
+    pub paths: GlobPatternSet,
+    #[serde(default)]
+    pub methods: GlobPatternSet,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct Authentication {
-    // Upstream Authorino's service name.
-    upstream_cluster: String,
-    // Regex pattern to exclude from authentication.
-    #[serde(with = "serde_regex")]
-    exclude_pattern: Option<Regex>,
+pub struct Rule {
+    pub operations: Option<Vec<Operation>>,
+    pub actions: Option<Vec<RLA_action_specifier>>,
 }
 
-impl Authentication {
-    pub fn upstream_cluster(&self) -> &str {
-        &self.upstream_cluster
+impl Rule {
+    pub fn operations(&self) -> Option<&[Operation]> {
+        self.operations.as_deref()
     }
 
-    pub fn exclude_pattern(&self) -> Option<&Regex> {
-        match &self.exclude_pattern {
-            Some(regex) => Some(regex),
-            None => None,
-        }
+    pub fn actions(&self) -> Option<&[RLA_action_specifier]> {
+        self.actions.as_deref()
     }
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct RateLimit {
-    // Upstream Limitador's service name.
-    upstream_cluster: String,
-    // RL domain to use when calling the ratelimit service.
-    domain: String,
-    // Envoy actions for generating descriptor keys.
-    actions: Vec<RLA_action_specifier>,
-    // Regex pattern to exclude from ratelimiting.
-    #[serde(with = "serde_regex")]
-    exclude_pattern: Option<Regex>,
+pub struct RateLimitPolicy {
+    #[serde(default)]
+    hosts: GlobPatternSet,
+    rules: Option<Vec<Rule>>,
+    global_actions: Option<Vec<RLA_action_specifier>>,
+    upstream_cluster: Option<String>,
+    domain: Option<String>,
 }
 
-impl RateLimit {
-    pub fn upstream_cluster(&self) -> &str {
-        &self.upstream_cluster
+impl RateLimitPolicy {
+    pub fn rules(&self) -> Option<&[Rule]> {
+        self.rules.as_deref()
     }
 
-    pub fn exclude_pattern(&self) -> Option<&Regex> {
-        match &self.exclude_pattern {
-            Some(regex) => Some(regex),
-            None => None,
-        }
+    pub fn hosts(&self) -> &GlobPatternSet {
+        &self.hosts
     }
 
-    pub fn actions(&self) -> &Vec<RLA_action_specifier> {
-        &self.actions
+    pub fn global_actions(&self) -> Option<&[RLA_action_specifier]> {
+        self.global_actions.as_deref()
     }
 
-    pub fn domain(&self) -> &str {
-        &self.domain
+    pub fn upstream_cluster(&self) -> Option<&str> {
+        self.upstream_cluster.as_deref()
+    }
+
+    pub fn domain(&self) -> Option<&str> {
+        self.domain.as_deref()
     }
 }
+
+// TODO(rahulanand16nov): We can convert the structure of config in such a way
+// that it's optimized for lookup in the runtime. For e.g., keying on virtualhost
+// to sort through ratelimitpolicies and then further operations.
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct FilterConfig {
-    // List of operations to apply on each request.
-    operations: Vec<Operation>,
+    ratelimitpolicies: HashMap<String, RateLimitPolicy>,
     // Deny request when faced with an irrecoverable failure.
     failure_mode_deny: bool,
 }
 
 impl FilterConfig {
     pub fn new() -> Self {
-        Self {
-            operations: Vec::new(),
+        FilterConfig {
+            ratelimitpolicies: HashMap::new(),
             failure_mode_deny: true,
         }
     }
 
-    pub fn mut_operations(&mut self) -> &mut Vec<Operation> {
-        &mut self.operations
-    }
-
-    pub fn operations(&self) -> &Vec<Operation> {
-        &self.operations
+    pub fn ratelimitpolicies(&self) -> &HashMap<String, RateLimitPolicy> {
+        &self.ratelimitpolicies
     }
 
     pub fn failure_mode_deny(&self) -> bool {
         self.failure_mode_deny
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_config() {
+        const CONFIG: &str = r#"{
+            "failure_mode_deny": true,
+            "ratelimitpolicies": {
+                "default-toystore": {
+                    "hosts": ["*.toystore.com"],
+                    "rules": [{
+                        "operations": [{
+                            "paths": ["/toy*"],
+                            "methods": ["GET"]
+                        }],
+                        "actions": [{
+                            "generic_key": {
+                                "descriptor_value": "yes",
+                                "descriptor_key": "get-toy"
+                            }
+                        }]
+                    }],
+                    "global_actions": [{
+                        "generic_key": {
+                            "descriptor_value": "yes",
+                            "descriptor_key": "vhost-level"
+                        }
+                    }],
+                    "upstream_cluster": "outbound|8080||limitador.kuadrant-system.svc.cluster.local",
+                    "domain": "toystore"
+                }
+            }
+        }"#;
+
+        let res = serde_json::from_str::<FilterConfig>(CONFIG);
+        if let Err(ref e) = res {
+            eprintln!("{}", e);
+        }
+        assert!(res.is_ok());
     }
 }

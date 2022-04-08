@@ -1,3 +1,6 @@
 /target
 Cargo.lock
 /deploy/*.wasm
+
+/src/envoy/*
+!/src/envoy/mod.rs
