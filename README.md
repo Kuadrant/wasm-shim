@@ -4,22 +4,26 @@ A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitado
 Following is a sample configuration used by the shim.
 
 ```yaml
-failure_mode_deny: true,
+failure_mode_deny: true
 ratelimitpolicies:
-  - ratelimitpolicy-1:
-      hosts: ["*.toystore.com"]
-      rules:
-        - operations:
-            - paths: ["/toy*"]
-              methods: ["GET"]
-          actions:
-            - generic_key:
-                descriptor_key: "get-toy"
-                descriptor_value: "yes"
-      global_actions:
-        - generic_key:
-            descriptor_key: "vhost-hit"
-            descriptor_value: "yes"
-      upstream_cluster: "limitador" # Should match cluster name in envoy
-      domain: "toystore"
+  default/toystore:
+    hosts:
+    - "*.toystore.com"
+    rules:
+    - operations:
+      - paths:
+        - "/admin/toy"
+        methods:
+        - POST
+        - DELETE
+      actions:
+      - generic_key:
+          descriptor_value: 'yes'
+          descriptor_key: admin
+    global_actions:
+    - generic_key:
+        descriptor_value: 'yes'
+        descriptor_key: vhaction
+    upstream_cluster: rate-limit-cluster
+    domain: toystore-app
 ```
