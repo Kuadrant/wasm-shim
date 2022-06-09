@@ -74,7 +74,7 @@ impl Filter {
 }
 
 impl HttpContext for Filter {
-    fn on_http_request_headers(&mut self, _: usize) -> Action {
+    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         let context_id = self.context_id();
         info!("context #{}: on_http_request_headers called", context_id);
 
