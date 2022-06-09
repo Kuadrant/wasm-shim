@@ -1,6 +1,6 @@
 use crate::configuration::FilterConfig;
 use crate::filter::http_context::Filter;
-use log::{info, warn};
+use log::{info, warn, debug};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 
@@ -23,7 +23,7 @@ impl RootContext for FilterRoot {
     }
 
     fn on_configure(&mut self, _config_size: usize) -> bool {
-        let configuration: Vec<u8> = match self.get_configuration() {
+        let configuration: Vec<u8> = match self.get_plugin_configuration() {
             Some(c) => c,
             None => return false,
         };
