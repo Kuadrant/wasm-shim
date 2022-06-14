@@ -1,3 +1,8 @@
+SHELL := /bin/bash
+
+MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+PROJECT_PATH := $(patsubst %/,%,$(dir $(MKFILE_PATH)))
+
 KIND_VERSION=v0.11.1
 # Installs kind if not present.
 kind:
@@ -63,7 +68,7 @@ undeploy-limitador:
 example-up:
 	istioctl kube-inject -f deploy/toystore.yaml | kubectl apply -f -
 	kubectl apply -f deploy/wasmplugin.yaml
-#   Cluster wide resource	
+#   Cluster wide resource
 	kubectl apply -f deploy/gateway-class.yaml
 #   Istio-system resource
 	kubectl apply -f deploy/gateway.yaml
@@ -79,14 +84,21 @@ example-down:
 	kubectl delete -f deploy/http-route.yaml
 	kubectl delete -f deploy/authorino-simple-api.yaml
 
+
+PROTOC_BIN=$(PROJECT_PATH)/bin/protoc
+PROTOC_VERSION=21.1
+$(PROTOC_BIN):
+	mkdir -p $(PROJECT_PATH)/bin
+	$(call get-protoc,$(PROJECT_PATH)/bin,https://github.com/protocolbuffers/protobuf/releases/latest/download/protoc-$(PROTOC_VERSION)-linux-x86_64.zip,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.3.0)
+
 # builds the module and move to deploy folder
 build: export BUILD?=debug
-build:
+build: $(PROTOC_BIN)
 	@echo "Building the wasm filter"
     ifeq ($(BUILD), release)
-		cargo build --target=wasm32-unknown-unknown --release
+		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown --release
     else
-		cargo build --target=wasm32-unknown-unknown
+		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown
     endif
 	cp target/wasm32-unknown-unknown/$(BUILD)/*.wasm ./deploy/
 
@@ -121,3 +133,18 @@ update-protobufs:
 # Rust protobuf support doesn't allow multiple files with same name and diff dir to merge so we have to create one our own.
 #	cd vendor-protobufs/data-plane-api/envoy/type/ && \
 #	touch tmp && git merge-file ./matcher/v3/metadata.proto ./tmp ./metadata/v3/metadata.proto --own && rm tmp
+
+# get-protoc will download zip from $2 and install it to $1.
+define get-protoc
+@[ -f $(1) ] || { \
+echo "Downloading $(2) and installing in $(1)" ;\
+set -e ;\
+TMP_DIR=$$(mktemp -d) ;\
+cd $$TMP_DIR ;\
+curl -Lo protoc.zip $(2) ;\
+unzip -q protoc.zip bin/protoc ;\
+cp bin/protoc $(1) ;\
+chmod a+x $(1)/protoc ;\
+rm -rf $$TMP_DIR ;\
+}
+endef

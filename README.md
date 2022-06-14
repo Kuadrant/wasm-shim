@@ -27,3 +27,25 @@ ratelimitpolicies:
     upstream_cluster: rate-limit-cluster
     domain: toystore-app
 ```
+
+## Building
+
+Prerequisites:
+
+* Install `wasm32-unknown-unknown` build target
+
+```
+rustup target add wasm32-unknown-unknown
+```
+
+Build the WASM module
+
+```
+make build
+```
+
+Build the WASM module in release mode
+
+```
+make build BUILD=release
+```
