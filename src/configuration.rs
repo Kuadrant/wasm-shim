@@ -38,6 +38,22 @@ pub struct RateLimitPolicy {
 }
 
 impl RateLimitPolicy {
+    pub fn new(
+        hosts: GlobPatternSet,
+        rules: Option<Vec<Rule>>,
+        global_actions: Option<Vec<RLA_action_specifier>>,
+        upstream_cluster: Option<String>,
+        domain: Option<String>,
+    ) -> Self {
+        RateLimitPolicy {
+            hosts,
+            rules,
+            global_actions,
+            upstream_cluster,
+            domain,
+        }
+    }
+
     pub fn rules(&self) -> Option<&[Rule]> {
         self.rules.as_deref()
     }
