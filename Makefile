@@ -15,6 +15,8 @@ endif
 
 KIND_CLUSTER_NAME ?= wasm-shim-cluster
 
+WASM_RELEASE_PATH = $(PROJECT_PATH)/target/wasm32-unknown-unknown/release/wasm_shim.wasm
+
 # Start a local Kubernetes cluster using Kind
 .PHONY: cluster-up
 cluster-up: kind
@@ -133,6 +135,16 @@ update-protobufs:
 # Rust protobuf support doesn't allow multiple files with same name and diff dir to merge so we have to create one our own.
 #	cd vendor-protobufs/data-plane-api/envoy/type/ && \
 #	touch tmp && git merge-file ./matcher/v3/metadata.proto ./tmp ./metadata/v3/metadata.proto --own && rm tmp
+
+$(WASM_RELEASE_PATH): export BUILD = release
+$(WASM_RELEASE_PATH):
+	make -C $(PROJECT_PATH) -f $(MKFILE_PATH) build
+
+development: $(WASM_RELEASE_PATH)
+	docker-compose up
+
+stop-development:
+	docker-compose down
 
 # get-protoc will download zip from $2 and install it to $1.
 define get-protoc
