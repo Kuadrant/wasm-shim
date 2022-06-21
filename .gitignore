@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 /src/envoy/*
 !/src/envoy/mod.rs
