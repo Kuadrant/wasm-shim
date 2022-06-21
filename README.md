@@ -49,3 +49,25 @@ Build the WASM module in release mode
 ```
 make build BUILD=release
 ```
+
+## Running/Testing locally
+
+`docker` and `docker-compose` required.
+
+Run local development environment
+
+```
+make development
+```
+
+Testing the WASM filter
+
+```
+curl http://127.0.0.1:18000/get
+```
+
+Clean up all resources
+
+```
+make stop-development
+```
