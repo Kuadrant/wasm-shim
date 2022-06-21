@@ -1,6 +1,6 @@
 use crate::configuration::FilterConfig;
 use crate::filter::http_context::Filter;
-use log::{info, warn, debug};
+use log::{info, warn};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 

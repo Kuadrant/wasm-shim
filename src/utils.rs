@@ -35,7 +35,7 @@ fn match_headers(req_headers: &HashMap<String, String>, config_headers: &[Header
                 let mut is_match = false;
                 match hm_specifier {
                     HeaderMatcher_specifier::exact_match(str) => is_match = str == req_header_value,
-                    HeaderMatcher_specifier::safe_regex_match(regex_matcher) => todo!(), // TODO(rahulanand16nov): not implemented.
+                    HeaderMatcher_specifier::safe_regex_match(_regex_matcher) => todo!(), // TODO(rahulanand16nov): not implemented.
                     HeaderMatcher_specifier::range_match(range) => {
                         if let Ok(val) = req_header_value.parse::<i64>() {
                             is_match = range.get_start() <= val && val < range.get_end();
@@ -155,7 +155,7 @@ pub fn descriptor_from_actions(
                     continue; // don't add the descriptor if no match.
                 }
             }
-            RLA_action_specifier::remote_address(ra) => {
+            RLA_action_specifier::remote_address(_ra) => {
                 descriptor_entry.set_key("remote_address".into());
 
                 let header_value = filter.get_http_request_header("x-forwarded-for");
