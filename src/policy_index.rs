@@ -41,82 +41,83 @@ mod tests {
     use crate::glob::GlobPatternSet;
     use crate::policy_index::PolicyIndex;
 
-    fn build_ratelimit_policy(domain: String) -> RateLimitPolicy {
-        RateLimitPolicy::new(GlobPatternSet::default(), None, None, None, Some(domain))
+    fn build_ratelimit_policy(domain: &str) -> RateLimitPolicy {
+        RateLimitPolicy::new(
+            GlobPatternSet::default(),
+            None,
+            None,
+            None,
+            Some(String::from(domain)),
+        )
     }
 
     #[test]
     fn not_wildcard_subdomain() {
         let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy(String::from("example.com"));
+        let rlp1 = build_ratelimit_policy("rlp1");
         index.insert("example.com", rlp1);
 
         let val = index.get_longest_match_policy("test.example.com");
-        assert_eq!(val.is_none(), true);
+        assert!(val.is_none());
 
         let val = index.get_longest_match_policy("other.com");
-        assert_eq!(val.is_none(), true);
+        assert!(val.is_none());
 
         let val = index.get_longest_match_policy("net");
-        assert_eq!(val.is_none(), true);
+        assert!(val.is_none());
 
         let val = index.get_longest_match_policy("example.com");
-        assert_eq!(val.is_some(), true);
-        assert_eq!(val.unwrap().domain().is_some(), true);
-        assert_eq!(val.unwrap().domain().unwrap(), "example.com");
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().domain(), Some("rlp1"));
     }
 
     #[test]
     fn wildcard_subdomain_does_not_match_domain() {
         let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy(String::from("*.example.com"));
+        let rlp1 = build_ratelimit_policy("rlp1");
 
         index.insert("*.example.com", rlp1);
         let val = index.get_longest_match_policy("example.com");
-        assert_eq!(val.is_none(), true);
+        assert!(val.is_none());
     }
 
     #[test]
     fn wildcard_subdomain_matches_subdomains() {
         let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy(String::from("*.example.com"));
+        let rlp1 = build_ratelimit_policy("rlp1");
 
         index.insert("*.example.com", rlp1);
         let val = index.get_longest_match_policy("test.example.com");
 
-        assert_eq!(val.is_some(), true);
-        assert_eq!(val.unwrap().domain().is_some(), true);
-        assert_eq!(val.unwrap().domain().unwrap(), "*.example.com");
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().domain(), Some("rlp1"));
     }
 
     #[test]
     fn longest_domain_match() {
         let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy(String::from("*.com"));
+        let rlp1 = build_ratelimit_policy("rlp1");
         index.insert("*.com", rlp1);
-        let rlp2 = build_ratelimit_policy(String::from("*.example.com"));
+        let rlp2 = build_ratelimit_policy("rlp2");
         index.insert("*.example.com", rlp2);
 
         let val = index.get_longest_match_policy("test.example.com");
-        assert_eq!(val.is_some(), true);
-        assert_eq!(val.unwrap().domain().is_some(), true);
-        assert_eq!(val.unwrap().domain().unwrap(), "*.example.com");
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().domain(), Some("rlp2"));
 
         let val = index.get_longest_match_policy("example.com");
-        assert_eq!(val.is_some(), true);
-        assert_eq!(val.unwrap().domain().is_some(), true);
-        assert_eq!(val.unwrap().domain().unwrap(), "*.com");
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().domain(), Some("rlp1"));
     }
 
     #[test]
     fn global_wildcard_match_all() {
         let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy(String::from("*"));
+        let rlp1 = build_ratelimit_policy("rlp1");
         index.insert("*", rlp1);
 
         let val = index.get_longest_match_policy("test.example.com");
-        assert_eq!(val.is_some(), true);
-        assert_eq!(val.unwrap().domain().is_some(), true);
-        assert_eq!(val.unwrap().domain().unwrap(), "*");
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().domain(), Some("rlp1"));
     }
 }
