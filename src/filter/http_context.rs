@@ -1,27 +1,19 @@
-use crate::configuration::FilterConfig;
+use crate::configuration::{FilterConfig, RateLimitPolicy, Rule};
 use crate::envoy::{
-    RLA_action_specifier, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code,
+    RLA_action_specifier, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest,
+    RateLimitResponse, RateLimitResponse_Code,
 };
-use crate::utils::{descriptor_from_actions, request_process_failure, UtilsErr};
+use crate::utils::{match_headers, request_process_failure, subdomain_match};
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
-
-// we cannot determine using Istio's naming scheme because this cluster is patched
-// by the kuadrant-controller and should match whatever value is patched.
-const DEFAULT_UPSTREAM_CLUSTER: &str = "rate-limit-cluster";
-
-struct RequestInfo {
-    pub host: String,
-    pub path: String,
-    pub method: String,
-}
 
 pub struct Filter {
     pub context_id: u32,
@@ -29,118 +21,44 @@ pub struct Filter {
 }
 
 impl Filter {
-    fn config(&self) -> &FilterConfig {
-        &self.config
+    fn request_path(&self) -> String {
+        // Note(eastizle): self.get_http_request_header(":path") is equivalent?
+        let path_bytes = self.get_property(vec!["request", "path"]).unwrap();
+        String::from_utf8(path_bytes).unwrap()
     }
 
-    fn context_id(&self) -> u32 {
-        self.context_id
+    fn request_method(&self) -> String {
+        // Note(eastizle): self.get_http_request_header(":method") is equivalent?
+        let method_bytes = self.get_property(vec!["request", "method"]).unwrap();
+        String::from_utf8(method_bytes).unwrap()
     }
 
-    fn fetch_request_info(&self) -> RequestInfo {
+    fn request_authority(&self) -> String {
         // TODO(rahulanand16nov): Handle error
         let host_bytes = self.get_property(vec!["request", "host"]).unwrap();
-        let mut host = String::from_utf8(host_bytes).unwrap();
+        let host = String::from_utf8(host_bytes).unwrap();
 
         // make sure port is removed from host before processing the request.
         let split_host = host.split(':').collect::<Vec<_>>();
-        host = split_host[0].to_owned();
-
-        let path_bytes = self.get_property(vec!["request", "path"]).unwrap();
-        let path = String::from_utf8(path_bytes).unwrap();
-
-        let method_bytes = self.get_property(vec!["request", "method"]).unwrap();
-        let method = String::from_utf8(method_bytes).unwrap();
-
-        RequestInfo { host, path, method }
+        split_host[0].to_owned()
     }
 
-    fn create_ratelimit_request(
-        &self,
-        domain: &str,
-        actions: &[RLA_action_specifier],
-    ) -> Result<RateLimitRequest, UtilsErr> {
-        let mut rl_req = RateLimitRequest::new();
-
-        rl_req.set_domain(domain.into());
-
-        rl_req.set_hits_addend(1);
-
-        rl_req
-            .mut_descriptors()
-            .push(descriptor_from_actions(self, actions)?);
-
-        Ok(rl_req)
-    }
-}
-
-impl HttpContext for Filter {
-    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
-        let context_id = self.context_id();
-        info!("context #{}: on_http_request_headers called", context_id);
-
-        let req_info = self.fetch_request_info();
-        let mut actions: Vec<RLA_action_specifier> = Vec::new();
-        let mut upstream_cluster = "";
-        let mut domain = "";
-
-        for (rlp_name, rlp) in self.config().ratelimitpolicies() {
-            if !rlp.hosts().is_match(&req_info.host) {
-                continue;
-            }
-            info!(
-                "context #{}: match found in {} RateLimitPolicy",
-                context_id, rlp_name
-            );
-
-            if let Some(rules) = rlp.rules() {
-                for rule in rules {
-                    let matched_operation = rule.operations().and_then(|operations| {
-                        operations.iter().find(|operation| {
-                            operation.paths.is_match(&req_info.path)
-                                && operation.methods.is_match(&req_info.method)
-                        })
-                    });
-
-                    // Without the operation match, actions won't be included.
-                    if matched_operation.is_none() {
-                        continue;
-                    }
-
-                    debug!(
-                        "context #{}: matched operation: {:?}",
-                        context_id, matched_operation
-                    );
-
-                    if let Some(matched_actions) = rule.actions() {
-                        actions.append(&mut matched_actions.to_vec());
-                    }
-                    break; // only first match is allowed.
-                }
-            }
-
-            if let Some(global_actions) = rlp.global_actions() {
-                actions.append(&mut global_actions.to_vec());
-            }
-            upstream_cluster = rlp.upstream_cluster().unwrap_or(DEFAULT_UPSTREAM_CLUSTER);
-            domain = rlp.domain().unwrap_or(rlp_name);
-            break;
-        }
-
-        if actions.is_empty() {
-            info!(
-                "context #{}: Allowing request to pass because zero descriptors generated",
-                context_id
-            );
+    fn process_rate_limit_policy(&self, rlp: &RateLimitPolicy) -> Action {
+        let descriptors = self.build_descriptors(rlp);
+        if descriptors.len() == 0 {
+            debug!("[context_id: {}] empty descriptors", self.context_id);
             return Action::Continue;
         }
 
-        // Initiate a call to the limitador
-        let rl_request = self.create_ratelimit_request(domain, &actions).unwrap(); // TODO(rahulanand16nov): Error Handling
-        let rl_req_serialized = Message::write_to_bytes(&rl_request).unwrap(); // TODO(rahulanand16nov): Error Handling
+        let mut rl_req = RateLimitRequest::new();
+        rl_req.set_domain(rlp.rate_limit_domain.clone());
+        rl_req.set_hits_addend(1);
+        rl_req.set_descriptors(descriptors);
+
+        let rl_req_serialized = Message::write_to_bytes(&rl_req).unwrap(); // TODO(rahulanand16nov): Error Handling
 
         match self.dispatch_grpc_call(
-            upstream_cluster,
+            rlp.upstream_cluster.as_str(),
             RATELIMIT_SERVICE_NAME,
             RATELIMIT_METHOD_NAME,
             Vec::new(),
@@ -150,10 +68,192 @@ impl HttpContext for Filter {
             Ok(call_id) => info!("Initiated gRPC call (id# {}) to Limitador", call_id),
             Err(e) => {
                 warn!("gRPC call to Limitador failed! {:?}", e);
-                request_process_failure(self.config().failure_mode_deny());
+                request_process_failure(self.config.failure_mode_deny);
             }
         }
         Action::Pause
+    }
+
+    fn build_descriptors(
+        &self,
+        rlp: &RateLimitPolicy,
+    ) -> ::protobuf::RepeatedField<RateLimitDescriptor> {
+        //::protobuf::RepeatedField::default()
+        rlp.gateway_actions
+            .iter()
+            .filter(|ga| self.filter_configurations_by_rules(&ga.rules))
+            // filter None and return configurations
+            .flat_map(|ga| &ga.configurations)
+            // flatten the vec<vec<Configurations> to vec<Configuration>
+            .flatten()
+            // filter None and return actions.
+            // All actions cannot be flatten! each vec of actions defines one potential descriptor
+            .flat_map(|configuration| &configuration.actions)
+            // filter None and return descriptors
+            .flat_map(|actions| self.build_single_descriptor(actions))
+            .collect()
+    }
+
+    fn filter_configurations_by_rules(&self, rules_opt: &Option<Vec<Rule>>) -> bool {
+        match rules_opt {
+            // no rules is equivalent to matching all the requests.
+            None => true,
+            Some(rules) => rules.iter().any(|rule| self.apply_rule(rule)),
+        }
+    }
+
+    fn apply_rule(&self, rule: &Rule) -> bool {
+        if let Some(paths) = &rule.paths {
+            if !paths.iter().any(|path| self.request_path().eq(path)) {
+                return false;
+            }
+        }
+
+        if let Some(methods) = &rule.methods {
+            if !methods
+                .iter()
+                .any(|method| self.request_method().eq(method))
+            {
+                return false;
+            }
+        }
+
+        if let Some(subdomains) = &rule.hosts {
+            if !subdomains
+                .iter()
+                .any(|subdomain| subdomain_match(subdomain, self.request_authority().as_str()))
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn build_single_descriptor(
+        &self,
+        actions: &[RLA_action_specifier],
+    ) -> Option<RateLimitDescriptor> {
+        let mut entries = ::protobuf::RepeatedField::default();
+        for action in actions.iter() {
+            let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+            match action {
+                RLA_action_specifier::source_cluster(_) => {
+                    match self.get_property(vec!["connection", "requested_server_name"]) {
+                        None => {
+                            debug!("requested service name not found");
+                            return None;
+                        }
+                        Some(src_cluster_bytes) => {
+                            match String::from_utf8(src_cluster_bytes) {
+                                // NOTE(rahulanand16nov): not sure if it's correct.
+                                Ok(src_cluster) => {
+                                    descriptor_entry.set_key("source_cluster".into());
+                                    descriptor_entry.set_value(src_cluster);
+                                    entries.push(descriptor_entry);
+                                }
+                                Err(e) => {
+                                    warn!("source_cluster action parsing error! {:?}", e);
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+                RLA_action_specifier::destination_cluster(_) => {
+                    match self.get_property(vec!["cluster_name"]) {
+                        None => {
+                            debug!("cluster name not found");
+                            return None;
+                        }
+                        Some(cluster_name_bytes) => match String::from_utf8(cluster_name_bytes) {
+                            Ok(cluster_name) => {
+                                descriptor_entry.set_key("destination_cluster".into());
+                                descriptor_entry.set_value(cluster_name);
+                                entries.push(descriptor_entry);
+                            }
+                            Err(e) => {
+                                warn!("cluster_name action parsing error! {:?}", e);
+                                return None;
+                            }
+                        },
+                    }
+                }
+                RLA_action_specifier::request_headers(rh) => {
+                    match self.get_http_request_header(rh.get_header_name()) {
+                        None => {
+                            debug!("header name {} not found", rh.get_header_name());
+                            return None;
+                        }
+                        Some(header_value) => {
+                            descriptor_entry.set_key(rh.get_descriptor_key().into());
+                            descriptor_entry.set_value(header_value);
+                            entries.push(descriptor_entry);
+                        }
+                    }
+                }
+                RLA_action_specifier::remote_address(_) => {
+                    match self.get_http_request_header("x-forwarded-for") {
+                        None => {
+                            debug!("x-forwarded-for header not found");
+                            return None;
+                        }
+                        Some(remote_addess) => {
+                            descriptor_entry.set_key("remote_address".into());
+                            descriptor_entry.set_value(remote_addess);
+                            entries.push(descriptor_entry);
+                        }
+                    }
+                }
+                RLA_action_specifier::generic_key(gk) => {
+                    descriptor_entry.set_key(gk.get_descriptor_key().into());
+                    descriptor_entry.set_value(gk.get_descriptor_value().into());
+                    entries.push(descriptor_entry);
+                }
+                RLA_action_specifier::header_value_match(hvm) => {
+                    let request_headers: HashMap<_, _> =
+                        self.get_http_request_headers().into_iter().collect();
+
+                    if hvm.get_expect_match().get_value()
+                        == match_headers(&request_headers, hvm.get_headers())
+                    {
+                        descriptor_entry.set_key("header_match".into());
+                        descriptor_entry.set_value(hvm.get_descriptor_value().into());
+                        entries.push(descriptor_entry);
+                    } else {
+                        debug!("header_value_match does not add entry");
+                        return None;
+                    }
+                }
+                RLA_action_specifier::dynamic_metadata(_) => todo!(),
+                RLA_action_specifier::metadata(_) => todo!(),
+                RLA_action_specifier::extension(_) => todo!(),
+            }
+        }
+        let mut res = RateLimitDescriptor::new();
+        res.set_entries(entries);
+        Some(res)
+    }
+}
+
+impl HttpContext for Filter {
+    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
+        info!("on_http_request_headers #{}", self.context_id);
+
+        match self
+            .config
+            .index
+            .get_longest_match_policy(self.request_authority().as_str())
+        {
+            None => {
+                info!(
+                    "context #{}: Allowing request to pass because zero descriptors generated",
+                    self.context_id
+                );
+                Action::Continue
+            }
+            Some(rlp) => self.process_rate_limit_policy(rlp),
+        }
     }
 }
 
@@ -168,7 +268,7 @@ impl Context for Filter {
             Some(bytes) => bytes,
             None => {
                 warn!("grpc response body is empty!");
-                request_process_failure(self.config().failure_mode_deny());
+                request_process_failure(self.config.failure_mode_deny);
                 return;
             }
         };
@@ -180,14 +280,14 @@ impl Context for Filter {
                     "failed to parse grpc response body into RateLimitResponse message: {}",
                     e
                 );
-                request_process_failure(self.config().failure_mode_deny());
+                request_process_failure(self.config.failure_mode_deny);
                 return;
             }
         };
 
         match rl_resp.get_overall_code() {
             RateLimitResponse_Code::UNKNOWN => {
-                request_process_failure(self.config().failure_mode_deny());
+                request_process_failure(self.config.failure_mode_deny);
                 return;
             }
             RateLimitResponse_Code::OVER_LIMIT => {
