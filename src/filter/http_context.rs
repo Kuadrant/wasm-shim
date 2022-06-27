@@ -94,15 +94,12 @@ impl HttpContext for Filter {
 
             if let Some(rules) = rlp.rules() {
                 for rule in rules {
-                    let matched_operation = rule
-                        .operations()
-                        .map(|operations| {
-                            operations.iter().find(|operation| {
-                                operation.paths.is_match(&req_info.path)
-                                    && operation.methods.is_match(&req_info.method)
-                            })
+                    let matched_operation = rule.operations().and_then(|operations| {
+                        operations.iter().find(|operation| {
+                            operation.paths.is_match(&req_info.path)
+                                && operation.methods.is_match(&req_info.method)
                         })
-                        .flatten();
+                    });
 
                     // Without the operation match, actions won't be included.
                     if matched_operation.is_none() {
@@ -114,7 +111,7 @@ impl HttpContext for Filter {
                         context_id, matched_operation
                     );
 
-                    if let Some(ref matched_actions) = rule.actions() {
+                    if let Some(matched_actions) = rule.actions() {
                         actions.append(&mut matched_actions.to_vec());
                     }
                     break; // only first match is allowed.
