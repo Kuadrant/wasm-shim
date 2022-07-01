@@ -1,4 +1,4 @@
-use crate::configuration::{FilterConfig, RateLimitPolicy, Rule};
+use crate::configuration::{Configuration, FilterConfig, RateLimitPolicy, Rule};
 use crate::envoy::{
     RLA_action_specifier, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest,
     RateLimitResponse, RateLimitResponse_Code,
@@ -93,35 +93,32 @@ impl Filter {
         rlp.gateway_actions
             .iter()
             .filter(|ga| self.filter_configurations_by_rules(&ga.rules))
-            // filter None and return configurations
-            .flat_map(|ga| &ga.configurations)
             // flatten the vec<vec<Configurations> to vec<Configuration>
-            .flatten()
-            // filter None and return actions.
+            .flat_map(|ga| &ga.configurations)
             // All actions cannot be flatten! each vec of actions defines one potential descriptor
-            .flat_map(|configuration| &configuration.actions)
-            // filter None and return descriptors
-            .flat_map(|actions| self.build_single_descriptor(actions))
+            .flat_map(|configuration| self.build_descriptor(configuration))
             .collect()
     }
 
-    fn filter_configurations_by_rules(&self, rules_opt: &Option<Vec<Rule>>) -> bool {
-        match rules_opt {
+    fn filter_configurations_by_rules(&self, rules: &Vec<Rule>) -> bool {
+        if rules.is_empty() {
             // no rules is equivalent to matching all the requests.
-            None => true,
-            Some(rules) => rules.iter().any(|rule| self.rule_applies(rule)),
+            return true;
         }
+
+        rules.iter().any(|rule| self.rule_applies(rule))
     }
 
     fn rule_applies(&self, rule: &Rule) -> bool {
-        if let Some(paths) = &rule.paths {
-            if !paths.iter().any(|path| self.request_path().eq(path)) {
+        if !rule.paths.is_empty() {
+            if !rule.paths.iter().any(|path| self.request_path().eq(path)) {
                 return false;
             }
         }
 
-        if let Some(methods) = &rule.methods {
-            if !methods
+        if !rule.methods.is_empty() {
+            if !rule
+                .methods
                 .iter()
                 .any(|method| self.request_method().eq(method))
             {
@@ -129,8 +126,9 @@ impl Filter {
             }
         }
 
-        if let Some(subdomains) = &rule.hosts {
-            if !subdomains
+        if !rule.hosts.is_empty() {
+            if !rule
+                .hosts
                 .iter()
                 .any(|subdomain| subdomain_match(subdomain, self.request_authority().as_str()))
             {
@@ -141,12 +139,9 @@ impl Filter {
         true
     }
 
-    fn build_single_descriptor(
-        &self,
-        actions: &[RLA_action_specifier],
-    ) -> Option<RateLimitDescriptor> {
+    fn build_descriptor(&self, configuration: &Configuration) -> Option<RateLimitDescriptor> {
         let mut entries = ::protobuf::RepeatedField::default();
-        for action in actions.iter() {
+        for action in configuration.actions.iter() {
             let mut descriptor_entry = RateLimitDescriptor_Entry::new();
             match action {
                 RLA_action_specifier::source_cluster(_) => {
