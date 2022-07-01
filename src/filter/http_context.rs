@@ -22,25 +22,36 @@ pub struct Filter {
 
 impl Filter {
     fn request_path(&self) -> String {
-        // Note(eastizle): self.get_http_request_header(":path") is equivalent?
-        let path_bytes = self.get_property(vec!["request", "path"]).unwrap();
-        String::from_utf8(path_bytes).unwrap()
+        match self.get_http_request_header(":path") {
+            None => {
+                warn!(":path header not found");
+                String::new()
+            }
+            Some(path) => path,
+        }
     }
 
     fn request_method(&self) -> String {
-        // Note(eastizle): self.get_http_request_header(":method") is equivalent?
-        let method_bytes = self.get_property(vec!["request", "method"]).unwrap();
-        String::from_utf8(method_bytes).unwrap()
+        match self.get_http_request_header(":method") {
+            None => {
+                warn!(":method header not found");
+                String::new()
+            }
+            Some(method) => method,
+        }
     }
 
     fn request_authority(&self) -> String {
-        // TODO(rahulanand16nov): Handle error
-        let host_bytes = self.get_property(vec!["request", "host"]).unwrap();
-        let host = String::from_utf8(host_bytes).unwrap();
-
-        // make sure port is removed from host before processing the request.
-        let split_host = host.split(':').collect::<Vec<_>>();
-        split_host[0].to_owned()
+        match self.get_http_request_header(":authority") {
+            None => {
+                warn!(":authority header not found");
+                String::new()
+            }
+            Some(host) => {
+                let split_host = host.split(':').collect::<Vec<_>>();
+                split_host[0].to_owned()
+            }
+        }
     }
 
     fn process_rate_limit_policy(&self, rlp: &RateLimitPolicy) -> Action {
