@@ -98,11 +98,11 @@ impl Filter {
         match rules_opt {
             // no rules is equivalent to matching all the requests.
             None => true,
-            Some(rules) => rules.iter().any(|rule| self.apply_rule(rule)),
+            Some(rules) => rules.iter().any(|rule| self.rule_applies(rule)),
         }
     }
 
-    fn apply_rule(&self, rule: &Rule) -> bool {
+    fn rule_applies(&self, rule: &Rule) -> bool {
         if let Some(paths) = &rule.paths {
             if !paths.iter().any(|path| self.request_path().eq(path)) {
                 return false;
