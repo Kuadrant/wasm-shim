@@ -7,6 +7,7 @@ use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
+use std::rc::Rc;
 use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
@@ -24,7 +25,7 @@ struct RequestInfo {
 
 pub struct Filter {
     pub context_id: u32,
-    pub config: FilterConfig,
+    pub config: Rc<FilterConfig>,
 }
 
 impl Filter {
