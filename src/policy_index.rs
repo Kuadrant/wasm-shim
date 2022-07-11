@@ -26,7 +26,7 @@ impl PolicyIndex {
     fn reverse_subdomain(subdomain: &str) -> String {
         let mut s = subdomain.to_string();
         s.push('.');
-        if s.chars().nth(0).unwrap() == '*' {
+        if s.starts_with('*') {
             s.remove(0);
         } else {
             s.insert(0, '$'); // $ is not a valid domain char
@@ -38,16 +38,15 @@ impl PolicyIndex {
 #[cfg(test)]
 mod tests {
     use crate::configuration::RateLimitPolicy;
-    use crate::glob::GlobPatternSet;
     use crate::policy_index::PolicyIndex;
 
-    fn build_ratelimit_policy(domain: &str) -> RateLimitPolicy {
+    fn build_ratelimit_policy(name: &str) -> RateLimitPolicy {
         RateLimitPolicy::new(
-            GlobPatternSet::default(),
-            None,
-            None,
-            None,
-            Some(String::from(domain)),
+            name.to_owned(),
+            "".to_owned(),
+            "".to_owned(),
+            Vec::new(),
+            Vec::new(),
         )
     }
 
@@ -68,7 +67,7 @@ mod tests {
 
         let val = index.get_longest_match_policy("example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap().domain(), Some("rlp1"));
+        assert_eq!(val.unwrap().name, "rlp1");
     }
 
     #[test]
@@ -90,7 +89,7 @@ mod tests {
         let val = index.get_longest_match_policy("test.example.com");
 
         assert!(val.is_some());
-        assert_eq!(val.unwrap().domain(), Some("rlp1"));
+        assert_eq!(val.unwrap().name, "rlp1");
     }
 
     #[test]
@@ -103,11 +102,11 @@ mod tests {
 
         let val = index.get_longest_match_policy("test.example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap().domain(), Some("rlp2"));
+        assert_eq!(val.unwrap().name, "rlp2");
 
         let val = index.get_longest_match_policy("example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap().domain(), Some("rlp1"));
+        assert_eq!(val.unwrap().name, "rlp1");
     }
 
     #[test]
@@ -118,6 +117,6 @@ mod tests {
 
         let val = index.get_longest_match_policy("test.example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap().domain(), Some("rlp1"));
+        assert_eq!(val.unwrap().name, "rlp1");
     }
 }

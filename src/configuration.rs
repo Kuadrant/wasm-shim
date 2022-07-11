@@ -4,20 +4,26 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
-    pub paths: Option<Vec<String>>,
-    pub hosts: Option<Vec<String>>,
-    pub methods: Option<Vec<String>>,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    #[serde(default)]
+    pub methods: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Configuration {
-    pub actions: Option<Vec<RLA_action_specifier>>,
+    #[serde(default)]
+    pub actions: Vec<RLA_action_specifier>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GatewayAction {
-    pub rules: Option<Vec<Rule>>,
-    pub configurations: Option<Vec<Configuration>>,
+    #[serde(default)]
+    pub rules: Vec<Rule>,
+    #[serde(default)]
+    pub configurations: Vec<Configuration>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -26,6 +32,7 @@ pub struct RateLimitPolicy {
     pub rate_limit_domain: String,
     pub upstream_cluster: String,
     pub hostnames: Vec<String>,
+    #[serde(default)]
     pub gateway_actions: Vec<GatewayAction>,
 }
 
