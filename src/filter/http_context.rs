@@ -110,30 +110,26 @@ impl Filter {
     }
 
     fn rule_applies(&self, rule: &Rule) -> bool {
-        if !rule.paths.is_empty() {
-            if !rule.paths.iter().any(|path| self.request_path().eq(path)) {
-                return false;
-            }
+        if !rule.paths.is_empty() && !rule.paths.iter().any(|path| self.request_path().eq(path)) {
+            return false;
         }
 
-        if !rule.methods.is_empty() {
-            if !rule
+        if !rule.methods.is_empty()
+            && !rule
                 .methods
                 .iter()
                 .any(|method| self.request_method().eq(method))
-            {
-                return false;
-            }
+        {
+            return false;
         }
 
-        if !rule.hosts.is_empty() {
-            if !rule
+        if !rule.hosts.is_empty()
+            && !rule
                 .hosts
                 .iter()
                 .any(|subdomain| subdomain_match(subdomain, self.request_authority().as_str()))
-            {
-                return false;
-            }
+        {
+            return false;
         }
 
         true
