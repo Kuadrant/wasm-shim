@@ -124,6 +124,28 @@ mod test {
                             "descriptor_key": "admin",
                             "descriptor_value": "1"
                         }
+                    },
+                    {
+                        "metadata": {
+                            "descriptor_key": "user-id",
+                            "default_value": "no-user",
+                            "metadata_key": {
+                                "key": "envoy.filters.http.ext_authz",
+                                "path": [
+                                    {
+                                        "segment": {
+                                            "key": "ext_auth_data"
+                                        }
+                                    },
+                                    {
+                                        "segment": {
+                                            "key": "user_id"
+                                        }
+                                    }
+                                ]
+                            },
+                            "source": "DYNAMIC"
+                        }
                     }
                     ]
                 }
@@ -141,6 +163,35 @@ mod test {
             eprintln!("{}", e);
         }
         assert!(res.is_ok());
+
+        let filter_config = res.unwrap();
+        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+
+        let gateway_actions = &filter_config.rate_limit_policies[0].gateway_actions;
+        assert_eq!(gateway_actions.len(), 1);
+
+        let configurations = &gateway_actions[0].configurations;
+        assert_eq!(configurations.len(), 1);
+
+        let actions = &configurations[0].actions;
+        assert_eq!(actions.len(), 2);
+        assert!(std::matches!(
+            actions[0],
+            RLA_action_specifier::generic_key(_)
+        ));
+        assert!(std::matches!(actions[1], RLA_action_specifier::metadata(_)));
+
+        if let RLA_action_specifier::metadata(ref metadata_action) = actions[1] {
+            let metadata_key = metadata_action.get_metadata_key();
+            assert_eq!(metadata_key.get_key(), "envoy.filters.http.ext_authz");
+
+            let metadata_path = metadata_key.get_path();
+            assert_eq!(metadata_path.len(), 2);
+            assert_eq!(metadata_path[0].get_key(), "ext_auth_data");
+            assert_eq!(metadata_path[1].get_key(), "user_id");
+        } else {
+            panic!("wrong action type: expected metadata type");
+        }
     }
 
     #[test]
