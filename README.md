@@ -5,27 +5,21 @@ Following is a sample configuration used by the shim.
 
 ```yaml
 failure_mode_deny: true
-ratelimitpolicies:
-  default/toystore:
-    hosts:
-    - "*.toystore.com"
-    rules:
-    - operations:
-      - paths:
-        - "/admin/toy"
-        methods:
-        - POST
-        - DELETE
-      actions:
-      - generic_key:
-          descriptor_value: 'yes'
-          descriptor_key: admin
-    global_actions:
-    - generic_key:
-        descriptor_value: 'yes'
-        descriptor_key: vhaction
+rate_limit_policies:
+  - name: toystore
+    rate_limit_domain: toystore-app
     upstream_cluster: rate-limit-cluster
-    domain: toystore-app
+    hostnames: ["*.toystore.com"]
+    gateway_actions:
+      - rules:
+          - paths: ["/admin/toy"]
+            methods: ["GET"]
+            hosts: ["pets.toystore.com"]
+        configurations:
+          - actions:
+            - generic_key:
+                descriptor_key: admin
+                descriptor_value: "1"
 ```
 
 ## Building
@@ -60,10 +54,24 @@ Run local development environment
 make development
 ```
 
-Testing the WASM filter
+Three rate limit policies defined for e2e testing:
+
+* `rlp-a`: Actions should not generate descriptors. Hence, rate limiting service should **not** be called.
 
 ```
-curl http://127.0.0.1:18000/get
+curl -H "Host: test.a.com" http://127.0.0.1:18000/get
+```
+
+* `rlp-b`: Rules do not match. Hence, rate limiting service should **not** be called.
+
+```
+curl -H "Host: test.b.com" http://127.0.0.1:18000/get
+```
+
+* `rlp-c`: Four descriptors from multiple action types should be generated. Hence, rate limiting service should be called.
+
+```
+curl -H "Host: test.c.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "My-Custom-Header-02: my-custom-header-value-02" http://127.0.0.1:18000/get
 ```
 
 Clean up all resources
