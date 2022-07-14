@@ -1,10 +1,5 @@
-use crate::envoy::{
-    HeaderMatcher, HeaderMatcher_specifier, RLA_action_specifier, RateLimitDescriptor,
-    RateLimitDescriptor_Entry, StringMatcher_pattern,
-};
-use log::warn;
+use crate::envoy::{HeaderMatcher, HeaderMatcher_specifier, StringMatcher_pattern};
 use proxy_wasm::hostcalls::{resume_http_request, send_http_response};
-use proxy_wasm::traits::HttpContext;
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,7 +22,10 @@ pub fn request_process_failure(failure_mode_deny: bool) {
     resume_http_request().unwrap();
 }
 
-fn match_headers(req_headers: &HashMap<String, String>, config_headers: &[HeaderMatcher]) -> bool {
+pub fn match_headers(
+    req_headers: &HashMap<String, String>,
+    config_headers: &[HeaderMatcher],
+) -> bool {
     for header_matcher in config_headers {
         let invert_match = header_matcher.get_invert_match();
         if let Some(req_header_value) = req_headers.get(header_matcher.get_name()) {
@@ -111,82 +109,19 @@ fn match_headers(req_headers: &HashMap<String, String>, config_headers: &[Header
     true
 }
 
-pub fn descriptor_from_actions(
-    filter: &dyn HttpContext,
-    actions: &[RLA_action_specifier],
-) -> Result<RateLimitDescriptor, UtilsErr> {
-    let mut res = RateLimitDescriptor::new();
-    for action in actions {
-        let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+pub fn subdomain_match(subdomain: &str, authority: &str) -> bool {
+    authority.ends_with(subdomain.replace('*', "").as_str())
+}
 
-        match action {
-            RLA_action_specifier::source_cluster(_) => {
-                descriptor_entry.set_key("source_cluster".into());
+#[cfg(test)]
+mod tests {
+    use crate::utils;
 
-                let src_cluster = String::from_utf8(
-                    filter
-                        .get_property(vec!["connection", "requested_server_name"])
-                        .unwrap_or_else(|| {
-                            warn!("requested service name not found");
-                            vec![]
-                        }),
-                )?; // NOTE: not sure if it's correct.
-                descriptor_entry.set_value(src_cluster);
-            }
-            RLA_action_specifier::destination_cluster(_) => {
-                descriptor_entry.set_key("destination_cluster".into());
-
-                let dst_cluster =
-                    String::from_utf8(filter.get_property(vec!["cluster_name"]).unwrap_or_else(
-                        || {
-                            warn!("requested service name not found");
-                            vec![]
-                        },
-                    ))?;
-                descriptor_entry.set_value(dst_cluster);
-            }
-            RLA_action_specifier::request_headers(rh) => {
-                descriptor_entry.set_key(rh.get_descriptor_key().into());
-
-                let header_value = filter.get_http_request_header(rh.get_header_name());
-                if let Some(value) = header_value {
-                    descriptor_entry.set_value(value);
-                } else if rh.get_skip_if_absent() {
-                    continue; // don't add the descriptor if no match.
-                }
-            }
-            RLA_action_specifier::remote_address(_ra) => {
-                descriptor_entry.set_key("remote_address".into());
-
-                let header_value = filter.get_http_request_header("x-forwarded-for");
-                if let Some(value) = header_value {
-                    descriptor_entry.set_value(value);
-                } else {
-                    continue;
-                }
-            }
-            RLA_action_specifier::generic_key(gk) => {
-                descriptor_entry.set_key(gk.get_descriptor_key().into());
-                descriptor_entry.set_value(gk.get_descriptor_value().into());
-            }
-            RLA_action_specifier::header_value_match(hvm) => {
-                let request_headers: HashMap<_, _> =
-                    filter.get_http_request_headers().into_iter().collect();
-
-                if hvm.get_expect_match().get_value()
-                    == match_headers(&request_headers, hvm.get_headers())
-                {
-                    descriptor_entry.set_key("header_match".into());
-                    descriptor_entry.set_value(hvm.get_descriptor_value().into());
-                } else {
-                    continue;
-                }
-            }
-            RLA_action_specifier::dynamic_metadata(_) => todo!(),
-            RLA_action_specifier::metadata(_) => todo!(),
-            RLA_action_specifier::extension(_) => todo!(),
-        }
-        res.mut_entries().push(descriptor_entry);
+    #[test]
+    fn subdomain_match() {
+        assert!(utils::subdomain_match("*.example.com", "test.example.com"));
+        assert!(!utils::subdomain_match("*.example.com", "example.com"));
+        assert!(utils::subdomain_match("*", "test1.test2.example.com"));
+        assert!(utils::subdomain_match("example.com", "example.com"));
     }
-    Ok(res)
 }

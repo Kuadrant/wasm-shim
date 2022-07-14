@@ -20,18 +20,21 @@ mod root_context;
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
     use crate::configuration::FilterConfig;
+    use log::info;
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
     use root_context::FilterRoot;
+    use std::rc::Rc;
 
     proxy_wasm::set_log_level(LogLevel::Trace);
     std::panic::set_hook(Box::new(|panic_info| {
         proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string()).unwrap();
     }));
     proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
+        info!("set_root_context #{}", context_id);
         Box::new(FilterRoot {
             context_id,
-            config: FilterConfig::new(),
+            config: Rc::new(FilterConfig::new()),
         })
     });
 }

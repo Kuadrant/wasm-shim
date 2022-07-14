@@ -42,45 +42,121 @@ static_resources:
                       value: >
                         {
                           "failure_mode_deny": true,
-                          "ratelimitpolicies": {
-                            "default-toystore": {
-                              "hosts": [
-                                "*"
-                              ],
-                              "rules": [
+                          "rate_limit_policies": [
+                            {
+                              "name": "rlp-a",
+                              "rate_limit_domain": "rls-domain-a",
+                              "upstream_cluster": "limitador",
+                              "hostnames": ["*.a.com"],
+                              "gateway_actions": [
                                 {
-                                  "operations": [
+                                  "configurations": [
                                     {
-                                      "paths": [
-                                        "/get"
-                                      ],
-                                      "methods": [
-                                        "GET"
+                                      "actions": [
+                                        {
+                                          "request_headers": {
+                                            "header_name": "not-existing-header",
+                                            "skip_if_absent": true,
+                                            "descriptor_key": "my-not-existing-header"
+                                          }
+                                        }
                                       ]
-                                    }
-                                  ],
-                                  "actions": [
-                                    {
-                                      "generic_key": {
-                                        "descriptor_value": "1",
-                                        "descriptor_key": "admin"
-                                      }
                                     }
                                   ]
                                 }
-                              ],
-                              "global_actions": [
-                                {
-                                  "generic_key": {
-                                    "descriptor_value": "1",
-                                    "descriptor_key": "vhaction"
-                                  }
-                                }
-                              ],
+                              ]
+                            },
+                            {
+                              "name": "rlp-b",
+                              "rate_limit_domain": "rls-domain-b",
                               "upstream_cluster": "limitador",
-                              "domain": "toystore-app"
+                              "hostnames": ["*.b.com"],
+                              "gateway_actions": [
+                                {
+                                  "rules": [
+                                    {
+                                      "paths": ["/not/exising/path"]
+                                    }
+                                  ],
+                                  "configurations": [
+                                    {
+                                      "actions": [
+                                        {
+                                          "generic_key": {
+                                            "descriptor_key": "some_generic_key",
+                                            "descriptor_value": "some_generic_value"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "name": "rlp-c",
+                              "rate_limit_domain": "rls-domain-c",
+                              "upstream_cluster": "limitador",
+                              "hostnames": ["*.c.com"],
+                              "gateway_actions": [
+                                {
+                                  "rules": [
+                                    {
+                                      "paths": ["/get"],
+                                      "hosts": ["test.c.com"],
+                                      "method": ["GET"]
+                                    }
+                                  ],
+                                  "configurations": [
+                                    {
+                                      "actions": [
+                                        {
+                                          "generic_key": {
+                                            "descriptor_key": "some_generic_key_for_c",
+                                            "descriptor_value": "some_generic_value_for_c"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "actions": [
+                                        {
+                                          "remote_address": {}
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "actions": [
+                                        {
+                                          "header_value_match": {
+                                            "descriptor_value": "header_value_match_value",
+                                            "headers": [
+                                              {
+                                                "name": "My-Custom-Header-01",
+                                                "exact_match": "my-custom-header-value",
+                                                "invert_match": false
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "actions": [
+                                        {
+                                          "request_headers": {
+                                            "header_name": "My-Custom-Header-02",
+                                            "skip_if_absent": true,
+                                            "descriptor_key": "my-custom-header-key"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
                             }
-                          }
+                          ]
                         }
               - name: envoy.filters.http.router
   clusters:
