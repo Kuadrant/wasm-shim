@@ -179,7 +179,6 @@ mod test {
             actions[0],
             RLA_action_specifier::generic_key(_)
         ));
-        assert!(std::matches!(actions[1], RLA_action_specifier::metadata(_)));
 
         if let RLA_action_specifier::metadata(ref metadata_action) = actions[1] {
             let metadata_key = metadata_action.get_metadata_key();

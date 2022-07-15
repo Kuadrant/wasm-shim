@@ -2,7 +2,7 @@ MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 PROJECT_PATH := $(patsubst %/,%,$(dir $(MKFILE_PATH)))
 IMAGE_VERSION ?= latest
 DOCKER ?= podman
-IMAGE_REPOSITORY ?= rahanand
+IMAGE_REPOSITORY ?= kuadrant
 
 .PHONY: build
 build-image:

@@ -254,7 +254,10 @@ impl Filter {
                                 debug!("failed to parse metadata value: {}", e);
                                 descriptor_entry.set_value(default_value.into());
                             }
-                            Ok(metadata_value) => descriptor_entry.set_value(metadata_value),
+                            Ok(metadata_value) => {
+                                descriptor_entry.set_value(metadata_value);
+                                entries.push(descriptor_entry);
+                            }
                         },
                     }
                 }
