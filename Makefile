@@ -91,7 +91,7 @@ PROTOC_BIN=$(PROJECT_PATH)/bin/protoc
 PROTOC_VERSION=21.1
 $(PROTOC_BIN):
 	mkdir -p $(PROJECT_PATH)/bin
-	$(call get-protoc,$(PROJECT_PATH)/bin,https://github.com/protocolbuffers/protobuf/releases/latest/download/protoc-$(PROTOC_VERSION)-linux-x86_64.zip,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.3.0)
+	$(call get-protoc,$(PROJECT_PATH)/bin,https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-linux-x86_64.zip,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.3.0)
 
 # builds the module and move to deploy folder
 build: export BUILD?=debug

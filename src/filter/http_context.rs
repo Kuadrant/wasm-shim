@@ -100,7 +100,7 @@ impl Filter {
             .collect()
     }
 
-    fn filter_configurations_by_rules(&self, rules: &Vec<Rule>) -> bool {
+    fn filter_configurations_by_rules(&self, rules: &[Rule]) -> bool {
         if rules.is_empty() {
             // no rules is equivalent to matching all the requests.
             return true;
@@ -228,7 +228,47 @@ impl Filter {
                     }
                 }
                 RLA_action_specifier::dynamic_metadata(_) => todo!(),
-                RLA_action_specifier::metadata(_) => todo!(),
+                RLA_action_specifier::metadata(md) => {
+                    // Note(rahul): defaulting to dynamic metadata source right now.
+                    let metadata_key = &md.get_metadata_key().key;
+                    let mut metadata_path: Vec<&str> = md
+                        .get_metadata_key()
+                        .get_path()
+                        .iter()
+                        .map(|path_segment| path_segment.get_key())
+                        .collect();
+                    let default_value = md.get_default_value();
+                    let descriptor_key = md.get_descriptor_key();
+
+                    descriptor_entry.set_key(descriptor_key.into());
+
+                    let mut property_path = vec!["metadata", "filter_metadata", metadata_key];
+                    property_path.append(&mut metadata_path);
+                    match self.get_property(property_path) {
+                        None => {
+                            debug!("metadata key not found");
+                            if default_value.is_empty() {
+                                debug!("skipping descriptor because no metadata and default value present");
+                                return None;
+                            }
+                            descriptor_entry.set_key(default_value.into());
+                        }
+                        Some(metadata_bytes) => match String::from_utf8(metadata_bytes) {
+                            Err(e) => {
+                                debug!("failed to parse metadata value: {}", e);
+                                if default_value.is_empty() {
+                                    debug!("skipping descriptor because no metadata and default value present");
+                                    return None;
+                                }
+                                descriptor_entry.set_value(default_value.into());
+                            }
+                            Ok(metadata_value) => {
+                                descriptor_entry.set_value(metadata_value);
+                                entries.push(descriptor_entry);
+                            }
+                        },
+                    }
+                }
                 RLA_action_specifier::extension(_) => todo!(),
             }
         }

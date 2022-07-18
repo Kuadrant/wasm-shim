@@ -24,6 +24,15 @@ static_resources:
                       route:
                         cluster: upstream
             http_filters:
+              - name: envoy.filters.http.header_to_metadata
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.header_to_metadata.v3.Config
+                  request_rules:
+                  - header: x-dyn-user-id
+                    on_header_present:
+                      key: user-id
+                      type: STRING
+                    remove: false
               - name: envoy.filters.http.wasm
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
@@ -148,6 +157,27 @@ static_resources:
                                             "header_name": "My-Custom-Header-02",
                                             "skip_if_absent": true,
                                             "descriptor_key": "my-custom-header-key"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "actions": [
+                                        {
+                                          "metadata": {
+                                            "descriptor_key": "user-id",
+                                            "default_value": "no-user",
+                                            "metadata_key": {
+                                              "key": "envoy.filters.http.header_to_metadata",
+                                              "path": [
+                                                {
+                                                  "segment": {
+                                                    "key": "user-id"
+                                                  }
+                                                }
+                                              ]
+                                            },
+                                            "source": "DYNAMIC"
                                           }
                                         }
                                       ]
