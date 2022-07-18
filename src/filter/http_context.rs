@@ -247,11 +247,19 @@ impl Filter {
                     match self.get_property(property_path) {
                         None => {
                             debug!("metadata key not found");
+                            if default_value.is_empty() {
+                                debug!("skipping descriptor because no metadata and default value present");
+                                return None;
+                            }
                             descriptor_entry.set_key(default_value.into());
                         }
                         Some(metadata_bytes) => match String::from_utf8(metadata_bytes) {
                             Err(e) => {
                                 debug!("failed to parse metadata value: {}", e);
+                                if default_value.is_empty() {
+                                    debug!("skipping descriptor because no metadata and default value present");
+                                    return None;
+                                }
                                 descriptor_entry.set_value(default_value.into());
                             }
                             Ok(metadata_value) => {
