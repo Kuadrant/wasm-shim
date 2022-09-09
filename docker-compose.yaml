@@ -26,10 +26,8 @@ services:
       - ./utils/docker-compose/envoy.yaml:/etc/envoy.yaml
       - ./target/wasm32-unknown-unknown/release/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
   limitador:
-    image: quay.io/3scale/limitador:0.5.1
-    environment:
-      RUST_LOG: debug
-      LIMITS_FILE: /opt/kuadrant/limits/limits.yaml
+    image: quay.io/kuadrant/limitador:latest
+    command: ["limitador-server", "-vvv", "/opt/kuadrant/limits/limits.yaml"]
     expose:
       - "8080"
       - "8081"

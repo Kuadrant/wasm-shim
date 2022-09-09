@@ -113,6 +113,16 @@ pub fn subdomain_match(subdomain: &str, authority: &str) -> bool {
     authority.ends_with(subdomain.replace('*', "").as_str())
 }
 
+pub fn path_match(path_pattern: &str, request_path: &str) -> bool {
+    if path_pattern.ends_with("*") {
+        let mut cp = path_pattern.to_string();
+        cp.pop();
+        request_path.starts_with(cp.as_str())
+    } else {
+        request_path.eq(path_pattern)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils;
@@ -123,5 +133,18 @@ mod tests {
         assert!(!utils::subdomain_match("*.example.com", "example.com"));
         assert!(utils::subdomain_match("*", "test1.test2.example.com"));
         assert!(utils::subdomain_match("example.com", "example.com"));
+    }
+
+    #[test]
+    fn path_match() {
+        assert!(utils::path_match("/cats", "/cats"));
+        assert!(utils::path_match("/", "/"));
+        assert!(utils::path_match("/*", "/"));
+        assert!(utils::path_match("/*", "/cats/something"));
+        assert!(utils::path_match("/cats/*", "/cats/"));
+        assert!(utils::path_match("/cats/*", "/cats/something"));
+        assert!(!utils::path_match("/cats/*", "/cats"));
+        assert!(utils::path_match("/cats*", "/catsanddogs"));
+        assert!(utils::path_match("/cats*", "/cats/dogs"));
     }
 }

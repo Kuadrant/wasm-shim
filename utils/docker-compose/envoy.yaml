@@ -66,7 +66,7 @@ static_resources:
                                           "request_headers": {
                                             "header_name": "not-existing-header",
                                             "skip_if_absent": true,
-                                            "descriptor_key": "my-not-existing-header"
+                                            "descriptor_key": "my_not_existing_header"
                                           }
                                         }
                                       ]
@@ -84,7 +84,7 @@ static_resources:
                                 {
                                   "rules": [
                                     {
-                                      "paths": ["/not/exising/path"]
+                                      "paths": ["/not/exising/path", "/any*"]
                                     }
                                   ],
                                   "configurations": [
@@ -156,7 +156,7 @@ static_resources:
                                           "request_headers": {
                                             "header_name": "My-Custom-Header-02",
                                             "skip_if_absent": true,
-                                            "descriptor_key": "my-custom-header-key"
+                                            "descriptor_key": "my_custom_header_key"
                                           }
                                         }
                                       ]
@@ -165,7 +165,7 @@ static_resources:
                                       "actions": [
                                         {
                                           "metadata": {
-                                            "descriptor_key": "user-id",
+                                            "descriptor_key": "user_id",
                                             "default_value": "no-user",
                                             "metadata_key": {
                                               "key": "envoy.filters.http.header_to_metadata",
