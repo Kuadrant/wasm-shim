@@ -114,7 +114,7 @@ pub fn subdomain_match(subdomain: &str, authority: &str) -> bool {
 }
 
 pub fn path_match(path_pattern: &str, request_path: &str) -> bool {
-    if path_pattern.ends_with("*") {
+    if path_pattern.ends_with('*') {
         let mut cp = path_pattern.to_string();
         cp.pop();
         request_path.starts_with(cp.as_str())
