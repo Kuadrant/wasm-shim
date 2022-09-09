@@ -18,13 +18,13 @@ proxy-wasm = "0.2"
 serde_json = "1.0"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
-prost = "0.6"
-prost-types = "0.6"
-protobuf = { version = "2.0", features = ["with-serde"] }
+prost = "0.11"
+prost-types = "0.11"
+protobuf = { version = "2.27", features = ["with-serde"] }
 thiserror = "1.0"
 regex = "1"
 serde_regex = "1.1.0"
 radix_trie = "0.2.1"
 
 [build-dependencies]
-protoc-rust = "2.0"
+protoc-rust = "2.27"
