@@ -23,7 +23,7 @@ services:
       - "18000:80"
       - "18001:8001"
     volumes:
-      - ./deploy/docker-compose/envoy.yaml:/etc/envoy.yaml
+      - ./utils/docker-compose/envoy.yaml:/etc/envoy.yaml
       - ./target/wasm32-unknown-unknown/release/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
   limitador:
     image: quay.io/3scale/limitador:0.5.1
@@ -34,6 +34,6 @@ services:
       - "8080"
       - "8081"
     volumes:
-      - ./deploy/docker-compose/limits.yaml:/opt/kuadrant/limits/limits.yaml
+      - ./utils/docker-compose/limits.yaml:/opt/kuadrant/limits/limits.yaml
   upstream:
     image: kennethreitz/httpbin

@@ -3,89 +3,7 @@ SHELL := /bin/bash
 MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 PROJECT_PATH := $(patsubst %/,%,$(dir $(MKFILE_PATH)))
 
-KIND_VERSION=v0.11.1
-# Installs kind if not present.
-kind:
-ifneq ($(KIND_VERSION), $(shell kind version | cut -d' ' -f2))
-	go install sigs.k8s.io/kind@$(KIND_VERSION)
-KIND=$(GOBIN)/kind
-else
-KIND=$(shell which kind)
-endif
-
-KIND_CLUSTER_NAME ?= wasm-shim-cluster
-
 WASM_RELEASE_PATH = $(PROJECT_PATH)/target/wasm32-unknown-unknown/release/wasm_shim.wasm
-
-# Start a local Kubernetes cluster using Kind
-.PHONY: cluster-up
-cluster-up: kind
-	kind create cluster --name $(KIND_CLUSTER_NAME)
-
-# Intialize submodule
-submodule:
-	git submodule update --init
-
-# Install Authorino CRDs into a cluster
-install-authorino: submodule
-	cd authorino-operator && \
-	make install
-
-# Uninstall Authorino CRDs from a cluster
-uninstall-authorino: submodule
-	cd authorino-operator && \
-	make uninstall
-
-# Deploys authorino
-deploy-authorino:
-	cd authorino-operator && make deploy
-	kubectl apply -f deploy/authorino.yaml
-
-# Undeploys authorino
-undeploy-authoriono:
-	cd authorino-operator && make undeploy
-	kubectl delete -f deploy/authorino.yaml
-
-# Install Limitador CRDs into a cluster
-install-limitador: submodule
-	cd limitador-operator && \
-	make install
-
-# Uninstall Limitador CRDs from a cluster
-uninstall-limitador: submodule
-	cd limitador-operator && \
-	make uninstall
-
-# Deploys authorino
-deploy-limitador:
-	cd limitador-operator && make deploy
-	kubectl apply -f deploy/limitador.yaml
-
-# Undeploys authorino
-undeploy-limitador:
-	cd limitador-operator && make undeploy
-	kubectl delete -f deploy/limitador.yaml
-
-# Deploys the example
-example-up:
-	istioctl kube-inject -f deploy/toystore.yaml | kubectl apply -f -
-	kubectl apply -f deploy/wasmplugin.yaml
-#   Cluster wide resource
-	kubectl apply -f deploy/gateway-class.yaml
-#   Istio-system resource
-	kubectl apply -f deploy/gateway.yaml
-	kubectl apply -f deploy/http-route.yaml
-	kubectl apply -f deploy/authorino-simple-api.yaml
-
-# Clean up the example
-example-down:
-	istioctl kube-inject -f deploy/toystore.yaml | kubectl delete -f -
-	kubectl delete -f deploy/wasmplugin.yaml
-	kubectl delete -f deploy/gateway-class.yaml
-	kubectl delete -f deploy/gateway.yaml
-	kubectl delete -f deploy/http-route.yaml
-	kubectl delete -f deploy/authorino-simple-api.yaml
-
 
 PROTOC_BIN=$(PROJECT_PATH)/bin/protoc
 PROTOC_VERSION=21.1
@@ -102,12 +20,6 @@ build: $(PROTOC_BIN)
     else
 		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown
     endif
-	cp target/wasm32-unknown-unknown/$(BUILD)/*.wasm ./deploy/
-
-# Deletes the local Kubernetes cluster started using Kind
-.PHONY: cleanup
-cleanup: kind
-	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 # Remove old ones and fetch the latest third-party protobufs
 update-protobufs:
