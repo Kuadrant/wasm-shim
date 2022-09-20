@@ -3,7 +3,7 @@ use crate::envoy::{
     RLA_action_specifier, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest,
     RateLimitResponse, RateLimitResponse_Code,
 };
-use crate::utils::{match_headers, request_process_failure, subdomain_match};
+use crate::utils::{match_headers, path_match, request_process_failure, subdomain_match};
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -110,7 +110,12 @@ impl Filter {
     }
 
     fn rule_applies(&self, rule: &Rule) -> bool {
-        if !rule.paths.is_empty() && !rule.paths.iter().any(|path| self.request_path().eq(path)) {
+        if !rule.paths.is_empty()
+            && !rule
+                .paths
+                .iter()
+                .any(|path| path_match(path, self.request_path().as_str()))
+        {
             return false;
         }
 
@@ -244,6 +249,7 @@ impl Filter {
 
                     let mut property_path = vec!["metadata", "filter_metadata", metadata_key];
                     property_path.append(&mut metadata_path);
+                    debug!("metadata property_path {:?}", property_path);
                     match self.get_property(property_path) {
                         None => {
                             debug!("metadata key not found");
@@ -251,7 +257,8 @@ impl Filter {
                                 debug!("skipping descriptor because no metadata and default value present");
                                 return None;
                             }
-                            descriptor_entry.set_key(default_value.into());
+                            descriptor_entry.set_value(default_value.into());
+                            entries.push(descriptor_entry);
                         }
                         Some(metadata_bytes) => match String::from_utf8(metadata_bytes) {
                             Err(e) => {

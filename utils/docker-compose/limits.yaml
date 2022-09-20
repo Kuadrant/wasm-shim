@@ -1,12 +1,12 @@
 ---
-- namespace: toystore-app
-  max_value: 10
-  seconds: 60
+- namespace: rls-domain-b
+  max_value: 5
+  seconds: 10
   conditions:
-    - "req.method == GET"
+    - "some_generic_key == 'some_generic_value'"
   variables: []
 - namespace: rls-domain-c
   max_value: 2
   seconds: 10
-  conditions: ["user-id == bob"]
+  conditions: ["user_id == 'bob'"]
   variables: []
