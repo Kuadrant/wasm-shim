@@ -114,8 +114,8 @@ pub fn subdomain_match(subdomain: &str, authority: &str) -> bool {
 }
 
 pub fn path_match(path_pattern: &str, request_path: &str) -> bool {
-    if path_pattern.ends_with('*') {
-        request_path.starts_with(&path_pattern[..path_pattern.len() - 1])
+    if let Some(stripped_path_pattern) = path_pattern.strip_suffix('*') {
+        request_path.starts_with(stripped_path_pattern)
     } else {
         request_path.eq(path_pattern)
     }
