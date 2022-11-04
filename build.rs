@@ -1,4 +1,10 @@
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use std::error::Error;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    generate_protobuf()
+}
+
+fn generate_protobuf() -> Result<(), Box<dyn Error>> {
     let custom = protoc_rust::Customize {
         serde_derive: Some(true),
         ..Default::default()
@@ -6,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     protoc_rust::Codegen::new()
         .out_dir("src/envoy")
         .customize(custom)
-        .inputs(&[
+        .inputs([
             "vendor-protobufs/data-plane-api/envoy/service/auth/v3/external_auth.proto",
             "vendor-protobufs/data-plane-api/envoy/service/ratelimit/v3/rls.proto",
             "vendor-protobufs/data-plane-api/envoy/service/auth/v3/attribute_context.proto",
@@ -39,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "vendor-protobufs/udpa/xds/core/v3/authority.proto",
             "vendor-protobufs/data-plane-api/envoy/type/tracing/v3/custom_tag.proto",
         ])
-        .includes(&[
+        .includes([
             "vendor-protobufs/data-plane-api/",
             "vendor-protobufs/protoc-gen-validate/",
             "vendor-protobufs/udpa/",
