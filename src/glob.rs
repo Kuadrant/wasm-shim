@@ -192,7 +192,7 @@ mod test {
     #[test]
     fn default_global_pattern_set() -> Result<(), Error> {
         let pattern_set = GlobPatternSet::default();
-        assert_eq!(pattern_set.is_match("should_match_all"), true);
+        assert!(pattern_set.is_match("should_match_all"));
         Ok(())
     }
 
