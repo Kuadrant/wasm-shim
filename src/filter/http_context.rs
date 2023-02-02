@@ -56,7 +56,7 @@ impl Filter {
 
     fn process_rate_limit_policy(&self, rlp: &RateLimitPolicy) -> Action {
         let descriptors = self.build_descriptors(rlp);
-        if descriptors.len() == 0 {
+        if descriptors.is_empty() {
             debug!("[context_id: {}] empty descriptors", self.context_id);
             return Action::Continue;
         }
@@ -88,7 +88,7 @@ impl Filter {
     fn build_descriptors(
         &self,
         rlp: &RateLimitPolicy,
-    ) -> ::protobuf::RepeatedField<RateLimitDescriptor> {
+    ) -> protobuf::RepeatedField<RateLimitDescriptor> {
         //::protobuf::RepeatedField::default()
         rlp.gateway_actions
             .iter()

@@ -160,7 +160,7 @@ mod test {
     fn parse_config() {
         let res = serde_json::from_str::<PluginConfiguration>(CONFIG);
         if let Err(ref e) = res {
-            eprintln!("{}", e);
+            eprintln!("{e}");
         }
         assert!(res.is_ok());
 
