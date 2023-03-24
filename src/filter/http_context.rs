@@ -18,6 +18,7 @@ const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
+    pub headers: Vec<(String, String)>,
 }
 
 impl Filter {
@@ -304,6 +305,13 @@ impl HttpContext for Filter {
             Some(rlp) => self.process_rate_limit_policy(rlp),
         }
     }
+
+    fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+        for (name, value) in &self.headers {
+            self.add_http_response_header(name, value);
+        }
+        Action::Continue
+    }
 }
 
 impl Context for Filter {
@@ -334,16 +342,35 @@ impl Context for Filter {
             }
         };
 
-        match rl_resp.get_overall_code() {
-            RateLimitResponse_Code::UNKNOWN => {
+        match rl_resp {
+            RateLimitResponse {
+                overall_code: RateLimitResponse_Code::UNKNOWN,
+                ..
+            } => {
                 request_process_failure(self.config.failure_mode_deny);
                 return;
             }
-            RateLimitResponse_Code::OVER_LIMIT => {
-                self.send_http_response(429, vec![], Some(b"Too Many Requests\n"));
+            RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OVER_LIMIT,
+                response_headers_to_add: rl_headers,
+                ..
+            } => {
+                let mut headers = vec![];
+                for header in &rl_headers {
+                    headers.push((header.get_key(), header.get_value()));
+                }
+                self.send_http_response(429, headers, Some(b"Too Many Requests\n"));
                 return;
             }
-            RateLimitResponse_Code::OK => {}
+            RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OK,
+                response_headers_to_add: headers,
+                ..
+            } => {
+                for header in headers {
+                    self.headers.push((header.key, header.value));
+                }
+            }
         }
         self.resume_http_request();
     }
