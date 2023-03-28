@@ -7,9 +7,15 @@ WASM_RELEASE_PATH = $(PROJECT_PATH)/target/wasm32-unknown-unknown/release/wasm_s
 
 PROTOC_BIN=$(PROJECT_PATH)/bin/protoc
 PROTOC_VERSION=21.1
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+	PROTOC_OS="linux-x86_64"
+endif
+ifeq ($(UNAME_S),Darwin)
+	PROTOC_OS="osx-universal_binary"
+endif
 $(PROTOC_BIN):
-	mkdir -p $(PROJECT_PATH)/bin
-	$(call get-protoc,$(PROJECT_PATH)/bin,https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-linux-x86_64.zip,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.3.0)
+	$(call get-protoc,$(PROJECT_PATH),https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-$(PROTOC_OS).zip)
 
 # builds the module and move to deploy folder
 build: export BUILD?=debug
@@ -62,15 +68,14 @@ stop-development:
 
 # get-protoc will download zip from $2 and install it to $1.
 define get-protoc
-@[ -f $(1) ] || { \
-echo "Downloading $(2) and installing in $(1)" ;\
+@{ \
+echo "Downloading $(2) and installing in $(1)/bin" ;\
 set -e ;\
 TMP_DIR=$$(mktemp -d) ;\
 cd $$TMP_DIR ;\
 curl -Lo protoc.zip $(2) ;\
-unzip -q protoc.zip bin/protoc ;\
-cp bin/protoc $(1) ;\
-chmod a+x $(1)/protoc ;\
+unzip -q protoc.zip bin/protoc -d $(1)/. ;\
+chmod a+x $(1)/bin/protoc ;\
 rm -rf $$TMP_DIR ;\
 }
 endef
