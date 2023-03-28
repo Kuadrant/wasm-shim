@@ -355,19 +355,19 @@ impl Context for Filter {
                 response_headers_to_add: rl_headers,
                 ..
             } => {
-                let mut headers = vec![];
+                let mut response_headers = vec![];
                 for header in &rl_headers {
-                    headers.push((header.get_key(), header.get_value()));
+                    response_headers.push((header.get_key(), header.get_value()));
                 }
-                self.send_http_response(429, headers, Some(b"Too Many Requests\n"));
+                self.send_http_response(429, response_headers, Some(b"Too Many Requests\n"));
                 return;
             }
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OK,
-                response_headers_to_add: headers,
+                response_headers_to_add: response_headers,
                 ..
             } => {
-                for header in headers {
+                for header in response_headers {
                     self.headers.push((header.key, header.value));
                 }
             }
