@@ -18,7 +18,7 @@ const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
-    pub headers: Vec<(String, String)>,
+    pub response_headers_to_add: Vec<(String, String)>,
 }
 
 impl Filter {
@@ -307,7 +307,7 @@ impl HttpContext for Filter {
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
-        for (name, value) in &self.headers {
+        for (name, value) in &self.response_headers_to_add {
             self.add_http_response_header(name, value);
         }
         Action::Continue
@@ -364,11 +364,12 @@ impl Context for Filter {
             }
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OK,
-                response_headers_to_add: response_headers,
+                response_headers_to_add: additional_headers,
                 ..
             } => {
-                for header in response_headers {
-                    self.headers.push((header.key, header.value));
+                for header in additional_headers {
+                    self.response_headers_to_add
+                        .push((header.key, header.value));
                 }
             }
         }
