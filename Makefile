@@ -15,7 +15,7 @@ ifeq ($(UNAME_S),Darwin)
 	PROTOC_OS="osx-universal_binary"
 endif
 $(PROTOC_BIN):
-	$(call get-protoc,$(PROJECT_PATH),https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-$(PROTOC_OS).zip,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.3.0)
+	$(call get-protoc,$(PROJECT_PATH),https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-$(PROTOC_OS).zip)
 
 # builds the module and move to deploy folder
 build: export BUILD?=debug
@@ -68,8 +68,8 @@ stop-development:
 
 # get-protoc will download zip from $2 and install it to $1.
 define get-protoc
-@[ -f $(1) ] || { \
-echo "Downloading $(2) and installing in $(1)" ;\
+@{ \
+echo "Downloading $(2) and installing in $(1)/bin" ;\
 set -e ;\
 TMP_DIR=$$(mktemp -d) ;\
 cd $$TMP_DIR ;\
