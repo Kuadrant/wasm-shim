@@ -21,6 +21,7 @@ impl RootContext for FilterRoot {
         Some(Box::new(Filter {
             context_id,
             config: Rc::clone(&self.config),
+            headers: Vec::default(),
         }))
     }
 
