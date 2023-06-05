@@ -1,4 +1,0 @@
-[submodule "vendor-test/test-framework"]
-	path = vendor-test/test-framework
-    url = https://github.com/alexsnaps/test-framework.git
-    branch = kuadrant
