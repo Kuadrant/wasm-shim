@@ -276,8 +276,16 @@ fn it_passes_additional_headers() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_add_header_map_value(Some(MapType::HttpResponseHeaders), Some("test"), Some("some value"))
-        .expect_add_header_map_value(Some(MapType::HttpResponseHeaders), Some("other"), Some("header value"))
+        .expect_add_header_map_value(
+            Some(MapType::HttpResponseHeaders),
+            Some("test"),
+            Some("some value"),
+        )
+        .expect_add_header_map_value(
+            Some(MapType::HttpResponseHeaders),
+            Some("other"),
+            Some("header value"),
+        )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }

@@ -19,7 +19,12 @@ mod tests {
         resp.response_headers_to_add
             .push(header("other", "header value"));
         let buffer = resp.write_to_bytes().unwrap();
-        // assert_eq!(b"", buffer.as_slice())
+        let expected: [u8; 45] = [
+            8, 1, 26, 18, 10, 4, 116, 101, 115, 116, 18, 10, 115, 111, 109, 101, 32, 118, 97, 108,
+            117, 101, 26, 21, 10, 5, 111, 116, 104, 101, 114, 18, 12, 104, 101, 97, 100, 101, 114,
+            32, 118, 97, 108, 117, 101,
+        ];
+        assert_eq!(expected, buffer.as_slice())
     }
 
     fn header(key: &str, value: &str) -> HeaderValue {
