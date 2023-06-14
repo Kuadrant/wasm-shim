@@ -28,6 +28,7 @@ radix_trie = "0.2.1"
 
 [dev-dependencies]
 proxy-wasm-test-framework = { path = "vendor-test/test-framework", version = "0.1.0" }
+protoc-rust = "2.27"
 
 [build-dependencies]
 protoc-rust = "2.27"
