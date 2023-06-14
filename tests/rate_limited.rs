@@ -1,7 +1,9 @@
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
+use serial_test::serial;
 
 #[test]
+#[serial]
 fn it_loads() {
     let args = tester::MockSettings {
         wasm_path: "target/wasm32-unknown-unknown/release/wasm_shim.wasm".to_string(),
@@ -61,6 +63,7 @@ fn it_loads() {
 }
 
 #[test]
+#[serial]
 fn it_limits() {
     let args = tester::MockSettings {
         wasm_path: "target/wasm32-unknown-unknown/release/wasm_shim.wasm".to_string(),
@@ -169,6 +172,7 @@ fn it_limits() {
 }
 
 #[test]
+#[serial]
 fn it_passes_additional_headers() {
     let args = tester::MockSettings {
         wasm_path: "target/wasm32-unknown-unknown/release/wasm_shim.wasm".to_string(),
