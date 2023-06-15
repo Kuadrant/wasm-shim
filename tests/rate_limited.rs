@@ -1,12 +1,22 @@
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
+use std::path::Path;
+
+fn wasm_module() -> String {
+    let wasm_file = Path::new("target/wasm32-unknown-unknown/release/wasm_shim.wasm");
+    assert!(
+        wasm_file.exists(),
+        "Run `cargo build --release --target=wasm32-unknown-unknown` first"
+    );
+    wasm_file.to_str().unwrap().to_string()
+}
 
 #[test]
 #[serial]
 fn it_loads() {
     let args = tester::MockSettings {
-        wasm_path: "target/wasm32-unknown-unknown/release/wasm_shim.wasm".to_string(),
+        wasm_path: wasm_module(),
         quiet: false,
         allow_unexpected: false,
     };
@@ -66,7 +76,7 @@ fn it_loads() {
 #[serial]
 fn it_limits() {
     let args = tester::MockSettings {
-        wasm_path: "target/wasm32-unknown-unknown/release/wasm_shim.wasm".to_string(),
+        wasm_path: wasm_module(),
         quiet: false,
         allow_unexpected: false,
     };
@@ -185,7 +195,7 @@ fn it_limits() {
 #[serial]
 fn it_passes_additional_headers() {
     let args = tester::MockSettings {
-        wasm_path: "target/wasm32-unknown-unknown/release/wasm_shim.wasm".to_string(),
+        wasm_path: wasm_module(),
         quiet: false,
         allow_unexpected: false,
     };
