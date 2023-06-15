@@ -3,6 +3,5 @@
 /src/envoy/*
 !/src/envoy/mod.rs
 .vscode/*
-vendor-protobufs
 
 /bin
