@@ -144,7 +144,17 @@ fn it_limits() {
         .returning(Some("POST"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
-        .expect_grpc_call(Some(""), Some(""), Some(""), Some(""), Some(""), Some(42))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("envoy.service.ratelimit.v3.RateLimitService"),
+            Some("ShouldRateLimit"),
+            Some(&[0, 0, 0, 0]),
+            Some(&[
+                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97,
+                100, 109, 105, 110, 18, 1, 49, 24, 1,
+            ]),
+            Some(5000),
+        )
         .returning(Some(42))
         .expect_log(
             Some(LogLevel::Info),
@@ -253,7 +263,17 @@ fn it_passes_additional_headers() {
         .returning(Some("POST"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
-        .expect_grpc_call(Some(""), Some(""), Some(""), Some(""), Some(""), Some(42))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("envoy.service.ratelimit.v3.RateLimitService"),
+            Some("ShouldRateLimit"),
+            Some(&[0, 0, 0, 0]),
+            Some(&[
+                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97,
+                100, 109, 105, 110, 18, 1, 49, 24, 1,
+            ]),
+            Some(5000),
+        )
         .returning(Some(42))
         .expect_log(
             Some(LogLevel::Info),
