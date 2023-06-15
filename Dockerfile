@@ -20,7 +20,6 @@ COPY ./Cargo.toml ./Cargo.toml
 COPY src src
 COPY build.rs build.rs
 COPY vendor-protobufs vendor-protobufs
-COPY vendor-test vendor-test
 
 RUN source $HOME/.cargo/env \
     && cargo build --target=wasm32-unknown-unknown --release
