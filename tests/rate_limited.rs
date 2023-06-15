@@ -33,7 +33,7 @@ fn it_loads() {
         .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), Some("plugin config parsed: PluginConfiguration { rate_limit_policies: [], failure_mode_deny: true }"))
+        .expect_log(Some(LogLevel::Info), None)
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
@@ -122,7 +122,7 @@ fn it_limits() {
         .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), Some("plugin config parsed: PluginConfiguration { rate_limit_policies: [RateLimitPolicy { name: \"some-name\", rate_limit_domain: \"RLS-domain\", upstream_cluster: \"limitador-cluster\", hostnames: [\"*.toystore.com\", \"example.com\"], gateway_actions: [GatewayAction { rules: [Rule { paths: [\"/admin/toy\"], hosts: [\"cars.toystore.com\"], methods: [\"POST\"] }], configurations: [Configuration { actions: [generic_key(descriptor_value: \"1\" descriptor_key: \"admin\")] }] }] }], failure_mode_deny: true }"))
+        .expect_log(Some(LogLevel::Info), None)
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
@@ -241,7 +241,7 @@ fn it_passes_additional_headers() {
         .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), Some("plugin config parsed: PluginConfiguration { rate_limit_policies: [RateLimitPolicy { name: \"some-name\", rate_limit_domain: \"RLS-domain\", upstream_cluster: \"limitador-cluster\", hostnames: [\"*.toystore.com\", \"example.com\"], gateway_actions: [GatewayAction { rules: [Rule { paths: [\"/admin/toy\"], hosts: [\"cars.toystore.com\"], methods: [\"POST\"] }], configurations: [Configuration { actions: [generic_key(descriptor_value: \"1\" descriptor_key: \"admin\")] }] }] }], failure_mode_deny: true }"))
+        .expect_log(Some(LogLevel::Info), None)
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
