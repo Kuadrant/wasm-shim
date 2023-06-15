@@ -4,7 +4,7 @@
 
 FROM alpine:3.16 as wasm-shim-build
 
-ARG RUSTC_VERSION=1.58.1
+ARG RUSTC_VERSION=1.69.0
 RUN apk update \
     && apk upgrade \
     && apk add build-base binutils-gold openssl3-dev protoc curl \
@@ -20,6 +20,7 @@ COPY ./Cargo.toml ./Cargo.toml
 COPY src src
 COPY build.rs build.rs
 COPY vendor-protobufs vendor-protobufs
+COPY vendor-test vendor-test
 
 RUN source $HOME/.cargo/env \
     && cargo build --target=wasm32-unknown-unknown --release
