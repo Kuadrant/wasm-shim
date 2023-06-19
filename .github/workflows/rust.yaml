@@ -40,13 +40,17 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          target: wasm32-unknown-unknown
       - uses: arduino/setup-protoc@v1
         with:
           version: '3.x'
       - uses: actions-rs/cargo@v1
         with:
+          command: build
+          args: --release --target wasm32-unknown-unknown
+      - uses: actions-rs/cargo@v1
+        with:
           command: test
-          args: --all-features
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
