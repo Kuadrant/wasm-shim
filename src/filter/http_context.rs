@@ -1,14 +1,15 @@
-use crate::configuration::{Configuration, FilterConfig, RateLimitPolicy, Rule};
-use crate::envoy::{
-    RLA_action_specifier, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest,
-    RateLimitResponse, RateLimitResponse_Code,
+use crate::configuration::{
+    Condition, DataItem, DataType, FilterConfig, PatternExpression, RateLimitPolicy,
 };
-use crate::utils::{match_headers, path_match, request_process_failure, subdomain_match};
+use crate::envoy::{
+    RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
+    RateLimitResponse_Code,
+};
+use crate::utils::request_process_failure;
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -22,26 +23,6 @@ pub struct Filter {
 }
 
 impl Filter {
-    fn request_path(&self) -> String {
-        match self.get_http_request_header(":path") {
-            None => {
-                warn!(":path header not found");
-                String::new()
-            }
-            Some(path) => path,
-        }
-    }
-
-    fn request_method(&self) -> String {
-        match self.get_http_request_header(":method") {
-            None => {
-                warn!(":method header not found");
-                String::new()
-            }
-            Some(method) => method,
-        }
-    }
-
     fn request_authority(&self) -> String {
         match self.get_http_request_header(":authority") {
             None => {
@@ -63,14 +44,14 @@ impl Filter {
         }
 
         let mut rl_req = RateLimitRequest::new();
-        rl_req.set_domain(rlp.rate_limit_domain.clone());
+        rl_req.set_domain(rlp.domain.clone());
         rl_req.set_hits_addend(1);
         rl_req.set_descriptors(descriptors);
 
         let rl_req_serialized = Message::write_to_bytes(&rl_req).unwrap(); // TODO(rahulanand16nov): Error Handling
 
         match self.dispatch_grpc_call(
-            rlp.upstream_cluster.as_str(),
+            rlp.service.as_str(),
             RATELIMIT_SERVICE_NAME,
             RATELIMIT_METHOD_NAME,
             Vec::new(),
@@ -80,7 +61,7 @@ impl Filter {
             Ok(call_id) => info!("Initiated gRPC call (id# {}) to Limitador", call_id),
             Err(e) => {
                 warn!("gRPC call to Limitador failed! {:?}", e);
-                request_process_failure(self.config.failure_mode_deny);
+                request_process_failure(&self.config.failure_mode);
             }
         }
         Action::Pause
@@ -91,195 +72,114 @@ impl Filter {
         rlp: &RateLimitPolicy,
     ) -> protobuf::RepeatedField<RateLimitDescriptor> {
         //::protobuf::RepeatedField::default()
-        rlp.gateway_actions
+        rlp.rules
             .iter()
-            .filter(|ga| self.filter_configurations_by_rules(&ga.rules))
-            // flatten the vec<vec<Configurations> to vec<Configuration>
-            .flat_map(|ga| &ga.configurations)
+            .filter(|rule| self.filter_rule_by_conditions(&rule.conditions))
+            // flatten the vec<vec<data> to vec<data>
+            .flat_map(|rule| &rule.data)
             // All actions cannot be flatten! each vec of actions defines one potential descriptor
-            .flat_map(|configuration| self.build_descriptor(configuration))
+            .flat_map(|data| self.build_descriptor(data))
             .collect()
     }
 
-    fn filter_configurations_by_rules(&self, rules: &[Rule]) -> bool {
-        if rules.is_empty() {
-            // no rules is equivalent to matching all the requests.
+    fn filter_rule_by_conditions(&self, conditions: &[Condition]) -> bool {
+        if conditions.is_empty() {
+            // no conditions is equivalent to matching all the requests.
             return true;
         }
 
-        rules.iter().any(|rule| self.rule_applies(rule))
+        conditions
+            .iter()
+            .any(|condition| self.condition_applies(condition))
     }
 
-    fn rule_applies(&self, rule: &Rule) -> bool {
-        if !rule.paths.is_empty()
-            && !rule
-                .paths
-                .iter()
-                .any(|path| path_match(path, self.request_path().as_str()))
-        {
-            return false;
-        }
-
-        if !rule.methods.is_empty()
-            && !rule
-                .methods
-                .iter()
-                .any(|method| self.request_method().eq(method))
-        {
-            return false;
-        }
-
-        if !rule.hosts.is_empty()
-            && !rule
-                .hosts
-                .iter()
-                .any(|subdomain| subdomain_match(subdomain, self.request_authority().as_str()))
-        {
-            return false;
-        }
-
-        true
+    fn condition_applies(&self, condition: &Condition) -> bool {
+        condition
+            .all_of
+            .iter()
+            .all(|pattern_expression| self.pattern_expression_applies(pattern_expression))
     }
 
-    fn build_descriptor(&self, configuration: &Configuration) -> Option<RateLimitDescriptor> {
+    fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
+        let attribute_path = p_e.selector.split(".").collect();
+        match self.get_property(attribute_path) {
+            None => {
+                debug!(
+                    "[context_id: {}]: selector not found: {}",
+                    self.context_id, p_e.selector
+                );
+                false
+            }
+            // TODO(eastizle): not all fields are strings
+            // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
+            Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
+                Err(e) => {
+                    debug!(
+                        "[context_id: {}]: failed to parse selector value: {}, error: {}",
+                        self.context_id, p_e.selector, e
+                    );
+                    false
+                }
+                Ok(attribute_value) => p_e
+                    .operator
+                    .eval(p_e.value.as_str(), attribute_value.as_str()),
+            },
+        }
+    }
+
+    fn build_descriptor(&self, data: &DataItem) -> Option<RateLimitDescriptor> {
         let mut entries = ::protobuf::RepeatedField::default();
-        for action in configuration.actions.iter() {
-            let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-            match action {
-                RLA_action_specifier::source_cluster(_) => {
-                    match self.get_property(vec!["connection", "requested_server_name"]) {
-                        None => {
-                            debug!("requested service name not found");
-                            return None;
-                        }
-                        Some(src_cluster_bytes) => {
-                            match String::from_utf8(src_cluster_bytes) {
-                                // NOTE(rahulanand16nov): not sure if it's correct.
-                                Ok(src_cluster) => {
-                                    descriptor_entry.set_key("source_cluster".into());
-                                    descriptor_entry.set_value(src_cluster);
-                                    entries.push(descriptor_entry);
-                                }
-                                Err(e) => {
-                                    warn!("source_cluster action parsing error! {:?}", e);
-                                    return None;
-                                }
-                            }
-                        }
-                    }
-                }
-                RLA_action_specifier::destination_cluster(_) => {
-                    match self.get_property(vec!["cluster_name"]) {
-                        None => {
-                            debug!("cluster name not found");
-                            return None;
-                        }
-                        Some(cluster_name_bytes) => match String::from_utf8(cluster_name_bytes) {
-                            Ok(cluster_name) => {
-                                descriptor_entry.set_key("destination_cluster".into());
-                                descriptor_entry.set_value(cluster_name);
+
+        match &data.item {
+            DataType::Static(static_item) => {
+                let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                descriptor_entry.set_key(static_item.key.to_owned());
+                descriptor_entry.set_value(static_item.value.to_owned());
+                entries.push(descriptor_entry);
+            }
+            DataType::Selector(selector_item) => {
+                let descriptor_key = match &selector_item.key {
+                    None => selector_item.selector.to_owned(),
+                    Some(key) => key.to_owned(),
+                };
+
+                let attribute_path = selector_item.selector.split(".").collect();
+
+                match self.get_property(attribute_path) {
+                    None => {
+                        debug!(
+                            "[context_id: {}]: selector not found: {}",
+                            self.context_id, selector_item.selector
+                        );
+                        match &selector_item.default {
+                            None => return None, // skipping descriptors
+                            Some(default_value) => {
+                                let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                                descriptor_entry.set_key(descriptor_key);
+                                descriptor_entry.set_value(default_value.to_owned());
                                 entries.push(descriptor_entry);
                             }
-                            Err(e) => {
-                                warn!("cluster_name action parsing error! {:?}", e);
-                                return None;
-                            }
-                        },
+                        }
                     }
-                }
-                RLA_action_specifier::request_headers(rh) => {
-                    match self.get_http_request_header(rh.get_header_name()) {
-                        None => {
-                            debug!("header name {} not found", rh.get_header_name());
+                    Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
+                        Err(e) => {
+                            debug!(
+                                "[context_id: {}]: failed to parse selector value: {}, error: {}",
+                                self.context_id, selector_item.selector, e
+                            );
                             return None;
                         }
-                        Some(header_value) => {
-                            descriptor_entry.set_key(rh.get_descriptor_key().into());
-                            descriptor_entry.set_value(header_value);
+                        Ok(attribute_value) => {
+                            let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                            descriptor_entry.set_key(descriptor_key);
+                            descriptor_entry.set_value(attribute_value);
                             entries.push(descriptor_entry);
                         }
-                    }
+                    },
                 }
-                RLA_action_specifier::remote_address(_) => {
-                    match self.get_http_request_header("x-forwarded-for") {
-                        None => {
-                            debug!("x-forwarded-for header not found");
-                            return None;
-                        }
-                        Some(remote_addess) => {
-                            descriptor_entry.set_key("remote_address".into());
-                            descriptor_entry.set_value(remote_addess);
-                            entries.push(descriptor_entry);
-                        }
-                    }
-                }
-                RLA_action_specifier::generic_key(gk) => {
-                    descriptor_entry.set_key(gk.get_descriptor_key().into());
-                    descriptor_entry.set_value(gk.get_descriptor_value().into());
-                    entries.push(descriptor_entry);
-                }
-                RLA_action_specifier::header_value_match(hvm) => {
-                    let request_headers: HashMap<_, _> =
-                        self.get_http_request_headers().into_iter().collect();
-
-                    if hvm.get_expect_match().get_value()
-                        == match_headers(&request_headers, hvm.get_headers())
-                    {
-                        descriptor_entry.set_key("header_match".into());
-                        descriptor_entry.set_value(hvm.get_descriptor_value().into());
-                        entries.push(descriptor_entry);
-                    } else {
-                        debug!("header_value_match does not add entry");
-                        return None;
-                    }
-                }
-                RLA_action_specifier::dynamic_metadata(_) => todo!(),
-                RLA_action_specifier::metadata(md) => {
-                    // Note(rahul): defaulting to dynamic metadata source right now.
-                    let metadata_key = &md.get_metadata_key().key;
-                    let mut metadata_path: Vec<&str> = md
-                        .get_metadata_key()
-                        .get_path()
-                        .iter()
-                        .map(|path_segment| path_segment.get_key())
-                        .collect();
-                    let default_value = md.get_default_value();
-                    let descriptor_key = md.get_descriptor_key();
-
-                    descriptor_entry.set_key(descriptor_key.into());
-
-                    let mut property_path = vec!["metadata", "filter_metadata", metadata_key];
-                    property_path.append(&mut metadata_path);
-                    debug!("metadata property_path {:?}", property_path);
-                    match self.get_property(property_path) {
-                        None => {
-                            debug!("metadata key not found");
-                            if default_value.is_empty() {
-                                debug!("skipping descriptor because no metadata and default value present");
-                                return None;
-                            }
-                            descriptor_entry.set_value(default_value.into());
-                            entries.push(descriptor_entry);
-                        }
-                        Some(metadata_bytes) => match String::from_utf8(metadata_bytes) {
-                            Err(e) => {
-                                debug!("failed to parse metadata value: {}", e);
-                                if default_value.is_empty() {
-                                    debug!("skipping descriptor because no metadata and default value present");
-                                    return None;
-                                }
-                                descriptor_entry.set_value(default_value.into());
-                            }
-                            Ok(metadata_value) => {
-                                descriptor_entry.set_value(metadata_value);
-                                entries.push(descriptor_entry);
-                            }
-                        },
-                    }
-                }
-                RLA_action_specifier::extension(_) => todo!(),
             }
         }
+
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
@@ -325,7 +225,7 @@ impl Context for Filter {
             Some(bytes) => bytes,
             None => {
                 warn!("grpc response body is empty!");
-                request_process_failure(self.config.failure_mode_deny);
+                request_process_failure(&self.config.failure_mode);
                 return;
             }
         };
@@ -337,7 +237,7 @@ impl Context for Filter {
                     "failed to parse grpc response body into RateLimitResponse message: {}",
                     e
                 );
-                request_process_failure(self.config.failure_mode_deny);
+                request_process_failure(&self.config.failure_mode);
                 return;
             }
         };
@@ -347,7 +247,7 @@ impl Context for Filter {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             } => {
-                request_process_failure(self.config.failure_mode_deny);
+                request_process_failure(&self.config.failure_mode);
                 return;
             }
             RateLimitResponse {
