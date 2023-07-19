@@ -77,7 +77,8 @@ impl Filter {
             .filter(|rule| self.filter_rule_by_conditions(&rule.conditions))
             // flatten the vec<vec<data> to vec<data>
             .flat_map(|rule| &rule.data)
-            // All actions cannot be flatten! each vec of actions defines one potential descriptor
+            // WRONG: each rule generates one descriptor
+            jdsjd
             .flat_map(|data| self.build_descriptor(data))
             .collect()
     }

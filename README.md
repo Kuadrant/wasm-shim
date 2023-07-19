@@ -56,19 +56,19 @@ make development
 
 Three rate limit policies defined for e2e testing:
 
-* `rlp-a`: Actions should not generate descriptors. Hence, rate limiting service should **not** be called.
+* `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and rate limiting service should **not** be called.
 
 ```
 curl -H "Host: test.a.com" http://127.0.0.1:18000/get
 ```
 
-* `rlp-b`: Rules do not match. Hence, rate limiting service should **not** be called.
+* `rlp-b`: Conditions do not match. Hence, rate limiting service should **not** be called.
 
 ```
 curl -H "Host: test.b.com" http://127.0.0.1:18000/get
 ```
 
-* `rlp-c`: Five descriptors from multiple action types should be generated. Hence, rate limiting service should be called.
+* `rlp-c`: Five descriptors from multiple data items should be generated. Hence, rate limiting service should be called.
 
 ```
 curl -H "Host: test.c.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "My-Custom-Header-02: my-custom-header-value-02" -H "x-dyn-user-id: bob" http://127.0.0.1:18000/get
