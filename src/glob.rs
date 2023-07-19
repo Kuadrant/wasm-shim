@@ -8,8 +8,7 @@
 //
 use std::convert::TryFrom;
 
-use regex::{Regex, RegexSet};
-use serde::{Deserialize, Serialize};
+use regex::Regex;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -18,8 +17,7 @@ pub enum Error {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Debug, Clone)]
 pub struct GlobPattern(Regex);
 
 impl<'a> TryFrom<&'a str> for GlobPattern {
@@ -129,72 +127,9 @@ fn regex_unescape_specials(specials: &[char], regex_s: &str) -> String {
         })
 }
 
-#[repr(transparent)]
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(try_from = "Vec<String>", into = "Vec<String>")]
-pub struct GlobPatternSet(RegexSet);
-
-impl TryFrom<Vec<String>> for GlobPatternSet {
-    type Error = Error;
-
-    fn try_from(v: Vec<String>) -> Result<Self, Self::Error> {
-        Self::new(v.iter().map(|pat| GlobPattern::glob_pattern(pat.as_str())))
-    }
-}
-
-impl<'a> TryFrom<&'a str> for GlobPatternSet {
-    type Error = Error;
-
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        Self::new(core::iter::once(GlobPattern::glob_pattern(value)))
-    }
-}
-
-impl From<GlobPatternSet> for Vec<String> {
-    fn from(gs: GlobPatternSet) -> Self {
-        gs.0.patterns().to_vec()
-    }
-}
-// The default value will match everything
-impl Default for GlobPatternSet {
-    fn default() -> Self {
-        // panic: won't panic since "*" is always valid
-        Self::new([".*"].iter()).unwrap()
-    }
-}
-
-impl GlobPatternSet {
-    pub fn new<I, S>(exprs: I) -> Result<Self, Error>
-    where
-        S: AsRef<str>,
-        I: IntoIterator<Item = S>,
-    {
-        Ok(Self(RegexSet::new(exprs)?))
-    }
-
-    pub fn is_match(&self, s: &str) -> bool {
-        self.0.is_match(s)
-    }
-
-    pub fn regex_set(&self) -> &RegexSet {
-        &self.0
-    }
-
-    pub fn into_inner(self) -> RegexSet {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn default_global_pattern_set() -> Result<(), Error> {
-        let pattern_set = GlobPatternSet::default();
-        assert!(pattern_set.is_match("should_match_all"));
-        Ok(())
-    }
 
     #[test]
     fn glob_pattern_matches() -> Result<(), Error> {

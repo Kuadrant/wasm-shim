@@ -1,4 +1,6 @@
+use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
+use log::warn;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -59,8 +61,17 @@ impl WhenConditionOperator {
             WhenConditionOperator::NotEqualOperator => !value.eq(attr_value),
             WhenConditionOperator::StartsWithOperator => attr_value.starts_with(value),
             WhenConditionOperator::EndsWithOperator => attr_value.ends_with(value),
-            // TODO(eastizle): implement other operators
-            _ => true,
+            WhenConditionOperator::MatchesOperator => match GlobPattern::try_from(value) {
+                // TODO(eastizle): regexp being compiled and validated at request time.
+                // Validations and possibly regexp compilation should happen at boot time instead.
+                // In addition, if the regexp is not valid, the only consequence is that
+                // the current condition would not apply
+                Ok(glob_pattern) => glob_pattern.is_match(attr_value),
+                Err(e) => {
+                    warn!("failed to parse regexp: {value}, error: {e:?}");
+                    false
+                }
+            },
         }
     }
 }

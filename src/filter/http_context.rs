@@ -145,6 +145,8 @@ impl Filter {
 
                 let attribute_path = selector_item.selector.split(".").collect();
 
+                // TODO(eastizle): not all fields are strings
+                // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
                 match self.get_property(attribute_path) {
                     None => {
                         debug!(
@@ -233,10 +235,7 @@ impl Context for Filter {
         let rl_resp: RateLimitResponse = match Message::parse_from_bytes(&res_body_bytes) {
             Ok(res) => res,
             Err(e) => {
-                warn!(
-                    "failed to parse grpc response body into RateLimitResponse message: {}",
-                    e
-                );
+                warn!("failed to parse grpc response body into RateLimitResponse message: {e}");
                 request_process_failure(&self.config.failure_mode);
                 return;
             }
