@@ -122,21 +122,105 @@ static_resources:
                                           "selector": "request.method",
                                           "operator": "eq",
                                           "value": "GET"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "data": [
+                                    {
+                                      "static": {
+                                        "key": "limit-to-be-activated",
+                                        "value": "1"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "conditions": [
+                                    {
+                                      "allOf": [
+                                        {
+                                          "selector": "request.url_path",
+                                          "operator": "starts_with",
+                                          "value": "/get"
                                         },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
+                                        }
                                       ]
                                     }
                                   ],
                                   "data": [
                                     {
                                       "selector": {
-                                        "key": "souce",
-                                        "value": "1"
+                                        "selector": "source.address"
                                       }
-                                    },
+                                    }
+                                  ]
+                                },
+                                {
+                                  "conditions": [
                                     {
-                                      "static": {
-                                        "key": "rlp-ns-C/rlp-name-C/limit-to-be-activated",
-                                        "value": "1"
+                                      "allOf": [
+                                        {
+                                          "selector": "request.url_path",
+                                          "operator": "starts_with",
+                                          "value": "/get"
+                                        },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "data": [
+                                    {
+                                      "selector": {
+                                        "selector": "request.headers.My-Custom-Header-01"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "conditions": [
+                                    {
+                                      "allOf": [
+                                        {
+                                          "selector": "request.url_path",
+                                          "operator": "starts_with",
+                                          "value": "/get"
+                                        },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "data": [
+                                    {
+                                      "selector": {
+                                        "selector": "metadata.filter_metadata.\"envoy.filters.http.header_to_metadata\".user-id"
                                       }
                                     }
                                   ]

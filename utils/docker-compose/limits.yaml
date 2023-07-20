@@ -3,6 +3,6 @@
   max_value: 2
   seconds: 10
   conditions:
-    - "rlp-ns-C/rlp-name-C/limit-to-be-activated == '1'"
+    - "limit_to_be_activated == '1'"
     - "user_id == 'bob'"
   variables: []

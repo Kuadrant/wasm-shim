@@ -1,11 +1,11 @@
 use crate::configuration::{
-    Condition, DataItem, DataType, FilterConfig, PatternExpression, RateLimitPolicy,
+    Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, RateLimitPolicy,
+    Rule,
 };
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
 };
-use crate::utils::request_process_failure;
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -58,28 +58,30 @@ impl Filter {
             Some(&rl_req_serialized),
             Duration::from_secs(5),
         ) {
-            Ok(call_id) => info!("Initiated gRPC call (id# {}) to Limitador", call_id),
+            Ok(call_id) => {
+                info!("Initiated gRPC call (id# {}) to Limitador", call_id);
+                Action::Pause
+            }
             Err(e) => {
-                warn!("gRPC call to Limitador failed! {:?}", e);
-                request_process_failure(&self.config.failure_mode);
+                warn!("gRPC call to Limitador failed! {e:?}");
+                if let FailureMode::Deny = self.config.failure_mode {
+                    self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                }
+                Action::Continue
             }
         }
-        Action::Pause
     }
 
     fn build_descriptors(
         &self,
         rlp: &RateLimitPolicy,
     ) -> protobuf::RepeatedField<RateLimitDescriptor> {
-        //::protobuf::RepeatedField::default()
         rlp.rules
             .iter()
-            .filter(|rule| self.filter_rule_by_conditions(&rule.conditions))
-            // flatten the vec<vec<data> to vec<data>
-            .flat_map(|rule| &rule.data)
-            // WRONG: each rule generates one descriptor
-            jdsjd
-            .flat_map(|data| self.build_descriptor(data))
+            .filter(|rule: &&Rule| self.filter_rule_by_conditions(&rule.conditions))
+            // Mapping 1 Rule -> 1 Descriptor
+            // Filter out empty descriptors
+            .filter_map(|rule| self.build_single_descriptor(&rule.data))
             .collect()
     }
 
@@ -128,57 +130,61 @@ impl Filter {
         }
     }
 
-    fn build_descriptor(&self, data: &DataItem) -> Option<RateLimitDescriptor> {
+    fn build_single_descriptor(&self, data_list: &Vec<DataItem>) -> Option<RateLimitDescriptor> {
         let mut entries = ::protobuf::RepeatedField::default();
 
-        match &data.item {
-            DataType::Static(static_item) => {
-                let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                descriptor_entry.set_key(static_item.key.to_owned());
-                descriptor_entry.set_value(static_item.value.to_owned());
-                entries.push(descriptor_entry);
-            }
-            DataType::Selector(selector_item) => {
-                let descriptor_key = match &selector_item.key {
-                    None => selector_item.selector.to_owned(),
-                    Some(key) => key.to_owned(),
-                };
+        // iterate over data items to allow any data item to skip the entire descriptor
+        for data in data_list.iter() {
+            match &data.item {
+                DataType::Static(static_item) => {
+                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                    descriptor_entry.set_key(static_item.key.to_owned());
+                    descriptor_entry.set_value(static_item.value.to_owned());
+                    entries.push(descriptor_entry);
+                }
+                DataType::Selector(selector_item) => {
+                    let descriptor_key = match &selector_item.key {
+                        None => selector_item.selector.to_owned(),
+                        Some(key) => key.to_owned(),
+                    };
 
-                let attribute_path = selector_item.selector.split(".").collect();
+                    let attribute_path = selector_item.selector.split(".").collect();
 
-                // TODO(eastizle): not all fields are strings
-                // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                match self.get_property(attribute_path) {
-                    None => {
-                        debug!(
-                            "[context_id: {}]: selector not found: {}",
-                            self.context_id, selector_item.selector
-                        );
-                        match &selector_item.default {
-                            None => return None, // skipping descriptors
-                            Some(default_value) => {
-                                let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                                descriptor_entry.set_key(descriptor_key);
-                                descriptor_entry.set_value(default_value.to_owned());
-                                entries.push(descriptor_entry);
+                    // TODO(eastizle): not all fields are strings
+                    // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
+                    match self.get_property(attribute_path) {
+                        None => {
+                            debug!(
+                                "[context_id: {}]: selector not found: {}",
+                                self.context_id, selector_item.selector
+                            );
+                            match &selector_item.default {
+                                // skipping the entire descriptor
+                                None => return None,
+                                Some(default_value) => {
+                                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                                    descriptor_entry.set_key(descriptor_key);
+                                    descriptor_entry.set_value(default_value.to_owned());
+                                    entries.push(descriptor_entry);
+                                }
                             }
                         }
-                    }
-                    Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                        Err(e) => {
-                            debug!(
+                        Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
+                            Err(e) => {
+                                debug!(
                                 "[context_id: {}]: failed to parse selector value: {}, error: {}",
                                 self.context_id, selector_item.selector, e
                             );
-                            return None;
-                        }
-                        Ok(attribute_value) => {
-                            let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                            descriptor_entry.set_key(descriptor_key);
-                            descriptor_entry.set_value(attribute_value);
-                            entries.push(descriptor_entry);
-                        }
-                    },
+                                return None;
+                            }
+                            Ok(attribute_value) => {
+                                let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                                descriptor_entry.set_key(descriptor_key);
+                                descriptor_entry.set_value(attribute_value);
+                                entries.push(descriptor_entry);
+                            }
+                        },
+                    }
                 }
             }
         }
@@ -186,6 +192,15 @@ impl Filter {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
+    }
+
+    fn handle_error_on_grpc_response(&self) {
+        match &self.config.failure_mode {
+            FailureMode::Deny => {
+                self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+            }
+            FailureMode::Allow => self.resume_http_request(),
+        }
     }
 }
 
@@ -210,6 +225,7 @@ impl HttpContext for Filter {
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+        debug!("on_http_response_headers #{}", self.context_id);
         for (name, value) in &self.response_headers_to_add {
             self.add_http_response_header(name, value);
         }
@@ -220,15 +236,15 @@ impl HttpContext for Filter {
 impl Context for Filter {
     fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, resp_size: usize) {
         info!(
-            "received gRPC call response: token: {}, status: {}",
-            token_id, status_code
+            "on_grpc_call_response #{}: received gRPC call response: token: {token_id}, status: {status_code}",
+            self.context_id
         );
 
         let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
             Some(bytes) => bytes,
             None => {
                 warn!("grpc response body is empty!");
-                request_process_failure(&self.config.failure_mode);
+                self.handle_error_on_grpc_response();
                 return;
             }
         };
@@ -237,7 +253,7 @@ impl Context for Filter {
             Ok(res) => res,
             Err(e) => {
                 warn!("failed to parse grpc response body into RateLimitResponse message: {e}");
-                request_process_failure(&self.config.failure_mode);
+                self.handle_error_on_grpc_response();
                 return;
             }
         };
@@ -247,7 +263,7 @@ impl Context for Filter {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             } => {
-                request_process_failure(&self.config.failure_mode);
+                self.handle_error_on_grpc_response();
                 return;
             }
             RateLimitResponse {

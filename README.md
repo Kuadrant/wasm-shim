@@ -68,10 +68,10 @@ curl -H "Host: test.a.com" http://127.0.0.1:18000/get
 curl -H "Host: test.b.com" http://127.0.0.1:18000/get
 ```
 
-* `rlp-c`: Five descriptors from multiple data items should be generated. Hence, rate limiting service should be called.
+* `rlp-c`: Four descriptors from multiple rules should be generated. Hence, rate limiting service should be called.
 
 ```
-curl -H "Host: test.c.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "My-Custom-Header-02: my-custom-header-value-02" -H "x-dyn-user-id: bob" http://127.0.0.1:18000/get
+curl -H "Host: test.c.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:18000/get
 ```
 
 **Note:** Dynamic metadata can also be set with `user-id` as the key if you add the header `x-dyn-user-id`. This is provided using [Header-To-Metadata filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/header_to_metadata_filter#config-http-filters-header-to-metadata).
