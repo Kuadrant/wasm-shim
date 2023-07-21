@@ -30,7 +30,7 @@ static_resources:
                   request_rules:
                   - header: x-dyn-user-id
                     on_header_present:
-                      key: user-id
+                      key: user_id
                       type: STRING
                     remove: false
               - name: envoy.filters.http.wasm
@@ -129,7 +129,7 @@ static_resources:
                                   "data": [
                                     {
                                       "static": {
-                                        "key": "limit-to-be-activated",
+                                        "key": "limit_to_be_activated",
                                         "value": "1"
                                       }
                                     }
@@ -220,7 +220,8 @@ static_resources:
                                   "data": [
                                     {
                                       "selector": {
-                                        "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user-id"
+                                        "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
+                                        "key": "user_id"
                                       }
                                     }
                                   ]

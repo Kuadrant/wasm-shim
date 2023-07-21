@@ -77,7 +77,7 @@ curl -H "Host: test.c.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-
 The expected descriptors:
 
 ```
-RateLimitDescriptor { entries: [Entry { key: "limit-to-be-activated", value: "1" }], limit: None }
+RateLimitDescriptor { entries: [Entry { key: "limit_to_be_activated", value: "1" }], limit: None }
 ```
 
 ```
@@ -89,12 +89,27 @@ RateLimitDescriptor { entries: [Entry { key: "request.headers.My-Custom-Header-0
 ```
 
 ```
-RateLimitDescriptor { entries: [Entry { key: "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user-id", value: "bob" }], limit: None }
+RateLimitDescriptor { entries: [Entry { key: "user_id", value: "bob" }], limit: None }
 ```
 
 **Note:** Using [Header-To-Metadata filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/header_to_metadata_filter#config-http-filters-header-to-metadata), `x-dyn-user-id` header value is available in the metadata struct with the `user-id` key.
 
-Clean up all resources
+According to the defined limits:
+
+```yaml
+---
+- namespace: rlp-ns-C/rlp-name-C
+  max_value: 2
+  seconds: 10
+  conditions:
+    - "limit_to_be_activated == '1'"
+    - "user_id == 'bob'"
+  variables: []
+```
+
+The third request in less than 10 seconds should return `429 Too Many Requests`.
+
+### Clean up all resources
 
 ```
 make stop-development
