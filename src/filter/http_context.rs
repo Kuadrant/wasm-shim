@@ -6,6 +6,7 @@ use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
 };
+use crate::utils::tokenize_with_escaping;
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -104,8 +105,10 @@ impl Filter {
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_path = p_e.selector.split(".").collect();
-        match self.get_property(attribute_path) {
+        let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
+        // convert a Vec<String> to Vec<&str>
+        // attribute_path.iter().map(AsRef::as_ref).collect()
+        match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
             None => {
                 debug!(
                     "[context_id: {}]: selector not found: {}",
@@ -148,11 +151,10 @@ impl Filter {
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = selector_item.selector.split(".").collect();
-
-                    // TODO(eastizle): not all fields are strings
-                    // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                    match self.get_property(attribute_path) {
+                    let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
+                    // convert a Vec<String> to Vec<&str>
+                    // attribute_path.iter().map(AsRef::as_ref).collect()
+                    match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
                         None => {
                             debug!(
                                 "[context_id: {}]: selector not found: {}",
@@ -169,6 +171,8 @@ impl Filter {
                                 }
                             }
                         }
+                        // TODO(eastizle): not all fields are strings
+                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
                         Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
                             Err(e) => {
                                 debug!(

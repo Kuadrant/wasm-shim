@@ -220,7 +220,7 @@ static_resources:
                                   "data": [
                                     {
                                       "selector": {
-                                        "selector": "metadata.filter_metadata.\"envoy.filters.http.header_to_metadata\".user-id"
+                                        "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user-id"
                                       }
                                     }
                                   ]

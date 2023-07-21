@@ -74,8 +74,25 @@ curl -H "Host: test.b.com" http://127.0.0.1:18000/get
 curl -H "Host: test.c.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:18000/get
 ```
 
-**Note:** Dynamic metadata can also be set with `user-id` as the key if you add the header `x-dyn-user-id`. This is provided using [Header-To-Metadata filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/header_to_metadata_filter#config-http-filters-header-to-metadata).
+The expected descriptors:
 
+```
+RateLimitDescriptor { entries: [Entry { key: "limit-to-be-activated", value: "1" }], limit: None }
+```
+
+```
+RateLimitDescriptor { entries: [Entry { key: "source.address", value: "127.0.0.1:0" }], limit: None }
+```
+
+```
+RateLimitDescriptor { entries: [Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }], limit: None }
+```
+
+```
+RateLimitDescriptor { entries: [Entry { key: "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user-id", value: "bob" }], limit: None }
+```
+
+**Note:** Using [Header-To-Metadata filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/header_to_metadata_filter#config-http-filters-header-to-metadata), `x-dyn-user-id` header value is available in the metadata struct with the `user-id` key.
 
 Clean up all resources
 
