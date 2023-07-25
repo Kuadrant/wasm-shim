@@ -43,25 +43,25 @@ pub struct DataItem {
 #[derive(Deserialize, PartialEq, Debug, Clone)]
 pub enum WhenConditionOperator {
     #[serde(rename = "eq")]
-    EqualOperator,
+    Equal,
     #[serde(rename = "neq")]
-    NotEqualOperator,
+    NotEqual,
     #[serde(rename = "startswith")]
-    StartsWithOperator,
-    #[serde(rename = "endsWith")]
-    EndsWithOperator,
+    StartsWith,
+    #[serde(rename = "endswith")]
+    EndsWith,
     #[serde(rename = "matches")]
-    MatchesOperator,
+    Matches,
 }
 
 impl WhenConditionOperator {
     pub fn eval(&self, value: &str, attr_value: &str) -> bool {
         match *self {
-            WhenConditionOperator::EqualOperator => value.eq(attr_value),
-            WhenConditionOperator::NotEqualOperator => !value.eq(attr_value),
-            WhenConditionOperator::StartsWithOperator => attr_value.starts_with(value),
-            WhenConditionOperator::EndsWithOperator => attr_value.ends_with(value),
-            WhenConditionOperator::MatchesOperator => match GlobPattern::try_from(value) {
+            WhenConditionOperator::Equal => value.eq(attr_value),
+            WhenConditionOperator::NotEqual => !value.eq(attr_value),
+            WhenConditionOperator::StartsWith => attr_value.starts_with(value),
+            WhenConditionOperator::EndsWith => attr_value.ends_with(value),
+            WhenConditionOperator::Matches => match GlobPattern::try_from(value) {
                 // TODO(eastizle): regexp being compiled and validated at request time.
                 // Validations and possibly regexp compilation should happen at boot time instead.
                 // In addition, if the regexp is not valid, the only consequence is that
@@ -403,31 +403,11 @@ mod test {
 
         let expected_conditions = [
             // selector, value, operator
-            (
-                "request.path",
-                "/admin/toy",
-                WhenConditionOperator::EqualOperator,
-            ),
-            (
-                "request.method",
-                "POST",
-                WhenConditionOperator::NotEqualOperator,
-            ),
-            (
-                "request.host",
-                "cars.",
-                WhenConditionOperator::StartsWithOperator,
-            ),
-            (
-                "request.host",
-                ".com",
-                WhenConditionOperator::EndsWithOperator,
-            ),
-            (
-                "request.host",
-                "*.com",
-                WhenConditionOperator::MatchesOperator,
-            ),
+            ("request.path", "/admin/toy", WhenConditionOperator::Equal),
+            ("request.method", "POST", WhenConditionOperator::NotEqual),
+            ("request.host", "cars.", WhenConditionOperator::StartsWith),
+            ("request.host", ".com", WhenConditionOperator::EndsWith),
+            ("request.host", "*.com", WhenConditionOperator::Matches),
         ];
 
         for i in 0..expected_conditions.len() {

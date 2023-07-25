@@ -133,7 +133,7 @@ impl Filter {
         }
     }
 
-    fn build_single_descriptor(&self, data_list: &Vec<DataItem>) -> Option<RateLimitDescriptor> {
+    fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
         let mut entries = ::protobuf::RepeatedField::default();
 
         // iterate over data items to allow any data item to skip the entire descriptor
