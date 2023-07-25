@@ -4,23 +4,90 @@ A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitado
 Following is a sample configuration used by the shim.
 
 ```yaml
-failure_mode_deny: true
-rate_limit_policies:
-  - name: toystore
-    rate_limit_domain: toystore-app
-    upstream_cluster: rate-limit-cluster
+failureMode: deny
+rateLimitPolicies:
+  - name: rlp-ns-A/rlp-name-A
+    domain: rlp-ns-A/rlp-name-A
+    service: rate-limit-cluster
     hostnames: ["*.toystore.com"]
-    gateway_actions:
-      - rules:
-          - paths: ["/admin/toy"]
-            methods: ["GET"]
-            hosts: ["pets.toystore.com"]
-        configurations:
-          - actions:
-            - generic_key:
-                descriptor_key: admin
-                descriptor_value: "1"
+    rules:
+    - conditions:
+      - allOf:
+        - selector: request.url_path
+          operator: startsWith
+          value: /get
+        - selector: request.host
+          operator: eq
+          value: test.toystore.com
+        - selector: request.method
+          operator: eq
+          value: GET
+      data:
+      - selector:
+          selector: request.headers.My-Custom-Header
+      - static:
+          key: admin
+          value: "1"
 ```
+
+## Features
+
+#### Condition operators implemented
+
+```Rust
+#[derive(Deserialize, PartialEq, Debug, Clone)]
+pub enum WhenConditionOperator {
+    #[serde(rename = "eq")]
+    EqualOperator,
+    #[serde(rename = "neq")]
+    NotEqualOperator,
+    #[serde(rename = "startsWith")]
+    StartsWithOperator,
+    #[serde(rename = "endsWith")]
+    EndsWithOperator,
+    #[serde(rename = "matches")]
+    MatchesOperator,
+}
+```
+
+The `matches` operator is a a simple globbing pattern implementation based on regular expressions.
+The only characters taken into account are:
+* `?`: 0 or 1 characters
+* `*`: 0 or more characters
+* `+`: 1 or more characters
+
+#### Selectors
+
+The struct is
+
+```Rust
+#[derive(Deserialize, Debug, Clone)]
+pub struct SelectorItem {
+    // Selector of an attribute from the contextual properties provided by kuadrant
+    // during request and connection processing
+    pub selector: String,
+
+    // If not set it defaults to `selector` field value as the descriptor key.
+    #[serde(default)]
+    pub key: Option<String>,
+
+    // An optional value to use if the selector is not found in the context.
+    // If not set and the selector is not found in the context, then no data is generated.
+    #[serde(default)]
+    pub default: Option<String>,
+}
+```
+
+Selectors are tokenized at each non-escaped occurrence of a separator character `.`.
+Example:
+
+```
+Input: this.is.a.exam\.ple -> Retuns: ["this", "is", "a", "exam.ple"].
+```
+
+Some path segments include dot `.` char in them. For instance envoy filter names: `envoy.filters.http.header_to_metadata`.
+In that particular cases, the dot chat (separator), needs to be escaped.
+
 
 ## Building
 
@@ -44,7 +111,13 @@ Build the WASM module in release mode
 make build BUILD=release
 ```
 
-## Running/Testing locally
+## Testing
+
+```
+cargo test
+```
+
+## Running local development environment
 
 `docker` and `docker-compose` required.
 
