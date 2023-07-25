@@ -46,9 +46,9 @@ pub enum WhenConditionOperator {
     EqualOperator,
     #[serde(rename = "neq")]
     NotEqualOperator,
-    #[serde(rename = "starts_with")]
+    #[serde(rename = "startsWith")]
     StartsWithOperator,
-    #[serde(rename = "ends_with")]
+    #[serde(rename = "endsWith")]
     EndsWithOperator,
     #[serde(rename = "matches")]
     MatchesOperator,
@@ -365,12 +365,12 @@ mod test {
                         },
                         {
                             "selector": "request.host",
-                            "operator": "starts_with",
+                            "operator": "startsWith",
                             "value": "cars."
                         },
                         {
                             "selector": "request.host",
-                            "operator": "ends_with",
+                            "operator": "endsWith",
                             "value": ".com"
                         },
                         {
