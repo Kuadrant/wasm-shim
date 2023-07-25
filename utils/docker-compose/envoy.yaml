@@ -81,7 +81,7 @@ static_resources:
                                       "allOf": [
                                         {
                                           "selector": "request.url_path",
-                                          "operator": "startsWith",
+                                          "operator": "startswith",
                                           "value": "/unknown-path"
                                         }
                                       ]
@@ -110,7 +110,7 @@ static_resources:
                                       "allOf": [
                                         {
                                           "selector": "request.url_path",
-                                          "operator": "startsWith",
+                                          "operator": "startswith",
                                           "value": "/get"
                                         },
                                         {
@@ -141,7 +141,7 @@ static_resources:
                                       "allOf": [
                                         {
                                           "selector": "request.url_path",
-                                          "operator": "startsWith",
+                                          "operator": "startswith",
                                           "value": "/get"
                                         },
                                         {
@@ -171,7 +171,7 @@ static_resources:
                                       "allOf": [
                                         {
                                           "selector": "request.url_path",
-                                          "operator": "startsWith",
+                                          "operator": "startswith",
                                           "value": "/get"
                                         },
                                         {
@@ -201,7 +201,7 @@ static_resources:
                                       "allOf": [
                                         {
                                           "selector": "request.url_path",
-                                          "operator": "startsWith",
+                                          "operator": "startswith",
                                           "value": "/get"
                                         },
                                         {

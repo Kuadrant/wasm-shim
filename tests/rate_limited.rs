@@ -104,7 +104,7 @@ fn it_limits() {
                         "allOf": [
                         {
                             "selector": "request.url_path",
-                            "operator": "startsWith",
+                            "operator": "startswith",
                             "value": "/admin/toy"
                         },
                         {
@@ -232,7 +232,7 @@ fn it_passes_additional_headers() {
                         "allOf": [
                         {
                             "selector": "request.url_path",
-                            "operator": "startsWith",
+                            "operator": "startswith",
                             "value": "/admin/toy"
                         },
                         {

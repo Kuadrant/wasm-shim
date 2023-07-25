@@ -14,7 +14,7 @@ rateLimitPolicies:
     - conditions:
       - allOf:
         - selector: request.url_path
-          operator: startsWith
+          operator: startswith
           value: /get
         - selector: request.host
           operator: eq
@@ -41,9 +41,9 @@ pub enum WhenConditionOperator {
     EqualOperator,
     #[serde(rename = "neq")]
     NotEqualOperator,
-    #[serde(rename = "startsWith")]
+    #[serde(rename = "startswith")]
     StartsWithOperator,
-    #[serde(rename = "endsWith")]
+    #[serde(rename = "endswith")]
     EndsWithOperator,
     #[serde(rename = "matches")]
     MatchesOperator,
