@@ -58,6 +58,11 @@ The only characters taken into account are:
 
 #### Selectors
 
+Selector of an attribute from the contextual properties provided by kuadrant.
+Currently, only some of the
+[Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes)
+can be used.
+
 The struct is
 
 ```Rust
