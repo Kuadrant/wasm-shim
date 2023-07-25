@@ -260,7 +260,7 @@ mod test {
             assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
             assert_eq!(static_item.value, "1");
         } else {
-            assert!(false);
+            panic!();
         }
 
         if let DataType::Selector(selector_item) = &data_items[1].item {
@@ -268,7 +268,7 @@ mod test {
             assert!(selector_item.key.is_none());
             assert!(selector_item.default.is_none());
         } else {
-            assert!(false);
+            panic!();
         }
     }
 
@@ -334,7 +334,7 @@ mod test {
                 "my_selector_default_value"
             );
         } else {
-            assert!(false);
+            panic!();
         }
     }
 
