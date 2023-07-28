@@ -108,29 +108,30 @@ impl Filter {
         let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
         // convert a Vec<String> to Vec<&str>
         // attribute_path.iter().map(AsRef::as_ref).collect()
-        match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
-            None => {
-                debug!(
-                    "[context_id: {}]: selector not found: {}",
-                    self.context_id, p_e.selector
-                );
-                false
-            }
-            // TODO(eastizle): not all fields are strings
-            // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-            Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                Err(e) => {
+        let attribute_value =
+            match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
+                None => {
                     debug!(
-                        "[context_id: {}]: failed to parse selector value: {}, error: {}",
-                        self.context_id, p_e.selector, e
+                        "[context_id: {}]: selector not found: {}, defaulting to ``",
+                        self.context_id, p_e.selector
                     );
-                    false
+                    "".to_string()
                 }
-                Ok(attribute_value) => p_e
-                    .operator
-                    .eval(p_e.value.as_str(), attribute_value.as_str()),
-            },
-        }
+                // TODO(eastizle): not all fields are strings
+                // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
+                Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
+                    Err(e) => {
+                        debug!(
+                            "[context_id: {}]: failed to parse selector value: {}, error: {}",
+                            self.context_id, p_e.selector, e
+                        );
+                        return false;
+                    }
+                    Ok(attribute_value) => attribute_value,
+                },
+            };
+        p_e.operator
+            .eval(p_e.value.as_str(), attribute_value.as_str())
     }
 
     fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
@@ -154,7 +155,9 @@ impl Filter {
                     let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
                     // convert a Vec<String> to Vec<&str>
                     // attribute_path.iter().map(AsRef::as_ref).collect()
-                    match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
+                    let value = match self
+                        .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
+                    {
                         None => {
                             debug!(
                                 "[context_id: {}]: selector not found: {}",
@@ -162,13 +165,8 @@ impl Filter {
                             );
                             match &selector_item.default {
                                 // skipping the entire descriptor
-                                None => return None,
-                                Some(default_value) => {
-                                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                                    descriptor_entry.set_key(descriptor_key);
-                                    descriptor_entry.set_value(default_value.to_owned());
-                                    entries.push(descriptor_entry);
-                                }
+                                None => "".to_string(),
+                                Some(default_value) => default_value.clone(),
                             }
                         }
                         // TODO(eastizle): not all fields are strings
@@ -181,14 +179,13 @@ impl Filter {
                             );
                                 return None;
                             }
-                            Ok(attribute_value) => {
-                                let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                                descriptor_entry.set_key(descriptor_key);
-                                descriptor_entry.set_value(attribute_value);
-                                entries.push(descriptor_entry);
-                            }
+                            Ok(attribute_value) => attribute_value,
                         },
-                    }
+                    };
+                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                    descriptor_entry.set_key(descriptor_key);
+                    descriptor_entry.set_value(value);
+                    entries.push(descriptor_entry);
                 }
             }
         }
