@@ -30,7 +30,7 @@ static_resources:
                   request_rules:
                   - header: x-dyn-user-id
                     on_header_present:
-                      key: user-id
+                      key: user_id
                       type: STRING
                     remove: false
               - name: envoy.filters.http.wasm
@@ -50,137 +50,179 @@ static_resources:
                       "@type": "type.googleapis.com/google.protobuf.StringValue"
                       value: >
                         {
-                          "failure_mode_deny": true,
-                          "rate_limit_policies": [
+                          "failureMode": "deny",
+                          "rateLimitPolicies": [
                             {
-                              "name": "rlp-a",
-                              "rate_limit_domain": "rls-domain-a",
-                              "upstream_cluster": "limitador",
+                              "name": "rlp-ns-A/rlp-name-A",
+                              "domain": "rlp-ns-A/rlp-name-A",
+                              "service": "limitador",
                               "hostnames": ["*.a.com"],
-                              "gateway_actions": [
+                              "rules": [
                                 {
-                                  "configurations": [
+                                  "data": [
                                     {
-                                      "actions": [
-                                        {
-                                          "request_headers": {
-                                            "header_name": "not-existing-header",
-                                            "skip_if_absent": true,
-                                            "descriptor_key": "my_not_existing_header"
-                                          }
-                                        }
-                                      ]
+                                      "selector": {
+                                        "selector": "unknown.path"
+                                      }
                                     }
                                   ]
                                 }
                               ]
                             },
                             {
-                              "name": "rlp-b",
-                              "rate_limit_domain": "rls-domain-b",
-                              "upstream_cluster": "limitador",
+                              "name": "rlp-ns-B/rlp-name-B",
+                              "domain": "rlp-ns-B/rlp-name-B",
+                              "service": "limitador",
                               "hostnames": ["*.b.com"],
-                              "gateway_actions": [
+                              "rules": [
                                 {
-                                  "rules": [
+                                  "conditions": [
                                     {
-                                      "paths": ["/not/exising/path", "/any*"]
-                                    }
-                                  ],
-                                  "configurations": [
-                                    {
-                                      "actions": [
+                                      "allOf": [
                                         {
-                                          "generic_key": {
-                                            "descriptor_key": "some_generic_key",
-                                            "descriptor_value": "some_generic_value"
-                                          }
+                                          "selector": "request.url_path",
+                                          "operator": "startswith",
+                                          "value": "/unknown-path"
                                         }
                                       ]
+                                    }
+                                  ],
+                                  "data": [
+                                    {
+                                      "static": {
+                                        "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
+                                        "value": "1"
+                                      }
                                     }
                                   ]
                                 }
                               ]
                             },
                             {
-                              "name": "rlp-c",
-                              "rate_limit_domain": "rls-domain-c",
-                              "upstream_cluster": "limitador",
+                              "name": "rlp-ns-C/rlp-name-C",
+                              "domain": "rlp-ns-C/rlp-name-C",
+                              "service": "limitador",
                               "hostnames": ["*.c.com"],
-                              "gateway_actions": [
+                              "rules": [
                                 {
-                                  "rules": [
+                                  "conditions": [
                                     {
-                                      "paths": ["/get"],
-                                      "hosts": ["test.c.com"],
-                                      "method": ["GET"]
+                                      "allOf": [
+                                        {
+                                          "selector": "request.url_path",
+                                          "operator": "startswith",
+                                          "value": "/get"
+                                        },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
+                                        }
+                                      ]
                                     }
                                   ],
-                                  "configurations": [
+                                  "data": [
                                     {
-                                      "actions": [
+                                      "static": {
+                                        "key": "limit_to_be_activated",
+                                        "value": "1"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "conditions": [
+                                    {
+                                      "allOf": [
                                         {
-                                          "generic_key": {
-                                            "descriptor_key": "some_generic_key_for_c",
-                                            "descriptor_value": "some_generic_value_for_c"
-                                          }
+                                          "selector": "request.url_path",
+                                          "operator": "startswith",
+                                          "value": "/get"
+                                        },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
                                         }
                                       ]
-                                    },
+                                    }
+                                  ],
+                                  "data": [
                                     {
-                                      "actions": [
+                                      "selector": {
+                                        "selector": "source.address"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "conditions": [
+                                    {
+                                      "allOf": [
                                         {
-                                          "remote_address": {}
+                                          "selector": "request.url_path",
+                                          "operator": "startswith",
+                                          "value": "/get"
+                                        },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
                                         }
                                       ]
-                                    },
+                                    }
+                                  ],
+                                  "data": [
                                     {
-                                      "actions": [
+                                      "selector": {
+                                        "selector": "request.headers.My-Custom-Header-01"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "conditions": [
+                                    {
+                                      "allOf": [
                                         {
-                                          "header_value_match": {
-                                            "descriptor_value": "header_value_match_value",
-                                            "headers": [
-                                              {
-                                                "name": "My-Custom-Header-01",
-                                                "exact_match": "my-custom-header-value",
-                                                "invert_match": false
-                                              }
-                                            ]
-                                          }
+                                          "selector": "request.url_path",
+                                          "operator": "startswith",
+                                          "value": "/get"
+                                        },
+                                        {
+                                          "selector": "request.host",
+                                          "operator": "eq",
+                                          "value": "test.c.com"
+                                        },
+                                        {
+                                          "selector": "request.method",
+                                          "operator": "eq",
+                                          "value": "GET"
                                         }
                                       ]
-                                    },
+                                    }
+                                  ],
+                                  "data": [
                                     {
-                                      "actions": [
-                                        {
-                                          "request_headers": {
-                                            "header_name": "My-Custom-Header-02",
-                                            "skip_if_absent": true,
-                                            "descriptor_key": "my_custom_header_key"
-                                          }
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "actions": [
-                                        {
-                                          "metadata": {
-                                            "descriptor_key": "user_id",
-                                            "default_value": "no-user",
-                                            "metadata_key": {
-                                              "key": "envoy.filters.http.header_to_metadata",
-                                              "path": [
-                                                {
-                                                  "segment": {
-                                                    "key": "user-id"
-                                                  }
-                                                }
-                                              ]
-                                            },
-                                            "source": "DYNAMIC"
-                                          }
-                                        }
-                                      ]
+                                      "selector": {
+                                        "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
+                                        "key": "user_id"
+                                      }
                                     }
                                   ]
                                 }

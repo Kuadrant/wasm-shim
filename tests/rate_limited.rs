@@ -29,8 +29,8 @@ fn it_loads() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failure_mode_deny": true,
-        "rate_limit_policies": []
+        "failureMode": "deny",
+        "rateLimitPolicies": []
     }"#;
 
     module
@@ -68,6 +68,7 @@ fn it_loads() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -89,37 +90,45 @@ fn it_limits() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failure_mode_deny": true,
-        "rate_limit_policies": [
-                {
+        "failureMode": "deny",
+        "rateLimitPolicies": [
+        {
             "name": "some-name",
-            "rate_limit_domain": "RLS-domain",
-            "upstream_cluster": "limitador-cluster",
+            "domain": "RLS-domain",
+            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
-            "gateway_actions": [
+            "rules": [
             {
-                "rules": [
-                {
-                    "paths": ["/admin/toy"],
-                    "hosts": ["cars.toystore.com"],
-                    "methods": ["POST"]
-                }],
-                "configurations": [
-                {
-                    "actions": [
+                "conditions": [
                     {
-                        "generic_key": {
-                            "descriptor_key": "admin",
-                            "descriptor_value": "1"
-                        }
+                        "allOf": [
+                        {
+                            "selector": "request.url_path",
+                            "operator": "startswith",
+                            "value": "/admin/toy"
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "eq",
+                            "value": "cars.toystore.com"
+                        },
+                        {
+                            "selector": "request.method",
+                            "operator": "eq",
+                            "value": "POST"
+                        }]
                     }
-                    ]
-                }
+                ],
+                "data": [
+                  {
+                    "static": {
+                      "key": "admin",
+                      "value": "1"
+                    }
+                  }
                 ]
-            }
-            ]
-        }
-        ]
+            }]
+        }]
     }"#;
 
     module
@@ -148,12 +157,12 @@ fn it_limits() {
         .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":path"))
-        .returning(Some("/admin/toy"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":method"))
-        .returning(Some("POST"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
+        .expect_get_property(Some(vec!["request", "url_path"]))
+        .returning(Some("/admin/toy".as_bytes()))
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some("POST".as_bytes()))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -178,7 +187,7 @@ fn it_limits() {
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
             Some(LogLevel::Info),
-            Some("received gRPC call response: token: 42, status: 0"),
+            Some("on_grpc_call_response #2: received gRPC call response: token: 42, status: 0"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
@@ -187,6 +196,7 @@ fn it_limits() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -208,37 +218,45 @@ fn it_passes_additional_headers() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failure_mode_deny": true,
-        "rate_limit_policies": [
-                {
+        "failureMode": "deny",
+        "rateLimitPolicies": [
+        {
             "name": "some-name",
-            "rate_limit_domain": "RLS-domain",
-            "upstream_cluster": "limitador-cluster",
+            "domain": "RLS-domain",
+            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
-            "gateway_actions": [
+            "rules": [
             {
-                "rules": [
-                {
-                    "paths": ["/admin/toy"],
-                    "hosts": ["cars.toystore.com"],
-                    "methods": ["POST"]
-                }],
-                "configurations": [
-                {
-                    "actions": [
+                "conditions": [
                     {
-                        "generic_key": {
-                            "descriptor_key": "admin",
-                            "descriptor_value": "1"
-                        }
+                        "allOf": [
+                        {
+                            "selector": "request.url_path",
+                            "operator": "startswith",
+                            "value": "/admin/toy"
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "eq",
+                            "value": "cars.toystore.com"
+                        },
+                        {
+                            "selector": "request.method",
+                            "operator": "eq",
+                            "value": "POST"
+                        }]
                     }
-                    ]
-                }
+                ],
+                "data": [
+                  {
+                    "static": {
+                      "key": "admin",
+                      "value": "1"
+                    }
+                  }
                 ]
-            }
-            ]
-        }
-        ]
+            }]
+        }]
     }"#;
 
     module
@@ -267,12 +285,12 @@ fn it_passes_additional_headers() {
         .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":path"))
-        .returning(Some("/admin/toy"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":method"))
-        .returning(Some("POST"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
+        .expect_get_property(Some(vec!["request", "url_path"]))
+        .returning(Some("/admin/toy".as_bytes()))
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some("POST".as_bytes()))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -301,7 +319,7 @@ fn it_passes_additional_headers() {
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
             Some(LogLevel::Info),
-            Some("received gRPC call response: token: 42, status: 0"),
+            Some("on_grpc_call_response #2: received gRPC call response: token: 42, status: 0"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
@@ -310,6 +328,7 @@ fn it_passes_additional_headers() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
         .expect_add_header_map_value(
             Some(MapType::HttpResponseHeaders),
             Some("test"),

@@ -31,7 +31,7 @@ impl RootContext for FilterRoot {
             Some(c) => c,
             None => return false,
         };
-        match serde_json::from_slice::<PluginConfiguration>(configuration.as_ref()) {
+        match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
                 self.config = Rc::new(FilterConfig::from(config));

@@ -1,71 +1,144 @@
-use crate::envoy::RLA_action_specifier;
+use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
+use log::warn;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct SelectorItem {
+    // Selector of an attribute from the contextual properties provided by kuadrant
+    // during request and connection processing
+    pub selector: String,
+
+    // If not set it defaults to `selector` field value as the descriptor key.
+    #[serde(default)]
+    pub key: Option<String>,
+
+    // An optional value to use if the selector is not found in the context.
+    // If not set and the selector is not found in the context, then no data is generated.
+    #[serde(default)]
+    pub default: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct StaticItem {
+    pub value: String,
+    pub key: String,
+}
+
+// Mutually exclusive struct fields
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum DataType {
+    Static(StaticItem),
+    Selector(SelectorItem),
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DataItem {
+    #[serde(flatten)]
+    pub item: DataType,
+}
+
+#[derive(Deserialize, PartialEq, Debug, Clone)]
+pub enum WhenConditionOperator {
+    #[serde(rename = "eq")]
+    Equal,
+    #[serde(rename = "neq")]
+    NotEqual,
+    #[serde(rename = "startswith")]
+    StartsWith,
+    #[serde(rename = "endswith")]
+    EndsWith,
+    #[serde(rename = "matches")]
+    Matches,
+}
+
+impl WhenConditionOperator {
+    pub fn eval(&self, value: &str, attr_value: &str) -> bool {
+        match *self {
+            WhenConditionOperator::Equal => value.eq(attr_value),
+            WhenConditionOperator::NotEqual => !value.eq(attr_value),
+            WhenConditionOperator::StartsWith => attr_value.starts_with(value),
+            WhenConditionOperator::EndsWith => attr_value.ends_with(value),
+            WhenConditionOperator::Matches => match GlobPattern::try_from(value) {
+                // TODO(eastizle): regexp being compiled and validated at request time.
+                // Validations and possibly regexp compilation should happen at boot time instead.
+                // In addition, if the regexp is not valid, the only consequence is that
+                // the current condition would not apply
+                Ok(glob_pattern) => glob_pattern.is_match(attr_value),
+                Err(e) => {
+                    warn!("failed to parse regexp: {value}, error: {e:?}");
+                    false
+                }
+            },
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternExpression {
+    pub selector: String,
+    pub operator: WhenConditionOperator,
+    pub value: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Condition {
+    pub all_of: Vec<PatternExpression>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
+    //
     #[serde(default)]
-    pub paths: Vec<String>,
-    #[serde(default)]
-    pub hosts: Vec<String>,
-    #[serde(default)]
-    pub methods: Vec<String>,
+    pub conditions: Vec<Condition>,
+    //
+    pub data: Vec<DataItem>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct Configuration {
-    #[serde(default)]
-    pub actions: Vec<RLA_action_specifier>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct GatewayAction {
-    #[serde(default)]
-    pub rules: Vec<Rule>,
-    #[serde(default)]
-    pub configurations: Vec<Configuration>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct RateLimitPolicy {
     pub name: String,
-    pub rate_limit_domain: String,
-    pub upstream_cluster: String,
+    pub domain: String,
+    pub service: String,
     pub hostnames: Vec<String>,
-    #[serde(default)]
-    pub gateway_actions: Vec<GatewayAction>,
+    pub rules: Vec<Rule>,
 }
 
 impl RateLimitPolicy {
     #[cfg(test)]
     pub fn new(
         name: String,
-        rate_limit_domain: String,
-        upstream_cluster: String,
+        domain: String,
+        service: String,
         hostnames: Vec<String>,
-        gateway_actions: Vec<GatewayAction>,
+        rules: Vec<Rule>,
     ) -> Self {
         RateLimitPolicy {
             name,
-            rate_limit_domain,
-            upstream_cluster,
+            domain,
+            service,
             hostnames,
-            gateway_actions,
+            rules,
         }
     }
 }
 
 pub struct FilterConfig {
     pub index: PolicyIndex,
-    // Deny request when faced with an irrecoverable failure.
-    pub failure_mode_deny: bool,
+    // Deny/Allow request when faced with an irrecoverable failure.
+    pub failure_mode: FailureMode,
 }
 
 impl FilterConfig {
     pub fn new() -> Self {
         Self {
             index: PolicyIndex::new(),
-            failure_mode_deny: true,
+            failure_mode: FailureMode::Deny,
         }
     }
 
@@ -80,20 +153,24 @@ impl FilterConfig {
 
         Self {
             index,
-            failure_mode_deny: config.failure_mode_deny,
+            failure_mode: config.failure_mode,
         }
     }
 }
 
-// TODO(rahulanand16nov): We can convert the structure of config in such a way
-// that it's optimized for lookup in the runtime. For e.g., keying on virtualhost
-// to sort through ratelimitpolicies and then further operations.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum FailureMode {
+    Deny,
+    Allow,
+}
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
     pub rate_limit_policies: Vec<RateLimitPolicy>,
-    // Deny request when faced with an irrecoverable failure.
-    pub failure_mode_deny: bool,
+    // Deny/Allow request when faced with an irrecoverable failure.
+    pub failure_mode: FailureMode,
 }
 
 #[cfg(test)]
@@ -101,63 +178,52 @@ mod test {
     use super::*;
 
     const CONFIG: &str = r#"{
-        "failure_mode_deny": true,
-        "rate_limit_policies": [
+        "failureMode": "deny",
+        "rateLimitPolicies": [
         {
-            "name": "some-name",
-            "rate_limit_domain": "RLS-domain",
-            "upstream_cluster": "limitador-cluster",
+            "name": "rlp-ns-A/rlp-name-A",
+            "domain": "rlp-ns-A/rlp-name-A",
+            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
-            "gateway_actions": [
+            "rules": [
             {
-                "rules": [
+                "conditions": [
                 {
-                    "paths": ["/admin/toy"],
-                    "hosts": ["cars.toystore.com"],
-                    "methods": ["POST"]
-                }],
-                "configurations": [
-                {
-                    "actions": [
+                    "allOf": [
                     {
-                        "generic_key": {
-                            "descriptor_key": "admin",
-                            "descriptor_value": "1"
-                        }
+                        "selector": "request.path",
+                        "operator": "eq",
+                        "value": "/admin/toy"
                     },
                     {
-                        "metadata": {
-                            "descriptor_key": "user-id",
-                            "default_value": "no-user",
-                            "metadata_key": {
-                                "key": "envoy.filters.http.ext_authz",
-                                "path": [
-                                    {
-                                        "segment": {
-                                            "key": "ext_auth_data"
-                                        }
-                                    },
-                                    {
-                                        "segment": {
-                                            "key": "user_id"
-                                        }
-                                    }
-                                ]
-                            },
-                            "source": "DYNAMIC"
-                        }
+                        "selector": "request.method",
+                        "operator": "eq",
+                        "value": "POST"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "eq",
+                        "value": "cars.toystore.com"
+                    }]
+                }],
+                "data": [
+                {
+                    "static": {
+                        "key": "rlp-ns-A/rlp-name-A",
+                        "value": "1"
                     }
-                    ]
-                }
-                ]
-            }
-            ]
-        }
-        ]
+                },
+                {
+                    "selector": {
+                        "selector": "auth.metadata.username"
+                    }
+                }]
+            }]
+        }]
     }"#;
 
     #[test]
-    fn parse_config() {
+    fn parse_config_happy_path() {
         let res = serde_json::from_str::<PluginConfiguration>(CONFIG);
         if let Err(ref e) = res {
             eprintln!("{e}");
@@ -167,35 +233,320 @@ mod test {
         let filter_config = res.unwrap();
         assert_eq!(filter_config.rate_limit_policies.len(), 1);
 
-        let gateway_actions = &filter_config.rate_limit_policies[0].gateway_actions;
-        assert_eq!(gateway_actions.len(), 1);
+        let rules = &filter_config.rate_limit_policies[0].rules;
+        assert_eq!(rules.len(), 1);
 
-        let configurations = &gateway_actions[0].configurations;
-        assert_eq!(configurations.len(), 1);
+        let conditions = &rules[0].conditions;
+        assert_eq!(conditions.len(), 1);
 
-        let actions = &configurations[0].actions;
-        assert_eq!(actions.len(), 2);
-        assert!(std::matches!(
-            actions[0],
-            RLA_action_specifier::generic_key(_)
-        ));
+        let all_of_conditions = &conditions[0].all_of;
+        assert_eq!(all_of_conditions.len(), 3);
 
-        if let RLA_action_specifier::metadata(ref metadata_action) = actions[1] {
-            let metadata_key = metadata_action.get_metadata_key();
-            assert_eq!(metadata_key.get_key(), "envoy.filters.http.ext_authz");
+        let data_items = &rules[0].data;
+        assert_eq!(data_items.len(), 2);
 
-            let metadata_path = metadata_key.get_path();
-            assert_eq!(metadata_path.len(), 2);
-            assert_eq!(metadata_path[0].get_key(), "ext_auth_data");
-            assert_eq!(metadata_path[1].get_key(), "user_id");
+        // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
+        //assert_eq!(
+        //    data_items[0],
+        //    DataItem {
+        //        item: DataType::Static(StaticItem {
+        //            key: String::from("rlp-ns-A/rlp-name-A"),
+        //            value: String::from("1")
+        //        })
+        //    }
+        //);
+
+        if let DataType::Static(static_item) = &data_items[0].item {
+            assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
+            assert_eq!(static_item.value, "1");
         } else {
-            panic!("wrong action type: expected metadata type");
+            panic!();
         }
+
+        if let DataType::Selector(selector_item) = &data_items[1].item {
+            assert_eq!(selector_item.selector, "auth.metadata.username");
+            assert!(selector_item.key.is_none());
+            assert!(selector_item.default.is_none());
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn parse_config_min() {
+        let config = r#"{
+            "failureMode": "deny",
+            "rateLimitPolicies": []
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(config);
+        if let Err(ref e) = res {
+            eprintln!("{e}");
+        }
+        assert!(res.is_ok());
+
+        let filter_config = res.unwrap();
+        assert_eq!(filter_config.rate_limit_policies.len(), 0);
+    }
+
+    #[test]
+    fn parse_config_data_selector() {
+        let config = r#"{
+            "failureMode": "deny",
+            "rateLimitPolicies": [
+            {
+                "name": "rlp-ns-A/rlp-name-A",
+                "domain": "rlp-ns-A/rlp-name-A",
+                "service": "limitador-cluster",
+                "hostnames": ["*.toystore.com", "example.com"],
+                "rules": [
+                {
+                    "data": [
+                    {
+                        "selector": {
+                            "selector": "my.selector.path",
+                            "key": "mykey",
+                            "default": "my_selector_default_value"
+                        }
+                    }]
+                }]
+            }]
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(config);
+        if let Err(ref e) = res {
+            eprintln!("{e}");
+        }
+        assert!(res.is_ok());
+
+        let filter_config = res.unwrap();
+        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+
+        let rules = &filter_config.rate_limit_policies[0].rules;
+        assert_eq!(rules.len(), 1);
+
+        let data_items = &rules[0].data;
+        assert_eq!(data_items.len(), 1);
+
+        if let DataType::Selector(selector_item) = &data_items[0].item {
+            assert_eq!(selector_item.selector, "my.selector.path");
+            assert_eq!(selector_item.key.as_ref().unwrap(), "mykey");
+            assert_eq!(
+                selector_item.default.as_ref().unwrap(),
+                "my_selector_default_value"
+            );
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn parse_config_condition_selector_operators() {
+        let config = r#"{
+            "failureMode": "deny",
+            "rateLimitPolicies": [
+            {
+                "name": "rlp-ns-A/rlp-name-A",
+                "domain": "rlp-ns-A/rlp-name-A",
+                "service": "limitador-cluster",
+                "hostnames": ["*.toystore.com", "example.com"],
+                "rules": [
+                {
+                    "conditions": [
+                    {
+                        "allOf": [
+                        {
+                            "selector": "request.path",
+                            "operator": "eq",
+                            "value": "/admin/toy"
+                        },
+                        {
+                            "selector": "request.method",
+                            "operator": "neq",
+                            "value": "POST"
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "startswith",
+                            "value": "cars."
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "endswith",
+                            "value": ".com"
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "matches",
+                            "value": "*.com"
+                        }]
+                    }],
+                    "data": [ { "selector": { "selector": "my.selector.path" } }]
+                }]
+            }]
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(config);
+        if let Err(ref e) = res {
+            eprintln!("{e}");
+        }
+        assert!(res.is_ok());
+
+        let filter_config = res.unwrap();
+        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+
+        let rules = &filter_config.rate_limit_policies[0].rules;
+        assert_eq!(rules.len(), 1);
+
+        let conditions = &rules[0].conditions;
+        assert_eq!(conditions.len(), 1);
+
+        let all_of_conditions = &conditions[0].all_of;
+        assert_eq!(all_of_conditions.len(), 5);
+
+        let expected_conditions = [
+            // selector, value, operator
+            ("request.path", "/admin/toy", WhenConditionOperator::Equal),
+            ("request.method", "POST", WhenConditionOperator::NotEqual),
+            ("request.host", "cars.", WhenConditionOperator::StartsWith),
+            ("request.host", ".com", WhenConditionOperator::EndsWith),
+            ("request.host", "*.com", WhenConditionOperator::Matches),
+        ];
+
+        for i in 0..expected_conditions.len() {
+            assert_eq!(all_of_conditions[i].selector, expected_conditions[i].0);
+            assert_eq!(all_of_conditions[i].value, expected_conditions[i].1);
+            assert_eq!(all_of_conditions[i].operator, expected_conditions[i].2);
+        }
+    }
+
+    #[test]
+    fn parse_config_conditions_optional() {
+        let config = r#"{
+            "failureMode": "deny",
+            "rateLimitPolicies": [
+            {
+                "name": "rlp-ns-A/rlp-name-A",
+                "domain": "rlp-ns-A/rlp-name-A",
+                "service": "limitador-cluster",
+                "hostnames": ["*.toystore.com", "example.com"],
+                "rules": [
+                {
+                    "data": [
+                    {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    },
+                    {
+                        "selector": {
+                            "selector": "auth.metadata.username"
+                        }
+                    }]
+                }]
+            }]
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(config);
+        if let Err(ref e) = res {
+            eprintln!("{e}");
+        }
+        assert!(res.is_ok());
+
+        let filter_config = res.unwrap();
+        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+
+        let rules = &filter_config.rate_limit_policies[0].rules;
+        assert_eq!(rules.len(), 1);
+
+        let conditions = &rules[0].conditions;
+        assert_eq!(conditions.len(), 0);
+    }
+
+    #[test]
+    fn parse_config_invalid_data() {
+        // data item fields are mutually exclusive
+        let bad_config = r#"{
+        "failureMode": "deny",
+        "rateLimitPolicies": [
+        {
+            "name": "rlp-ns-A/rlp-name-A",
+            "domain": "rlp-ns-A/rlp-name-A",
+            "service": "limitador-cluster",
+            "hostnames": ["*.toystore.com", "example.com"],
+            "rules": [
+            {
+                "data": [
+                {
+                    "static": {
+                        "key": "rlp-ns-A/rlp-name-A",
+                        "value": "1"
+                    },
+                    "selector": {
+                        "selector": "auth.metadata.username"
+                    }
+                }]
+            }]
+        }]
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(bad_config);
+        assert!(res.is_err());
+
+        // data item unknown fields are forbidden
+        let bad_config = r#"{
+        "failureMode": "deny",
+        "rateLimitPolicies": [
+        {
+            "name": "rlp-ns-A/rlp-name-A",
+            "domain": "rlp-ns-A/rlp-name-A",
+            "service": "limitador-cluster",
+            "hostnames": ["*.toystore.com", "example.com"],
+            "rules": [
+            {
+                "data": [
+                {
+                    "unknown": {
+                        "key": "rlp-ns-A/rlp-name-A",
+                        "value": "1"
+                    }
+                }]
+            }]
+        }]
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(bad_config);
+        assert!(res.is_err());
+
+        // condition selector operator unknown
+        let bad_config = r#"{
+            "failureMode": "deny",
+            "rateLimitPolicies": [
+            {
+                "name": "rlp-ns-A/rlp-name-A",
+                "domain": "rlp-ns-A/rlp-name-A",
+                "service": "limitador-cluster",
+                "hostnames": ["*.toystore.com", "example.com"],
+                "rules": [
+                {
+                    "conditions": [
+                    {
+                        "allOf": [
+                        {
+                            "selector": "request.path",
+                            "operator": "unknown",
+                            "value": "/admin/toy"
+                        }]
+                    }],
+                    "data": [ { "selector": { "selector": "my.selector.path" } }]
+                }]
+            }]
+        }"#;
+        let res = serde_json::from_str::<PluginConfiguration>(bad_config);
+        assert!(res.is_err());
     }
 
     #[test]
     fn filter_config_from_configuration() {
         let res = serde_json::from_str::<PluginConfiguration>(CONFIG);
+        if let Err(ref e) = res {
+            eprintln!("{e}");
+        }
         assert!(res.is_ok());
 
         let filter_config = FilterConfig::from(res.unwrap());
