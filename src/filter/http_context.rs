@@ -10,9 +10,10 @@ use crate::utils::tokenize_with_escaping;
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::Action;
+use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 use std::time::Duration;
+use crate::typing::TypedProperty;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -191,6 +192,14 @@ impl Filter {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
+    }
+
+    fn get_typed_property(&self, path: &str) -> TypedProperty {
+        match self.get_property(path.iter().map(AsRef::as_ref).collect()) {
+            None => {}
+            Some(_) => {}
+        }
+        TypedProperty::String("".to_string())
     }
 
     fn handle_error_on_grpc_response(&self) {
