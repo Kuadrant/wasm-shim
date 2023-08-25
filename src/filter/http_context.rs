@@ -109,7 +109,10 @@ impl Filter {
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
         let property = self.get_typed_property(&p_e.selector);
-        p_e.eval(&property)
+        match property {
+            None => false,
+            Some(prop) => p_e.eval(&prop),
+        }
     }
 
     fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
@@ -130,33 +133,16 @@ impl Filter {
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
-                    // convert a Vec<String> to Vec<&str>
-                    // attribute_path.iter().map(AsRef::as_ref).collect()
-                    let value = match self
-                        .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-                    {
-                        None => {
-                            debug!(
-                                "[context_id: {}]: selector not found: {}",
-                                self.context_id, selector_item.selector
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                            Err(e) => {
-                                debug!(
-                                "[context_id: {}]: failed to parse selector value: {}, error: {}",
-                                self.context_id, selector_item.selector, e);
-                                return None;
-                            }
-                            Ok(attribute_value) => attribute_value,
-                        },
+                    let typed_property = match self.get_typed_property(&selector_item.selector) {
+                        Some(typed_property) => typed_property,
+                        None => TypedProperty::String(
+                            selector_item.default.clone().unwrap_or("".to_string()),
+                        ),
+                    };
+                    // todo: for now we send string values as is, not as string literals
+                    let value = match typed_property {
+                        TypedProperty::String(string) => string,
+                        _ => typed_property.as_literal(),
                     };
                     let mut descriptor_entry = RateLimitDescriptor_Entry::new();
                     descriptor_entry.set_key(descriptor_key);
@@ -171,7 +157,7 @@ impl Filter {
         Some(res)
     }
 
-    fn get_typed_property(&self, path: &str) -> TypedProperty {
+    fn get_typed_property(&self, path: &str) -> Option<TypedProperty> {
         let tokens = tokenize_with_escaping(path, '.', '\\');
         match self.get_property(tokens.iter().map(AsRef::as_ref).collect()) {
             None => {
@@ -179,15 +165,14 @@ impl Filter {
                     "[context_id: {}]: selector not found: {path}, defaulting to ``",
                     self.context_id
                 );
-                TypedProperty::String("".to_string())
+                None
             }
             Some(attribute_bytes) => match self
                 .property_mapper
                 .typed(path, attribute_bytes)
-                .map_err(TypedProperty::string)
             {
-                Ok(tp) => tp,
-                Err(tp) => tp,
+                Ok(tp) => Some(tp),
+                Err(raw) => Some(TypedProperty::string(raw)),
             },
         }
     }

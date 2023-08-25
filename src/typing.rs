@@ -43,6 +43,23 @@ impl TypedProperty {
             }
         }
     }
+
+    pub fn as_literal(&self) -> String {
+        match self {
+            TypedProperty::String(str) => format!("\"{}\"", str.replace('\\', "\\\\").replace('"', "\\\"")),
+            TypedProperty::Integer(int) => int.to_string(),
+            TypedProperty::Bytes(bytes) => {
+                let len = 5 * bytes.len();
+                let mut str = String::with_capacity(len + 1);
+                write!(str, "[").unwrap();
+                for byte in bytes {
+                    write!(str, "\\x{:02x},", byte).unwrap();
+                }
+                str.replace_range(len..len + 1, "]");
+                str
+            }
+        }
+    }
 }
 
 impl PartialEq<str> for TypedProperty {
@@ -63,5 +80,23 @@ mod tests {
     fn escapes_bytes() {
         let prop = TypedProperty::bytes(vec![0xb2, 0x42, 0x01]);
         assert_eq!("\\xb2\\x42\\x01", prop.as_string());
+    }
+
+    #[test]
+    fn literal_bytes() {
+        let prop = TypedProperty::bytes(vec![0xb2, 0x42, 0x01]);
+        assert_eq!("[\\xb2,\\x42,\\x01]", prop.as_literal());
+    }
+
+    #[test]
+    fn literal_strings() {
+        let prop = TypedProperty::String("Foobar".to_string());
+        assert_eq!("\"Foobar\"", prop.as_literal());
+        let prop = TypedProperty::String("Foo\\bar".to_string());
+        assert_eq!("\"Foo\\\\bar\"", prop.as_literal());
+        let prop = TypedProperty::String("Foo\"bar\"".to_string());
+        assert_eq!("\"Foo\\\"bar\\\"\"", prop.as_literal());
+        let prop = TypedProperty::String("\\Foo\"bar\"".to_string());
+        assert_eq!("\"\\\\Foo\\\"bar\\\"\"", prop.as_literal());
     }
 }
