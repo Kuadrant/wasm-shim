@@ -9,8 +9,7 @@ pub struct EnvoyTypeMapper {
 
 impl EnvoyTypeMapper {
     pub fn new() -> Self {
-        let mut properties: BTreeMap<String, Box<MapperFn>> =
-            BTreeMap::new();
+        let mut properties: BTreeMap<String, Box<MapperFn>> = BTreeMap::new();
         properties.insert("foo.bar".to_string(), Box::new(TypedProperty::string));
         properties.insert("foo.car".to_string(), Box::new(TypedProperty::integer));
         Self {
@@ -25,4 +24,3 @@ impl EnvoyTypeMapper {
         }
     }
 }
-

@@ -23,6 +23,7 @@ pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
+    pub property_mapper: Rc<EnvoyTypeMapper>,
 }
 
 impl Filter {
@@ -180,7 +181,8 @@ impl Filter {
                 );
                 TypedProperty::String("".to_string())
             }
-            Some(attribute_bytes) => match EnvoyTypeMapper::new()
+            Some(attribute_bytes) => match self
+                .property_mapper
                 .typed(path, attribute_bytes)
                 .map_err(TypedProperty::string)
             {
