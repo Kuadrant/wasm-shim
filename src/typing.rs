@@ -24,6 +24,26 @@ impl TypedProperty {
         }
     }
 
+    pub fn timestamp(bytes: Vec<u8>) -> Self {
+        TypedProperty::Bytes(bytes.to_vec())
+    }
+
+    pub fn string_map(bytes: Vec<u8>) -> Self {
+        TypedProperty::Bytes(bytes.to_vec())
+    }
+
+    pub fn complex_map(bytes: Vec<u8>) -> Self {
+        TypedProperty::Bytes(bytes.to_vec())
+    }
+
+    pub fn boolean(bytes: Vec<u8>) -> Self {
+        TypedProperty::Bytes(bytes.to_vec())
+    }
+
+    pub fn metadata(bytes: Vec<u8>) -> Self {
+        TypedProperty::Bytes(bytes.to_vec())
+    }
+
     pub fn bytes(bytes: Vec<u8>) -> Self {
         TypedProperty::Bytes(bytes.to_vec())
     }
@@ -46,7 +66,9 @@ impl TypedProperty {
 
     pub fn as_literal(&self) -> String {
         match self {
-            TypedProperty::String(str) => format!("\"{}\"", str.replace('\\', "\\\\").replace('"', "\\\"")),
+            TypedProperty::String(str) => {
+                format!("\"{}\"", str.replace('\\', "\\\\").replace('"', "\\\""))
+            }
             TypedProperty::Integer(int) => int.to_string(),
             TypedProperty::Bytes(bytes) => {
                 let len = 5 * bytes.len();

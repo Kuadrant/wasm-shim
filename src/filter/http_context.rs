@@ -167,10 +167,7 @@ impl Filter {
                 );
                 None
             }
-            Some(attribute_bytes) => match self
-                .property_mapper
-                .typed(path, attribute_bytes)
-            {
+            Some(attribute_bytes) => match self.property_mapper.typed(path, attribute_bytes) {
                 Ok(tp) => Some(tp),
                 Err(raw) => Some(TypedProperty::string(raw)),
             },
