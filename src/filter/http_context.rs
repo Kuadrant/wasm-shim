@@ -164,8 +164,7 @@ impl Filter {
                                 self.context_id, selector_item.selector
                             );
                             match &selector_item.default {
-                                // skipping the entire descriptor
-                                None => "".to_string(),
+                                None => return None, // skipping the entire descriptor
                                 Some(default_value) => default_value.clone(),
                             }
                         }
@@ -175,8 +174,7 @@ impl Filter {
                             Err(e) => {
                                 debug!(
                                 "[context_id: {}]: failed to parse selector value: {}, error: {}",
-                                self.context_id, selector_item.selector, e
-                            );
+                                self.context_id, selector_item.selector, e);
                                 return None;
                             }
                             Ok(attribute_value) => attribute_value,
