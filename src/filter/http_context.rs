@@ -135,9 +135,7 @@ impl Filter {
 
                     let typed_property = match self.get_typed_property(&selector_item.selector) {
                         Some(typed_property) => typed_property,
-                        None => TypedProperty::String(
-                            selector_item.default.clone().unwrap_or("".to_string()),
-                        ),
+                        None => return None,
                     };
                     // todo: for now we send string values as is, not as string literals
                     let value = match typed_property {
@@ -162,7 +160,7 @@ impl Filter {
         match self.get_property(tokens.iter().map(AsRef::as_ref).collect()) {
             None => {
                 debug!(
-                    "[context_id: {}]: selector not found: {path}, defaulting to ``",
+                    "[context_id: {}]: selector not found: {path}",
                     self.context_id
                 );
                 None
