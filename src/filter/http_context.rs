@@ -2,10 +2,12 @@ use crate::configuration::{
     Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, RateLimitPolicy,
     Rule,
 };
+use crate::envoy::properties::EnvoyTypeMapper;
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
 };
+use crate::typing::TypedProperty;
 use crate::utils::tokenize_with_escaping;
 use log::{debug, info, warn};
 use protobuf::Message;
@@ -21,6 +23,7 @@ pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
+    pub property_mapper: Rc<EnvoyTypeMapper>,
 }
 
 impl Filter {
@@ -105,33 +108,11 @@ impl Filter {
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
-        // convert a Vec<String> to Vec<&str>
-        // attribute_path.iter().map(AsRef::as_ref).collect()
-        let attribute_value =
-            match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
-                None => {
-                    debug!(
-                        "[context_id: {}]: selector not found: {}, defaulting to ``",
-                        self.context_id, p_e.selector
-                    );
-                    "".to_string()
-                }
-                // TODO(eastizle): not all fields are strings
-                // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                    Err(e) => {
-                        debug!(
-                            "[context_id: {}]: failed to parse selector value: {}, error: {}",
-                            self.context_id, p_e.selector, e
-                        );
-                        return false;
-                    }
-                    Ok(attribute_value) => attribute_value,
-                },
-            };
-        p_e.operator
-            .eval(p_e.value.as_str(), attribute_value.as_str())
+        let property = self.get_typed_property(&p_e.selector);
+        match property {
+            None => false,
+            Some(prop) => p_e.eval(&prop),
+        }
     }
 
     fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
@@ -152,33 +133,14 @@ impl Filter {
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
-                    // convert a Vec<String> to Vec<&str>
-                    // attribute_path.iter().map(AsRef::as_ref).collect()
-                    let value = match self
-                        .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-                    {
-                        None => {
-                            debug!(
-                                "[context_id: {}]: selector not found: {}",
-                                self.context_id, selector_item.selector
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                            Err(e) => {
-                                debug!(
-                                "[context_id: {}]: failed to parse selector value: {}, error: {}",
-                                self.context_id, selector_item.selector, e);
-                                return None;
-                            }
-                            Ok(attribute_value) => attribute_value,
-                        },
+                    let typed_property = match self.get_typed_property(&selector_item.selector) {
+                        Some(typed_property) => typed_property,
+                        None => return None,
+                    };
+                    // todo: for now we send string values as is, not as string literals
+                    let value = match typed_property {
+                        TypedProperty::String(string) => string,
+                        _ => typed_property.as_literal(),
                     };
                     let mut descriptor_entry = RateLimitDescriptor_Entry::new();
                     descriptor_entry.set_key(descriptor_key);
@@ -191,6 +153,23 @@ impl Filter {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
+    }
+
+    fn get_typed_property(&self, path: &str) -> Option<TypedProperty> {
+        let tokens = tokenize_with_escaping(path, '.', '\\');
+        match self.get_property(tokens.iter().map(AsRef::as_ref).collect()) {
+            None => {
+                debug!(
+                    "[context_id: {}]: selector not found: {path}",
+                    self.context_id
+                );
+                None
+            }
+            Some(attribute_bytes) => match self.property_mapper.typed(path, attribute_bytes) {
+                Ok(tp) => Some(tp),
+                Err(raw) => Some(TypedProperty::string(raw)),
+            },
+        }
     }
 
     fn handle_error_on_grpc_response(&self) {

@@ -1,5 +1,6 @@
 use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
+use crate::typing::TypedProperty;
 use log::warn;
 use serde::Deserialize;
 
@@ -54,34 +55,34 @@ pub enum WhenConditionOperator {
     Matches,
 }
 
-impl WhenConditionOperator {
-    pub fn eval(&self, value: &str, attr_value: &str) -> bool {
-        match *self {
-            WhenConditionOperator::Equal => value.eq(attr_value),
-            WhenConditionOperator::NotEqual => !value.eq(attr_value),
-            WhenConditionOperator::StartsWith => attr_value.starts_with(value),
-            WhenConditionOperator::EndsWith => attr_value.ends_with(value),
-            WhenConditionOperator::Matches => match GlobPattern::try_from(value) {
-                // TODO(eastizle): regexp being compiled and validated at request time.
-                // Validations and possibly regexp compilation should happen at boot time instead.
-                // In addition, if the regexp is not valid, the only consequence is that
-                // the current condition would not apply
-                Ok(glob_pattern) => glob_pattern.is_match(attr_value),
-                Err(e) => {
-                    warn!("failed to parse regexp: {value}, error: {e:?}");
-                    false
-                }
-            },
-        }
-    }
-}
-
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PatternExpression {
     pub selector: String,
     pub operator: WhenConditionOperator,
     pub value: String,
+}
+
+impl PatternExpression {
+    pub fn eval(&self, value: &TypedProperty) -> bool {
+        match self.operator {
+            WhenConditionOperator::Equal => value.eq(&self.value),
+            WhenConditionOperator::NotEqual => value.ne(&self.value),
+            WhenConditionOperator::StartsWith => value.as_string().starts_with(&self.value),
+            WhenConditionOperator::EndsWith => value.as_string().ends_with(&self.value),
+            WhenConditionOperator::Matches => match GlobPattern::try_from(self.value.as_str()) {
+                // TODO(eastizle): regexp being compiled and validated at request time.
+                // Validations and possibly regexp compilation should happen at boot time instead.
+                // In addition, if the regexp is not valid, the only consequence is that
+                // the current condition would not apply
+                Ok(glob_pattern) => glob_pattern.is_match(&value.as_string()),
+                Err(e) => {
+                    warn!("failed to parse regexp: {}, error: {e:?}", self.value);
+                    false
+                }
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]

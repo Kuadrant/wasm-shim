@@ -1,4 +1,5 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
+use crate::envoy::properties::EnvoyTypeMapper;
 use crate::filter::http_context::Filter;
 use log::{info, warn};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -8,6 +9,7 @@ use std::rc::Rc;
 pub struct FilterRoot {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
+    pub property_mapper: Rc<EnvoyTypeMapper>,
 }
 
 impl RootContext for FilterRoot {
@@ -22,6 +24,7 @@ impl RootContext for FilterRoot {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
+            property_mapper: self.property_mapper.clone(),
         }))
     }
 

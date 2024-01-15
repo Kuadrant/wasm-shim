@@ -1,3 +1,5 @@
+use crate::envoy::properties::EnvoyTypeMapper;
+
 mod http_context;
 mod root_context;
 
@@ -35,6 +37,7 @@ extern "C" fn start() {
         Box::new(FilterRoot {
             context_id,
             config: Rc::new(FilterConfig::new()),
+            property_mapper: Rc::new(EnvoyTypeMapper::new()),
         })
     });
 }
