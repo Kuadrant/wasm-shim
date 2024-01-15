@@ -31,23 +31,9 @@ mod token_bucket;
 mod value;
 
 pub use {
-    address::{
-        Address, Address_oneof_address, SocketAddress, SocketAddress_Protocol,
-        SocketAddress_oneof_port_specifier as SocketAddress_port,
-    },
-    attribute_context::{
-        AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
-        AttributeContext_Request,
-    },
-    base::HeaderValue,
-    base::Metadata,
-    external_auth::{CheckRequest, CheckResponse},
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
-    route_components::{
-        HeaderMatcher, HeaderMatcher_oneof_header_match_specifier as HeaderMatcher_specifier,
-        RateLimit_Action, RateLimit_Action_oneof_action_specifier as RLA_action_specifier,
-    },
-    string::StringMatcher_oneof_match_pattern as StringMatcher_pattern,
-    timestamp::Timestamp,
 };
+
+#[cfg(test)]
+pub use base::HeaderValue;
