@@ -22,6 +22,7 @@ impl RootContext for FilterRoot {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
+            tracing_headers: Vec::default(),
         }))
     }
 

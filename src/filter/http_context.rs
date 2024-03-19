@@ -21,6 +21,7 @@ pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
+    pub tracing_headers: Vec<(String, String)>,
 }
 
 impl Filter {
@@ -51,11 +52,17 @@ impl Filter {
 
         let rl_req_serialized = Message::write_to_bytes(&rl_req).unwrap(); // TODO(rahulanand16nov): Error Handling
 
+        let rl_tracing_headers = self
+            .tracing_headers
+            .iter()
+            .map(|(header, value)| (header.as_str(), value.as_bytes()))
+            .collect();
+
         match self.dispatch_grpc_call(
             rlp.service.as_str(),
             RATELIMIT_SERVICE_NAME,
             RATELIMIT_METHOD_NAME,
-            Vec::new(),
+            rl_tracing_headers,
             Some(&rl_req_serialized),
             Duration::from_secs(5),
         ) {
@@ -207,6 +214,15 @@ impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         info!("on_http_request_headers #{}", self.context_id);
 
+        let req_headers = self.get_http_request_headers();
+        for (header, value) in req_headers.iter() {
+            match header.as_str() {
+                "traceparent" | "tracestate" | "baggage" => {
+                    self.tracing_headers.push((header.clone(), value.clone()))
+                }
+                _ => (),
+            }
+        }
         match self
             .config
             .index
