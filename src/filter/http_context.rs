@@ -10,23 +10,38 @@ use crate::utils::tokenize_with_escaping;
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::Action;
+use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 use std::time::Duration;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
 // tracing headers
-const TRACEPARENT_HEADER: &str = "traceparent";
-const TRACESTATE_HEADER: &str = "tracestate";
-const BAGGAGE_HEADER: &str = "baggage";
+#[derive(EnumIter)]
+pub enum TracingHeader {
+    Traceparent,
+    Tracestate,
+    Baggage,
+}
+
+impl TracingHeader {
+    fn as_str(&self) -> &'static str {
+        match self {
+            TracingHeader::Traceparent => "traceparent",
+            TracingHeader::Tracestate => "tracestate",
+            TracingHeader::Baggage => "baggage",
+        }
+    }
+}
 
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
-    pub tracing_headers: Vec<(String, String)>,
+    pub tracing_headers: Vec<(TracingHeader, Bytes)>,
 }
 
 impl Filter {
@@ -60,7 +75,7 @@ impl Filter {
         let rl_tracing_headers = self
             .tracing_headers
             .iter()
-            .map(|(header, value)| (header.as_str(), value.as_bytes()))
+            .map(|(header, value)| (header.as_str(), value.as_slice()))
             .collect();
 
         match self.dispatch_grpc_call(
@@ -219,13 +234,10 @@ impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         info!("on_http_request_headers #{}", self.context_id);
 
-        let req_headers = self.get_http_request_headers();
-        for (header, value) in req_headers.iter() {
-            match header.to_lowercase().as_str() {
-                TRACEPARENT_HEADER | TRACESTATE_HEADER | BAGGAGE_HEADER => {
-                    self.tracing_headers.push((header.clone(), value.clone()))
-                }
-                _ => (),
+        for header in TracingHeader::iter() {
+            match self.get_http_request_header_bytes(header.as_str()) {
+                Some(value) => self.tracing_headers.push((header, value)),
+                None => (),
             }
         }
         match self
