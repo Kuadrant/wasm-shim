@@ -17,6 +17,11 @@ use std::time::Duration;
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
+// tracing headers
+const TRACEPARENT_HEADER: &str = "traceparent";
+const TRACESTATE_HEADER: &str = "tracestate";
+const BAGGAGE_HEADER: &str = "baggage";
+
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
@@ -216,8 +221,8 @@ impl HttpContext for Filter {
 
         let req_headers = self.get_http_request_headers();
         for (header, value) in req_headers.iter() {
-            match header.as_str() {
-                "traceparent" | "tracestate" | "baggage" => {
+            match header.to_lowercase().as_str() {
+                TRACEPARENT_HEADER | TRACESTATE_HEADER | BAGGAGE_HEADER => {
                     self.tracing_headers.push((header.clone(), value.clone()))
                 }
                 _ => (),
