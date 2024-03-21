@@ -61,10 +61,10 @@ $(WASM_RELEASE_PATH): $(RUST_SOURCES)
 	make -C $(PROJECT_PATH) -f $(MKFILE_PATH) build
 
 development: $(WASM_RELEASE_PATH)
-	docker-compose up
+	docker compose up
 
 stop-development:
-	docker-compose down
+	docker compose down
 
 # get-protoc will download zip from $2 and install it to $1.
 define get-protoc
