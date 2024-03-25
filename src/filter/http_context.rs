@@ -6,6 +6,7 @@ use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
 };
+use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::utils::tokenize_with_escaping;
 use log::{debug, info, warn};
 use protobuf::Message;
@@ -13,14 +14,11 @@ use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 use std::time::Duration;
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
 // tracing headers
-#[derive(EnumIter)]
 pub enum TracingHeader {
     Traceparent,
     Tracestate,
@@ -28,11 +26,15 @@ pub enum TracingHeader {
 }
 
 impl TracingHeader {
+    fn all() -> [Self; 3] {
+        [Traceparent, Tracestate, Baggage]
+    }
+
     fn as_str(&self) -> &'static str {
         match self {
-            TracingHeader::Traceparent => "traceparent",
-            TracingHeader::Tracestate => "tracestate",
-            TracingHeader::Baggage => "baggage",
+            Traceparent => "traceparent",
+            Tracestate => "tracestate",
+            Baggage => "baggage",
         }
     }
 }
@@ -234,7 +236,7 @@ impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         info!("on_http_request_headers #{}", self.context_id);
 
-        for header in TracingHeader::iter() {
+        for header in TracingHeader::all() {
             match self.get_http_request_header_bytes(header.as_str()) {
                 Some(value) => self.tracing_headers.push((header, value)),
                 None => (),

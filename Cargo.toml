@@ -24,8 +24,6 @@ protobuf = { version = "2.27", features = ["with-serde"] }
 thiserror = "1.0"
 regex = "1"
 radix_trie = "0.2.1"
-strum = "0.26.2"
-strum_macros = "0.26.2"
 
 [dev-dependencies]
 proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }
