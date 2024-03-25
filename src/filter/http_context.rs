@@ -6,21 +6,44 @@ use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
 };
+use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::utils::tokenize_with_escaping;
 use log::{debug, info, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::Action;
+use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
+// tracing headers
+pub enum TracingHeader {
+    Traceparent,
+    Tracestate,
+    Baggage,
+}
+
+impl TracingHeader {
+    fn all() -> [Self; 3] {
+        [Traceparent, Tracestate, Baggage]
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Traceparent => "traceparent",
+            Tracestate => "tracestate",
+            Baggage => "baggage",
+        }
+    }
+}
+
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
+    pub tracing_headers: Vec<(TracingHeader, Bytes)>,
 }
 
 impl Filter {
@@ -51,11 +74,17 @@ impl Filter {
 
         let rl_req_serialized = Message::write_to_bytes(&rl_req).unwrap(); // TODO(rahulanand16nov): Error Handling
 
+        let rl_tracing_headers = self
+            .tracing_headers
+            .iter()
+            .map(|(header, value)| (header.as_str(), value.as_slice()))
+            .collect();
+
         match self.dispatch_grpc_call(
             rlp.service.as_str(),
             RATELIMIT_SERVICE_NAME,
             RATELIMIT_METHOD_NAME,
-            Vec::new(),
+            rl_tracing_headers,
             Some(&rl_req_serialized),
             Duration::from_secs(5),
         ) {
@@ -207,6 +236,12 @@ impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         info!("on_http_request_headers #{}", self.context_id);
 
+        for header in TracingHeader::all() {
+            match self.get_http_request_header_bytes(header.as_str()) {
+                Some(value) => self.tracing_headers.push((header, value)),
+                None => (),
+            }
+        }
         match self
             .config
             .index
