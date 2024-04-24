@@ -52,9 +52,15 @@ update-protobufs:
 #	cd vendor-protobufs/data-plane-api/envoy/type/ && \
 #	touch tmp && git merge-file ./matcher/v3/metadata.proto ./tmp ./metadata/v3/metadata.proto --own && rm tmp
 
+# wasm binary sha256 checksum needs to be known in advance
+.PHONY: development
 development:
+	docker build -t wasm-server:dev -f Dockerfile.server . && \
+		WASM_SHA256="$$(docker run --rm --entrypoint sha256sum wasm-server:dev /data/plugin.wasm | \
+		cut -d' ' -f1)" envsubst < utils/docker-compose/envoy.template.yaml > utils/docker-compose/envoy.yaml
 	docker compose up
 
+.PHONY: stop-development
 stop-development:
 	docker compose down
 

@@ -44,7 +44,7 @@ static_resources:
                       runtime: envoy.wasm.runtime.v8
                       code:
                         remote:
-                          sha256: d5bd8b7a21e2369e130a9a2bd80345df30102b08d4fe070c1896a75769e7e2c0
+                          sha256: ${WASM_SHA256}
                           http_uri:
                             uri: http://wasm-server:80/plugin.wasm
                             cluster: wasm-server

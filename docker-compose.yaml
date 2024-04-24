@@ -26,8 +26,7 @@ services:
       - ./utils/docker-compose/envoy.yaml:/etc/envoy.yaml
       - ./target/wasm32-unknown-unknown/release/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
   wasm-server:
-    build:
-      dockerfile: ./Dockerfile.server
+    image: wasm-server:dev
     expose:
       - "80"
   limitador:
