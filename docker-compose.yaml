@@ -1,11 +1,11 @@
 ---
-version: '2.2'
 services:
   envoy:
     image: envoyproxy/envoy:v1.20-latest
     depends_on:
       - limitador
       - upstream
+      - wasm-server
     command:
       - /usr/local/bin/envoy
       - --config-path
@@ -25,6 +25,11 @@ services:
     volumes:
       - ./utils/docker-compose/envoy.yaml:/etc/envoy.yaml
       - ./target/wasm32-unknown-unknown/release/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
+  wasm-server:
+    build:
+      dockerfile: ./Dockerfile.server
+    expose:
+      - "80"
   limitador:
     image: quay.io/kuadrant/limitador:latest
     command: ["limitador-server", "-vvv", "/opt/kuadrant/limits/limits.yaml"]
