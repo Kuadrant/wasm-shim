@@ -56,8 +56,8 @@ update-protobufs:
 .PHONY: development
 development:
 	docker build -t wasm-server:dev -f Dockerfile.server . && \
-		WASM_SHA256="$$(docker run --rm --entrypoint sha256sum wasm-server:dev /data/plugin.wasm | \
-		cut -d' ' -f1)" envsubst < utils/docker-compose/envoy.template.yaml > utils/docker-compose/envoy.yaml
+		WASM_SHA256="$$(docker run --rm --entrypoint cat wasm-server:dev /data/plugin.wasm.sha256)" \
+		envsubst < utils/docker-compose/envoy.template.yaml > utils/docker-compose/envoy.yaml
 	docker compose up
 
 .PHONY: stop-development
