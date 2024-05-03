@@ -1,6 +1,6 @@
 [package]
 name = "wasm-shim"
-version = "0.4.0-rc1"
+version = "0.4.0"
 edition = "2021"
 authors = ["Rahul Anand <rahulanand16nov@gmail.com>"]
 description = "shim connecting envoy and authorino/limitador"
