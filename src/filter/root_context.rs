@@ -34,6 +34,7 @@ impl RootContext for FilterRoot {
         };
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
+                info!("root-context #{}: Eguzki", self.context_id);
                 info!("plugin config parsed: {:?}", config);
                 self.config = Rc::new(FilterConfig::from(config));
             }
