@@ -1,9 +1,16 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
 use crate::filter::http_context::Filter;
+use const_format::formatcp;
 use log::{info, warn};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
+
+const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
+const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
+const WASM_SHIM_FEATURES: &str = env!("WASM_SHIM_FEATURES");
+const WASM_SHIM_GIT_HASH: &str = env!("WASM_SHIM_GIT_HASH");
+const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
 pub struct FilterRoot {
     pub context_id: u32,
@@ -12,7 +19,18 @@ pub struct FilterRoot {
 
 impl RootContext for FilterRoot {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
-        info!("root-context #{}: VM started", self.context_id);
+        let full_version: &'static str = formatcp!(
+            "v{} ({}) {} {}",
+            WASM_SHIM_VERSION,
+            WASM_SHIM_GIT_HASH,
+            WASM_SHIM_FEATURES,
+            WASM_SHIM_PROFILE,
+        );
+
+        info!(
+            "{} {} root-context #{}: VM started",
+            WASM_SHIM_HEADER, full_version, self.context_id
+        );
         true
     }
 

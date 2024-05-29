@@ -1,10 +1,16 @@
 [package]
 name = "wasm-shim"
-version = "0.1.0"
+version = "0.5.0-dev"
 edition = "2021"
-authors = ["Rahul Anand <rahulanand16nov@gmail.com>"]
-description = "shim connecting envoy and authorino/limitador"
+authors = ["Alex Snaps <asnaps@redhat.com>", "Eguzki Astiz Lezaun <eguzki@redhat.com>", "Rahul Anand <rahulanand16nov@gmail.com>"]
+description = "Wasm module connecting envoy and authorino/limitador"
 license = "Apache-2.0"
+keywords = ["rate-limiting", "rate", "limiter", "envoy", "rls"]
+categories = ["web-programming"]
+homepage = "https://kuadrant.io"
+repository = "https://github.com/Kuadrant/wasm-shim"
+documentation = "https://kuadrant.io"
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib"]
@@ -24,6 +30,7 @@ protobuf = { version = "2.27", features = ["with-serde"] }
 thiserror = "1.0"
 regex = "1"
 radix_trie = "0.2.1"
+const_format = "0.2.31"
 
 [dev-dependencies]
 proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }

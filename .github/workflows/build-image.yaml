@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Add latest tag
         if: ${{ github.ref_name == env.MAIN_BRANCH_NAME }}
         id: add-latest-tag
@@ -30,6 +30,8 @@ jobs:
         with:
           image: wasm-shim
           tags: ${{ env.IMG_TAGS }}
+          build-args: |
+            GITHUB_SHA=${{ github.sha }}
           dockerfiles: |
             ./Dockerfile
       - name: Push Image
