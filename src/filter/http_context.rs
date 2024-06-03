@@ -237,11 +237,11 @@ impl HttpContext for Filter {
         info!("on_http_request_headers #{}", self.context_id);
 
         for header in TracingHeader::all() {
-            match self.get_http_request_header_bytes(header.as_str()) {
-                Some(value) => self.tracing_headers.push((header, value)),
-                None => (),
+            if let Some(value) = self.get_http_request_header_bytes(header.as_str()) {
+                self.tracing_headers.push((header, value))
             }
         }
+
         match self
             .config
             .index
