@@ -33,4 +33,4 @@ jobs:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: target/wasm32-unknown-unknown/release/wasm_shim.wasm
           asset_content_type: application/wasm
-          asset_name: kuadrant-ratelimit-wasm-${{ github.ref_name }}
+          asset_name: kuadrant-wasm-shim-${{ github.ref_name }}
