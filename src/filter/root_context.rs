@@ -1,7 +1,7 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
 use crate::filter::http_context::Filter;
 use const_format::formatcp;
-use log::{info, warn};
+use log::{debug, info, warn};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
@@ -35,7 +35,7 @@ impl RootContext for FilterRoot {
     }
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
-        info!("create_http_context #{}", context_id);
+        debug!("create_http_context #{}", context_id);
         Some(Box::new(Filter {
             context_id,
             config: Rc::clone(&self.config),
