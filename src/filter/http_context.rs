@@ -14,6 +14,7 @@ use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 use std::time::Duration;
+use crate::envoy::properties::EnvoyTypeMapper;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -43,6 +44,7 @@ pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
+    pub property_mapper: Rc<EnvoyTypeMapper>,
     pub tracing_headers: Vec<(TracingHeader, Bytes)>,
 }
 

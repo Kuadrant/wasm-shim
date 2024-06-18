@@ -5,6 +5,7 @@ use log::{debug, info, warn};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
+use crate::envoy::properties::EnvoyTypeMapper;
 
 const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
 const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
@@ -15,6 +16,7 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 pub struct FilterRoot {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
+    pub property_mapper: Rc<EnvoyTypeMapper>,
 }
 
 impl RootContext for FilterRoot {
@@ -40,6 +42,7 @@ impl RootContext for FilterRoot {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
+            property_mapper: Rc::clone(&self.property_mapper),
             tracing_headers: Vec::default(),
         }))
     }
@@ -53,7 +56,7 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
-                self.config = Rc::new(FilterConfig::from(config));
+                self.config = Rc::new(config.into());
             }
             Err(e) => {
                 warn!("failed to parse plugin config: {}", e);

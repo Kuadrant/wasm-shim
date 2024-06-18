@@ -134,15 +134,17 @@ pub struct FilterConfig {
     pub failure_mode: FailureMode,
 }
 
-impl FilterConfig {
-    pub fn new() -> Self {
+impl Default for FilterConfig {
+    fn default() -> Self {
         Self {
             index: PolicyIndex::new(),
             failure_mode: FailureMode::Deny,
         }
     }
+}
 
-    pub fn from(config: PluginConfiguration) -> Self {
+impl From<PluginConfiguration> for FilterConfig {
+    fn from(config: PluginConfiguration) -> Self {
         let mut index = PolicyIndex::new();
 
         for rlp in config.rate_limit_policies.iter() {
