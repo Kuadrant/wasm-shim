@@ -28,14 +28,14 @@ impl RootContext for FilterRoot {
         );
 
         info!(
-            "{} {} root-context #{}: VM started",
-            WASM_SHIM_HEADER, full_version, self.context_id
+            "#{} {} {}: VM started",
+            self.context_id, WASM_SHIM_HEADER, full_version
         );
         true
     }
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
-        debug!("create_http_context #{}", context_id);
+        debug!("#{} create_http_context", context_id);
         Some(Box::new(Filter {
             context_id,
             config: Rc::clone(&self.config),
@@ -45,7 +45,7 @@ impl RootContext for FilterRoot {
     }
 
     fn on_configure(&mut self, _config_size: usize) -> bool {
-        info!("on_configure #{}", self.context_id);
+        info!("#{} on_configure", self.context_id);
         let configuration: Vec<u8> = match self.get_plugin_configuration() {
             Some(c) => c,
             None => return false,

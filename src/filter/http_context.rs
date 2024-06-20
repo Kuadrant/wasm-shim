@@ -64,7 +64,7 @@ impl Filter {
         let descriptors = self.build_descriptors(rlp);
         if descriptors.is_empty() {
             debug!(
-                "process_rate_limit_policy: empty descriptors #{}",
+                "#{} process_rate_limit_policy: empty descriptors",
                 self.context_id
             );
             return Action::Continue;
@@ -93,8 +93,8 @@ impl Filter {
         ) {
             Ok(call_id) => {
                 debug!(
-                    "Initiated gRPC call (id# {}) to Limitador #{}",
-                    call_id, self.context_id
+                    "#{} initiated gRPC call (id# {}) to Limitador",
+                    self.context_id, call_id
                 );
                 Action::Pause
             }
@@ -148,8 +148,8 @@ impl Filter {
         {
             None => {
                 debug!(
-                    "pattern_expression_applies: selector not found: {}, defaulting to `` #{}",
-                    p_e.selector, self.context_id
+                    "#{} pattern_expression_applies: selector not found: {}, defaulting to ``",
+                    self.context_id, p_e.selector
                 );
                 "".to_string()
             }
@@ -158,8 +158,8 @@ impl Filter {
             Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
                 Err(e) => {
                     debug!(
-                            "pattern_expression_applies: failed to parse selector value: {}, error: {} #{}",
-                            p_e.selector, e, self.context_id,
+                            "#{} pattern_expression_applies: failed to parse selector value: {}, error: {}",
+                            self.context_id, p_e.selector, e
                         );
                     return false;
                 }
@@ -196,8 +196,8 @@ impl Filter {
                     {
                         None => {
                             debug!(
-                                "build_single_descriptor: selector not found: {} #{}",
-                                selector_item.selector, self.context_id,
+                                "#{} build_single_descriptor: selector not found: {}",
+                                self.context_id, selector_item.selector
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -209,8 +209,8 @@ impl Filter {
                         Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
                             Err(e) => {
                                 debug!(
-                                    "build_single_descriptor: failed to parse selector value: {}, error: {} #{}",
-                                    selector_item.selector, e, self.context_id
+                                    "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    self.context_id, selector_item.selector, e
                                 );
                                 return None;
                             }
@@ -242,7 +242,7 @@ impl Filter {
 
 impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
-        debug!("on_http_request_headers #{}", self.context_id);
+        debug!("#{} on_http_request_headers", self.context_id);
 
         for header in TracingHeader::all() {
             if let Some(value) = self.get_http_request_header_bytes(header.as_str()) {
@@ -257,31 +257,35 @@ impl HttpContext for Filter {
         {
             None => {
                 debug!(
-                    "Allowing request to pass because zero descriptors generated #{}",
+                    "#{} allowing request to pass because zero descriptors generated",
                     self.context_id
                 );
                 Action::Continue
             }
             Some(rlp) => {
-                debug!("ratelimitpolicy selected {} #{}", rlp.name, self.context_id);
+                debug!("#{} ratelimitpolicy selected {}", self.context_id, rlp.name);
                 self.process_rate_limit_policy(rlp)
             }
         }
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
-        debug!("on_http_response_headers #{}", self.context_id);
+        debug!("#{} on_http_response_headers", self.context_id);
         for (name, value) in &self.response_headers_to_add {
             self.add_http_response_header(name, value);
         }
         Action::Continue
+    }
+
+    fn on_log(&mut self) {
+        debug!("#{} completed.", self.context_id);
     }
 }
 
 impl Context for Filter {
     fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, resp_size: usize) {
         debug!(
-            "on_grpc_call_response: received gRPC call response: token: {token_id}, status: {status_code} #{}",
+            "#{} on_grpc_call_response: received gRPC call response: token: {token_id}, status: {status_code}",
             self.context_id
         );
 
