@@ -35,12 +35,12 @@ fn it_loads() {
 
     module
         .call_proxy_on_context_create(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("set_root_context #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
     module
         .call_proxy_on_configure(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -50,13 +50,13 @@ fn it_loads() {
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Info), Some("create_http_context #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
@@ -66,15 +66,15 @@ fn it_loads() {
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
         .expect_log(
-            Some(LogLevel::Info),
-            Some("context #2: Allowing request to pass because zero descriptors generated"),
+            Some(LogLevel::Debug),
+            Some("#2 allowing request to pass because zero descriptors generated"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -139,12 +139,12 @@ fn it_limits() {
 
     module
         .call_proxy_on_context_create(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("set_root_context #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
     module
         .call_proxy_on_configure(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -154,13 +154,13 @@ fn it_limits() {
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Info), Some("create_http_context #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
@@ -175,6 +175,10 @@ fn it_limits() {
         .returning(Some("cars.toystore.com".as_bytes()))
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 ratelimitpolicy selected some-name"),
+        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -188,8 +192,8 @@ fn it_limits() {
         )
         .returning(Some(42))
         .expect_log(
-            Some(LogLevel::Info),
-            Some("Initiated gRPC call (id# 42) to Limitador"),
+            Some(LogLevel::Debug),
+            Some("#2 initiated gRPC call (id# 42) to Limitador"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -198,8 +202,8 @@ fn it_limits() {
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
-            Some(LogLevel::Info),
-            Some("on_grpc_call_response #2: received gRPC call response: token: 42, status: 0"),
+            Some(LogLevel::Debug),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
@@ -208,7 +212,7 @@ fn it_limits() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -273,12 +277,12 @@ fn it_passes_additional_headers() {
 
     module
         .call_proxy_on_context_create(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("set_root_context #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
     module
         .call_proxy_on_configure(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -288,13 +292,13 @@ fn it_passes_additional_headers() {
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Info), Some("create_http_context #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
@@ -309,6 +313,10 @@ fn it_passes_additional_headers() {
         .returning(Some("cars.toystore.com".as_bytes()))
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 ratelimitpolicy selected some-name"),
+        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -322,8 +330,8 @@ fn it_passes_additional_headers() {
         )
         .returning(Some(42))
         .expect_log(
-            Some(LogLevel::Info),
-            Some("Initiated gRPC call (id# 42) to Limitador"),
+            Some(LogLevel::Debug),
+            Some("#2 initiated gRPC call (id# 42) to Limitador"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -336,8 +344,8 @@ fn it_passes_additional_headers() {
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
-            Some(LogLevel::Info),
-            Some("on_grpc_call_response #2: received gRPC call response: token: 42, status: 0"),
+            Some(LogLevel::Debug),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
@@ -346,7 +354,7 @@ fn it_passes_additional_headers() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_add_header_map_value(
             Some(MapType::HttpResponseHeaders),
             Some("test"),
@@ -401,12 +409,12 @@ fn it_rate_limits_with_empty_conditions() {
 
     module
         .call_proxy_on_context_create(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("set_root_context #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
     module
         .call_proxy_on_configure(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -416,13 +424,13 @@ fn it_rate_limits_with_empty_conditions() {
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Info), Some("create_http_context #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
@@ -431,6 +439,10 @@ fn it_rate_limits_with_empty_conditions() {
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("a.com"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 ratelimitpolicy selected some-name"),
+        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -444,8 +456,8 @@ fn it_rate_limits_with_empty_conditions() {
         )
         .returning(Some(42))
         .expect_log(
-            Some(LogLevel::Info),
-            Some("Initiated gRPC call (id# 42) to Limitador"),
+            Some(LogLevel::Debug),
+            Some("#2 initiated gRPC call (id# 42) to Limitador"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -454,8 +466,8 @@ fn it_rate_limits_with_empty_conditions() {
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
-            Some(LogLevel::Info),
-            Some("on_grpc_call_response #2: received gRPC call response: token: 42, status: 0"),
+            Some(LogLevel::Debug),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
@@ -464,7 +476,7 @@ fn it_rate_limits_with_empty_conditions() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -508,12 +520,12 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
 
     module
         .call_proxy_on_context_create(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("set_root_context #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
     module
         .call_proxy_on_configure(root_context, 0)
-        .expect_log(Some(LogLevel::Info), Some("on_configure #1"))
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -523,13 +535,13 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Info), Some("create_http_context #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Info), Some("on_http_request_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
@@ -542,18 +554,22 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("[context_id: 2]: selector not found: unknown.path"),
+            Some("#2 ratelimitpolicy selected some-name"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("[context_id: 2] empty descriptors"),
+            Some("#2 build_single_descriptor: selector not found: unknown.path"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 process_rate_limit_policy: empty descriptors"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("on_http_response_headers #2"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }

@@ -8,7 +8,7 @@ use crate::envoy::{
 };
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::utils::tokenize_with_escaping;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Bytes};
@@ -63,7 +63,10 @@ impl Filter {
     fn process_rate_limit_policy(&self, rlp: &RateLimitPolicy) -> Action {
         let descriptors = self.build_descriptors(rlp);
         if descriptors.is_empty() {
-            debug!("[context_id: {}] empty descriptors", self.context_id);
+            debug!(
+                "#{} process_rate_limit_policy: empty descriptors",
+                self.context_id
+            );
             return Action::Continue;
         }
 
@@ -89,7 +92,10 @@ impl Filter {
             Duration::from_secs(5),
         ) {
             Ok(call_id) => {
-                info!("Initiated gRPC call (id# {}) to Limitador", call_id);
+                debug!(
+                    "#{} initiated gRPC call (id# {}) to Limitador",
+                    self.context_id, call_id
+                );
                 Action::Pause
             }
             Err(e) => {
@@ -137,28 +143,29 @@ impl Filter {
         let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
         // convert a Vec<String> to Vec<&str>
         // attribute_path.iter().map(AsRef::as_ref).collect()
-        let attribute_value =
-            match self.get_property(attribute_path.iter().map(AsRef::as_ref).collect()) {
-                None => {
+        let attribute_value = match self
+            .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
+        {
+            None => {
+                debug!(
+                    "#{} pattern_expression_applies: selector not found: {}, defaulting to ``",
+                    self.context_id, p_e.selector
+                );
+                "".to_string()
+            }
+            // TODO(eastizle): not all fields are strings
+            // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
+            Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
+                Err(e) => {
                     debug!(
-                        "[context_id: {}]: selector not found: {}, defaulting to ``",
-                        self.context_id, p_e.selector
-                    );
-                    "".to_string()
-                }
-                // TODO(eastizle): not all fields are strings
-                // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                    Err(e) => {
-                        debug!(
-                            "[context_id: {}]: failed to parse selector value: {}, error: {}",
+                            "#{} pattern_expression_applies: failed to parse selector value: {}, error: {}",
                             self.context_id, p_e.selector, e
                         );
-                        return false;
-                    }
-                    Ok(attribute_value) => attribute_value,
-                },
-            };
+                    return false;
+                }
+                Ok(attribute_value) => attribute_value,
+            },
+        };
         p_e.operator
             .eval(p_e.value.as_str(), attribute_value.as_str())
     }
@@ -189,7 +196,7 @@ impl Filter {
                     {
                         None => {
                             debug!(
-                                "[context_id: {}]: selector not found: {}",
+                                "#{} build_single_descriptor: selector not found: {}",
                                 self.context_id, selector_item.selector
                             );
                             match &selector_item.default {
@@ -202,8 +209,9 @@ impl Filter {
                         Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
                             Err(e) => {
                                 debug!(
-                                "[context_id: {}]: failed to parse selector value: {}, error: {}",
-                                self.context_id, selector_item.selector, e);
+                                    "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    self.context_id, selector_item.selector, e
+                                );
                                 return None;
                             }
                             Ok(attribute_value) => attribute_value,
@@ -234,7 +242,7 @@ impl Filter {
 
 impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
-        info!("on_http_request_headers #{}", self.context_id);
+        debug!("#{} on_http_request_headers", self.context_id);
 
         for header in TracingHeader::all() {
             if let Some(value) = self.get_http_request_header_bytes(header.as_str()) {
@@ -248,29 +256,36 @@ impl HttpContext for Filter {
             .get_longest_match_policy(self.request_authority().as_str())
         {
             None => {
-                info!(
-                    "context #{}: Allowing request to pass because zero descriptors generated",
+                debug!(
+                    "#{} allowing request to pass because zero descriptors generated",
                     self.context_id
                 );
                 Action::Continue
             }
-            Some(rlp) => self.process_rate_limit_policy(rlp),
+            Some(rlp) => {
+                debug!("#{} ratelimitpolicy selected {}", self.context_id, rlp.name);
+                self.process_rate_limit_policy(rlp)
+            }
         }
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
-        debug!("on_http_response_headers #{}", self.context_id);
+        debug!("#{} on_http_response_headers", self.context_id);
         for (name, value) in &self.response_headers_to_add {
             self.add_http_response_header(name, value);
         }
         Action::Continue
     }
+
+    fn on_log(&mut self) {
+        debug!("#{} completed.", self.context_id);
+    }
 }
 
 impl Context for Filter {
     fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, resp_size: usize) {
-        info!(
-            "on_grpc_call_response #{}: received gRPC call response: token: {token_id}, status: {status_code}",
+        debug!(
+            "#{} on_grpc_call_response: received gRPC call response: token: {token_id}, status: {status_code}",
             self.context_id
         );
 

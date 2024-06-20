@@ -31,7 +31,7 @@ extern "C" fn start() {
         proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string()).unwrap();
     }));
     proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
-        info!("set_root_context #{}", context_id);
+        info!("#{} set_root_context", context_id);
         Box::new(FilterRoot {
             context_id,
             config: Rc::new(FilterConfig::new()),
