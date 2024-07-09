@@ -675,7 +675,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = FilterConfig::from(res.unwrap());
+        let filter_config = FilterConfig::try_from(res.unwrap()).unwrap();
         let rlp_option = filter_config.index.get_longest_match_policy("example.com");
         assert!(rlp_option.is_some());
 
