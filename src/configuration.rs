@@ -1,7 +1,10 @@
 use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
+use cel_interpreter::Expression;
 use log::warn;
 use serde::Deserialize;
+use std::cell::OnceCell;
+use std::fmt::{Display, Formatter};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -17,6 +20,65 @@ pub struct SelectorItem {
     // If not set and the selector is not found in the context, then no data is generated.
     #[serde(default)]
     pub default: Option<String>,
+
+    #[serde(skip_deserializing)]
+    path: OnceCell<Path>,
+}
+
+impl SelectorItem {
+    pub fn path(&self) -> &Path {
+        self.path.get_or_init(|| self.selector.as_str().into())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Path {
+    tokens: Vec<String>,
+}
+
+impl Display for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.tokens
+                .iter()
+                .map(|t| t.replace('.', "\\."))
+                .collect::<Vec<String>>()
+                .join(".")
+        )
+    }
+}
+
+impl From<&str> for Path {
+    fn from(value: &str) -> Self {
+        let mut token = String::new();
+        let mut tokens: Vec<String> = Vec::new();
+        let mut chars = value.chars();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '.' => {
+                    tokens.push(token);
+                    token = String::new();
+                }
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        token.push(next);
+                    }
+                }
+                _ => token.push(ch),
+            }
+        }
+        tokens.push(token);
+
+        Self { tokens }
+    }
+}
+
+impl Path {
+    pub fn tokens(&self) -> Vec<&str> {
+        self.tokens.iter().map(String::as_str).collect()
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -82,6 +144,26 @@ pub struct PatternExpression {
     pub selector: String,
     pub operator: WhenConditionOperator,
     pub value: String,
+
+    #[serde(skip_deserializing)]
+    path: OnceCell<Path>,
+    #[serde(skip_deserializing)]
+    compiled: OnceCell<Expression>,
+}
+
+impl PatternExpression {
+    pub fn path(&self) -> Vec<&str> {
+        self.path
+            .get_or_init(|| self.selector.as_str().into())
+            .tokens()
+    }
+
+    pub fn expression(&self) -> &Expression {
+        self.compiled.get_or_init(|| {
+            self.try_into()
+                .expect("Expression should have been validated by now!")
+        })
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -562,5 +644,38 @@ mod test {
 
         let rlp_option = filter_config.index.get_longest_match_policy("unknown");
         assert!(rlp_option.is_none());
+    }
+
+    #[test]
+    fn path_tokenizes_with_escaping_basic() {
+        let path: Path = r"one\.two..three\\\\.four\\\.\five.".into();
+        assert_eq!(
+            path.tokens(),
+            vec!["one.two", "", r"three\\", r"four\.five", ""]
+        );
+    }
+
+    #[test]
+    fn path_tokenizes_with_escaping_ends_with_separator() {
+        let path: Path = r"one.".into();
+        assert_eq!(path.tokens(), vec!["one", ""]);
+    }
+
+    #[test]
+    fn path_tokenizes_with_escaping_ends_with_escape() {
+        let path: Path = r"one\".into();
+        assert_eq!(path.tokens(), vec!["one"]);
+    }
+
+    #[test]
+    fn path_tokenizes_with_escaping_starts_with_separator() {
+        let path: Path = r".one".into();
+        assert_eq!(path.tokens(), vec!["", "one"]);
+    }
+
+    #[test]
+    fn path_tokenizes_with_escaping_starts_with_escape() {
+        let path: Path = r"\one".into();
+        assert_eq!(path.tokens(), vec!["one"]);
     }
 }

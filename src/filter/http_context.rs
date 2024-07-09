@@ -2,19 +2,18 @@ use crate::configuration::{
     Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, RateLimitPolicy,
     Rule,
 };
+use crate::envoy::properties::EnvoyTypeMapper;
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
 };
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
-use crate::utils::tokenize_with_escaping;
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 use std::time::Duration;
-use crate::envoy::properties::EnvoyTypeMapper;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -142,7 +141,7 @@ impl Filter {
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
+        let attribute_path = p_e.path();
         // convert a Vec<String> to Vec<&str>
         // attribute_path.iter().map(AsRef::as_ref).collect()
         let attribute_value = match self
@@ -186,20 +185,16 @@ impl Filter {
                 }
                 DataType::Selector(selector_item) => {
                     let descriptor_key = match &selector_item.key {
-                        None => selector_item.selector.to_owned(),
+                        None => selector_item.path().to_string(),
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
-                    // convert a Vec<String> to Vec<&str>
-                    // attribute_path.iter().map(AsRef::as_ref).collect()
-                    let value = match self
-                        .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-                    {
+                    let attribute_path = selector_item.path();
+                    let value = match self.get_property(attribute_path.tokens()) {
                         None => {
                             debug!(
                                 "#{} build_single_descriptor: selector not found: {}",
-                                self.context_id, selector_item.selector
+                                self.context_id, attribute_path
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -212,7 +207,7 @@ impl Filter {
                             Err(e) => {
                                 debug!(
                                     "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    self.context_id, selector_item.selector, e
+                                    self.context_id, attribute_path, e
                                 );
                                 return None;
                             }

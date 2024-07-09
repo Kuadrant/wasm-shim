@@ -4,7 +4,6 @@ mod filter;
 mod glob;
 mod policy_index;
 mod typing;
-mod utils;
 
 #[cfg(test)]
 mod tests {

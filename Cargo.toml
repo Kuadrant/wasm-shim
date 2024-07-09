@@ -32,7 +32,8 @@ regex = "1"
 radix_trie = "0.2.1"
 const_format = "0.2.31"
 chrono = "0.4.38"
-cel-interpreter = "0.7.1"
+cel-interpreter = { git = "https://github.com/clarkmcc/cel-rust", branch = "master" }
+cel-parser = { git = "https://github.com/clarkmcc/cel-rust.git", branch = "master" }
 
 [dev-dependencies]
 proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }

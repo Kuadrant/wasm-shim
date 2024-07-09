@@ -1,3 +1,6 @@
+use crate::configuration::{PatternExpression, WhenConditionOperator};
+use cel_interpreter::objects::{ValueType as CelValueType, ValueType};
+use cel_parser::{Atom, Expression};
 use chrono::{DateTime, Utc};
 use std::fmt::Write;
 use std::ops::Add;
@@ -52,13 +55,6 @@ impl TypedProperty {
 }
 
 impl TypedProperty {
-    pub fn as_string(&self) -> String {
-        match self {
-            TypedProperty::String(str) => str.clone(),
-            TypedProperty::Integer(int) => int.to_string(),
-            _ => self.as_literal(),
-        }
-    }
 
     pub fn as_literal(&self) -> String {
         match self {
@@ -91,6 +87,112 @@ impl PartialEq<str> for TypedProperty {
             TypedProperty::Integer(int) => int.to_string().as_str() == other,
             _ => self.as_literal() == other,
         }
+    }
+}
+
+impl TryFrom<&PatternExpression> for Expression {
+    type Error = ();
+
+    fn try_from(expression: &PatternExpression) -> Result<Self, Self::Error> {
+        let cel_type = type_of(&expression.selector);
+
+        let expression = match cel_type {
+            ValueType::Map => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    match cel_parser::parse(&expression.value) {
+                        Ok(exp) => {
+                            if let Expression::Map(data) = exp {
+                                Ok(Expression::Map(data))
+                            } else {
+                                Err(())
+                            }
+                        }
+                        Err(_) => Err(()),
+                    }
+                }
+                _ => Err(()),
+            },
+            ValueType::Int | ValueType::UInt => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    match cel_parser::parse(&expression.value) {
+                        Ok(exp) => {
+                            if let Expression::Atom(atom) = &exp {
+                                match atom {
+                                    Atom::Int(_) | Atom::UInt(_) | Atom::Float(_) => Ok(exp),
+                                    _ => Err(()),
+                                }
+                            } else {
+                                Err(())
+                            }
+                        }
+                        Err(_) => Err(()),
+                    }
+                }
+                _ => Err(()),
+            },
+            // ValueType::String => match expression.operator {
+            //     WhenConditionOperator::Matches => {}
+            //     _ => Ok(cel_parser::Expression::Atom(cel_parser::Atom::String(
+            //         Arc::new(expression.value.clone()),
+            //     ))),
+            // },
+            // ValueType::Bytes => {}
+            // ValueType::Bool => {}
+            // ValueType::Timestamp => {}
+            _ => todo!(),
+        }?;
+
+        Ok(expression)
+    }
+}
+
+fn type_of(path: &str) -> CelValueType {
+    match path {
+        "request.time" => CelValueType::Timestamp,
+        "request.id" => CelValueType::String,
+        "request.protocol" => CelValueType::String,
+        "request.scheme" => CelValueType::String,
+        "request.host" => CelValueType::String,
+        "request.method" => CelValueType::String,
+        "request.path" => CelValueType::String,
+        "request.url_path" => CelValueType::String,
+        "request.query" => CelValueType::String,
+        "request.referer" => CelValueType::String,
+        "request.useragent" => CelValueType::String,
+        "request.body" => CelValueType::String,
+        "source.address" => CelValueType::String,
+        "source.service" => CelValueType::String,
+        "source.principal" => CelValueType::String,
+        "source.certificate" => CelValueType::String,
+        "destination.address" => CelValueType::String,
+        "destination.service" => CelValueType::String,
+        "destination.principal" => CelValueType::String,
+        "destination.certificate" => CelValueType::String,
+        "connection.requested_server_name" => CelValueType::String,
+        "connection.tls_session.sni" => CelValueType::String,
+        "connection.tls_version" => CelValueType::String,
+        "connection.subject_local_certificate" => CelValueType::String,
+        "connection.subject_peer_certificate" => CelValueType::String,
+        "connection.dns_san_local_certificate" => CelValueType::String,
+        "connection.dns_san_peer_certificate" => CelValueType::String,
+        "connection.uri_san_local_certificate" => CelValueType::String,
+        "connection.uri_san_peer_certificate" => CelValueType::String,
+        "connection.sha256_peer_certificate_digest" => CelValueType::String,
+        "ratelimit.domain" => CelValueType::String,
+        "request.size" => CelValueType::Int,
+        "source.port" => CelValueType::Int,
+        "destination.port" => CelValueType::Int,
+        "connection.id" => CelValueType::Int,
+        "ratelimit.hits_addend" => CelValueType::Int,
+        "request.headers" => CelValueType::Map,
+        "request.context_extensions" => CelValueType::Map,
+        "source.labels" => CelValueType::Map,
+        "destination.labels" => CelValueType::Map,
+        "filter_state" => CelValueType::Map,
+        "connection.mtls" => CelValueType::Bool,
+        "request.raw_body" => CelValueType::Bytes,
+        "auth.identity" => CelValueType::Bytes,
+        _ => CelValueType::Bytes,
     }
 }
 
