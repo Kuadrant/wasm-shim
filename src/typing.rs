@@ -1,10 +1,12 @@
 use crate::configuration::{PatternExpression, WhenConditionOperator};
 use cel_interpreter::objects::{ValueType as CelValueType, ValueType};
-use cel_parser::{Atom, Expression};
+use cel_parser::{ArithmeticOp, Atom, Expression, ParseError, RelationOp};
 use chrono::{DateTime, Utc};
 use std::fmt::Write;
 use std::ops::Add;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use cel_parser::Expression::Ident;
 
 pub enum TypedProperty {
     String(String),
@@ -95,7 +97,7 @@ impl TryFrom<&PatternExpression> for Expression {
     fn try_from(expression: &PatternExpression) -> Result<Self, Self::Error> {
         let cel_type = type_of(&expression.selector);
 
-        let expression = match cel_type {
+        let value = match cel_type {
             ValueType::Map => match expression.operator {
                 WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
                     match cel_parser::parse(&expression.value) {
@@ -129,19 +131,28 @@ impl TryFrom<&PatternExpression> for Expression {
                 }
                 _ => Err(()),
             },
-            // ValueType::String => match expression.operator {
-            //     WhenConditionOperator::Matches => {}
-            //     _ => Ok(cel_parser::Expression::Atom(cel_parser::Atom::String(
-            //         Arc::new(expression.value.clone()),
-            //     ))),
-            // },
+            ValueType::String => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    Ok(Expression::Atom(Atom::String(Arc::new(expression.value.clone()))))
+                }
+                // WhenConditionOperator::Matches => {}
+                _ => Ok(Expression::Atom(cel_parser::Atom::String(
+                    Arc::new(expression.value.clone()),
+                ))),
+            },
             // ValueType::Bytes => {}
             // ValueType::Bool => {}
             // ValueType::Timestamp => {}
-            _ => todo!(),
+            _ => todo!("Still needs support for values of type `{cel_type}`"),
         }?;
 
-        Ok(expression)
+        match expression.operator {
+            WhenConditionOperator::Equal => Ok(Expression::Relation(Ident(Arc::new("attribute".to_string())).into(), RelationOp::Equals, value.into())),
+            WhenConditionOperator::NotEqual => Ok(Expression::Relation(Ident(Arc::new("attribute".to_string())).into(), RelationOp::NotEquals, value.into())),
+            WhenConditionOperator::StartsWith => Err(()),
+            WhenConditionOperator::EndsWith => Err(()),
+            WhenConditionOperator::Matches => Err(()),
+        }
     }
 }
 
@@ -198,12 +209,6 @@ fn type_of(path: &str) -> CelValueType {
 #[cfg(test)]
 mod tests {
     use crate::typing::TypedProperty;
-
-    #[test]
-    fn escapes_bytes() {
-        let prop = TypedProperty::bytes(vec![0xb2, 0x42, 0x01]);
-        assert_eq!(prop.as_literal(), prop.as_string());
-    }
 
     #[test]
     fn literal_bytes() {

@@ -1,6 +1,7 @@
 use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
 use cel_interpreter::Expression;
+use cel_parser::RelationOp;
 use log::warn;
 use serde::Deserialize;
 use std::cell::OnceCell;
@@ -171,12 +172,7 @@ impl PatternExpression {
         self.path
             .set(self.selector.as_str().into())
             .map_err(|_| ())?;
-        self.compiled
-            .set(
-                self.try_into()
-                    .expect("Expression should have been validated by now!"),
-            )
-            .map_err(|_| ())
+        self.compiled.set(self.try_into()?).map_err(|_| ())
     }
     pub fn path(&self) -> Vec<&str> {
         self.path
@@ -675,7 +671,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = FilterConfig::try_from(res.unwrap()).unwrap();
+        let filter_config = FilterConfig::try_from(res.unwrap()).expect("That didn't work");
         let rlp_option = filter_config.index.get_longest_match_policy("example.com");
         assert!(rlp_option.is_some());
 
