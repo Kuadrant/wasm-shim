@@ -1,11 +1,11 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
+use crate::envoy::properties::EnvoyTypeMapper;
 use crate::filter::http_context::Filter;
 use const_format::formatcp;
 use log::{debug, info, warn};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
-use crate::envoy::properties::EnvoyTypeMapper;
 
 const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
 const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
