@@ -26,8 +26,14 @@ pub struct SelectorItem {
 }
 
 impl SelectorItem {
+    pub fn compile(&self) -> Result<(), ()> {
+        self.path.set(self.selector.as_str().into()).map_err(|_| ())
+    }
+
     pub fn path(&self) -> &Path {
-        self.path.get_or_init(|| self.selector.as_str().into())
+        self.path
+            .get()
+            .expect("SelectorItem wasn't previously compiled!")
     }
 }
 
@@ -95,6 +101,15 @@ pub enum DataType {
     Selector(SelectorItem),
 }
 
+impl DataType {
+    pub fn compile(&self) -> Result<(), ()> {
+        match self {
+            DataType::Static(_) => Ok(()),
+            DataType::Selector(selector) => selector.compile(),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DataItem {
@@ -152,17 +167,28 @@ pub struct PatternExpression {
 }
 
 impl PatternExpression {
+    pub fn compile(&self) -> Result<(), ()> {
+        self.path
+            .set(self.selector.as_str().into())
+            .map_err(|_| ())?;
+        self.compiled
+            .set(
+                self.try_into()
+                    .expect("Expression should have been validated by now!"),
+            )
+            .map_err(|_| ())
+    }
     pub fn path(&self) -> Vec<&str> {
         self.path
-            .get_or_init(|| self.selector.as_str().into())
+            .get()
+            .expect("PatternExpression wasn't previously compiled!")
             .tokens()
     }
 
     pub fn expression(&self) -> &Expression {
-        self.compiled.get_or_init(|| {
-            self.try_into()
-                .expect("Expression should have been validated by now!")
-        })
+        self.compiled
+            .get()
+            .expect("PatternExpression wasn't previously compiled!")
     }
 }
 
@@ -225,20 +251,36 @@ impl Default for FilterConfig {
     }
 }
 
-impl From<PluginConfiguration> for FilterConfig {
-    fn from(config: PluginConfiguration) -> Self {
+impl TryFrom<PluginConfiguration> for FilterConfig {
+    type Error = ();
+
+    fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = PolicyIndex::new();
 
         for rlp in config.rate_limit_policies.iter() {
+            for rule in &rlp.rules {
+                for datum in &rule.data {
+                    if datum.item.compile().is_err() {
+                        return Err(());
+                    }
+                }
+                for condition in &rule.conditions {
+                    for pe in &condition.all_of {
+                        if pe.compile().is_err() {
+                            return Err(());
+                        }
+                    }
+                }
+            }
             for hostname in rlp.hostnames.iter() {
                 index.insert(hostname, rlp.clone());
             }
         }
 
-        Self {
+        Ok(Self {
             index,
             failure_mode: config.failure_mode,
-        }
+        })
     }
 }
 

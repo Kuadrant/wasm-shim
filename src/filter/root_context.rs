@@ -56,7 +56,13 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
-                self.config = Rc::new(config.into());
+                let result = config.try_into();
+                if result.is_err() {
+                    warn!("failed to compile plugin config");
+                    return false;
+                }
+                let filter_config: FilterConfig = result.unwrap();
+                self.config = Rc::new(filter_config);
             }
             Err(e) => {
                 warn!("failed to parse plugin config: {}", e);

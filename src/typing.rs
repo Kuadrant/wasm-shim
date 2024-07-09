@@ -55,7 +55,6 @@ impl TypedProperty {
 }
 
 impl TypedProperty {
-
     pub fn as_literal(&self) -> String {
         match self {
             TypedProperty::String(str) => {
