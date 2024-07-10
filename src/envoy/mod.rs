@@ -30,8 +30,6 @@ mod timestamp;
 mod token_bucket;
 mod value;
 
-pub mod properties;
-
 pub use {
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},

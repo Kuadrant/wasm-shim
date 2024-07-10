@@ -1,10 +1,11 @@
-use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
-use cel_interpreter::Expression;
-use log::warn;
+use cel_interpreter::objects::ValueType;
+use cel_interpreter::{Context, Expression, Value};
+use cel_parser::{Atom, RelationOp};
 use serde::Deserialize;
 use std::cell::OnceCell;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -131,28 +132,6 @@ pub enum WhenConditionOperator {
     Matches,
 }
 
-impl WhenConditionOperator {
-    pub fn eval(&self, value: &str, attr_value: &str) -> bool {
-        match *self {
-            WhenConditionOperator::Equal => value.eq(attr_value),
-            WhenConditionOperator::NotEqual => !value.eq(attr_value),
-            WhenConditionOperator::StartsWith => attr_value.starts_with(value),
-            WhenConditionOperator::EndsWith => attr_value.ends_with(value),
-            WhenConditionOperator::Matches => match GlobPattern::try_from(value) {
-                // TODO(eastizle): regexp being compiled and validated at request time.
-                // Validations and possibly regexp compilation should happen at boot time instead.
-                // In addition, if the regexp is not valid, the only consequence is that
-                // the current condition would not apply
-                Ok(glob_pattern) => glob_pattern.is_match(attr_value),
-                Err(e) => {
-                    warn!("failed to parse regexp: {value}, error: {e:?}");
-                    false
-                }
-            },
-        }
-    }
-}
-
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PatternExpression {
@@ -184,6 +163,161 @@ impl PatternExpression {
         self.compiled
             .get()
             .expect("PatternExpression wasn't previously compiled!")
+    }
+
+    pub fn eval(&self, attribute_value: String) -> bool {
+        let cel_type = type_of(&self.selector);
+        let value = match cel_type {
+            ValueType::String => Value::String(attribute_value.into()),
+            ValueType::Int | ValueType::UInt => Value::Int(attribute_value.parse::<i64>().unwrap()),
+            _ => unimplemented!("Need support for {}", cel_type),
+        };
+        let mut ctx = Context::default();
+        ctx.add_variable("attribute", value).unwrap();
+        Value::resolve(self.compiled.get().unwrap(), &ctx)
+            .map(|v| {
+                if let Value::Bool(result) = v {
+                    result
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    }
+}
+
+impl TryFrom<&PatternExpression> for Expression {
+    type Error = ();
+
+    fn try_from(expression: &PatternExpression) -> Result<Self, Self::Error> {
+        let cel_type = type_of(&expression.selector);
+
+        let value = match cel_type {
+            ValueType::Map => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    match cel_parser::parse(&expression.value) {
+                        Ok(exp) => {
+                            if let Expression::Map(data) = exp {
+                                Ok(Expression::Map(data))
+                            } else {
+                                Err(())
+                            }
+                        }
+                        Err(_) => Err(()),
+                    }
+                }
+                _ => Err(()),
+            },
+            ValueType::Int | ValueType::UInt => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    match cel_parser::parse(&expression.value) {
+                        Ok(exp) => {
+                            if let Expression::Atom(atom) = &exp {
+                                match atom {
+                                    Atom::Int(_) | Atom::UInt(_) | Atom::Float(_) => Ok(exp),
+                                    _ => Err(()),
+                                }
+                            } else {
+                                Err(())
+                            }
+                        }
+                        Err(_) => Err(()),
+                    }
+                }
+                _ => Err(()),
+            },
+            ValueType::String => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => Ok(
+                    Expression::Atom(Atom::String(Arc::new(expression.value.clone()))),
+                ),
+                // WhenConditionOperator::Matches => {}
+                _ => Ok(Expression::Atom(Atom::String(Arc::new(
+                    expression.value.clone(),
+                )))),
+            },
+            // ValueType::Bytes => {}
+            // ValueType::Bool => {}
+            // ValueType::Timestamp => {}
+            _ => todo!("Still needs support for values of type `{cel_type}`"),
+        }?;
+
+        match expression.operator {
+            WhenConditionOperator::Equal => Ok(Expression::Relation(
+                Expression::Ident(Arc::new("attribute".to_string())).into(),
+                RelationOp::Equals,
+                value.into(),
+            )),
+            WhenConditionOperator::NotEqual => Ok(Expression::Relation(
+                Expression::Ident(Arc::new("attribute".to_string())).into(),
+                RelationOp::NotEquals,
+                value.into(),
+            )),
+            WhenConditionOperator::StartsWith => Ok(Expression::FunctionCall(
+                Expression::Ident(Arc::new("startsWith".to_string())).into(),
+                Some(Expression::Ident("attribute".to_string().into()).into()),
+                [value].to_vec(),
+            )),
+            WhenConditionOperator::EndsWith => Ok(Expression::FunctionCall(
+                Expression::Ident(Arc::new("endsWith".to_string())).into(),
+                Some(Expression::Ident("attribute".to_string().into()).into()),
+                [value].to_vec(),
+            )),
+            WhenConditionOperator::Matches => Ok(Expression::FunctionCall(
+                Expression::Ident(Arc::new("matches".to_string())).into(),
+                Some(Expression::Ident("attribute".to_string().into()).into()),
+                [value].to_vec(),
+            )),
+        }
+    }
+}
+
+pub fn type_of(path: &str) -> ValueType {
+    match path {
+        "request.time" => ValueType::Timestamp,
+        "request.id" => ValueType::String,
+        "request.protocol" => ValueType::String,
+        "request.scheme" => ValueType::String,
+        "request.host" => ValueType::String,
+        "request.method" => ValueType::String,
+        "request.path" => ValueType::String,
+        "request.url_path" => ValueType::String,
+        "request.query" => ValueType::String,
+        "request.referer" => ValueType::String,
+        "request.useragent" => ValueType::String,
+        "request.body" => ValueType::String,
+        "source.address" => ValueType::String,
+        "source.service" => ValueType::String,
+        "source.principal" => ValueType::String,
+        "source.certificate" => ValueType::String,
+        "destination.address" => ValueType::String,
+        "destination.service" => ValueType::String,
+        "destination.principal" => ValueType::String,
+        "destination.certificate" => ValueType::String,
+        "connection.requested_server_name" => ValueType::String,
+        "connection.tls_session.sni" => ValueType::String,
+        "connection.tls_version" => ValueType::String,
+        "connection.subject_local_certificate" => ValueType::String,
+        "connection.subject_peer_certificate" => ValueType::String,
+        "connection.dns_san_local_certificate" => ValueType::String,
+        "connection.dns_san_peer_certificate" => ValueType::String,
+        "connection.uri_san_local_certificate" => ValueType::String,
+        "connection.uri_san_peer_certificate" => ValueType::String,
+        "connection.sha256_peer_certificate_digest" => ValueType::String,
+        "ratelimit.domain" => ValueType::String,
+        "request.size" => ValueType::Int,
+        "source.port" => ValueType::Int,
+        "destination.port" => ValueType::Int,
+        "connection.id" => ValueType::Int,
+        "ratelimit.hits_addend" => ValueType::Int,
+        "request.headers" => ValueType::Map,
+        "request.context_extensions" => ValueType::Map,
+        "source.labels" => ValueType::Map,
+        "destination.labels" => ValueType::Map,
+        "filter_state" => ValueType::Map,
+        "connection.mtls" => ValueType::Bool,
+        "request.raw_body" => ValueType::Bytes,
+        "auth.identity" => ValueType::Bytes,
+        _ => ValueType::Bytes,
     }
 }
 

@@ -1,5 +1,3 @@
-use crate::envoy::properties::EnvoyTypeMapper;
-
 mod http_context;
 mod root_context;
 
@@ -25,7 +23,6 @@ extern "C" fn start() {
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
     use root_context::FilterRoot;
-    use std::rc::Rc;
 
     proxy_wasm::set_log_level(LogLevel::Trace);
     std::panic::set_hook(Box::new(|panic_info| {
@@ -36,7 +33,6 @@ extern "C" fn start() {
         Box::new(FilterRoot {
             context_id,
             config: Default::default(),
-            property_mapper: Rc::new(EnvoyTypeMapper::new()),
         })
     });
 }
