@@ -31,7 +31,7 @@ thiserror = "1.0"
 regex = "1"
 radix_trie = "0.2.1"
 const_format = "0.2.31"
-chrono = { version = "0.4.38", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4.38", default-features = false, features = ["alloc", "std"] }
 cel-interpreter = { git = "https://github.com/clarkmcc/cel-rust", branch = "master" }
 cel-parser = { git = "https://github.com/clarkmcc/cel-rust.git", branch = "master" }
 

@@ -1,12 +1,11 @@
 use crate::configuration::{PatternExpression, WhenConditionOperator};
 use cel_interpreter::objects::{ValueType as CelValueType, ValueType};
-use cel_parser::{ArithmeticOp, Atom, Expression, ParseError, RelationOp};
-// use chrono::{DateTime, Utc};
+use cel_parser::{Atom, Expression, RelationOp};
+use chrono::{DateTime, Utc};
 use std::fmt::Write;
 use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use cel_parser::Expression::Ident;
 
 pub enum TypedProperty {
     String(String),
@@ -74,7 +73,8 @@ impl TypedProperty {
                 str
             }
             TypedProperty::Timestamp(ts) => {
-                "TS".to_string()
+                let ts: DateTime<Utc> = (*ts).into();
+                ts.to_rfc3339()
             }
         }
     }
@@ -135,7 +135,7 @@ impl TryFrom<&PatternExpression> for Expression {
                     Ok(Expression::Atom(Atom::String(Arc::new(expression.value.clone()))))
                 }
                 // WhenConditionOperator::Matches => {}
-                _ => Ok(Expression::Atom(cel_parser::Atom::String(
+                _ => Ok(Expression::Atom(Atom::String(
                     Arc::new(expression.value.clone()),
                 ))),
             },
@@ -146,11 +146,11 @@ impl TryFrom<&PatternExpression> for Expression {
         }?;
 
         match expression.operator {
-            WhenConditionOperator::Equal => Ok(Expression::Relation(Ident(Arc::new("attribute".to_string())).into(), RelationOp::Equals, value.into())),
-            WhenConditionOperator::NotEqual => Ok(Expression::Relation(Ident(Arc::new("attribute".to_string())).into(), RelationOp::NotEquals, value.into())),
-            WhenConditionOperator::StartsWith => Err(()),
-            WhenConditionOperator::EndsWith => Err(()),
-            WhenConditionOperator::Matches => Err(()),
+            WhenConditionOperator::Equal => Ok(Expression::Relation(Expression::Ident(Arc::new("attribute".to_string())).into(), RelationOp::Equals, value.into())),
+            WhenConditionOperator::NotEqual => Ok(Expression::Relation(Expression::Ident(Arc::new("attribute".to_string())).into(), RelationOp::NotEquals, value.into())),
+            WhenConditionOperator::StartsWith => Ok(Expression::FunctionCall(Expression::Ident(Arc::new("startsWith".to_string())).into(), Some(Expression::Ident("attribute".to_string().into()).into()), [value].to_vec())),
+            WhenConditionOperator::EndsWith => Ok(Expression::FunctionCall(Expression::Ident(Arc::new("endsWith".to_string())).into(), Some(Expression::Ident("attribute".to_string().into()).into()), [value].to_vec())),
+            WhenConditionOperator::Matches => Ok(Expression::FunctionCall(Expression::Ident(Arc::new("matches".to_string())).into(), Some(Expression::Ident("attribute".to_string().into()).into()), [value].to_vec())),
         }
     }
 }
