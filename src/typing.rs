@@ -1,7 +1,7 @@
 use crate::configuration::{PatternExpression, WhenConditionOperator};
 use cel_interpreter::objects::{ValueType as CelValueType, ValueType};
 use cel_parser::{ArithmeticOp, Atom, Expression, ParseError, RelationOp};
-use chrono::{DateTime, Utc};
+// use chrono::{DateTime, Utc};
 use std::fmt::Write;
 use std::ops::Add;
 use std::sync::Arc;
@@ -74,8 +74,7 @@ impl TypedProperty {
                 str
             }
             TypedProperty::Timestamp(ts) => {
-                let ts: DateTime<Utc> = (*ts).into();
-                ts.to_rfc3339()
+                "TS".to_string()
             }
         }
     }
