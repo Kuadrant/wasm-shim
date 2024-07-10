@@ -1,7 +1,6 @@
 use crate::glob::GlobPattern;
 use crate::policy_index::PolicyIndex;
 use cel_interpreter::Expression;
-use cel_parser::RelationOp;
 use log::warn;
 use serde::Deserialize;
 use std::cell::OnceCell;
