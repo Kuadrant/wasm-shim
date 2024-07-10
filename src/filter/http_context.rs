@@ -2,7 +2,6 @@ use crate::configuration::{
     Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, RateLimitPolicy,
     Rule,
 };
-use crate::envoy::properties::EnvoyTypeMapper;
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
     RateLimitResponse_Code,
@@ -43,7 +42,6 @@ pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
-    pub property_mapper: Rc<EnvoyTypeMapper>,
     pub tracing_headers: Vec<(TracingHeader, Bytes)>,
 }
 
@@ -142,14 +140,10 @@ impl Filter {
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
         let attribute_path = p_e.path();
-        // convert a Vec<String> to Vec<&str>
-        // attribute_path.iter().map(AsRef::as_ref).collect()
-        let attribute_value = match self
-            .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-        {
-            None => {
+        let attribute_value = match self.get_property(attribute_path)
+        {    None => {
                 debug!(
-                    "#{} pattern_expression_applies: selector not found: {}, defaulting to ``",
+                    "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
                     self.context_id, p_e.selector
                 );
                 "".to_string()
@@ -159,16 +153,15 @@ impl Filter {
             Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
                 Err(e) => {
                     debug!(
-                            "#{} pattern_expression_applies: failed to parse selector value: {}, error: {}",
-                            self.context_id, p_e.selector, e
-                        );
+                        "#{} pattern_expression_applies:  failed to parse selector value: {}, error: {}",
+                        self.context_id, p_e.selector, e
+                    );
                     return false;
                 }
                 Ok(attribute_value) => attribute_value,
             },
         };
-        p_e.operator
-            .eval(p_e.value.as_str(), attribute_value.as_str())
+        p_e.eval(attribute_value)
     }
 
     fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {

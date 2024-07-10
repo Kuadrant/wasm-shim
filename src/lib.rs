@@ -3,7 +3,6 @@ mod envoy;
 mod filter;
 mod glob;
 mod policy_index;
-mod typing;
 
 #[cfg(test)]
 mod tests {
