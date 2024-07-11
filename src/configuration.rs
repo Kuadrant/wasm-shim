@@ -2,7 +2,7 @@ use crate::policy_index::PolicyIndex;
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
-use chrono::DateTime;
+use chrono::{DateTime, FixedOffset};
 use serde::Deserialize;
 use std::cell::OnceCell;
 use std::fmt::{Debug, Display, Formatter};
@@ -204,7 +204,8 @@ impl PatternExpression {
                         return Err(format!("Timestamp expected to be 8 bytes, but got {}", raw_attribute.len()));
                     }
                     let nanos = i64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!"));
-                    Value::Timestamp(DateTime::from_timestamp_nanos(nanos).into())
+                    let time: DateTime<FixedOffset> = DateTime::from_timestamp_nanos(nanos).into();
+                    Value::Timestamp(time)
                 }
             }
             // todo: Impl support for parsing these two types… Tho List/Map of what?
@@ -302,7 +303,7 @@ impl TryFrom<&PatternExpression> for CelExpression {
                     &expression.operator
                 )),
             },
-            ValueType::Int | ValueType::UInt => match expression.operator {
+            ValueType::Int | ValueType::UInt | ValueType::Float => match expression.operator {
                 WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
                     if let Expression::Atom(atom) = &cel_value {
                         match atom {
@@ -318,9 +319,12 @@ impl TryFrom<&PatternExpression> for CelExpression {
                     &expression.operator
                 )),
             },
-            ValueType::String => Ok(Expression::Atom(Atom::String(Arc::new(
-                expression.value.clone(),
-            )))),
+            ValueType::String => match &cel_value {
+                Expression::Atom(Atom::String(_)) => Ok(cel_value),
+                _ => Ok(Expression::Atom(Atom::String(Arc::new(
+                    expression.value.clone(),
+                )))),
+            },
             ValueType::Bytes => match expression.operator {
                 WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
                     if let Expression::Atom(atom) = &cel_value {
@@ -994,5 +998,178 @@ mod test {
     fn path_tokenizes_with_escaping_starts_with_escape() {
         let path: Path = r"\one".into();
         assert_eq!(path.tokens(), vec!["one"]);
+    }
+
+    mod pattern_expressions {
+        use crate::configuration::{PatternExpression, WhenConditionOperator};
+        use chrono::{DateTime, FixedOffset};
+
+        #[test]
+        fn test_legacy_string() {
+            let p = PatternExpression {
+                selector: "request.id".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "request_id".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval("request_id".as_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_proper_string() {
+            let p = PatternExpression {
+                selector: "request.id".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "\"request_id\"".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval("request_id".as_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_proper_int_as_string() {
+            let p = PatternExpression {
+                selector: "request.id".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "123".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval("123".as_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_proper_string_inferred() {
+            let p = PatternExpression {
+                selector: "foobar".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "\"123\"".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval("123".as_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_int() {
+            let p = PatternExpression {
+                selector: "destination.port".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "8080".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval(8080_i64.to_le_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_int_inferred() {
+            let p = PatternExpression {
+                selector: "foobar".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "8080".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval(8080_i64.to_le_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_float_inferred() {
+            let p = PatternExpression {
+                selector: "foobar".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "1.0".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval(1_f64.to_le_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        fn test_bool() {
+            let p = PatternExpression {
+                selector: "connection.mtls".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "true".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            assert_eq!(
+                p.eval((true as u8).to_le_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
+
+        #[test]
+        #[ignore]
+        // Unsure about this: https://github.com/clarkmcc/cel-rust/issues/67
+        fn test_timestamp() {
+            let p = PatternExpression {
+                selector: "request.time".to_string(),
+                operator: WhenConditionOperator::Equal,
+                value: "2023-05-28T00:00:00+00:00".to_string(),
+                path: Default::default(),
+                compiled: Default::default(),
+            };
+            p.compile().expect("Should compile fine!");
+            let ts: DateTime<FixedOffset> =
+                DateTime::parse_from_rfc3339("2023-05-28T00:00:00+00:00").unwrap();
+            let ts_nanos = ts.timestamp_nanos_opt().unwrap();
+            println!("{}", ts_nanos);
+            assert_eq!(
+                p.eval(ts_nanos.to_le_bytes().to_vec()),
+                Ok(true),
+                "Expression: {:?}",
+                p.compiled.get()
+            )
+        }
     }
 }
