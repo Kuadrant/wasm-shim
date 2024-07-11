@@ -1,13 +1,12 @@
-use std::cell::OnceCell;
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
-
+use crate::policy_index::PolicyIndex;
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
+use chrono::DateTime;
 use serde::Deserialize;
-
-use crate::policy_index::PolicyIndex;
+use std::cell::OnceCell;
+use std::fmt::{Debug, Display, Formatter};
+use std::sync::Arc;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -146,7 +145,7 @@ pub struct PatternExpression {
     #[serde(skip_deserializing)]
     path: OnceCell<Path>,
     #[serde(skip_deserializing)]
-    compiled: OnceCell<Expression>,
+    compiled: OnceCell<CelExpression>,
 }
 
 impl PatternExpression {
@@ -165,22 +164,56 @@ impl PatternExpression {
             .tokens()
     }
 
-    pub fn expression(&self) -> &Expression {
-        self.compiled
-            .get()
-            .expect("PatternExpression wasn't previously compiled!")
-    }
-
-    pub fn eval(&self, attribute_value: String) -> bool {
-        let cel_type = type_of(&self.selector).unwrap();
+    pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
+        let cel_type = &self.compiled.get().unwrap().cel_type;
         let value = match cel_type {
-            ValueType::String => Value::String(attribute_value.into()),
-            ValueType::Int | ValueType::UInt => Value::Int(attribute_value.parse::<i64>().unwrap()),
+            ValueType::String =>
+                Value::String(String::from_utf8(raw_attribute).map_err(|err| format!(
+                    "pattern_expression_applies:  failed to parse selector String value: {}, error: {}",
+                    self.selector, err))?.into()),
+            ValueType::Int => {
+                if raw_attribute.len() != 8 {
+                    return Err(format!("Int value expected to be 8 bytes, but got {}", raw_attribute.len()));
+                }
+                Value::Int(i64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!")))
+            },
+            ValueType::UInt => {
+                {
+                    if raw_attribute.len() != 8 {
+                        return Err(format!("UInt value expected to be 8 bytes, but got {}", raw_attribute.len()));
+                    }
+                    Value::UInt(u64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!")))
+                }
+            },
+            ValueType::Float => {
+                if raw_attribute.len() != 8 {
+                    return Err(format!("Float value expected to be 8 bytes, but got {}", raw_attribute.len()));
+                }
+                Value::Float(f64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!")))
+            },
+            ValueType::Bytes => Value::Bytes(raw_attribute.into()),
+            ValueType::Bool => {
+                if raw_attribute.len() != 1 {
+                    return Err(format!("Bool value expected to be 8 bytes, but got {}", raw_attribute.len()));
+                }
+                Value::Bool(raw_attribute[0] & 1 == 1)
+            }
+            ValueType::Timestamp => {
+                {
+                    if raw_attribute.len() != 8 {
+                        return Err(format!("Timestamp expected to be 8 bytes, but got {}", raw_attribute.len()));
+                    }
+                    let nanos = i64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!"));
+                    Value::Timestamp(DateTime::from_timestamp_nanos(nanos).into())
+                }
+            }
+            // ValueType::List => {}
+            // ValueType::Map => {}
             _ => unimplemented!("Need support for {}", cel_type),
         };
         let mut ctx = Context::default();
         ctx.add_variable("attribute", value).unwrap();
-        Value::resolve(self.compiled.get().unwrap(), &ctx)
+        Value::resolve(&self.compiled.get().unwrap().expression, &ctx)
             .map(|v| {
                 if let Value::Bool(result) = v {
                     result
@@ -188,11 +221,44 @@ impl PatternExpression {
                     false
                 }
             })
-            .unwrap_or(false)
+            .map_err(|err| format!("Error evaluating {:?}: {}", self.compiled, err))
     }
 }
 
-impl TryFrom<&PatternExpression> for Expression {
+struct CelExpression {
+    expression: Expression,
+    cel_type: ValueType,
+}
+
+impl Debug for CelExpression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CelExpression({}, {:?}", self.cel_type, self.expression)
+    }
+}
+
+impl Clone for CelExpression {
+    fn clone(&self) -> Self {
+        Self {
+            expression: self.expression.clone(),
+            cel_type: match self.cel_type {
+                ValueType::List => ValueType::List,
+                ValueType::Map => ValueType::Map,
+                ValueType::Function => ValueType::Function,
+                ValueType::Int => ValueType::Int,
+                ValueType::UInt => ValueType::UInt,
+                ValueType::Float => ValueType::Float,
+                ValueType::String => ValueType::String,
+                ValueType::Bytes => ValueType::Bytes,
+                ValueType::Bool => ValueType::Bool,
+                ValueType::Duration => ValueType::Duration,
+                ValueType::Timestamp => ValueType::Timestamp,
+                ValueType::Null => ValueType::Null,
+            },
+        }
+    }
+}
+
+impl TryFrom<&PatternExpression> for CelExpression {
     type Error = String;
 
     fn try_from(expression: &PatternExpression) -> Result<Self, Self::Error> {
@@ -272,33 +338,38 @@ impl TryFrom<&PatternExpression> for Expression {
             )),
         }?;
 
-        match expression.operator {
-            WhenConditionOperator::Equal => Ok(Expression::Relation(
+        let expression = match expression.operator {
+            WhenConditionOperator::Equal => Expression::Relation(
                 Expression::Ident(Arc::new("attribute".to_string())).into(),
                 RelationOp::Equals,
                 value.into(),
-            )),
-            WhenConditionOperator::NotEqual => Ok(Expression::Relation(
+            ),
+            WhenConditionOperator::NotEqual => Expression::Relation(
                 Expression::Ident(Arc::new("attribute".to_string())).into(),
                 RelationOp::NotEquals,
                 value.into(),
-            )),
-            WhenConditionOperator::StartsWith => Ok(Expression::FunctionCall(
+            ),
+            WhenConditionOperator::StartsWith => Expression::FunctionCall(
                 Expression::Ident(Arc::new("startsWith".to_string())).into(),
                 Some(Expression::Ident("attribute".to_string().into()).into()),
                 [value].to_vec(),
-            )),
-            WhenConditionOperator::EndsWith => Ok(Expression::FunctionCall(
+            ),
+            WhenConditionOperator::EndsWith => Expression::FunctionCall(
                 Expression::Ident(Arc::new("endsWith".to_string())).into(),
                 Some(Expression::Ident("attribute".to_string().into()).into()),
                 [value].to_vec(),
-            )),
-            WhenConditionOperator::Matches => Ok(Expression::FunctionCall(
+            ),
+            WhenConditionOperator::Matches => Expression::FunctionCall(
                 Expression::Ident(Arc::new("matches".to_string())).into(),
                 Some(Expression::Ident("attribute".to_string().into()).into()),
                 [value].to_vec(),
-            )),
-        }
+            ),
+        };
+
+        Ok(Self {
+            expression,
+            cel_type,
+        })
     }
 }
 

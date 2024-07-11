@@ -146,22 +146,20 @@ impl Filter {
                     "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
                     self.context_id, p_e.selector
                 );
-                "".to_string()
+                "".to_string().as_bytes().to_vec()
             }
-            // TODO(eastizle): not all fields are strings
-            // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-            Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                Err(e) => {
-                    debug!(
-                        "#{} pattern_expression_applies:  failed to parse selector value: {}, error: {}",
-                        self.context_id, p_e.selector, e
-                    );
-                    return false;
-                }
-                Ok(attribute_value) => attribute_value,
-            },
+            Some(attribute_bytes) => attribute_bytes,
         };
-        p_e.eval(attribute_value)
+        match p_e.eval(attribute_value) {
+            Err(e) => {
+                debug!(
+                    "#{} pattern_expression_applies failed: {}",
+                    self.context_id, e
+                );
+                false
+            }
+            Ok(result) => result,
+        }
     }
 
     fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
