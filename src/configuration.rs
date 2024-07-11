@@ -207,6 +207,7 @@ impl PatternExpression {
                     Value::Timestamp(DateTime::from_timestamp_nanos(nanos).into())
                 }
             }
+            // todo: Impl support for parsing these two types… Tho List/Map of what?
             // ValueType::List => {}
             // ValueType::Map => {}
             _ => unimplemented!("Need support for {}", cel_type),
@@ -306,33 +307,73 @@ impl TryFrom<&PatternExpression> for CelExpression {
                     if let Expression::Atom(atom) = &cel_value {
                         match atom {
                             Atom::Int(_) | Atom::UInt(_) | Atom::Float(_) => Ok(cel_value),
-                            _ => Err(format!("Can't compare {cel_value:?} with a {atom:?}]")),
+                            _ => Err(format!("Can't compare {cel_value:?} with a Number")),
                         }
                     } else {
                         Err(format!("Can't compare {cel_value:?} with a Number"))
                     }
                 }
                 _ => Err(format!(
-                    "Unsupported operator {:?} on Map",
+                    "Unsupported operator {:?} on Number",
                     &expression.operator
                 )),
             },
             ValueType::String => Ok(Expression::Atom(Atom::String(Arc::new(
                 expression.value.clone(),
             )))),
-            ValueType::Bytes => {
-                if let Expression::Atom(atom) = &cel_value {
-                    match atom {
-                        Atom::String(_str) => Ok(cel_value),
-                        Atom::Bytes(_bytes) => Ok(cel_value),
-                        _ => Err("BYTES!".to_string()),
+            ValueType::Bytes => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    if let Expression::Atom(atom) = &cel_value {
+                        match atom {
+                            Atom::String(_str) => Ok(cel_value),
+                            Atom::Bytes(_bytes) => Ok(cel_value),
+                            _ => Err(format!("Can't compare {cel_value:?} with Bytes")),
+                        }
+                    } else {
+                        Err(format!("Can't compare {cel_value:?} with Bytes"))
                     }
-                } else {
-                    Err("BYTES TOO!".to_string())
                 }
-            }
-            // ValueType::Bool => {}
-            // ValueType::Timestamp => {}
+                _ => Err(format!(
+                    "Unsupported operator {:?} on Bytes",
+                    &expression.operator
+                )),
+            },
+            ValueType::Bool => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    if let Expression::Atom(atom) = &cel_value {
+                        match atom {
+                            Atom::Bool(_) => Ok(cel_value),
+                            _ => Err(format!("Can't compare {cel_value:?} with Bool")),
+                        }
+                    } else {
+                        Err(format!("Can't compare {cel_value:?} with Bool"))
+                    }
+                }
+                _ => Err(format!(
+                    "Unsupported operator {:?} on Bool",
+                    &expression.operator
+                )),
+            },
+            ValueType::Timestamp => match expression.operator {
+                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
+                    if let Expression::Atom(atom) = &cel_value {
+                        match atom {
+                            Atom::String(_) => Ok(Expression::FunctionCall(
+                                Expression::Ident("timestamp".to_string().into()).into(),
+                                None,
+                                [cel_value].to_vec(),
+                            )),
+                            _ => Err(format!("Can't compare {cel_value:?} with Timestamp")),
+                        }
+                    } else {
+                        Err(format!("Can't compare {cel_value:?} with Bool"))
+                    }
+                }
+                _ => Err(format!(
+                    "Unsupported operator {:?} on Bytes",
+                    &expression.operator
+                )),
+            },
             _ => Err(format!(
                 "Still needs support for values of type `{cel_type}`"
             )),
