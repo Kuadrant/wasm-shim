@@ -267,7 +267,9 @@ impl TryFrom<&PatternExpression> for Expression {
             }
             // ValueType::Bool => {}
             // ValueType::Timestamp => {}
-            _ => todo!("Still needs support for values of type `{cel_type}`"),
+            _ => Err(format!(
+                "Still needs support for values of type `{cel_type}`"
+            )),
         }?;
 
         match expression.operator {
