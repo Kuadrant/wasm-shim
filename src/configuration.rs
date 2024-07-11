@@ -1,11 +1,13 @@
-use crate::policy_index::PolicyIndex;
+use std::cell::OnceCell;
+use std::fmt::{Display, Formatter};
+use std::sync::Arc;
+
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
 use serde::Deserialize;
-use std::cell::OnceCell;
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
+
+use crate::policy_index::PolicyIndex;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -27,8 +29,10 @@ pub struct SelectorItem {
 }
 
 impl SelectorItem {
-    pub fn compile(&self) -> Result<(), ()> {
-        self.path.set(self.selector.as_str().into()).map_err(|_| ())
+    pub fn compile(&self) -> Result<(), String> {
+        self.path
+            .set(self.selector.as_str().into())
+            .map_err(|p| format!("Err on {p:?}"))
     }
 
     pub fn path(&self) -> &Path {
@@ -103,7 +107,7 @@ pub enum DataType {
 }
 
 impl DataType {
-    pub fn compile(&self) -> Result<(), ()> {
+    pub fn compile(&self) -> Result<(), String> {
         match self {
             DataType::Static(_) => Ok(()),
             DataType::Selector(selector) => selector.compile(),
@@ -146,11 +150,13 @@ pub struct PatternExpression {
 }
 
 impl PatternExpression {
-    pub fn compile(&self) -> Result<(), ()> {
+    pub fn compile(&self) -> Result<(), String> {
         self.path
             .set(self.selector.as_str().into())
-            .map_err(|_| ())?;
-        self.compiled.set(self.try_into()?).map_err(|_| ())
+            .map_err(|_| "Duh!")?;
+        self.compiled
+            .set(self.try_into()?)
+            .map_err(|_| "Ooops".to_string())
     }
     pub fn path(&self) -> Vec<&str> {
         self.path
@@ -166,7 +172,7 @@ impl PatternExpression {
     }
 
     pub fn eval(&self, attribute_value: String) -> bool {
-        let cel_type = type_of(&self.selector);
+        let cel_type = type_of(&self.selector).unwrap();
         let value = match cel_type {
             ValueType::String => Value::String(attribute_value.into()),
             ValueType::Int | ValueType::UInt => Value::Int(attribute_value.parse::<i64>().unwrap()),
@@ -187,55 +193,78 @@ impl PatternExpression {
 }
 
 impl TryFrom<&PatternExpression> for Expression {
-    type Error = ();
+    type Error = String;
 
     fn try_from(expression: &PatternExpression) -> Result<Self, Self::Error> {
-        let cel_type = type_of(&expression.selector);
+        let cel_value = match cel_parser::parse(&expression.value) {
+            Ok(exp) => match exp {
+                Expression::Ident(ident) => Expression::Atom(Atom::String(ident)),
+                Expression::Member(_, _) => {
+                    Expression::Atom(Atom::String(expression.value.to_string().into()))
+                }
+                _ => exp,
+            },
+            Err(_) => Expression::Atom(Atom::String(expression.value.clone().into())),
+        };
+        let cel_type = type_of(&expression.selector).unwrap_or(match &cel_value {
+            Expression::List(_) => Ok(ValueType::List),
+            Expression::Map(_) => Ok(ValueType::Map),
+            Expression::Atom(atom) => Ok(match atom {
+                Atom::Int(_) => ValueType::Int,
+                Atom::UInt(_) => ValueType::UInt,
+                Atom::Float(_) => ValueType::Float,
+                Atom::String(_) => ValueType::String,
+                Atom::Bytes(_) => ValueType::Bytes,
+                Atom::Bool(_) => ValueType::Bool,
+                Atom::Null => ValueType::Null,
+            }),
+            _ => Err(format!("Unsupported CEL value: {cel_value:?}")),
+        }?);
 
         let value = match cel_type {
             ValueType::Map => match expression.operator {
                 WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
-                    match cel_parser::parse(&expression.value) {
-                        Ok(exp) => {
-                            if let Expression::Map(data) = exp {
-                                Ok(Expression::Map(data))
-                            } else {
-                                Err(())
-                            }
-                        }
-                        Err(_) => Err(()),
+                    if let Expression::Map(data) = cel_value {
+                        Ok(Expression::Map(data))
+                    } else {
+                        Err(format!("Can't compare {cel_value:?} with a Map"))
                     }
                 }
-                _ => Err(()),
+                _ => Err(format!(
+                    "Unsupported operator {:?} on Map",
+                    &expression.operator
+                )),
             },
             ValueType::Int | ValueType::UInt => match expression.operator {
                 WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => {
-                    match cel_parser::parse(&expression.value) {
-                        Ok(exp) => {
-                            if let Expression::Atom(atom) = &exp {
-                                match atom {
-                                    Atom::Int(_) | Atom::UInt(_) | Atom::Float(_) => Ok(exp),
-                                    _ => Err(()),
-                                }
-                            } else {
-                                Err(())
-                            }
+                    if let Expression::Atom(atom) = &cel_value {
+                        match atom {
+                            Atom::Int(_) | Atom::UInt(_) | Atom::Float(_) => Ok(cel_value),
+                            _ => Err(format!("Can't compare {cel_value:?} with a {atom:?}]")),
                         }
-                        Err(_) => Err(()),
+                    } else {
+                        Err(format!("Can't compare {cel_value:?} with a Number"))
                     }
                 }
-                _ => Err(()),
+                _ => Err(format!(
+                    "Unsupported operator {:?} on Map",
+                    &expression.operator
+                )),
             },
-            ValueType::String => match expression.operator {
-                WhenConditionOperator::Equal | WhenConditionOperator::NotEqual => Ok(
-                    Expression::Atom(Atom::String(Arc::new(expression.value.clone()))),
-                ),
-                // WhenConditionOperator::Matches => {}
-                _ => Ok(Expression::Atom(Atom::String(Arc::new(
-                    expression.value.clone(),
-                )))),
-            },
-            // ValueType::Bytes => {}
+            ValueType::String => Ok(Expression::Atom(Atom::String(Arc::new(
+                expression.value.clone(),
+            )))),
+            ValueType::Bytes => {
+                if let Expression::Atom(atom) = &cel_value {
+                    match atom {
+                        Atom::String(_str) => Ok(cel_value),
+                        Atom::Bytes(_bytes) => Ok(cel_value),
+                        _ => Err("BYTES!".to_string()),
+                    }
+                } else {
+                    Err("BYTES TOO!".to_string())
+                }
+            }
             // ValueType::Bool => {}
             // ValueType::Timestamp => {}
             _ => todo!("Still needs support for values of type `{cel_type}`"),
@@ -271,53 +300,53 @@ impl TryFrom<&PatternExpression> for Expression {
     }
 }
 
-pub fn type_of(path: &str) -> ValueType {
+pub fn type_of(path: &str) -> Option<ValueType> {
     match path {
-        "request.time" => ValueType::Timestamp,
-        "request.id" => ValueType::String,
-        "request.protocol" => ValueType::String,
-        "request.scheme" => ValueType::String,
-        "request.host" => ValueType::String,
-        "request.method" => ValueType::String,
-        "request.path" => ValueType::String,
-        "request.url_path" => ValueType::String,
-        "request.query" => ValueType::String,
-        "request.referer" => ValueType::String,
-        "request.useragent" => ValueType::String,
-        "request.body" => ValueType::String,
-        "source.address" => ValueType::String,
-        "source.service" => ValueType::String,
-        "source.principal" => ValueType::String,
-        "source.certificate" => ValueType::String,
-        "destination.address" => ValueType::String,
-        "destination.service" => ValueType::String,
-        "destination.principal" => ValueType::String,
-        "destination.certificate" => ValueType::String,
-        "connection.requested_server_name" => ValueType::String,
-        "connection.tls_session.sni" => ValueType::String,
-        "connection.tls_version" => ValueType::String,
-        "connection.subject_local_certificate" => ValueType::String,
-        "connection.subject_peer_certificate" => ValueType::String,
-        "connection.dns_san_local_certificate" => ValueType::String,
-        "connection.dns_san_peer_certificate" => ValueType::String,
-        "connection.uri_san_local_certificate" => ValueType::String,
-        "connection.uri_san_peer_certificate" => ValueType::String,
-        "connection.sha256_peer_certificate_digest" => ValueType::String,
-        "ratelimit.domain" => ValueType::String,
-        "request.size" => ValueType::Int,
-        "source.port" => ValueType::Int,
-        "destination.port" => ValueType::Int,
-        "connection.id" => ValueType::Int,
-        "ratelimit.hits_addend" => ValueType::Int,
-        "request.headers" => ValueType::Map,
-        "request.context_extensions" => ValueType::Map,
-        "source.labels" => ValueType::Map,
-        "destination.labels" => ValueType::Map,
-        "filter_state" => ValueType::Map,
-        "connection.mtls" => ValueType::Bool,
-        "request.raw_body" => ValueType::Bytes,
-        "auth.identity" => ValueType::Bytes,
-        _ => ValueType::Bytes,
+        "request.time" => Some(ValueType::Timestamp),
+        "request.id" => Some(ValueType::String),
+        "request.protocol" => Some(ValueType::String),
+        "request.scheme" => Some(ValueType::String),
+        "request.host" => Some(ValueType::String),
+        "request.method" => Some(ValueType::String),
+        "request.path" => Some(ValueType::String),
+        "request.url_path" => Some(ValueType::String),
+        "request.query" => Some(ValueType::String),
+        "request.referer" => Some(ValueType::String),
+        "request.useragent" => Some(ValueType::String),
+        "request.body" => Some(ValueType::String),
+        "source.address" => Some(ValueType::String),
+        "source.service" => Some(ValueType::String),
+        "source.principal" => Some(ValueType::String),
+        "source.certificate" => Some(ValueType::String),
+        "destination.address" => Some(ValueType::String),
+        "destination.service" => Some(ValueType::String),
+        "destination.principal" => Some(ValueType::String),
+        "destination.certificate" => Some(ValueType::String),
+        "connection.requested_server_name" => Some(ValueType::String),
+        "connection.tls_session.sni" => Some(ValueType::String),
+        "connection.tls_version" => Some(ValueType::String),
+        "connection.subject_local_certificate" => Some(ValueType::String),
+        "connection.subject_peer_certificate" => Some(ValueType::String),
+        "connection.dns_san_local_certificate" => Some(ValueType::String),
+        "connection.dns_san_peer_certificate" => Some(ValueType::String),
+        "connection.uri_san_local_certificate" => Some(ValueType::String),
+        "connection.uri_san_peer_certificate" => Some(ValueType::String),
+        "connection.sha256_peer_certificate_digest" => Some(ValueType::String),
+        "ratelimit.domain" => Some(ValueType::String),
+        "request.size" => Some(ValueType::Int),
+        "source.port" => Some(ValueType::Int),
+        "destination.port" => Some(ValueType::Int),
+        "connection.id" => Some(ValueType::Int),
+        "ratelimit.hits_addend" => Some(ValueType::Int),
+        "request.headers" => Some(ValueType::Map),
+        "request.context_extensions" => Some(ValueType::Map),
+        "source.labels" => Some(ValueType::Map),
+        "destination.labels" => Some(ValueType::Map),
+        "filter_state" => Some(ValueType::Map),
+        "connection.mtls" => Some(ValueType::Bool),
+        "request.raw_body" => Some(ValueType::Bytes),
+        "auth.identity" => Some(ValueType::Bytes),
+        _ => None,
     }
 }
 
@@ -381,7 +410,7 @@ impl Default for FilterConfig {
 }
 
 impl TryFrom<PluginConfiguration> for FilterConfig {
-    type Error = ();
+    type Error = String;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = PolicyIndex::new();
@@ -389,14 +418,16 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
         for rlp in config.rate_limit_policies.iter() {
             for rule in &rlp.rules {
                 for datum in &rule.data {
-                    if datum.item.compile().is_err() {
-                        return Err(());
+                    let result = datum.item.compile();
+                    if result.is_err() {
+                        return Err(result.err().unwrap());
                     }
                 }
                 for condition in &rule.conditions {
                     for pe in &condition.all_of {
-                        if pe.compile().is_err() {
-                            return Err(());
+                        let result = pe.compile();
+                        if result.is_err() {
+                            return Err(result.err().unwrap());
                         }
                     }
                 }
@@ -804,7 +835,8 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = FilterConfig::try_from(res.unwrap()).expect("That didn't work");
+        let result = FilterConfig::try_from(res.unwrap());
+        let filter_config = result.expect("That didn't work");
         let rlp_option = filter_config.index.get_longest_match_policy("example.com");
         assert!(rlp_option.is_some());
 
