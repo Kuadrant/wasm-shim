@@ -140,8 +140,8 @@ impl Filter {
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
         let attribute_path = p_e.path();
-        let attribute_value = match self.get_property(attribute_path)
-        {    None => {
+        let attribute_value = match self.get_property(attribute_path) {
+            None => {
                 debug!(
                     "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
                     self.context_id, p_e.selector
