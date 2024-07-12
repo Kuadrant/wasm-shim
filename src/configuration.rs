@@ -214,7 +214,7 @@ impl PatternExpression {
             _ => unimplemented!("Need support for {}", cel_type),
         };
         let mut ctx = Context::default();
-        ctx.add_variable("attribute", value).unwrap();
+        ctx.add_variable_from_value("attribute", value);
         Value::resolve(&self.compiled.get().unwrap().expression, &ctx)
             .map(|v| {
                 if let Value::Bool(result) = v {
@@ -1002,7 +1002,6 @@ mod test {
 
     mod pattern_expressions {
         use crate::configuration::{PatternExpression, WhenConditionOperator};
-        use chrono::{DateTime, FixedOffset};
 
         #[test]
         fn test_legacy_string() {
@@ -1149,8 +1148,6 @@ mod test {
         }
 
         #[test]
-        #[ignore]
-        // Unsure about this: https://github.com/clarkmcc/cel-rust/issues/67
         fn test_timestamp() {
             let p = PatternExpression {
                 selector: "request.time".to_string(),
@@ -1160,12 +1157,8 @@ mod test {
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
-            let ts: DateTime<FixedOffset> =
-                DateTime::parse_from_rfc3339("2023-05-28T00:00:00+00:00").unwrap();
-            let ts_nanos = ts.timestamp_nanos_opt().unwrap();
-            println!("{}", ts_nanos);
             assert_eq!(
-                p.eval(ts_nanos.to_le_bytes().to_vec()),
+                p.eval(1685232000000000000_i64.to_le_bytes().to_vec()),
                 Ok(true),
                 "Expression: {:?}",
                 p.compiled.get()
