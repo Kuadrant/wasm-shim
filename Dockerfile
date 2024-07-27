@@ -7,7 +7,7 @@ FROM alpine:3.16 as wasm-shim-build
 ARG GITHUB_SHA
 ENV GITHUB_SHA=${GITHUB_SHA:-unknown}
 
-ARG RUSTC_VERSION=1.69.0
+ARG RUSTC_VERSION=1.80.0
 RUN apk update \
     && apk upgrade \
     && apk add build-base binutils-gold openssl3-dev protoc curl \
