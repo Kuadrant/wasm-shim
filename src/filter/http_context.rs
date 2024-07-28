@@ -146,7 +146,7 @@ impl Filter {
                     "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
                     self.context_id, p_e.selector
                 );
-                "".to_string().as_bytes().to_vec()
+                b"".to_vec()
             }
             Some(attribute_bytes) => attribute_bytes,
         };
