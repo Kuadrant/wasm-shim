@@ -1,5 +1,5 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
-use crate::filter::http_context::Filter;
+use crate::filter::http_context::HttpRateLimitFilter;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -36,11 +36,11 @@ impl RootContext for FilterRoot {
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         debug!("#{} create_http_context", context_id);
-        Some(Box::new(Filter {
+        Some(Box::new(HttpRateLimitFilter {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
-            tracing_headers: Vec::default(),
+            await_id: None,
         }))
     }
 
