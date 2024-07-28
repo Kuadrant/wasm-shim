@@ -194,7 +194,7 @@ impl PatternExpression {
             ValueType::Bytes => Value::Bytes(raw_attribute.into()),
             ValueType::Bool => {
                 if raw_attribute.len() != 1 {
-                    return Err(format!("Bool value expected to be 8 bytes, but got {}", raw_attribute.len()));
+                    return Err(format!("Bool value expected to be 1 byte, but got {}", raw_attribute.len()));
                 }
                 Value::Bool(raw_attribute[0] & 1 == 1)
             }
