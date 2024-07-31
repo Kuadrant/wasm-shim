@@ -1,5 +1,7 @@
 mod http_context;
 mod root_context;
+#[cfg(feature = "auth")]
+mod auth_filter;
 
 #[cfg_attr(
     all(
