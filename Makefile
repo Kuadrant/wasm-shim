@@ -60,8 +60,13 @@ $(WASM_RELEASE_PATH): export BUILD = release
 $(WASM_RELEASE_PATH): $(RUST_SOURCES)
 	make -C $(PROJECT_PATH) -f $(MKFILE_PATH) build
 
-development: $(WASM_RELEASE_PATH)
-	docker compose up
+ratelimit-development: $(WASM_RELEASE_PATH)
+	cp utils/docker-compose/envoy-ratelimit.yaml utils/docker-compose/envoy.yaml
+	docker compose up envoy limitador
+
+auth-development: $(WASM_RELEASE_PATH)
+	cp utils/docker-compose/envoy-auth.yaml utils/docker-compose/envoy.yaml
+	docker compose up envoy
 
 stop-development:
 	docker compose down
