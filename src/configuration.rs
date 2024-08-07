@@ -485,7 +485,7 @@ pub struct Rule {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct RateLimitPolicy {
+pub struct Policy {
     pub name: String,
     pub domain: String,
     pub service: String,
@@ -493,7 +493,7 @@ pub struct RateLimitPolicy {
     pub rules: Vec<Rule>,
 }
 
-impl RateLimitPolicy {
+impl Policy {
     #[cfg(test)]
     pub fn new(
         name: String,
@@ -502,7 +502,7 @@ impl RateLimitPolicy {
         hostnames: Vec<String>,
         rules: Vec<Rule>,
     ) -> Self {
-        RateLimitPolicy {
+        Policy {
             name,
             domain,
             service,
@@ -533,7 +533,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = PolicyIndex::new();
 
-        for rlp in config.rate_limit_policies.iter() {
+        for rlp in config.policies.iter() {
             for rule in &rlp.rules {
                 for datum in &rule.data {
                     let result = datum.item.compile();
@@ -572,7 +572,8 @@ pub enum FailureMode {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    pub rate_limit_policies: Vec<RateLimitPolicy>,
+    #[serde(rename = "rateLimitPolicies")]
+    pub policies: Vec<Policy>,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
 }
@@ -635,9 +636,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+        assert_eq!(filter_config.policies.len(), 1);
 
-        let rules = &filter_config.rate_limit_policies[0].rules;
+        let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
@@ -689,7 +690,7 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.rate_limit_policies.len(), 0);
+        assert_eq!(filter_config.policies.len(), 0);
     }
 
     #[test]
@@ -722,9 +723,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+        assert_eq!(filter_config.policies.len(), 1);
 
-        let rules = &filter_config.rate_limit_policies[0].rules;
+        let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
         let data_items = &rules[0].data;
@@ -794,9 +795,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+        assert_eq!(filter_config.policies.len(), 1);
 
-        let rules = &filter_config.rate_limit_policies[0].rules;
+        let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
@@ -855,9 +856,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.rate_limit_policies.len(), 1);
+        assert_eq!(filter_config.policies.len(), 1);
 
-        let rules = &filter_config.rate_limit_policies[0].rules;
+        let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
