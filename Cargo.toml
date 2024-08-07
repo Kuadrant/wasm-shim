@@ -31,6 +31,9 @@ thiserror = "1.0"
 regex = "1"
 radix_trie = "0.2.1"
 const_format = "0.2.31"
+chrono = { version = "0.4.38", default-features = false, features = ["alloc", "std"] }
+cel-interpreter = "0.8.1"
+cel-parser = "0.7.1"
 
 [dev-dependencies]
 proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }

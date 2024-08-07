@@ -1,7 +1,7 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
 use crate::filter::http_context::Filter;
 use const_format::formatcp;
-use log::{debug, info, warn};
+use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
@@ -53,10 +53,18 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
-                self.config = Rc::new(FilterConfig::from(config));
+                let filter_config =
+                    match <PluginConfiguration as TryInto<FilterConfig>>::try_into(config) {
+                        Ok(cfg) => cfg,
+                        Err(err) => {
+                            error!("failed to compile plugin config: {}", err);
+                            return false;
+                        }
+                    };
+                self.config = Rc::new(filter_config);
             }
             Err(e) => {
-                warn!("failed to parse plugin config: {}", e);
+                error!("failed to parse plugin config: {}", e);
                 return false;
             }
         }

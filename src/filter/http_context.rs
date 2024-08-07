@@ -7,7 +7,6 @@ use crate::envoy::{
     RateLimitResponse_Code,
 };
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
-use crate::utils::tokenize_with_escaping;
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -140,34 +139,27 @@ impl Filter {
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
-        // convert a Vec<String> to Vec<&str>
-        // attribute_path.iter().map(AsRef::as_ref).collect()
-        let attribute_value = match self
-            .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-        {
+        let attribute_path = p_e.path();
+        let attribute_value = match self.get_property(attribute_path) {
             None => {
                 debug!(
-                    "#{} pattern_expression_applies: selector not found: {}, defaulting to ``",
+                    "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
                     self.context_id, p_e.selector
                 );
-                "".to_string()
+                b"".to_vec()
             }
-            // TODO(eastizle): not all fields are strings
-            // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-            Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                Err(e) => {
-                    debug!(
-                            "#{} pattern_expression_applies: failed to parse selector value: {}, error: {}",
-                            self.context_id, p_e.selector, e
-                        );
-                    return false;
-                }
-                Ok(attribute_value) => attribute_value,
-            },
+            Some(attribute_bytes) => attribute_bytes,
         };
-        p_e.operator
-            .eval(p_e.value.as_str(), attribute_value.as_str())
+        match p_e.eval(attribute_value) {
+            Err(e) => {
+                debug!(
+                    "#{} pattern_expression_applies failed: {}",
+                    self.context_id, e
+                );
+                false
+            }
+            Ok(result) => result,
+        }
     }
 
     fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
@@ -184,20 +176,16 @@ impl Filter {
                 }
                 DataType::Selector(selector_item) => {
                     let descriptor_key = match &selector_item.key {
-                        None => selector_item.selector.to_owned(),
+                        None => selector_item.path().to_string(),
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
-                    // convert a Vec<String> to Vec<&str>
-                    // attribute_path.iter().map(AsRef::as_ref).collect()
-                    let value = match self
-                        .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-                    {
+                    let attribute_path = selector_item.path();
+                    let value = match self.get_property(attribute_path.tokens()) {
                         None => {
                             debug!(
                                 "#{} build_single_descriptor: selector not found: {}",
-                                self.context_id, selector_item.selector
+                                self.context_id, attribute_path
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -210,7 +198,7 @@ impl Filter {
                             Err(e) => {
                                 debug!(
                                     "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    self.context_id, selector_item.selector, e
+                                    self.context_id, attribute_path, e
                                 );
                                 return None;
                             }
