@@ -1,4 +1,4 @@
-mod http_context;
+pub(crate) mod http_context;
 mod root_context;
 
 #[cfg_attr(

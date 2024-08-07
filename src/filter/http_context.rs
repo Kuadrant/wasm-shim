@@ -1,13 +1,6 @@
-use crate::configuration::{
-    Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, Policy,
-    Rule,
-};
-use crate::envoy::{
-    RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest, RateLimitResponse,
-    RateLimitResponse_Code,
-};
+use crate::configuration::{FailureMode, FilterConfig, Policy};
+use crate::envoy::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code};
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
-use crate::utils::tokenize_with_escaping;
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -61,7 +54,7 @@ impl Filter {
     }
 
     fn process_rate_limit_policy(&self, rlp: &Policy) -> Action {
-        let descriptors = self.build_descriptors(rlp);
+        let descriptors = rlp.build_descriptors(self);
         if descriptors.is_empty() {
             debug!(
                 "#{} process_rate_limit_policy: empty descriptors",
@@ -106,128 +99,6 @@ impl Filter {
                 Action::Continue
             }
         }
-    }
-
-    fn build_descriptors(
-        &self,
-        rlp: &Policy,
-    ) -> protobuf::RepeatedField<RateLimitDescriptor> {
-        rlp.rules
-            .iter()
-            .filter(|rule: &&Rule| self.filter_rule_by_conditions(&rule.conditions))
-            // Mapping 1 Rule -> 1 Descriptor
-            // Filter out empty descriptors
-            .filter_map(|rule| self.build_single_descriptor(&rule.data))
-            .collect()
-    }
-
-    fn filter_rule_by_conditions(&self, conditions: &[Condition]) -> bool {
-        if conditions.is_empty() {
-            // no conditions is equivalent to matching all the requests.
-            return true;
-        }
-
-        conditions
-            .iter()
-            .any(|condition| self.condition_applies(condition))
-    }
-
-    fn condition_applies(&self, condition: &Condition) -> bool {
-        condition
-            .all_of
-            .iter()
-            .all(|pattern_expression| self.pattern_expression_applies(pattern_expression))
-    }
-
-    fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_path = tokenize_with_escaping(&p_e.selector, '.', '\\');
-        // convert a Vec<String> to Vec<&str>
-        // attribute_path.iter().map(AsRef::as_ref).collect()
-        let attribute_value = match self
-            .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-        {
-            None => {
-                debug!(
-                    "#{} pattern_expression_applies: selector not found: {}, defaulting to ``",
-                    self.context_id, p_e.selector
-                );
-                "".to_string()
-            }
-            // TODO(eastizle): not all fields are strings
-            // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-            Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                Err(e) => {
-                    debug!(
-                            "#{} pattern_expression_applies: failed to parse selector value: {}, error: {}",
-                            self.context_id, p_e.selector, e
-                        );
-                    return false;
-                }
-                Ok(attribute_value) => attribute_value,
-            },
-        };
-        p_e.operator
-            .eval(p_e.value.as_str(), attribute_value.as_str())
-    }
-
-    fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
-        let mut entries = ::protobuf::RepeatedField::default();
-
-        // iterate over data items to allow any data item to skip the entire descriptor
-        for data in data_list.iter() {
-            match &data.item {
-                DataType::Static(static_item) => {
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(static_item.key.to_owned());
-                    descriptor_entry.set_value(static_item.value.to_owned());
-                    entries.push(descriptor_entry);
-                }
-                DataType::Selector(selector_item) => {
-                    let descriptor_key = match &selector_item.key {
-                        None => selector_item.selector.to_owned(),
-                        Some(key) => key.to_owned(),
-                    };
-
-                    let attribute_path = tokenize_with_escaping(&selector_item.selector, '.', '\\');
-                    // convert a Vec<String> to Vec<&str>
-                    // attribute_path.iter().map(AsRef::as_ref).collect()
-                    let value = match self
-                        .get_property(attribute_path.iter().map(AsRef::as_ref).collect())
-                    {
-                        None => {
-                            debug!(
-                                "#{} build_single_descriptor: selector not found: {}",
-                                self.context_id, selector_item.selector
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                            Err(e) => {
-                                debug!(
-                                    "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    self.context_id, selector_item.selector, e
-                                );
-                                return None;
-                            }
-                            Ok(attribute_value) => attribute_value,
-                        },
-                    };
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(descriptor_key);
-                    descriptor_entry.set_value(value);
-                    entries.push(descriptor_entry);
-                }
-            }
-        }
-
-        let mut res = RateLimitDescriptor::new();
-        res.set_entries(entries);
-        Some(res)
     }
 
     fn handle_error_on_grpc_response(&self) {
