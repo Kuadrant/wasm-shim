@@ -101,7 +101,7 @@ pub struct Rule {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct RateLimitPolicy {
+pub struct Policy {
     pub name: String,
     pub domain: String,
     pub service: String,
@@ -109,7 +109,7 @@ pub struct RateLimitPolicy {
     pub rules: Vec<Rule>,
 }
 
-impl RateLimitPolicy {
+impl Policy {
     #[cfg(test)]
     pub fn new(
         name: String,
@@ -118,7 +118,7 @@ impl RateLimitPolicy {
         hostnames: Vec<String>,
         rules: Vec<Rule>,
     ) -> Self {
-        RateLimitPolicy {
+        Policy {
             name,
             domain,
             service,
@@ -168,7 +168,7 @@ pub enum FailureMode {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    pub rate_limit_policies: Vec<RateLimitPolicy>,
+    pub rate_limit_policies: Vec<Policy>,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
 }

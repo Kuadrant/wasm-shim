@@ -1,5 +1,5 @@
 use crate::configuration::{
-    Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, RateLimitPolicy,
+    Condition, DataItem, DataType, FailureMode, FilterConfig, PatternExpression, Policy,
     Rule,
 };
 use crate::envoy::{
@@ -60,7 +60,7 @@ impl Filter {
         }
     }
 
-    fn process_rate_limit_policy(&self, rlp: &RateLimitPolicy) -> Action {
+    fn process_rate_limit_policy(&self, rlp: &Policy) -> Action {
         let descriptors = self.build_descriptors(rlp);
         if descriptors.is_empty() {
             debug!(
@@ -110,7 +110,7 @@ impl Filter {
 
     fn build_descriptors(
         &self,
-        rlp: &RateLimitPolicy,
+        rlp: &Policy,
     ) -> protobuf::RepeatedField<RateLimitDescriptor> {
         rlp.rules
             .iter()
