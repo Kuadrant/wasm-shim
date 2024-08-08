@@ -1,6 +1,6 @@
 use radix_trie::Trie;
 
-use crate::configuration::Policy;
+use crate::policy::Policy;
 
 pub struct PolicyIndex {
     raw_tree: Trie<String, Policy>,
@@ -37,7 +37,7 @@ impl PolicyIndex {
 
 #[cfg(test)]
 mod tests {
-    use crate::configuration::Policy;
+    use crate::policy::Policy;
     use crate::policy_index::PolicyIndex;
 
     fn build_ratelimit_policy(name: &str) -> Policy {

@@ -1,3 +1,4 @@
+use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
@@ -465,50 +466,6 @@ pub fn type_of(path: &str) -> Option<ValueType> {
         "request.raw_body" => Some(ValueType::Bytes),
         "auth.identity" => Some(ValueType::Bytes),
         _ => None,
-    }
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Condition {
-    pub all_of: Vec<PatternExpression>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct Rule {
-    //
-    #[serde(default)]
-    pub conditions: Vec<Condition>,
-    //
-    pub data: Vec<DataItem>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Policy {
-    pub name: String,
-    pub domain: String,
-    pub service: String,
-    pub hostnames: Vec<String>,
-    pub rules: Vec<Rule>,
-}
-
-impl Policy {
-    #[cfg(test)]
-    pub fn new(
-        name: String,
-        domain: String,
-        service: String,
-        hostnames: Vec<String>,
-        rules: Vec<Rule>,
-    ) -> Self {
-        Policy {
-            name,
-            domain,
-            service,
-            hostnames,
-            rules,
-        }
     }
 }
 
