@@ -1,9 +1,9 @@
 use radix_trie::Trie;
 
-use crate::configuration::RateLimitPolicy;
+use crate::policy::Policy;
 
 pub struct PolicyIndex {
-    raw_tree: Trie<String, RateLimitPolicy>,
+    raw_tree: Trie<String, Policy>,
 }
 
 impl PolicyIndex {
@@ -13,12 +13,12 @@ impl PolicyIndex {
         }
     }
 
-    pub fn insert(&mut self, subdomain: &str, policy: RateLimitPolicy) {
+    pub fn insert(&mut self, subdomain: &str, policy: Policy) {
         let rev = Self::reverse_subdomain(subdomain);
         self.raw_tree.insert(rev, policy);
     }
 
-    pub fn get_longest_match_policy(&self, subdomain: &str) -> Option<&RateLimitPolicy> {
+    pub fn get_longest_match_policy(&self, subdomain: &str) -> Option<&Policy> {
         let rev = Self::reverse_subdomain(subdomain);
         self.raw_tree.get_ancestor_value(&rev)
     }
@@ -37,11 +37,11 @@ impl PolicyIndex {
 
 #[cfg(test)]
 mod tests {
-    use crate::configuration::RateLimitPolicy;
+    use crate::policy::Policy;
     use crate::policy_index::PolicyIndex;
 
-    fn build_ratelimit_policy(name: &str) -> RateLimitPolicy {
-        RateLimitPolicy::new(
+    fn build_ratelimit_policy(name: &str) -> Policy {
+        Policy::new(
             name.to_owned(),
             "".to_owned(),
             "".to_owned(),
