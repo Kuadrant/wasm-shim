@@ -1,0 +1,57 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: limitador
+  name: limitador
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: limitador
+  template:
+    metadata:
+      labels:
+        app: limitador
+    spec:
+      containers:
+        - args:
+            - -vvv
+            - /opt/kuadrant/limits/limits.yaml
+          command:
+            - limitador-server
+          image: quay.io/kuadrant/limitador:latest
+          name: limitador
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: grpc
+          volumeMounts:
+            - mountPath: /opt/kuadrant/limits
+              name: limits
+      volumes:
+        - configMap:
+            items:
+              - key: limits.yaml
+                path: limits.yaml
+            name: limits
+          name: limits
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: limitador
+  name: limitador
+spec:
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+    - name: grpc
+      port: 8081
+      protocol: TCP
+  selector:
+    app: limitador
