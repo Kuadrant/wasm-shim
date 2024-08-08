@@ -74,9 +74,15 @@ deploy-limitador:
 
 .PHONY: user-apps
 
+
+ifeq (true,$(TLS_ENABLED))
+ENVOY_OVERLAY = tls
+else
+ENVOY_OVERLAY = notls
+endif
 user-apps: ## Deploys talker API and envoy
 	kubectl -n $(NAMESPACE) apply -f https://raw.githubusercontent.com/kuadrant/authorino-examples/main/talker-api/talker-api-deploy.yaml
-	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/envoy-tls.yaml
+	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/envoy-$(ENVOY_OVERLAY).yaml
 
 
 ##@ Util
