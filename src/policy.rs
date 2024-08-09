@@ -1,3 +1,4 @@
+use crate::attribute::get_attribute;
 use crate::configuration::{DataItem, DataType, PatternExpression};
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::filter::http_context::Filter;
@@ -125,31 +126,7 @@ impl Policy {
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = selector_item.path();
-                    let value = match filter.get_property(attribute_path.tokens()) {
-                        None => {
-                            debug!(
-                                "#{} build_single_descriptor: selector not found: {}",
-                                filter.context_id, attribute_path
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                            Err(e) => {
-                                debug!(
-                                    "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    filter.context_id, attribute_path, e
-                                );
-                                return None;
-                            }
-                            Ok(attribute_value) => attribute_value,
-                        },
-                    };
+                    let value = get_attribute(filter, selector_item.selector.as_str()).ok()?;
                     let mut descriptor_entry = RateLimitDescriptor_Entry::new();
                     descriptor_entry.set_key(descriptor_key);
                     descriptor_entry.set_value(value);
