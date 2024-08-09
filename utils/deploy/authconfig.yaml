@@ -1,0 +1,28 @@
+---
+apiVersion: authorino.kuadrant.io/v1beta2
+kind: AuthConfig
+metadata:
+  name: talker-api-protection
+spec:
+  hosts:
+    - talker-api.127.0.0.1.nip.io
+  authentication:
+    "friends":
+      apiKey:
+        selector:
+          matchLabels:
+            group: friends
+      credentials:
+        authorizationHeader:
+          prefix: APIKEY
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-key-1
+  labels:
+    authorino.kuadrant.io/managed-by: authorino
+    group: friends
+stringData:
+  api_key: "ndyBzreUzF4zqDQsqSPMHkRhriEOtcRx"
+type: Opaque

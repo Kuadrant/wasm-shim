@@ -83,6 +83,7 @@ endif
 user-apps: ## Deploys talker API and envoy
 	kubectl -n $(NAMESPACE) apply -f https://raw.githubusercontent.com/kuadrant/authorino-examples/main/talker-api/talker-api-deploy.yaml
 	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/envoy-$(ENVOY_OVERLAY).yaml
+	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/authconfig.yaml
 
 
 ##@ Util
