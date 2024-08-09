@@ -141,16 +141,16 @@ data:
                                       "name": "rlp-ns-A/rlp-name-A",
                                       "domain": "rlp-ns-A/rlp-name-A",
                                       "service": "authorino_wasm",
-                                      "hostnames": ["*.a.com"],
+                                      "hostnames": ["talker-api.127.0.0.1.nip.io"],
                                       "rules": [
                                         {
                                           "conditions": [
                                             {
                                               "allOf": [
                                                 {
-                                                  "selector": "request.host",
+                                                  "selector": "request.path",
                                                   "operator": "eq",
-                                                  "value": "test.a.com"
+                                                  "value": "/hello"
                                                 }
                                               ]
                                             }
