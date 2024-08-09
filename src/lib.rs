@@ -1,3 +1,4 @@
+mod attribute;
 mod configuration;
 mod envoy;
 mod filter;
