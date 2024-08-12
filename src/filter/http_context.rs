@@ -1,16 +1,14 @@
 use crate::configuration::{FailureMode, FilterConfig};
-use crate::envoy::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code};
+use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::policy::Policy;
+use crate::service::rate_limit::RateLimitService;
+use crate::service::Service;
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
-use std::time::Duration;
-
-const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
-const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
 // tracing headers
 pub enum TracingHeader {
@@ -63,28 +61,16 @@ impl Filter {
             );
             return Action::Continue;
         }
-
-        let mut rl_req = RateLimitRequest::new();
-        rl_req.set_domain(rlp.domain.clone());
-        rl_req.set_hits_addend(1);
-        rl_req.set_descriptors(descriptors);
-
-        let rl_req_serialized = Message::write_to_bytes(&rl_req).unwrap(); // TODO(rahulanand16nov): Error Handling
-
         let rl_tracing_headers = self
             .tracing_headers
             .iter()
             .map(|(header, value)| (header.as_str(), value.as_slice()))
             .collect();
 
-        match self.dispatch_grpc_call(
-            rlp.service.as_str(),
-            RATELIMIT_SERVICE_NAME,
-            RATELIMIT_METHOD_NAME,
-            rl_tracing_headers,
-            Some(&rl_req_serialized),
-            Duration::from_secs(5),
-        ) {
+        let rls = RateLimitService::new(rlp.service.as_str(), rl_tracing_headers);
+        let message = RateLimitService::message(rlp.domain.clone(), descriptors);
+
+        match rls.send(message) {
             Ok(call_id) => {
                 debug!(
                     "#{} initiated gRPC call (id# {}) to Limitador",
