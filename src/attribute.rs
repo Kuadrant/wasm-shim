@@ -24,7 +24,7 @@ impl Attribute for i64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
-                "Int value expected to be 8 bytes, but got {}",
+                "parse: Int value expected to be 8 bytes, but got {}",
                 raw_attribute.len()
             ));
         }
@@ -40,7 +40,7 @@ impl Attribute for u64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
-                "UInt value expected to be 8 bytes, but got {}",
+                "parse: UInt value expected to be 8 bytes, but got {}",
                 raw_attribute.len()
             ));
         }
@@ -56,7 +56,7 @@ impl Attribute for f64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
-                "Float value expected to be 8 bytes, but got {}",
+                "parse: Float value expected to be 8 bytes, but got {}",
                 raw_attribute.len()
             ));
         }
@@ -78,7 +78,7 @@ impl Attribute for bool {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 1 {
             return Err(format!(
-                "Bool value expected to be 1 byte, but got {}",
+                "parse: Bool value expected to be 1 byte, but got {}",
                 raw_attribute.len()
             ));
         }
