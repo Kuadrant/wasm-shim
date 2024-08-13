@@ -1,13 +1,15 @@
-use crate::policy::Policy;
-use crate::policy_index::PolicyIndex;
-use cel_interpreter::objects::ValueType;
-use cel_interpreter::{Context, Expression, Value};
-use cel_parser::{Atom, RelationOp};
-use chrono::{DateTime, FixedOffset};
-use serde::Deserialize;
 use std::cell::OnceCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
+
+use cel_interpreter::objects::ValueType;
+use cel_interpreter::{Context, Expression, Value};
+use cel_parser::{Atom, RelationOp};
+use serde::Deserialize;
+
+use crate::attribute::Attribute;
+use crate::policy::Policy;
+use crate::policy_index::PolicyIndex;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -168,47 +170,13 @@ impl PatternExpression {
     pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
         let cel_type = &self.compiled.get().unwrap().cel_type;
         let value = match cel_type {
-            ValueType::String =>
-                Value::String(String::from_utf8(raw_attribute).map_err(|err| format!(
-                    "pattern_expression_applies:  failed to parse selector String value: {}, error: {}",
-                    self.selector, err))?.into()),
-            ValueType::Int => {
-                if raw_attribute.len() != 8 {
-                    return Err(format!("Int value expected to be 8 bytes, but got {}", raw_attribute.len()));
-                }
-                Value::Int(i64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!")))
-            },
-            ValueType::UInt => {
-                {
-                    if raw_attribute.len() != 8 {
-                        return Err(format!("UInt value expected to be 8 bytes, but got {}", raw_attribute.len()));
-                    }
-                    Value::UInt(u64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!")))
-                }
-            },
-            ValueType::Float => {
-                if raw_attribute.len() != 8 {
-                    return Err(format!("Float value expected to be 8 bytes, but got {}", raw_attribute.len()));
-                }
-                Value::Float(f64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!")))
-            },
-            ValueType::Bytes => Value::Bytes(raw_attribute.into()),
-            ValueType::Bool => {
-                if raw_attribute.len() != 1 {
-                    return Err(format!("Bool value expected to be 1 byte, but got {}", raw_attribute.len()));
-                }
-                Value::Bool(raw_attribute[0] & 1 == 1)
-            }
-            ValueType::Timestamp => {
-                {
-                    if raw_attribute.len() != 8 {
-                        return Err(format!("Timestamp expected to be 8 bytes, but got {}", raw_attribute.len()));
-                    }
-                    let nanos = i64::from_le_bytes(raw_attribute[..8].try_into().expect("This has to be 8 bytes long!"));
-                    let time: DateTime<FixedOffset> = DateTime::from_timestamp_nanos(nanos).into();
-                    Value::Timestamp(time)
-                }
-            }
+            ValueType::String => Value::String(Arc::new(Attribute::parse(raw_attribute)?)),
+            ValueType::Int => Value::Int(Attribute::parse(raw_attribute)?),
+            ValueType::UInt => Value::UInt(Attribute::parse(raw_attribute)?),
+            ValueType::Float => Value::Float(Attribute::parse(raw_attribute)?),
+            ValueType::Bytes => Value::Bytes(Arc::new(Attribute::parse(raw_attribute)?)),
+            ValueType::Bool => Value::Bool(Attribute::parse(raw_attribute)?),
+            ValueType::Timestamp => Value::Timestamp(Attribute::parse(raw_attribute)?),
             // todo: Impl support for parsing these two types… Tho List/Map of what?
             // ValueType::List => {}
             // ValueType::Map => {}

@@ -1,3 +1,4 @@
+use crate::attribute::Attribute;
 use crate::configuration::{DataItem, DataType, PatternExpression};
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::filter::http_context::Filter;
@@ -139,16 +140,10 @@ impl Policy {
                         }
                         // TODO(eastizle): not all fields are strings
                         // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match String::from_utf8(attribute_bytes) {
-                            Err(e) => {
-                                debug!(
-                                    "#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    filter.context_id, attribute_path, e
-                                );
-                                return None;
-                            }
-                            Ok(attribute_value) => attribute_value,
-                        },
+                        Some(attribute_bytes) => Attribute::parse(attribute_bytes)
+                            .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    filter.context_id, attribute_path, e))
+                            .ok()?,
                     };
                     let mut descriptor_entry = RateLimitDescriptor_Entry::new();
                     descriptor_entry.set_key(descriptor_key);
