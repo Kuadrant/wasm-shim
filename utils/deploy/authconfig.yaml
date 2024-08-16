@@ -5,7 +5,7 @@ metadata:
   name: talker-api-protection
 spec:
   hosts:
-    - talker-api.127.0.0.1.nip.io
+    - effective-route-1
   authentication:
     "friends":
       apiKey:
