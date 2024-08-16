@@ -1,7 +1,6 @@
 use crate::configuration::Path;
-use crate::filter::http_context::Filter;
 use chrono::{DateTime, FixedOffset};
-use proxy_wasm::traits::Context;
+use proxy_wasm::hostcalls;
 
 pub trait Attribute {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String>
@@ -105,15 +104,12 @@ impl Attribute for DateTime<FixedOffset> {
 }
 
 #[allow(dead_code)]
-pub fn get_attribute<T>(f: &Filter, attr: &str) -> Result<T, String>
+pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
     T: Attribute,
 {
-    match f.get_property(Path::from(attr).tokens()) {
-        None => Err(format!(
-            "#{} get_attribute: not found: {}",
-            f.context_id, attr
-        )),
-        Some(attribute_bytes) => T::parse(attribute_bytes),
+    match hostcalls::get_property(Path::from(attr).tokens()) {
+        Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
+        _ => Err(format!("get_attribute: not found: {}", attr)),
     }
 }
