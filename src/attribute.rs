@@ -103,7 +103,6 @@ impl Attribute for DateTime<FixedOffset> {
     }
 }
 
-#[allow(dead_code)]
 pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
     T: Attribute,
