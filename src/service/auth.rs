@@ -30,11 +30,11 @@ impl AuthService {
         }
     }
 
-    pub fn message() -> CheckRequest {
-        AuthService::build_check_req()
+    pub fn message(ce_host: String) -> CheckRequest {
+        AuthService::build_check_req(ce_host)
     }
 
-    fn build_check_req() -> CheckRequest {
+    fn build_check_req(ce_host: String) -> CheckRequest {
         let mut auth_req = CheckRequest::default();
         let mut attr = AttributeContext::default();
         attr.set_request(AuthService::build_request());
@@ -46,12 +46,8 @@ impl AuthService {
             get_attribute::<String>("source.address").unwrap_or_default(),
             get_attribute::<i64>("source.port").unwrap_or_default() as u32,
         ));
-        // todo(adam-cattermole): for now we set the context_extensions to the request host
-        // but this should take other info into account
-        let context_extensions = HashMap::from([(
-            "host".to_string(),
-            attr.get_request().get_http().host.to_owned(),
-        )]);
+        // the ce_host is the identifier for authorino to determine which authconfig to use
+        let context_extensions = HashMap::from([("host".to_string(), ce_host)]);
         attr.set_context_extensions(context_extensions);
         attr.set_metadata_context(Metadata::default());
         auth_req.set_attributes(attr);
