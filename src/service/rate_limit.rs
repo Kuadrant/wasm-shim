@@ -7,18 +7,23 @@ use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
-pub struct RateLimitService<'a> {
+pub struct RateLimitService {
     endpoint: String,
-    metadata: Vec<(&'a str, &'a [u8])>,
+    metadata: Vec<(String, Vec<u8>)>,
 }
 
-impl<'a> RateLimitService<'a> {
-    pub fn new(endpoint: &str, metadata: Vec<(&'a str, &'a [u8])>) -> RateLimitService<'a> {
+impl RateLimitService {
+    pub fn new(endpoint: &str, metadata: Vec<(&str, &[u8])>) -> Self {
+        let m = metadata
+            .into_iter()
+            .map(|(header, value)| (header.to_owned(), value.to_owned()))
+            .collect();
         Self {
-            endpoint: String::from(endpoint),
-            metadata,
+            endpoint: endpoint.to_owned(),
+            metadata: m,
         }
     }
+
     pub fn message(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
@@ -33,25 +38,23 @@ impl<'a> RateLimitService<'a> {
     }
 }
 
-fn grpc_call(
-    upstream_name: &str,
-    initial_metadata: Vec<(&str, &[u8])>,
-    message: RateLimitRequest,
-) -> Result<u32, Status> {
-    let msg = Message::write_to_bytes(&message).unwrap(); // TODO(didierofrivia): Error Handling
-    dispatch_grpc_call(
-        upstream_name,
-        RATELIMIT_SERVICE_NAME,
-        RATELIMIT_METHOD_NAME,
-        initial_metadata,
-        Some(&msg),
-        Duration::from_secs(5),
-    )
-}
-
-impl Service<RateLimitRequest> for RateLimitService<'_> {
+impl Service<RateLimitRequest> for RateLimitService {
     fn send(&self, message: RateLimitRequest) -> Result<u32, Status> {
-        grpc_call(self.endpoint.as_str(), self.metadata.clone(), message)
+        let msg = Message::write_to_bytes(&message).unwrap(); // TODO(didierofrivia): Error Handling
+        let metadata = self
+            .metadata
+            .iter()
+            .map(|(header, value)| (header.as_str(), value.as_slice()))
+            .collect();
+
+        dispatch_grpc_call(
+            self.endpoint.as_str(),
+            RATELIMIT_SERVICE_NAME,
+            RATELIMIT_METHOD_NAME,
+            metadata,
+            Some(&msg),
+            Duration::from_secs(5),
+        )
     }
 }
 
