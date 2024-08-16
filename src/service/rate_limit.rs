@@ -14,12 +14,13 @@ pub struct RateLimitService {
 }
 
 impl RateLimitService {
-    pub fn new(endpoint: &str, metadata: Vec<(TracingHeader, Bytes)>) -> RateLimitService {
+    pub fn new(endpoint: &str, metadata: Vec<(TracingHeader, Bytes)>) -> Self {
         Self {
             endpoint: String::from(endpoint),
             tracing_headers: metadata,
         }
     }
+
     pub fn message(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
@@ -34,31 +35,22 @@ impl RateLimitService {
     }
 }
 
-fn grpc_call(
-    upstream_name: &str,
-    initial_metadata: Vec<(&str, &[u8])>,
-    message: RateLimitRequest,
-) -> Result<u32, Status> {
-    let msg = Message::write_to_bytes(&message).unwrap(); // TODO(didierofrivia): Error Handling
-    dispatch_grpc_call(
-        upstream_name,
-        RATELIMIT_SERVICE_NAME,
-        RATELIMIT_METHOD_NAME,
-        initial_metadata,
-        Some(&msg),
-        Duration::from_secs(5),
-    )
-}
-
 impl Service<RateLimitRequest> for RateLimitService {
     fn send(&self, message: RateLimitRequest) -> Result<u32, Status> {
-        grpc_call(
+        let msg = Message::write_to_bytes(&message).unwrap(); // TODO(didierofrivia): Error Handling
+        let metadata = self
+            .tracing_headers
+            .iter()
+            .map(|(header, value)| (header.as_str(), value.as_slice()))
+            .collect();
+
+        dispatch_grpc_call(
             self.endpoint.as_str(),
-            self.tracing_headers
-                .iter()
-                .map(|(header, value)| (header.as_str(), value.as_slice()))
-                .collect(),
-            message,
+            RATELIMIT_SERVICE_NAME,
+            RATELIMIT_METHOD_NAME,
+            metadata,
+            Some(&msg),
+            Duration::from_secs(5),
         )
     }
 }
