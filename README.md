@@ -1,6 +1,8 @@
 A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador.
 
 ## Sample configuration
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FKuadrant%2Fwasm-shim.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FKuadrant%2Fwasm-shim?ref=badge_shield)
+
 Following is a sample configuration used by the shim.
 
 ```yaml
@@ -192,3 +194,7 @@ The third request in less than 10 seconds should return `429 Too Many Requests`.
 ```
 make stop-development
 ```
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FKuadrant%2Fwasm-shim.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FKuadrant%2Fwasm-shim?ref=badge_large)
