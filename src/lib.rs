@@ -5,6 +5,7 @@ mod filter;
 mod glob;
 mod policy;
 mod policy_index;
+mod service;
 
 #[cfg(test)]
 mod tests {
