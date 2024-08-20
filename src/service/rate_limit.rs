@@ -1,22 +1,23 @@
 use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
+use crate::filter::http_context::TracingHeader;
 use crate::service::Service;
 use protobuf::{Message, RepeatedField};
 use proxy_wasm::hostcalls::dispatch_grpc_call;
-use proxy_wasm::types::Status;
+use proxy_wasm::types::{Bytes, Status};
 use std::time::Duration;
 
 const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
-pub struct RateLimitService<'a> {
+pub struct RateLimitService {
     endpoint: String,
-    metadata: Vec<(&'a str, &'a [u8])>,
+    tracing_headers: Vec<(TracingHeader, Bytes)>,
 }
 
-impl<'a> RateLimitService<'a> {
-    pub fn new(endpoint: &str, metadata: Vec<(&'a str, &'a [u8])>) -> RateLimitService<'a> {
+impl RateLimitService {
+    pub fn new(endpoint: &str, metadata: Vec<(TracingHeader, Bytes)>) -> RateLimitService {
         Self {
             endpoint: String::from(endpoint),
-            metadata,
+            tracing_headers: metadata,
         }
     }
     pub fn message(
@@ -49,9 +50,16 @@ fn grpc_call(
     )
 }
 
-impl Service<RateLimitRequest> for RateLimitService<'_> {
+impl Service<RateLimitRequest> for RateLimitService {
     fn send(&self, message: RateLimitRequest) -> Result<u32, Status> {
-        grpc_call(self.endpoint.as_str(), self.metadata.clone(), message)
+        grpc_call(
+            self.endpoint.as_str(),
+            self.tracing_headers
+                .iter()
+                .map(|(header, value)| (header.as_str(), value.as_slice()))
+                .collect(),
+            message,
+        )
     }
 }
 

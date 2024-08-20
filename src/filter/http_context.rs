@@ -11,6 +11,7 @@ use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
 
 // tracing headers
+#[derive(Clone)]
 pub enum TracingHeader {
     Traceparent,
     Tracestate,
@@ -22,7 +23,7 @@ impl TracingHeader {
         [Traceparent, Tracestate, Baggage]
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Traceparent => "traceparent",
             Tracestate => "tracestate",
@@ -61,13 +62,8 @@ impl Filter {
             );
             return Action::Continue;
         }
-        let rl_tracing_headers = self
-            .tracing_headers
-            .iter()
-            .map(|(header, value)| (header.as_str(), value.as_slice()))
-            .collect();
 
-        let rls = RateLimitService::new(rlp.service.as_str(), rl_tracing_headers);
+        let rls = RateLimitService::new(rlp.service.as_str(), self.tracing_headers.clone());
         let message = RateLimitService::message(rlp.domain.clone(), descriptors);
 
         match rls.send(message) {
