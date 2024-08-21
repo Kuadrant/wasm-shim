@@ -1,9 +1,9 @@
-use crate::configuration::{FailureMode, FilterConfig};
+use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
 use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::policy::Policy;
 use crate::service::rate_limit::RateLimitService;
-use crate::service::Service;
+use crate::service::GrpcServiceHandler;
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -19,7 +19,7 @@ pub enum TracingHeader {
 }
 
 impl TracingHeader {
-    fn all() -> [Self; 3] {
+    pub fn all() -> [Self; 3] {
         [Traceparent, Tracestate, Baggage]
     }
 
@@ -63,7 +63,11 @@ impl Filter {
             return Action::Continue;
         }
 
-        let rls = RateLimitService::new(rlp.service.as_str(), self.tracing_headers.clone());
+        let rls = GrpcServiceHandler::new(
+            ExtensionType::RateLimit,
+            rlp.service.clone(),
+            self.tracing_headers.clone(),
+        );
         let message = RateLimitService::message(rlp.domain.clone(), descriptors);
 
         match rls.send(message) {
