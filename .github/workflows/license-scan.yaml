@@ -1,0 +1,22 @@
+---
+name: License Scan
+
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  fossa-scan:
+    name: Find license compliance and security issues
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fossas/fossa-action@v1.4.0
+        with:
+          api-key: ${{secrets.FOSSA_API_TOKEN}}
+          run-tests: true
+          project: git+github.com/Kuadrant/wasm-shim
