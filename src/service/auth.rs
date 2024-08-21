@@ -3,33 +3,19 @@ use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
     AttributeContext_Request, CheckRequest, Metadata, SocketAddress,
 };
-use crate::filter::http_context::TracingHeader;
-use crate::service::Service;
 use chrono::{DateTime, FixedOffset, Timelike};
 use protobuf::well_known_types::Timestamp;
 use protobuf::Message;
 use proxy_wasm::hostcalls;
-use proxy_wasm::hostcalls::dispatch_grpc_call;
-use proxy_wasm::types::{Bytes, MapType, Status};
+use proxy_wasm::types::MapType;
 use std::collections::HashMap;
-use std::time::Duration;
 
-const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
-const AUTH_METHOD_NAME: &str = "Check";
+pub const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
+pub const AUTH_METHOD_NAME: &str = "Check";
 
-pub struct AuthService {
-    endpoint: String,
-    tracing_headers: Vec<(TracingHeader, Bytes)>,
-}
+pub struct AuthService;
 
 impl AuthService {
-    pub fn new(endpoint: &str, metadata: Vec<(TracingHeader, Bytes)>) -> Self {
-        Self {
-            endpoint: String::from(endpoint),
-            tracing_headers: metadata,
-        }
-    }
-
     pub fn message(ce_host: String) -> CheckRequest {
         AuthService::build_check_req(ce_host)
     }
@@ -91,25 +77,5 @@ impl AuthService {
         address.set_socket_address(socket_address);
         peer.set_address(address);
         peer
-    }
-}
-
-impl Service<CheckRequest> for AuthService {
-    fn send(&self, message: CheckRequest) -> Result<u32, Status> {
-        let msg = Message::write_to_bytes(&message).unwrap(); // TODO(adam-cattermole): Error Handling
-        let metadata = self
-            .tracing_headers
-            .iter()
-            .map(|(header, value)| (header.as_str(), value.as_slice()))
-            .collect();
-
-        dispatch_grpc_call(
-            self.endpoint.as_str(),
-            AUTH_SERVICE_NAME,
-            AUTH_METHOD_NAME,
-            metadata,
-            Some(&msg),
-            Duration::from_secs(5),
-        )
     }
 }
