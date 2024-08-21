@@ -1,3 +1,7 @@
+# Wasm-shim
+
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B162%2Fgit%2Bgithub.com%2FKuadrant%2Fwasm-shim.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B162%2Fgit%2Bgithub.com%2FKuadrant%2Fwasm-shim?ref=badge_shield&issueType=license)
+
 A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador.
 
 ## Sample configuration
@@ -192,3 +196,9 @@ The third request in less than 10 seconds should return `429 Too Many Requests`.
 ```
 make stop-development
 ```
+
+## License
+
+[Apache 2.0 License](LICENSE)
+
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B162%2Fgit%2Bgithub.com%2FKuadrant%2Fwasm-shim.svg?type=large&issueType=license)](https://app.fossa.com/projects/custom%2B162%2Fgit%2Bgithub.com%2FKuadrant%2Fwasm-shim?ref=badge_large&issueType=license)
