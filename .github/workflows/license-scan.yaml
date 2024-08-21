@@ -16,6 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: fossas/fossa-action@v1.4.0
+        name: License Scan
+        with:
+          api-key: ${{secrets.FOSSA_API_TOKEN}}
+          branch: ${{ github.head_ref || github.ref_name }}
+          project: git+github.com/Kuadrant/wasm-shim
+      - uses: fossas/fossa-action@v1.4.0
+        name: License test for issues
         with:
           api-key: ${{secrets.FOSSA_API_TOKEN}}
           run-tests: true
