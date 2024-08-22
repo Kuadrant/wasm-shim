@@ -1,5 +1,6 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
 use crate::filter::http_context::Filter;
+use crate::service::HeaderResolver;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -40,7 +41,7 @@ impl RootContext for FilterRoot {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
-            tracing_headers: Vec::default(),
+            header_resolver: Rc::new(HeaderResolver::new()),
         }))
     }
 

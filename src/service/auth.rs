@@ -5,7 +5,6 @@ use crate::envoy::{
 };
 use chrono::{DateTime, FixedOffset, Timelike};
 use protobuf::well_known_types::Timestamp;
-use protobuf::Message;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::MapType;
 use std::collections::HashMap;

@@ -1,42 +1,19 @@
 use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
 use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
-use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::policy::Policy;
 use crate::service::rate_limit::RateLimitService;
-use crate::service::GrpcServiceHandler;
+use crate::service::{GrpcServiceHandler, HeaderResolver};
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::{Action, Bytes};
+use proxy_wasm::types::Action;
 use std::rc::Rc;
-
-// tracing headers
-#[derive(Clone)]
-pub enum TracingHeader {
-    Traceparent,
-    Tracestate,
-    Baggage,
-}
-
-impl TracingHeader {
-    pub fn all() -> [Self; 3] {
-        [Traceparent, Tracestate, Baggage]
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Traceparent => "traceparent",
-            Tracestate => "tracestate",
-            Baggage => "baggage",
-        }
-    }
-}
 
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
-    pub tracing_headers: Vec<(TracingHeader, Bytes)>,
+    pub header_resolver: Rc<HeaderResolver>,
 }
 
 impl Filter {
@@ -66,7 +43,7 @@ impl Filter {
         let rls = GrpcServiceHandler::new(
             ExtensionType::RateLimit,
             rlp.service.clone(),
-            self.tracing_headers.clone(),
+            Rc::clone(&self.header_resolver),
         );
         let message = RateLimitService::message(rlp.domain.clone(), descriptors);
 
@@ -101,12 +78,6 @@ impl Filter {
 impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
-
-        for header in TracingHeader::all() {
-            if let Some(value) = self.get_http_request_header_bytes(header.as_str()) {
-                self.tracing_headers.push((header, value))
-            }
-        }
 
         match self
             .config
