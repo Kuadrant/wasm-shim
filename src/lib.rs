@@ -1,3 +1,4 @@
+mod action_dispatcher;
 mod attribute;
 mod configuration;
 mod envoy;
