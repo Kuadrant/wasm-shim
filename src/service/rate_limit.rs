@@ -1,25 +1,12 @@
 use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
-use crate::filter::http_context::TracingHeader;
-use crate::service::Service;
-use protobuf::{Message, RepeatedField};
-use proxy_wasm::hostcalls::dispatch_grpc_call;
-use proxy_wasm::types::{Bytes, Status};
-use std::time::Duration;
+use protobuf::RepeatedField;
 
-const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
-const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
-pub struct RateLimitService {
-    endpoint: String,
-    tracing_headers: Vec<(TracingHeader, Bytes)>,
-}
+pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
+pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
+
+pub struct RateLimitService;
 
 impl RateLimitService {
-    pub fn new(endpoint: &str, metadata: Vec<(TracingHeader, Bytes)>) -> RateLimitService {
-        Self {
-            endpoint: String::from(endpoint),
-            tracing_headers: metadata,
-        }
-    }
     pub fn message(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
@@ -31,35 +18,6 @@ impl RateLimitService {
             unknown_fields: Default::default(),
             cached_size: Default::default(),
         }
-    }
-}
-
-fn grpc_call(
-    upstream_name: &str,
-    initial_metadata: Vec<(&str, &[u8])>,
-    message: RateLimitRequest,
-) -> Result<u32, Status> {
-    let msg = Message::write_to_bytes(&message).unwrap(); // TODO(didierofrivia): Error Handling
-    dispatch_grpc_call(
-        upstream_name,
-        RATELIMIT_SERVICE_NAME,
-        RATELIMIT_METHOD_NAME,
-        initial_metadata,
-        Some(&msg),
-        Duration::from_secs(5),
-    )
-}
-
-impl Service<RateLimitRequest> for RateLimitService {
-    fn send(&self, message: RateLimitRequest) -> Result<u32, Status> {
-        grpc_call(
-            self.endpoint.as_str(),
-            self.tracing_headers
-                .iter()
-                .map(|(header, value)| (header.as_str(), value.as_slice()))
-                .collect(),
-            message,
-        )
     }
 }
 
