@@ -14,39 +14,29 @@ pub struct Condition {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
-    //
     #[serde(default)]
     pub conditions: Vec<Condition>,
-    //
+    pub actions: Vec<Action>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Action {
+    pub extension: String,
     pub data: Vec<DataItem>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Policy {
-    pub name: String,
-    pub domain: String,
-    pub service: String,
-    pub hostnames: Vec<String>,
+    pub hostname: String,
     pub rules: Vec<Rule>,
 }
 
 impl Policy {
     #[cfg(test)]
-    pub fn new(
-        name: String,
-        domain: String,
-        service: String,
-        hostnames: Vec<String>,
-        rules: Vec<Rule>,
-    ) -> Self {
-        Policy {
-            name,
-            domain,
-            service,
-            hostnames,
-            rules,
-        }
+    pub fn new(hostname: String, rules: Vec<Rule>) -> Self {
+        Policy { hostname, rules }
     }
 
     pub fn build_descriptors(

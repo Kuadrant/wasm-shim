@@ -1,4 +1,5 @@
 use std::cell::OnceCell;
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
@@ -504,8 +505,16 @@ pub enum ExtensionType {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    #[serde(rename = "rateLimitPolicies")]
+    pub extensions: HashMap<String, Extension>,
     pub policies: Vec<Policy>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Extension {
+    #[serde(rename = "type")]
+    pub extension_type: ExtensionType,
+    pub endpoint: String,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
 }
