@@ -40,13 +40,19 @@ impl Filter {
             return Action::Continue;
         }
 
-        let rls = GrpcServiceHandler::new(
-            Rc::clone(&self.config.service),
-            Rc::clone(&self.header_resolver),
-        );
+        // todo(adam-cattermole): For now we just get the first GrpcService but we expect to have
+        // an action which links to the service that should be used
+        let rls = self
+            .config
+            .services
+            .values()
+            .next()
+            .expect("expect a value");
+
+        let handler = GrpcServiceHandler::new(Rc::clone(rls), Rc::clone(&self.header_resolver));
         let message = RateLimitService::message(rlp.domain.clone(), descriptors);
 
-        match rls.send(message) {
+        match handler.send(message) {
             Ok(call_id) => {
                 debug!(
                     "#{} initiated gRPC call (id# {}) to Limitador",
@@ -56,7 +62,7 @@ impl Filter {
             }
             Err(e) => {
                 warn!("gRPC call to Limitador failed! {e:?}");
-                if let FailureMode::Deny = self.config.failure_mode {
+                if let FailureMode::Deny = rls.failure_mode() {
                     self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
                 }
                 Action::Continue
@@ -65,7 +71,15 @@ impl Filter {
     }
 
     fn handle_error_on_grpc_response(&self) {
-        match &self.config.failure_mode {
+        // todo(adam-cattermole): We need a method of knowing which service is the one currently
+        // being used (the current action) so that we can get the failure mode
+        let rls = self
+            .config
+            .services
+            .values()
+            .next()
+            .expect("expect a value");
+        match rls.failure_mode() {
             FailureMode::Deny => {
                 self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
             }
