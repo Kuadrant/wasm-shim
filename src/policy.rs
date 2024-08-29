@@ -26,24 +26,16 @@ pub struct Rule {
 pub struct Policy {
     pub name: String,
     pub domain: String,
-    pub service: String,
     pub hostnames: Vec<String>,
     pub rules: Vec<Rule>,
 }
 
 impl Policy {
     #[cfg(test)]
-    pub fn new(
-        name: String,
-        domain: String,
-        service: String,
-        hostnames: Vec<String>,
-        rules: Vec<Rule>,
-    ) -> Self {
+    pub fn new(name: String, domain: String, hostnames: Vec<String>, rules: Vec<Rule>) -> Self {
         Policy {
             name,
             domain,
-            service,
             hostnames,
             rules,
         }

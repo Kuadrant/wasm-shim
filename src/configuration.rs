@@ -1,4 +1,5 @@
 use std::cell::OnceCell;
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -441,17 +442,14 @@ pub fn type_of(path: &str) -> Option<ValueType> {
 
 pub struct FilterConfig {
     pub index: PolicyIndex,
-    // Deny/Allow request when faced with an irrecoverable failure.
-    pub failure_mode: FailureMode,
-    pub service: Rc<GrpcService>,
+    pub services: Rc<HashMap<String, Rc<GrpcService>>>,
 }
 
 impl Default for FilterConfig {
     fn default() -> Self {
         Self {
             index: PolicyIndex::new(),
-            failure_mode: FailureMode::Deny,
-            service: Rc::new(GrpcService::default()),
+            services: Rc::new(HashMap::new()),
         }
     }
 }
@@ -484,21 +482,33 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
             }
         }
 
-        // todo(adam-cattermole): retrieve from config
-        let rl_service =
-            GrpcService::new(ExtensionType::RateLimit, config.policies[0].service.clone());
+        // configure grpc services from the extensions in config
+        let services = config
+            .extensions
+            .into_iter()
+            .map(|(name, ext)| {
+                (
+                    name,
+                    Rc::new(GrpcService::new(
+                        ext.extension_type,
+                        ext.endpoint,
+                        ext.failure_mode,
+                    )),
+                )
+            })
+            .collect();
 
         Ok(Self {
             index,
-            failure_mode: config.failure_mode,
-            service: Rc::new(rl_service),
+            services: Rc::new(services),
         })
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum FailureMode {
+    #[default]
     Deny,
     Allow,
 }
@@ -513,8 +523,16 @@ pub enum ExtensionType {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    #[serde(rename = "rateLimitPolicies")]
+    pub extensions: HashMap<String, Extension>,
     pub policies: Vec<Policy>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Extension {
+    #[serde(rename = "type")]
+    pub extension_type: ExtensionType,
+    pub endpoint: String,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
 }
@@ -524,12 +542,17 @@ mod test {
     use super::*;
 
     const CONFIG: &str = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
             "domain": "rlp-ns-A/rlp-name-A",
-            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -621,8 +644,8 @@ mod test {
     #[test]
     fn parse_config_min() {
         let config = r#"{
-            "failureMode": "deny",
-            "rateLimitPolicies": []
+            "extensions": {},
+            "policies": []
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
         if let Err(ref e) = res {
@@ -637,12 +660,17 @@ mod test {
     #[test]
     fn parse_config_data_selector() {
         let config = r#"{
-            "failureMode": "deny",
-            "rateLimitPolicies": [
+            "extensions": {
+                "limitador": {
+                    "type": "ratelimit",
+                    "endpoint": "limitador-cluster",
+                    "failureMode": "deny"
+                }
+            },
+            "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "domain": "rlp-ns-A/rlp-name-A",
-                "service": "limitador-cluster",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -687,12 +715,17 @@ mod test {
     #[test]
     fn parse_config_condition_selector_operators() {
         let config = r#"{
-            "failureMode": "deny",
-            "rateLimitPolicies": [
+            "extensions": {
+                "limitador": {
+                    "type": "ratelimit",
+                    "endpoint": "limitador-cluster",
+                    "failureMode": "deny"
+                }
+            },
+            "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "domain": "rlp-ns-A/rlp-name-A",
-                "service": "limitador-cluster",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -766,12 +799,17 @@ mod test {
     #[test]
     fn parse_config_conditions_optional() {
         let config = r#"{
-            "failureMode": "deny",
-            "rateLimitPolicies": [
+            "extensions": {
+                "limitador": {
+                    "type": "ratelimit",
+                    "endpoint": "limitador-cluster",
+                    "failureMode": "deny"
+                }
+            },
+            "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "domain": "rlp-ns-A/rlp-name-A",
-                "service": "limitador-cluster",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -810,12 +848,17 @@ mod test {
     fn parse_config_invalid_data() {
         // data item fields are mutually exclusive
         let bad_config = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
             "domain": "rlp-ns-A/rlp-name-A",
-            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -837,8 +880,14 @@ mod test {
 
         // data item unknown fields are forbidden
         let bad_config = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
             "domain": "rlp-ns-A/rlp-name-A",
@@ -861,12 +910,17 @@ mod test {
 
         // condition selector operator unknown
         let bad_config = r#"{
-            "failureMode": "deny",
-            "rateLimitPolicies": [
+            "extensions": {
+                "limitador": {
+                    "type": "ratelimit",
+                    "endpoint": "limitador-cluster",
+                    "failureMode": "deny"
+                }
+            },
+            "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "domain": "rlp-ns-A/rlp-name-A",
-                "service": "limitador-cluster",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {

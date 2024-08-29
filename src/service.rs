@@ -1,7 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod rate_limit;
 
-use crate::configuration::ExtensionType;
+use crate::configuration::{ExtensionType, FailureMode};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
@@ -18,20 +18,23 @@ pub struct GrpcService {
     endpoint: String,
     name: &'static str,
     method: &'static str,
+    failure_mode: FailureMode,
 }
 
 impl GrpcService {
-    pub fn new(extension_type: ExtensionType, endpoint: String) -> Self {
+    pub fn new(extension_type: ExtensionType, endpoint: String, failure_mode: FailureMode) -> Self {
         match extension_type {
             ExtensionType::Auth => Self {
                 endpoint,
                 name: AUTH_SERVICE_NAME,
                 method: AUTH_METHOD_NAME,
+                failure_mode,
             },
             ExtensionType::RateLimit => Self {
                 endpoint,
                 name: RATELIMIT_SERVICE_NAME,
                 method: RATELIMIT_METHOD_NAME,
+                failure_mode,
             },
         }
     }
@@ -44,8 +47,12 @@ impl GrpcService {
     fn method(&self) -> &str {
         self.method
     }
+    pub fn failure_mode(&self) -> &FailureMode {
+        &self.failure_mode
+    }
 }
 
+#[derive(Default)]
 pub struct GrpcServiceHandler {
     service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
@@ -81,6 +88,12 @@ impl GrpcServiceHandler {
 
 pub struct HeaderResolver {
     headers: OnceCell<Vec<(&'static str, Bytes)>>,
+}
+
+impl Default for HeaderResolver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HeaderResolver {
