@@ -13,46 +13,49 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub struct GrpcServiceHandler {
+#[derive(Default)]
+pub struct GrpcService {
     endpoint: String,
-    service_name: String,
-    method_name: String,
+    name: &'static str,
+    method: &'static str,
+}
+
+impl GrpcService {
+    pub fn new(extension_type: ExtensionType, endpoint: String) -> Self {
+        match extension_type {
+            ExtensionType::Auth => Self {
+                endpoint,
+                name: AUTH_SERVICE_NAME,
+                method: AUTH_METHOD_NAME,
+            },
+            ExtensionType::RateLimit => Self {
+                endpoint,
+                name: RATELIMIT_SERVICE_NAME,
+                method: RATELIMIT_METHOD_NAME,
+            },
+        }
+    }
+    fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn method(&self) -> &str {
+        self.method
+    }
+}
+
+pub struct GrpcServiceHandler {
+    service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
 }
 
 impl GrpcServiceHandler {
-    fn build(
-        endpoint: String,
-        service_name: &str,
-        method_name: &str,
-        header_resolver: Rc<HeaderResolver>,
-    ) -> Self {
+    pub fn new(service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
         Self {
-            endpoint: endpoint.to_owned(),
-            service_name: service_name.to_owned(),
-            method_name: method_name.to_owned(),
+            service,
             header_resolver,
-        }
-    }
-
-    pub fn new(
-        extension_type: ExtensionType,
-        endpoint: String,
-        header_resolver: Rc<HeaderResolver>,
-    ) -> Self {
-        match extension_type {
-            ExtensionType::Auth => Self::build(
-                endpoint,
-                AUTH_SERVICE_NAME,
-                AUTH_METHOD_NAME,
-                header_resolver,
-            ),
-            ExtensionType::RateLimit => Self::build(
-                endpoint,
-                RATELIMIT_SERVICE_NAME,
-                RATELIMIT_METHOD_NAME,
-                header_resolver,
-            ),
         }
     }
 
@@ -66,9 +69,9 @@ impl GrpcServiceHandler {
             .collect();
 
         dispatch_grpc_call(
-            self.endpoint.as_str(),
-            self.service_name.as_str(),
-            self.method_name.as_str(),
+            self.service.endpoint(),
+            self.service.name(),
+            self.service.method(),
             metadata,
             Some(&msg),
             Duration::from_secs(5),

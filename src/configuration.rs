@@ -1,5 +1,6 @@
 use std::cell::OnceCell;
 use std::fmt::{Debug, Display, Formatter};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use cel_interpreter::objects::ValueType;
@@ -10,6 +11,7 @@ use serde::Deserialize;
 use crate::attribute::Attribute;
 use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
+use crate::service::GrpcService;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -441,6 +443,7 @@ pub struct FilterConfig {
     pub index: PolicyIndex,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
+    pub service: Rc<GrpcService>,
 }
 
 impl Default for FilterConfig {
@@ -448,6 +451,7 @@ impl Default for FilterConfig {
         Self {
             index: PolicyIndex::new(),
             failure_mode: FailureMode::Deny,
+            service: Rc::new(GrpcService::default()),
         }
     }
 }
@@ -480,9 +484,14 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
             }
         }
 
+        // todo(adam-cattermole): retrieve from config
+        let rl_service =
+            GrpcService::new(ExtensionType::RateLimit, config.policies[0].service.clone());
+
         Ok(Self {
             index,
             failure_mode: config.failure_mode,
+            service: Rc::new(rl_service),
         })
     }
 }
