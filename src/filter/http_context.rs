@@ -1,4 +1,4 @@
-use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
+use crate::configuration::{FailureMode, FilterConfig};
 use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
 use crate::policy::Policy;
 use crate::service::rate_limit::RateLimitService;
@@ -41,8 +41,7 @@ impl Filter {
         }
 
         let rls = GrpcServiceHandler::new(
-            ExtensionType::RateLimit,
-            rlp.service.clone(),
+            Rc::clone(&self.config.service),
             Rc::clone(&self.header_resolver),
         );
         let message = RateLimitService::message(rlp.domain.clone(), descriptors);
