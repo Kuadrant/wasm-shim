@@ -29,8 +29,8 @@ fn it_loads() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": []
+        "extensions": {},
+        "policies": []
     }"#;
 
     module
@@ -90,12 +90,17 @@ fn it_limits() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "some-name",
             "domain": "RLS-domain",
-            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -228,12 +233,17 @@ fn it_passes_additional_headers() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "some-name",
             "domain": "RLS-domain",
-            "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -380,12 +390,17 @@ fn it_rate_limits_with_empty_conditions() {
 
     let root_context = 1;
     let cfg = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "some-name",
             "domain": "RLS-domain",
-            "service": "limitador-cluster",
             "hostnames": ["*.com"],
             "rules": [
             {
@@ -492,12 +507,17 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
 
     let root_context = 1;
     let cfg = r#"{
-        "failureMode": "deny",
-        "rateLimitPolicies": [
+        "extensions": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny"
+            }
+        },
+        "policies": [
         {
             "name": "some-name",
             "domain": "RLS-domain",
-            "service": "limitador-cluster",
             "hostnames": ["*.com"],
             "rules": [
             {
