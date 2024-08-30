@@ -1,3 +1,4 @@
+use proxy_wasm::types::Status;
 use std::cell::RefCell;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -16,67 +17,40 @@ impl State {
         }
     }
 }
-#[derive(PartialEq, Clone)]
-pub(crate) enum Action {
-    Auth { state: State },
-    RateLimit { state: State },
+#[derive(Clone)]
+pub(crate) struct Action {
+    state: State,
+    result: Result<u32, Status>,
+    operation: Option<fn() -> Result<u32, Status>>,
 }
 
 impl Action {
+    pub fn default() -> Self {
+        Self {
+            state: State::Pending,
+            result: Err(Status::Empty),
+            operation: None,
+        }
+    }
+
+    pub fn set_operation(&mut self, operation: fn() -> Result<u32, Status>) {
+        self.operation = Some(operation);
+    }
+
     pub fn trigger(&mut self) {
-        match self {
-            Action::Auth { .. } => self.auth(),
-            Action::RateLimit { .. } => self.rate_limit(),
+        if let State::Done = self.state {
+        } else if let Some(operation) = self.operation {
+            self.result = operation();
+            self.state.next();
         }
     }
 
-    fn get_state(&self) -> &State {
-        match self {
-            Action::Auth { state } => state,
-            Action::RateLimit { state } => state,
-        }
+    fn get_state(&self) -> State {
+        self.state.clone()
     }
 
-    fn rate_limit(&mut self) {
-        // Specifics for RL, returning State
-        if let Action::RateLimit { state } = self {
-            match state {
-                State::Pending => {
-                    println!("Trigger the request and return State::Waiting");
-                    state.next();
-                }
-                State::Waiting => {
-                    println!(
-                        "When got on_grpc_response, process RL response and return State::Done"
-                    );
-                    state.next();
-                }
-                State::Done => {
-                    println!("Done for RL... calling next action (?)");
-                }
-            }
-        }
-    }
-
-    fn auth(&mut self) {
-        // Specifics for Auth, returning State
-        if let Action::Auth { state } = self {
-            match state {
-                State::Pending => {
-                    println!("Trigger the request and return State::Waiting");
-                    state.next();
-                }
-                State::Waiting => {
-                    println!(
-                        "When got on_grpc_response, process Auth response and return State::Done"
-                    );
-                    state.next();
-                }
-                State::Done => {
-                    println!("Done for Auth... calling next action (?)");
-                }
-            }
-        }
+    fn get_result(&self) -> Result<u32, Status> {
+        self.result
     }
 }
 
@@ -91,10 +65,6 @@ impl ActionDispatcher {
         }
     }
 
-    pub fn new(/*vec of PluginConfig actions*/) -> ActionDispatcher {
-        ActionDispatcher::default()
-    }
-
     pub fn push_actions(&self, actions: Vec<Action>) {
         self.actions.borrow_mut().extend(actions);
     }
@@ -104,6 +74,10 @@ impl ActionDispatcher {
             .borrow()
             .first()
             .map(|action| action.get_state().clone())
+    }
+
+    pub fn get_current_action_result(&self) -> Result<u32, Status> {
+        self.actions.borrow().first().unwrap().get_result()
     }
 
     pub fn next(&self) -> bool {
@@ -128,29 +102,25 @@ mod tests {
 
     #[test]
     fn action_transition() {
-        let mut action = Action::Auth {
-            state: State::Pending,
-        };
-        assert_eq!(*action.get_state(), State::Pending);
+        let mut action = Action::default();
+        action.set_operation(|| -> Result<u32, Status> { Ok(200) });
+        assert_eq!(action.get_state(), State::Pending);
         action.trigger();
-        assert_eq!(*action.get_state(), State::Waiting);
+        assert_eq!(action.get_state(), State::Waiting);
         action.trigger();
-        assert_eq!(*action.get_state(), State::Done);
+        assert_eq!(action.result, Ok(200));
+        assert_eq!(action.get_state(), State::Done);
     }
 
     #[test]
     fn action_dispatcher_push_actions() {
-        let mut action_dispatcher = ActionDispatcher {
-            actions: RefCell::new(vec![Action::RateLimit {
-                state: State::Pending,
-            }]),
+        let action_dispatcher = ActionDispatcher {
+            actions: RefCell::new(vec![Action::default()]),
         };
 
         assert_eq!(action_dispatcher.actions.borrow().len(), 1);
 
-        action_dispatcher.push_actions(vec![Action::Auth {
-            state: State::Pending,
-        }]);
+        action_dispatcher.push_actions(vec![Action::default()]);
 
         assert_eq!(action_dispatcher.actions.borrow().len(), 2);
     }
@@ -158,44 +128,39 @@ mod tests {
     #[test]
     fn action_dispatcher_get_current_action_state() {
         let action_dispatcher = ActionDispatcher {
-            actions: RefCell::new(vec![Action::RateLimit {
-                state: State::Waiting,
-            }]),
+            actions: RefCell::new(vec![Action::default()]),
         };
 
         assert_eq!(
             action_dispatcher.get_current_action_state(),
-            Some(State::Waiting)
+            Some(State::Pending)
         );
-
-        let action_dispatcher2 = ActionDispatcher::default();
-
-        assert_eq!(action_dispatcher2.get_current_action_state(), None);
     }
 
     #[test]
     fn action_dispatcher_next() {
-        let mut action_dispatcher = ActionDispatcher {
-            actions: RefCell::new(vec![Action::RateLimit {
-                state: State::Pending,
-            }]),
+        let mut action = Action::default();
+        action.set_operation(|| -> Result<u32, Status> { Ok(200) });
+        let action_dispatcher = ActionDispatcher {
+            actions: RefCell::new(vec![action]),
         };
         let mut res = action_dispatcher.next();
-        assert_eq!(res, true);
+        assert!(res);
         assert_eq!(
             action_dispatcher.get_current_action_state(),
             Some(State::Waiting)
         );
 
         res = action_dispatcher.next();
-        assert_eq!(res, true);
+        assert!(res);
         assert_eq!(
             action_dispatcher.get_current_action_state(),
             Some(State::Done)
         );
+        assert_eq!(action_dispatcher.get_current_action_result(), Ok(200));
 
         res = action_dispatcher.next();
-        assert_eq!(res, false);
+        assert!(!res);
         assert_eq!(action_dispatcher.get_current_action_state(), None);
     }
 }
