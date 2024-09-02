@@ -1,6 +1,7 @@
 use proxy_wasm::types::Status;
 use std::cell::RefCell;
 
+#[allow(dead_code)]
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum State {
     Pending,
@@ -8,6 +9,7 @@ pub(crate) enum State {
     Done,
 }
 
+#[allow(dead_code)]
 impl State {
     fn next(&mut self) {
         match self {
@@ -17,6 +19,8 @@ impl State {
         }
     }
 }
+
+#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct Action {
     state: State,
@@ -24,6 +28,7 @@ pub(crate) struct Action {
     operation: Option<fn() -> Result<u32, Status>>,
 }
 
+#[allow(dead_code)]
 impl Action {
     pub fn default() -> Self {
         Self {
@@ -54,10 +59,12 @@ impl Action {
     }
 }
 
+#[allow(dead_code)]
 pub struct ActionDispatcher {
     actions: RefCell<Vec<Action>>,
 }
 
+#[allow(dead_code)]
 impl ActionDispatcher {
     pub fn default() -> ActionDispatcher {
         ActionDispatcher {
