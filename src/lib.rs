@@ -1,4 +1,4 @@
-mod action_dispatcher;
+mod operation_dispatcher;
 mod attribute;
 mod configuration;
 #[allow(renamed_and_removed_lints)]
