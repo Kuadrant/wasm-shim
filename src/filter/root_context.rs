@@ -1,10 +1,12 @@
 use crate::configuration::{FilterConfig, PluginConfiguration};
 use crate::filter::http_context::Filter;
-use crate::service::HeaderResolver;
+use crate::operation_dispatcher::OperationDispatcher;
+use crate::service::{GrpcServiceHandler, HeaderResolver};
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -37,11 +39,24 @@ impl RootContext for FilterRoot {
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         debug!("#{} create_http_context", context_id);
+        let mut service_handlers: HashMap<String, Rc<GrpcServiceHandler>> = HashMap::new();
+        self.config
+            .services
+            .iter()
+            .for_each(|(extension, service)| {
+                service_handlers
+                    .entry(extension.clone())
+                    .or_insert(Rc::from(GrpcServiceHandler::new(
+                        Rc::clone(service),
+                        Rc::new(HeaderResolver::new()),
+                        None,
+                    )));
+            });
         Some(Box::new(Filter {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
-            header_resolver: Rc::new(HeaderResolver::new()),
+            operation_dispatcher: OperationDispatcher::new(service_handlers),
         }))
     }
 
