@@ -5,9 +5,10 @@ on:
   push:
     branches: ['*']
     tags: ['*']
+  workflow_dispatch: {}
 
 env:
-  IMG_TAGS: ${{ github.sha }} ${{ github.ref_name }}
+  IMG_TAGS: ${{ github.ref_name }}
   IMG_REGISTRY_HOST: quay.io
   IMG_REGISTRY_ORG: kuadrant
   MAIN_BRANCH_NAME: main
@@ -19,11 +20,16 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
-      - name: Add latest tag
+      - name: Add latest tag for the main branch
         if: ${{ github.ref_name == env.MAIN_BRANCH_NAME }}
         id: add-latest-tag
         run: |
           echo "IMG_TAGS=latest ${{ env.IMG_TAGS }}" >> $GITHUB_ENV
+      - name: Add git sha tag for the main branch
+        if: ${{ github.ref_name == env.MAIN_BRANCH_NAME }}
+        id: add-git-sha-tag
+        run: |
+          echo "IMG_TAGS=${{ github.sha }} ${{ env.IMG_TAGS }}" >> $GITHUB_ENV
       - name: Build Image
         id: build-image
         uses: redhat-actions/buildah-build@v2
