@@ -27,8 +27,6 @@ mod tests {
     use crate::service::rate_limit::RateLimitService;
     //use crate::service::Service;
     use protobuf::{CachedSize, RepeatedField, UnknownFields};
-    //use proxy_wasm::types::Status;
-    //use crate::filter::http_context::{Filter};
 
     fn build_message() -> RateLimitRequest {
         let domain = "rlp1";
@@ -52,20 +50,4 @@ mod tests {
         assert_eq!(msg.unknown_fields, UnknownFields::default());
         assert_eq!(msg.cached_size, CachedSize::default());
     }
-    /*#[test]
-    fn sends_message() {
-        let msg = build_message();
-        let metadata   = vec![("header-1", "value-1".as_bytes())];
-        let rls = RateLimitService::new("limitador-cluster", metadata);
-
-        // TODO(didierofrivia): When we have a grpc response type, assert the async response
-    }
-
-    fn grpc_call(
-        _upstream_name: &str,
-        _initial_metadata: Vec<(&str, &[u8])>,
-        _message: RateLimitRequest,
-    ) -> Result<u32, Status> {
-        Ok(1)
-    } */
 }
