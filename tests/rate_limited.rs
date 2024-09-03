@@ -132,7 +132,18 @@ fn it_limits() {
                     }
                   }
                 ]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
     }"#;
 
@@ -275,7 +286,18 @@ fn it_passes_additional_headers() {
                     }
                   }
                 ]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
     }"#;
 
@@ -412,7 +434,18 @@ fn it_rate_limits_with_empty_conditions() {
                     }
                   }
                 ]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
     }"#;
 
@@ -528,7 +561,18 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
                     }
                 }
                 ]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
     }"#;
 

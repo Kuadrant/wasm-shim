@@ -513,10 +513,11 @@ pub enum FailureMode {
     Allow,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtensionType {
     Auth,
+    #[default]
     RateLimit,
 }
 
@@ -535,6 +536,14 @@ pub struct Extension {
     pub endpoint: String,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Action {
+    pub extension: String,
+    #[allow(dead_code)]
+    pub data: DataType,
 }
 
 #[cfg(test)]
@@ -587,7 +596,18 @@ mod test {
                         "selector": "auth.metadata.username"
                     }
                 }]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
     }"#;
 
@@ -682,7 +702,18 @@ mod test {
                             "default": "my_selector_default_value"
                         }
                     }]
-                }]
+                }],
+                "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -759,7 +790,18 @@ mod test {
                         }]
                     }],
                     "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }]
+                }],
+                "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -825,7 +867,18 @@ mod test {
                             "selector": "auth.metadata.username"
                         }
                     }]
-                }]
+                }],
+                "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -872,7 +925,18 @@ mod test {
                         "selector": "auth.metadata.username"
                     }
                 }]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -902,7 +966,18 @@ mod test {
                         "value": "1"
                     }
                 }]
-            }]
+            }],
+            "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -934,7 +1009,18 @@ mod test {
                         }]
                     }],
                     "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }]
+                }],
+                "actions": [
+                {
+                    "extension": "limitador",
+                    "data": {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }
+                }
+            ]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
