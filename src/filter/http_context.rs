@@ -1,8 +1,7 @@
 use crate::configuration::{FailureMode, FilterConfig};
 use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
+use crate::operation_dispatcher::OperationDispatcher;
 use crate::policy::Policy;
-use crate::service::rate_limit::RateLimitService;
-use crate::service::{GrpcServiceHandler, HeaderResolver};
 use log::{debug, warn};
 use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -13,7 +12,7 @@ pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
-    pub header_resolver: Rc<HeaderResolver>,
+    pub operation_dispatcher: OperationDispatcher,
 }
 
 impl Filter {
@@ -40,33 +39,31 @@ impl Filter {
             return Action::Continue;
         }
 
-        // todo(adam-cattermole): For now we just get the first GrpcService but we expect to have
-        // an action which links to the service that should be used
-        let rls = self
-            .config
-            .services
-            .values()
-            .next()
-            .expect("expect a value");
+        // Build Actions from config actions
+        self.operation_dispatcher.build_operations(rlp, descriptors);
+        // populate actions in the dispatcher
+        // call the next on the match
 
-        let handler = GrpcServiceHandler::new(Rc::clone(rls), Rc::clone(&self.header_resolver));
-        let message = RateLimitService::message(rlp.domain.clone(), descriptors);
-
-        match handler.send(message) {
-            Ok(call_id) => {
-                debug!(
-                    "#{} initiated gRPC call (id# {}) to Limitador",
-                    self.context_id, call_id
-                );
-                Action::Pause
-            }
-            Err(e) => {
-                warn!("gRPC call to Limitador failed! {e:?}");
-                if let FailureMode::Deny = rls.failure_mode() {
-                    self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+        if let Some(result) = self.operation_dispatcher.next() {
+            match result {
+                (_state, Ok(call_id)) => {
+                    debug!(
+                        "#{} initiated gRPC call (id# {}) to Limitador",
+                        self.context_id, call_id
+                    );
+                    Action::Pause
                 }
-                Action::Continue
+                (_state, Err(e)) => {
+                    warn!("gRPC call to Limitador failed! {e:?}");
+                    // TODO(didierofrivia): Get the failure_mode
+                    /*if let FailureMode::Deny = rls.failure_mode() {
+                        self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                    } */
+                    Action::Continue
+                }
             }
+        } else {
+            Action::Continue
         }
     }
 
