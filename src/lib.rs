@@ -1,10 +1,10 @@
-mod operation_dispatcher;
 mod attribute;
 mod configuration;
 #[allow(renamed_and_removed_lints)]
 mod envoy;
 mod filter;
 mod glob;
+mod operation_dispatcher;
 mod policy;
 mod policy_index;
 mod service;
