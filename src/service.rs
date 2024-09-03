@@ -2,8 +2,9 @@ pub(crate) mod auth;
 pub(crate) mod rate_limit;
 
 use crate::configuration::{ExtensionType, FailureMode};
+use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
-use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
+use crate::service::rate_limit::{RateLimitService, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
 use protobuf::Message;
 use proxy_wasm::hostcalls;
@@ -13,9 +14,26 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+#[derive(Clone)]
+pub enum GrpcMessage {
+    //Auth(CheckRequest),
+    RateLimit(RateLimitRequest),
+}
+
+impl GrpcMessage {
+    pub fn get_message(&self) -> &RateLimitRequest {
+        //TODO(didierofrivia): Should return Message
+        match self {
+            GrpcMessage::RateLimit(message) => message,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct GrpcService {
     endpoint: String,
+    #[allow(dead_code)]
+    extension_type: ExtensionType,
     name: &'static str,
     method: &'static str,
     failure_mode: FailureMode,
@@ -26,18 +44,21 @@ impl GrpcService {
         match extension_type {
             ExtensionType::Auth => Self {
                 endpoint,
+                extension_type,
                 name: AUTH_SERVICE_NAME,
                 method: AUTH_METHOD_NAME,
                 failure_mode,
             },
             ExtensionType::RateLimit => Self {
                 endpoint,
+                extension_type,
                 name: RATELIMIT_SERVICE_NAME,
                 method: RATELIMIT_METHOD_NAME,
                 failure_mode,
             },
         }
     }
+
     fn endpoint(&self) -> &str {
         &self.endpoint
     }
@@ -52,22 +73,36 @@ impl GrpcService {
     }
 }
 
-#[derive(Default)]
+type GrpcCall = fn(
+    upstream_name: &str,
+    service_name: &str,
+    method_name: &str,
+    initial_metadata: Vec<(&str, &[u8])>,
+    message: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<u32, Status>;
+
 pub struct GrpcServiceHandler {
     service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
+    grpc_call: GrpcCall,
 }
 
 impl GrpcServiceHandler {
-    pub fn new(service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
+    pub fn new(
+        service: Rc<GrpcService>,
+        header_resolver: Rc<HeaderResolver>,
+        grpc_call: Option<GrpcCall>,
+    ) -> Self {
         Self {
             service,
             header_resolver,
+            grpc_call: grpc_call.unwrap_or(dispatch_grpc_call),
         }
     }
 
-    pub fn send<M: Message>(&self, message: M) -> Result<u32, Status> {
-        let msg = Message::write_to_bytes(&message).unwrap();
+    pub fn send(&self, message: GrpcMessage) -> Result<u32, Status> {
+        let msg = Message::write_to_bytes(message.get_message()).unwrap();
         let metadata = self
             .header_resolver
             .get()
@@ -75,7 +110,7 @@ impl GrpcServiceHandler {
             .map(|(header, value)| (*header, value.as_slice()))
             .collect();
 
-        dispatch_grpc_call(
+        (self.grpc_call)(
             self.service.endpoint(),
             self.service.name(),
             self.service.method(),
@@ -83,6 +118,20 @@ impl GrpcServiceHandler {
             Some(&msg),
             Duration::from_secs(5),
         )
+    }
+
+    // Using domain as ce_host for the time being, we might pass a DataType in the future.
+    //TODO(didierofrivia): Make it work with Message. for both Auth and RL
+    pub fn build_message(
+        &self,
+        domain: String,
+        descriptors: protobuf::RepeatedField<RateLimitDescriptor>,
+    ) -> GrpcMessage {
+        /*match self.service.extension_type {
+            //ExtensionType::Auth => GrpcMessage::Auth(AuthService::message(domain.clone())),
+            //ExtensionType::RateLimit => GrpcMessage::RateLimit(RateLimitService::message(domain.clone(), descriptors)),
+        }*/
+        GrpcMessage::RateLimit(RateLimitService::message(domain.clone(), descriptors))
     }
 }
 
