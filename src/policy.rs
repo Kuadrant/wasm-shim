@@ -1,5 +1,5 @@
 use crate::attribute::Attribute;
-use crate::configuration::{DataItem, DataType, PatternExpression};
+use crate::configuration::{Action, DataItem, DataType, PatternExpression};
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::filter::http_context::Filter;
 use log::debug;
@@ -28,16 +28,24 @@ pub struct Policy {
     pub domain: String,
     pub hostnames: Vec<String>,
     pub rules: Vec<Rule>,
+    pub actions: Vec<Action>,
 }
 
 impl Policy {
     #[cfg(test)]
-    pub fn new(name: String, domain: String, hostnames: Vec<String>, rules: Vec<Rule>) -> Self {
+    pub fn new(
+        name: String,
+        domain: String,
+        hostnames: Vec<String>,
+        rules: Vec<Rule>,
+        actions: Vec<Action>,
+    ) -> Self {
         Policy {
             name,
             domain,
             hostnames,
             rules,
+            actions,
         }
     }
 
