@@ -1,7 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod rate_limit;
 
-use crate::configuration::{ExtensionType, FailureMode};
+use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::envoy::{CheckRequest, RateLimitDescriptor, RateLimitRequest};
 use crate::service::auth::{AuthService, AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{RateLimitService, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
@@ -147,36 +147,30 @@ impl GrpcMessage {
 
 #[derive(Default)]
 pub struct GrpcService {
-    endpoint: String,
     #[allow(dead_code)]
-    extension_type: ExtensionType,
+    extension: Rc<Extension>,
     name: &'static str,
     method: &'static str,
-    failure_mode: FailureMode,
 }
 
 impl GrpcService {
-    pub fn new(extension_type: ExtensionType, endpoint: String, failure_mode: FailureMode) -> Self {
-        match extension_type {
+    pub fn new(extension: Rc<Extension>) -> Self {
+        match extension.extension_type {
             ExtensionType::Auth => Self {
-                endpoint,
-                extension_type,
+                extension,
                 name: AUTH_SERVICE_NAME,
                 method: AUTH_METHOD_NAME,
-                failure_mode,
             },
             ExtensionType::RateLimit => Self {
-                endpoint,
-                extension_type,
+                extension,
                 name: RATELIMIT_SERVICE_NAME,
                 method: RATELIMIT_METHOD_NAME,
-                failure_mode,
             },
         }
     }
 
     fn endpoint(&self) -> &str {
-        &self.endpoint
+        &self.extension.endpoint
     }
     fn name(&self) -> &str {
         self.name
@@ -185,7 +179,7 @@ impl GrpcService {
         self.method
     }
     pub fn failure_mode(&self) -> &FailureMode {
-        &self.failure_mode
+        &self.extension.failure_mode
     }
 }
 
@@ -236,8 +230,12 @@ impl GrpcServiceHandler {
         )
     }
 
+    pub fn get_extension(&self) -> Rc<Extension> {
+        Rc::clone(&self.service.extension)
+    }
+
     pub fn get_extension_type(&self) -> ExtensionType {
-        self.service.extension_type.clone()
+        self.service.extension.extension_type.clone()
     }
 }
 

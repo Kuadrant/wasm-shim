@@ -486,16 +486,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
         let services = config
             .extensions
             .into_iter()
-            .map(|(name, ext)| {
-                (
-                    name,
-                    Rc::new(GrpcService::new(
-                        ext.extension_type,
-                        ext.endpoint,
-                        ext.failure_mode,
-                    )),
-                )
-            })
+            .map(|(name, ext)| (name, Rc::new(GrpcService::new(Rc::new(ext)))))
             .collect();
 
         Ok(Self {
@@ -505,7 +496,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum FailureMode {
     #[default]
@@ -513,7 +504,7 @@ pub enum FailureMode {
     Allow,
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtensionType {
     Auth,
@@ -528,7 +519,7 @@ pub struct PluginConfiguration {
     pub policies: Vec<Policy>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Extension {
     #[serde(rename = "type")]
