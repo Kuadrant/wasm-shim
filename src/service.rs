@@ -11,7 +11,6 @@ use protobuf::{
     Clear, CodedInputStream, CodedOutputStream, Message, ProtobufResult, UnknownFields,
 };
 use proxy_wasm::hostcalls;
-use proxy_wasm::hostcalls::dispatch_grpc_call;
 use proxy_wasm::types::{Bytes, MapType, Status};
 use std::any::Any;
 use std::cell::OnceCell;
@@ -195,23 +194,17 @@ type GrpcCall = fn(
 pub struct GrpcServiceHandler {
     service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
-    grpc_call: GrpcCall,
 }
 
 impl GrpcServiceHandler {
-    pub fn new(
-        service: Rc<GrpcService>,
-        header_resolver: Rc<HeaderResolver>,
-        grpc_call: Option<GrpcCall>,
-    ) -> Self {
+    pub fn new(service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
         Self {
             service,
             header_resolver,
-            grpc_call: grpc_call.unwrap_or(dispatch_grpc_call),
         }
     }
 
-    pub fn send(&self, message: GrpcMessage) -> Result<u32, Status> {
+    pub fn send(&self, grpc_call: GrpcCall, message: GrpcMessage) -> Result<u32, Status> {
         let msg = Message::write_to_bytes(&message).unwrap();
         let metadata = self
             .header_resolver
@@ -220,7 +213,7 @@ impl GrpcServiceHandler {
             .map(|(header, value)| (*header, value.as_slice()))
             .collect();
 
-        (self.grpc_call)(
+        grpc_call(
             self.service.endpoint(),
             self.service.name(),
             self.service.method(),

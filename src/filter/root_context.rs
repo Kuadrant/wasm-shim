@@ -49,7 +49,6 @@ impl RootContext for FilterRoot {
                     .or_insert(Rc::from(GrpcServiceHandler::new(
                         Rc::clone(service),
                         Rc::new(HeaderResolver::new()),
-                        None,
                     )));
             });
         Some(Box::new(Filter {
