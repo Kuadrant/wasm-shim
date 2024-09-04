@@ -96,7 +96,11 @@ impl OperationDispatcher {
         policy.actions.iter().for_each(|action| {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
-                let message = service.build_message(policy.domain.clone(), descriptors.clone());
+                let message = GrpcMessage::new(
+                    service.get_extension_type(),
+                    policy.domain.clone(),
+                    descriptors.clone(),
+                );
                 operations.push(Operation::new((service.clone(), message)))
             }
         });
