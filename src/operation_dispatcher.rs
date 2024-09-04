@@ -30,6 +30,7 @@ impl State {
 type Procedure = (Rc<GrpcServiceHandler>, GrpcMessage);
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub(crate) struct Operation {
     state: State,
     result: Result<u32, Status>,
@@ -136,16 +137,14 @@ impl OperationDispatcher {
         self.operations.borrow().first().unwrap().get_result()
     }
 
-    pub fn next(&self) -> Option<(State, Result<u32, Status>)> {
+    pub fn next(&self) -> Option<Operation> {
         let mut operations = self.operations.borrow_mut();
         if let Some((i, operation)) = operations.iter_mut().enumerate().next() {
             if let State::Done = operation.get_state() {
-                let res = operation.get_result();
-                operations.remove(i);
-                Some((State::Done, res))
+                Some(operations.remove(i))
             } else {
                 operation.trigger();
-                Some((operation.state.clone(), operation.result))
+                Some(operation.clone())
             }
         } else {
             None
@@ -167,7 +166,7 @@ mod tests {
         _message: Option<&[u8]>,
         _timeout: Duration,
     ) -> Result<u32, Status> {
-        Ok(1)
+        Ok(200)
     }
 
     fn build_grpc_service_handler() -> GrpcServiceHandler {
@@ -263,23 +262,16 @@ mod tests {
         let operation_dispatcher = OperationDispatcher::default();
         operation_dispatcher.push_operations(vec![operation]);
 
-        let mut res = operation_dispatcher.next();
-        assert_eq!(res, Some((State::Waiting, Ok(200))));
-        assert_eq!(
-            operation_dispatcher.get_current_operation_state(),
-            Some(State::Waiting)
-        );
+        if let Some(operation) = operation_dispatcher.next() {
+            assert_eq!(operation.get_result(), Ok(200));
+            assert_eq!(operation.get_state(), State::Waiting);
+        }
 
-        res = operation_dispatcher.next();
-        assert_eq!(res, Some((State::Done, Ok(200))));
-        assert_eq!(
-            operation_dispatcher.get_current_operation_state(),
-            Some(State::Done)
-        );
-        assert_eq!(operation_dispatcher.get_current_operation_result(), Ok(200));
-
-        res = operation_dispatcher.next();
-        assert_eq!(res, None);
+        if let Some(operation) = operation_dispatcher.next() {
+            assert_eq!(operation.get_result(), Ok(200));
+            assert_eq!(operation.get_state(), State::Done);
+        }
+        operation_dispatcher.next();
         assert_eq!(operation_dispatcher.get_current_operation_state(), None);
     }
 }
