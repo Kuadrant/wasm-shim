@@ -3,10 +3,12 @@ use crate::envoy::RateLimitDescriptor;
 use crate::policy::Policy;
 use crate::service::{GrpcMessage, GrpcServiceHandler};
 use protobuf::RepeatedField;
+use proxy_wasm::hostcalls;
 use proxy_wasm::types::Status;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 #[allow(dead_code)]
 #[derive(PartialEq, Debug, Clone)]
@@ -25,6 +27,24 @@ impl State {
             _ => {}
         }
     }
+}
+
+fn grpc_call(
+    upstream_name: &str,
+    service_name: &str,
+    method_name: &str,
+    initial_metadata: Vec<(&str, &[u8])>,
+    message: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<u32, Status> {
+    hostcalls::dispatch_grpc_call(
+        upstream_name,
+        service_name,
+        method_name,
+        initial_metadata,
+        message,
+        timeout,
+    )
 }
 
 type Procedure = (Rc<GrpcServiceHandler>, GrpcMessage);
@@ -56,7 +76,7 @@ impl Operation {
     pub fn trigger(&mut self) {
         if let State::Done = self.state {
         } else {
-            self.result = self.procedure.0.send(self.procedure.1.clone());
+            self.result = self.procedure.0.send(grpc_call, self.procedure.1.clone());
             self.state.next();
         }
     }
@@ -170,11 +190,7 @@ mod tests {
     }
 
     fn build_grpc_service_handler() -> GrpcServiceHandler {
-        GrpcServiceHandler::new(
-            Rc::new(Default::default()),
-            Rc::new(Default::default()),
-            Some(grpc_call),
-        )
+        GrpcServiceHandler::new(Rc::new(Default::default()), Rc::new(Default::default()))
     }
 
     fn build_message() -> RateLimitRequest {
