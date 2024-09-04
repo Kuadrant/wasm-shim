@@ -10,7 +10,6 @@ use protobuf::reflect::MessageDescriptor;
 use protobuf::{
     Clear, CodedInputStream, CodedOutputStream, Message, ProtobufResult, UnknownFields,
 };
-use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
 use std::any::Any;
 use std::cell::OnceCell;
@@ -182,7 +181,7 @@ impl GrpcService {
     }
 }
 
-type GrpcCall = fn(
+pub type GrpcCall = fn(
     upstream_name: &str,
     service_name: &str,
     method_name: &str,
@@ -190,6 +189,8 @@ type GrpcCall = fn(
     message: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<u32, Status>;
+
+pub type GetMapValuesBytes = fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status>;
 
 pub struct GrpcServiceHandler {
     service: Rc<GrpcService>,
@@ -204,11 +205,16 @@ impl GrpcServiceHandler {
         }
     }
 
-    pub fn send(&self, grpc_call: GrpcCall, message: GrpcMessage) -> Result<u32, Status> {
+    pub fn send(
+        &self,
+        get_map_values_bytes: GetMapValuesBytes,
+        grpc_call: GrpcCall,
+        message: GrpcMessage,
+    ) -> Result<u32, Status> {
         let msg = Message::write_to_bytes(&message).unwrap();
         let metadata = self
             .header_resolver
-            .get()
+            .get(get_map_values_bytes)
             .iter()
             .map(|(header, value)| (*header, value.as_slice()))
             .collect();
@@ -249,12 +255,12 @@ impl HeaderResolver {
         }
     }
 
-    pub fn get(&self) -> &Vec<(&'static str, Bytes)> {
+    pub fn get(&self, get_map_values_bytes: GetMapValuesBytes) -> &Vec<(&'static str, Bytes)> {
         self.headers.get_or_init(|| {
             let mut headers = Vec::new();
             for header in TracingHeader::all() {
                 if let Ok(Some(value)) =
-                    hostcalls::get_map_value_bytes(MapType::HttpRequestHeaders, (*header).as_str())
+                    get_map_values_bytes(MapType::HttpRequestHeaders, (*header).as_str())
                 {
                     headers.push(((*header).as_str(), value));
                 }
