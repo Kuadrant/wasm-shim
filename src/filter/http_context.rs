@@ -39,26 +39,22 @@ impl Filter {
             return Action::Continue;
         }
 
-        // Build Actions from config actions
         self.operation_dispatcher.build_operations(rlp, descriptors);
-        // populate actions in the dispatcher
-        // call the next on the match
 
-        if let Some(result) = self.operation_dispatcher.next() {
-            match result {
-                (_state, Ok(call_id)) => {
+        if let Some(operation) = self.operation_dispatcher.next() {
+            match operation.get_result() {
+                Ok(call_id) => {
                     debug!(
                         "#{} initiated gRPC call (id# {}) to Limitador",
                         self.context_id, call_id
                     );
                     Action::Pause
                 }
-                (_state, Err(e)) => {
+                Err(e) => {
                     warn!("gRPC call to Limitador failed! {e:?}");
-                    // TODO(didierofrivia): Get the failure_mode
-                    /*if let FailureMode::Deny = rls.failure_mode() {
+                    if let FailureMode::Deny = operation.get_failure_mode() {
                         self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
-                    } */
+                    }
                     Action::Continue
                 }
             }
