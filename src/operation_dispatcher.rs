@@ -1,3 +1,4 @@
+use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::envoy::RateLimitDescriptor;
 use crate::policy::Policy;
 use crate::service::{GrpcMessage, GrpcServiceHandler};
@@ -32,15 +33,17 @@ type Procedure = (Rc<GrpcServiceHandler>, GrpcMessage);
 pub(crate) struct Operation {
     state: State,
     result: Result<u32, Status>,
+    extension: Rc<Extension>,
     procedure: Procedure,
 }
 
 #[allow(dead_code)]
 impl Operation {
-    pub fn new(procedure: Procedure) -> Self {
+    pub fn new(extension: Rc<Extension>, procedure: Procedure) -> Self {
         Self {
             state: State::Pending,
             result: Err(Status::Empty),
+            extension,
             procedure,
         }
     }
@@ -57,12 +60,20 @@ impl Operation {
         }
     }
 
-    fn get_state(&self) -> State {
+    pub fn get_state(&self) -> State {
         self.state.clone()
     }
 
-    fn get_result(&self) -> Result<u32, Status> {
+    pub fn get_result(&self) -> Result<u32, Status> {
         self.result
+    }
+
+    pub fn get_extension_type(&self) -> ExtensionType {
+        self.extension.extension_type.clone()
+    }
+
+    pub fn get_failure_mode(&self) -> FailureMode {
+        self.extension.failure_mode.clone()
     }
 }
 
@@ -101,7 +112,10 @@ impl OperationDispatcher {
                     policy.domain.clone(),
                     descriptors.clone(),
                 );
-                operations.push(Operation::new((service.clone(), message)))
+                operations.push(Operation::new(
+                    service.get_extension(),
+                    (Rc::clone(service), message),
+                ))
             }
         });
         self.push_operations(operations);
@@ -175,11 +189,32 @@ mod tests {
     }
 
     #[test]
+    fn operation_getters() {
+        let extension = Rc::new(Extension::default());
+        let operation = Operation::new(
+            extension,
+            (
+                Rc::new(build_grpc_service_handler()),
+                GrpcMessage::RateLimit(build_message()),
+            ),
+        );
+
+        assert_eq!(operation.get_state(), State::Pending);
+        assert_eq!(operation.get_extension_type(), ExtensionType::RateLimit);
+        assert_eq!(operation.get_failure_mode(), FailureMode::Deny);
+        assert_eq!(operation.get_result(), Result::Ok(1));
+    }
+
+    #[test]
     fn operation_transition() {
-        let mut operation = Operation::new((
-            Rc::new(build_grpc_service_handler()),
-            GrpcMessage::RateLimit(build_message()),
-        ));
+        let extension = Rc::new(Extension::default());
+        let mut operation = Operation::new(
+            extension,
+            (
+                Rc::new(build_grpc_service_handler()),
+                GrpcMessage::RateLimit(build_message()),
+            ),
+        );
         assert_eq!(operation.get_state(), State::Pending);
         operation.trigger();
         assert_eq!(operation.get_state(), State::Waiting);
@@ -193,11 +228,14 @@ mod tests {
         let operation_dispatcher = OperationDispatcher::default();
 
         assert_eq!(operation_dispatcher.operations.borrow().len(), 1);
-
-        operation_dispatcher.push_operations(vec![Operation::new((
-            Rc::new(build_grpc_service_handler()),
-            GrpcMessage::RateLimit(build_message()),
-        ))]);
+        let extension = Rc::new(Extension::default());
+        operation_dispatcher.push_operations(vec![Operation::new(
+            extension,
+            (
+                Rc::new(build_grpc_service_handler()),
+                GrpcMessage::RateLimit(build_message()),
+            ),
+        )]);
 
         assert_eq!(operation_dispatcher.operations.borrow().len(), 2);
     }
@@ -214,10 +252,14 @@ mod tests {
 
     #[test]
     fn operation_dispatcher_next() {
-        let operation = Operation::new((
-            Rc::new(build_grpc_service_handler()),
-            GrpcMessage::RateLimit(build_message()),
-        ));
+        let extension = Rc::new(Extension::default());
+        let operation = Operation::new(
+            extension,
+            (
+                Rc::new(build_grpc_service_handler()),
+                GrpcMessage::RateLimit(build_message()),
+            ),
+        );
         let operation_dispatcher = OperationDispatcher::default();
         operation_dispatcher.push_operations(vec![operation]);
 
