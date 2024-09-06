@@ -181,7 +181,7 @@ impl GrpcService {
     }
 }
 
-pub type GrpcCall = fn(
+pub type GrpcCallFn = fn(
     upstream_name: &str,
     service_name: &str,
     method_name: &str,
@@ -190,7 +190,7 @@ pub type GrpcCall = fn(
     timeout: Duration,
 ) -> Result<u32, Status>;
 
-pub type GetMapValuesBytes = fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status>;
+pub type GetMapValuesBytesFn = fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status>;
 
 pub struct GrpcServiceHandler {
     service: Rc<GrpcService>,
@@ -207,19 +207,19 @@ impl GrpcServiceHandler {
 
     pub fn send(
         &self,
-        get_map_values_bytes: GetMapValuesBytes,
-        grpc_call: GrpcCall,
+        get_map_values_bytes_fn: GetMapValuesBytesFn,
+        grpc_call_fn: GrpcCallFn,
         message: GrpcMessage,
     ) -> Result<u32, Status> {
         let msg = Message::write_to_bytes(&message).unwrap();
         let metadata = self
             .header_resolver
-            .get(get_map_values_bytes)
+            .get(get_map_values_bytes_fn)
             .iter()
             .map(|(header, value)| (*header, value.as_slice()))
             .collect();
 
-        grpc_call(
+        grpc_call_fn(
             self.service.endpoint(),
             self.service.name(),
             self.service.method(),
@@ -255,12 +255,12 @@ impl HeaderResolver {
         }
     }
 
-    pub fn get(&self, get_map_values_bytes: GetMapValuesBytes) -> &Vec<(&'static str, Bytes)> {
+    pub fn get(&self, get_map_values_bytes_fn: GetMapValuesBytesFn) -> &Vec<(&'static str, Bytes)> {
         self.headers.get_or_init(|| {
             let mut headers = Vec::new();
             for header in TracingHeader::all() {
                 if let Ok(Some(value)) =
-                    get_map_values_bytes(MapType::HttpRequestHeaders, (*header).as_str())
+                    get_map_values_bytes_fn(MapType::HttpRequestHeaders, (*header).as_str())
                 {
                     headers.push(((*header).as_str(), value));
                 }
