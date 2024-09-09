@@ -1,11 +1,15 @@
+use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::envoy::RateLimitDescriptor;
 use crate::policy::Policy;
-use crate::service::{GrpcMessage, GrpcServiceHandler};
+use crate::service::grpc_message::GrpcMessageRequest;
+use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcServiceHandler};
 use protobuf::RepeatedField;
-use proxy_wasm::types::Status;
+use proxy_wasm::hostcalls;
+use proxy_wasm::types::{Bytes, MapType, Status};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 #[allow(dead_code)]
 #[derive(PartialEq, Debug, Clone)]
@@ -26,43 +30,58 @@ impl State {
     }
 }
 
-type Procedure = (Rc<GrpcServiceHandler>, GrpcMessage);
+type Procedure = (Rc<GrpcServiceHandler>, GrpcMessageRequest);
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub(crate) struct Operation {
     state: State,
     result: Result<u32, Status>,
+    extension: Rc<Extension>,
     procedure: Procedure,
+    grpc_call_fn: GrpcCallFn,
+    get_map_values_bytes_fn: GetMapValuesBytesFn,
 }
 
 #[allow(dead_code)]
 impl Operation {
-    pub fn new(procedure: Procedure) -> Self {
+    pub fn new(extension: Rc<Extension>, procedure: Procedure) -> Self {
         Self {
             state: State::Pending,
             result: Err(Status::Empty),
+            extension,
             procedure,
+            grpc_call_fn,
+            get_map_values_bytes_fn,
         }
     }
 
-    pub fn set_action(&mut self, procedure: Procedure) {
-        self.procedure = procedure;
-    }
-
-    pub fn trigger(&mut self) {
+    fn trigger(&mut self) {
         if let State::Done = self.state {
         } else {
-            self.result = self.procedure.0.send(self.procedure.1.clone());
+            self.result = self.procedure.0.send(
+                self.get_map_values_bytes_fn,
+                self.grpc_call_fn,
+                self.procedure.1.clone(),
+            );
             self.state.next();
         }
     }
 
-    fn get_state(&self) -> State {
+    pub fn get_state(&self) -> State {
         self.state.clone()
     }
 
-    fn get_result(&self) -> Result<u32, Status> {
+    pub fn get_result(&self) -> Result<u32, Status> {
         self.result
+    }
+
+    pub fn get_extension_type(&self) -> ExtensionType {
+        self.extension.extension_type.clone()
+    }
+
+    pub fn get_failure_mode(&self) -> FailureMode {
+        self.extension.failure_mode.clone()
     }
 }
 
@@ -96,8 +115,15 @@ impl OperationDispatcher {
         policy.actions.iter().for_each(|action| {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
-                let message = service.build_message(policy.domain.clone(), descriptors.clone());
-                operations.push(Operation::new((service.clone(), message)))
+                let message = GrpcMessageRequest::new(
+                    service.get_extension_type(),
+                    policy.domain.clone(),
+                    descriptors.clone(),
+                );
+                operations.push(Operation::new(
+                    service.get_extension(),
+                    (Rc::clone(service), message),
+                ))
             }
         });
         self.push_operations(operations);
@@ -118,21 +144,42 @@ impl OperationDispatcher {
         self.operations.borrow().first().unwrap().get_result()
     }
 
-    pub fn next(&self) -> Option<(State, Result<u32, Status>)> {
+    pub fn next(&self) -> Option<Operation> {
         let mut operations = self.operations.borrow_mut();
         if let Some((i, operation)) = operations.iter_mut().enumerate().next() {
             if let State::Done = operation.get_state() {
-                let res = operation.get_result();
                 operations.remove(i);
-                Some((State::Done, res))
+                operations.get(i).cloned() // The next op is now at `i`
             } else {
                 operation.trigger();
-                Some((operation.state.clone(), operation.result))
+                Some(operation.clone())
             }
         } else {
             None
         }
     }
+}
+
+fn grpc_call_fn(
+    upstream_name: &str,
+    service_name: &str,
+    method_name: &str,
+    initial_metadata: Vec<(&str, &[u8])>,
+    message: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<u32, Status> {
+    hostcalls::dispatch_grpc_call(
+        upstream_name,
+        service_name,
+        method_name,
+        initial_metadata,
+        message,
+        timeout,
+    )
+}
+
+fn get_map_values_bytes_fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status> {
+    hostcalls::get_map_value_bytes(map_type, key)
 }
 
 #[cfg(test)]
@@ -141,7 +188,7 @@ mod tests {
     use crate::envoy::RateLimitRequest;
     use std::time::Duration;
 
-    fn grpc_call(
+    fn grpc_call_fn_stub(
         _upstream_name: &str,
         _service_name: &str,
         _method_name: &str,
@@ -149,15 +196,18 @@ mod tests {
         _message: Option<&[u8]>,
         _timeout: Duration,
     ) -> Result<u32, Status> {
-        Ok(1)
+        Ok(200)
+    }
+
+    fn get_map_values_bytes_fn_stub(
+        _map_type: MapType,
+        _key: &str,
+    ) -> Result<Option<Bytes>, Status> {
+        Ok(Some(Vec::new()))
     }
 
     fn build_grpc_service_handler() -> GrpcServiceHandler {
-        GrpcServiceHandler::new(
-            Rc::new(Default::default()),
-            Rc::new(Default::default()),
-            Some(grpc_call),
-        )
+        GrpcServiceHandler::new(Rc::new(Default::default()), Rc::new(Default::default()))
     }
 
     fn build_message() -> RateLimitRequest {
@@ -170,12 +220,33 @@ mod tests {
         }
     }
 
+    fn build_operation() -> Operation {
+        Operation {
+            state: State::Pending,
+            result: Ok(1),
+            extension: Rc::new(Extension::default()),
+            procedure: (
+                Rc::new(build_grpc_service_handler()),
+                GrpcMessageRequest::RateLimit(build_message()),
+            ),
+            grpc_call_fn: grpc_call_fn_stub,
+            get_map_values_bytes_fn: get_map_values_bytes_fn_stub,
+        }
+    }
+
+    #[test]
+    fn operation_getters() {
+        let operation = build_operation();
+
+        assert_eq!(operation.get_state(), State::Pending);
+        assert_eq!(operation.get_extension_type(), ExtensionType::RateLimit);
+        assert_eq!(operation.get_failure_mode(), FailureMode::Deny);
+        assert_eq!(operation.get_result(), Ok(1));
+    }
+
     #[test]
     fn operation_transition() {
-        let mut operation = Operation::new((
-            Rc::new(build_grpc_service_handler()),
-            GrpcMessage::RateLimit(build_message()),
-        ));
+        let mut operation = build_operation();
         assert_eq!(operation.get_state(), State::Pending);
         operation.trigger();
         assert_eq!(operation.get_state(), State::Waiting);
@@ -188,20 +259,16 @@ mod tests {
     fn operation_dispatcher_push_actions() {
         let operation_dispatcher = OperationDispatcher::default();
 
+        assert_eq!(operation_dispatcher.operations.borrow().len(), 0);
+        operation_dispatcher.push_operations(vec![build_operation()]);
+
         assert_eq!(operation_dispatcher.operations.borrow().len(), 1);
-
-        operation_dispatcher.push_operations(vec![Operation::new((
-            Rc::new(build_grpc_service_handler()),
-            GrpcMessage::RateLimit(build_message()),
-        ))]);
-
-        assert_eq!(operation_dispatcher.operations.borrow().len(), 2);
     }
 
     #[test]
     fn operation_dispatcher_get_current_action_state() {
         let operation_dispatcher = OperationDispatcher::default();
-
+        operation_dispatcher.push_operations(vec![build_operation()]);
         assert_eq!(
             operation_dispatcher.get_current_operation_state(),
             Some(State::Pending)
@@ -210,30 +277,37 @@ mod tests {
 
     #[test]
     fn operation_dispatcher_next() {
-        let operation = Operation::new((
-            Rc::new(build_grpc_service_handler()),
-            GrpcMessage::RateLimit(build_message()),
-        ));
         let operation_dispatcher = OperationDispatcher::default();
-        operation_dispatcher.push_operations(vec![operation]);
+        operation_dispatcher.push_operations(vec![build_operation(), build_operation()]);
 
-        let mut res = operation_dispatcher.next();
-        assert_eq!(res, Some((State::Waiting, Ok(200))));
+        assert_eq!(operation_dispatcher.get_current_operation_result(), Ok(1));
         assert_eq!(
             operation_dispatcher.get_current_operation_state(),
-            Some(State::Waiting)
+            Some(State::Pending)
         );
 
-        res = operation_dispatcher.next();
-        assert_eq!(res, Some((State::Done, Ok(200))));
-        assert_eq!(
-            operation_dispatcher.get_current_operation_state(),
-            Some(State::Done)
-        );
-        assert_eq!(operation_dispatcher.get_current_operation_result(), Ok(200));
+        let mut op = operation_dispatcher.next();
+        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.unwrap().get_state(), State::Waiting);
 
-        res = operation_dispatcher.next();
-        assert_eq!(res, None);
-        assert_eq!(operation_dispatcher.get_current_operation_state(), None);
+        op = operation_dispatcher.next();
+        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.unwrap().get_state(), State::Done);
+
+        op = operation_dispatcher.next();
+        assert_eq!(op.clone().unwrap().get_result(), Ok(1));
+        assert_eq!(op.unwrap().get_state(), State::Pending);
+
+        op = operation_dispatcher.next();
+        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.unwrap().get_state(), State::Waiting);
+
+        op = operation_dispatcher.next();
+        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.unwrap().get_state(), State::Done);
+
+        op = operation_dispatcher.next();
+        assert!(op.is_none());
+        assert!(operation_dispatcher.get_current_operation_state().is_none());
     }
 }
