@@ -82,6 +82,10 @@ impl Policy {
 
     fn pattern_expression_applies(&self, filter: &Filter, p_e: &PatternExpression) -> bool {
         let attribute_path = p_e.path();
+        debug!(
+            "#{} get_property:  selector: {} path: {:?}",
+            filter.context_id, p_e.selector, attribute_path
+        );
         let attribute_value = match filter.get_property(attribute_path) {
             None => {
                 debug!(
@@ -127,6 +131,10 @@ impl Policy {
                     };
 
                     let attribute_path = selector_item.path();
+                    debug!(
+                        "#{} get_property:  selector: {} path: {:?}",
+                        filter.context_id, selector_item.selector, attribute_path
+                    );
                     let value = match filter.get_property(attribute_path.tokens()) {
                         None => {
                             debug!(
