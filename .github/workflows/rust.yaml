@@ -71,4 +71,4 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets --all-features -- -D warnings
+          args: --all-targets --all-features # TODO: Re-add `-- -D warnings` when https://github.com/stepancheg/rust-protobuf/pull/733 is released  to new version of crate
