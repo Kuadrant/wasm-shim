@@ -1,6 +1,6 @@
 use crate::attribute::Attribute;
 use crate::configuration::{DataItem, DataType, PatternExpression};
-use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
+use crate::envoy::ratelimit::{rate_limit_descriptor, RateLimitDescriptor};
 use crate::filter::http_context::Filter;
 use log::debug;
 use proxy_wasm::traits::Context;
@@ -49,10 +49,7 @@ impl Policy {
         }
     }
 
-    pub fn build_descriptors(
-        &self,
-        filter: &Filter,
-    ) -> protobuf::RepeatedField<RateLimitDescriptor> {
+    pub fn build_descriptors(&self, filter: &Filter) -> Vec<RateLimitDescriptor> {
         self.rules
             .iter()
             .filter(|rule: &&Rule| self.filter_rule_by_conditions(filter, &rule.conditions))
@@ -109,15 +106,17 @@ impl Policy {
         filter: &Filter,
         data_list: &[DataItem],
     ) -> Option<RateLimitDescriptor> {
-        let mut entries = ::protobuf::RepeatedField::default();
+        let mut entries = Vec::new();
 
         // iterate over data items to allow any data item to skip the entire descriptor
         for data in data_list.iter() {
             match &data.item {
                 DataType::Static(static_item) => {
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(static_item.key.to_owned());
-                    descriptor_entry.set_value(static_item.value.to_owned());
+                    let descriptor_entry = rate_limit_descriptor::Entry {
+                        key: static_item.key.to_owned(),
+                        value: static_item.value.to_owned(),
+                        special_fields: Default::default(),
+                    };
                     entries.push(descriptor_entry);
                 }
                 DataType::Selector(selector_item) => {
@@ -145,16 +144,18 @@ impl Policy {
                                     filter.context_id, attribute_path, e))
                             .ok()?,
                     };
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(descriptor_key);
-                    descriptor_entry.set_value(value);
+                    let descriptor_entry = rate_limit_descriptor::Entry {
+                        key: descriptor_key,
+                        value,
+                        special_fields: Default::default(),
+                    };
                     entries.push(descriptor_entry);
                 }
             }
         }
 
         let mut res = RateLimitDescriptor::new();
-        res.set_entries(entries);
+        res.entries = entries;
         Some(res)
     }
 }

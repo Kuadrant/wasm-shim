@@ -53,13 +53,8 @@ fn set_git_hash(env: &str) {
 }
 
 fn generate_protobuf() -> Result<(), Box<dyn Error>> {
-    let custom = protoc_rust::Customize {
-        serde_derive: Some(true),
-        ..Default::default()
-    };
-    protoc_rust::Codegen::new()
+    protobuf_codegen::Codegen::new()
         .out_dir("src/envoy")
-        .customize(custom)
         .inputs([
             "vendor-protobufs/data-plane-api/envoy/service/auth/v3/external_auth.proto",
             "vendor-protobufs/data-plane-api/envoy/service/ratelimit/v3/rls.proto",

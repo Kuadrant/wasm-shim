@@ -1,39 +1,33 @@
-mod address;
-mod attribute_context;
-mod authority;
-mod backoff;
-mod base;
-mod config_source;
-mod context_params;
-mod custom_tag;
-mod extension;
-mod external_auth;
-mod grpc_service;
-mod http_status;
-mod http_uri;
-mod matcher;
-mod metadata;
-mod number;
-mod percent;
-mod proxy_protocol;
-mod range;
-mod ratelimit;
-mod ratelimit_unit;
-mod regex;
-mod rls;
-mod route_components;
-mod semantic_version;
-mod socket_option;
-mod status;
-mod string;
-mod timestamp;
-mod token_bucket;
-mod value;
+// @generated
 
-pub use {
-    ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
-    rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
-};
-
-#[cfg(test)]
-pub use base::HeaderValue;
+pub mod address;
+pub mod attribute_context;
+pub mod authority;
+pub mod backoff;
+pub mod base;
+pub mod config_source;
+pub mod context_params;
+pub mod custom_tag;
+pub mod extension;
+pub mod external_auth;
+pub mod grpc_service;
+pub mod http_status;
+pub mod http_uri;
+pub mod matcher;
+pub mod metadata;
+pub mod number;
+pub mod percent;
+pub mod proxy_protocol;
+pub mod range;
+pub mod ratelimit;
+pub mod ratelimit_unit;
+pub mod regex;
+pub mod rls;
+pub mod route_components;
+pub mod semantic_version;
+pub mod socket_option;
+pub mod status;
+pub mod string;
+pub mod timestamp;
+pub mod token_bucket;
+pub mod value;

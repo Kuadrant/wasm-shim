@@ -1,7 +1,8 @@
-use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
+use crate::envoy::ratelimit::RateLimitDescriptor;
+use crate::envoy::rls::RateLimitRequest;
 use crate::filter::http_context::TracingHeader;
 use crate::service::Service;
-use protobuf::{Message, RepeatedField};
+use protobuf::Message;
 use proxy_wasm::hostcalls::dispatch_grpc_call;
 use proxy_wasm::types::{Bytes, Status};
 use std::time::Duration;
@@ -20,16 +21,12 @@ impl RateLimitService {
             tracing_headers: metadata,
         }
     }
-    pub fn message(
-        domain: String,
-        descriptors: RepeatedField<RateLimitDescriptor>,
-    ) -> RateLimitRequest {
+    pub fn message(domain: String, descriptors: Vec<RateLimitDescriptor>) -> RateLimitRequest {
         RateLimitRequest {
             domain,
             descriptors,
             hits_addend: 1,
-            unknown_fields: Default::default(),
-            cached_size: Default::default(),
+            special_fields: Default::default(),
         }
     }
 }
@@ -65,21 +62,25 @@ impl Service<RateLimitRequest> for RateLimitService {
 
 #[cfg(test)]
 mod tests {
-    use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitRequest};
+    use crate::envoy::ratelimit::{rate_limit_descriptor, RateLimitDescriptor};
+    // use crate::envoy::ratelimit::RateLimitDescriptor::Entry;
+    use crate::envoy::rls::RateLimitRequest;
     use crate::service::rate_limit::RateLimitService;
     //use crate::service::Service;
-    use protobuf::{CachedSize, RepeatedField, UnknownFields};
+    use protobuf::SpecialFields;
     //use proxy_wasm::types::Status;
     //use crate::filter::http_context::{Filter};
 
     fn build_message() -> RateLimitRequest {
         let domain = "rlp1";
         let mut field = RateLimitDescriptor::new();
-        let mut entry = RateLimitDescriptor_Entry::new();
-        entry.set_key("key1".to_string());
-        entry.set_value("value1".to_string());
-        field.set_entries(RepeatedField::from_vec(vec![entry]));
-        let descriptors = RepeatedField::from_vec(vec![field]);
+        let entry = rate_limit_descriptor::Entry {
+            key: "key1".to_string(),
+            value: "value1".to_string(),
+            special_fields: Default::default(),
+        };
+        field.set_entries(vec![entry]);
+        let descriptors = vec![field];
 
         RateLimitService::message(domain.to_string(), descriptors.clone())
     }
@@ -91,8 +92,7 @@ mod tests {
         assert_eq!(msg.domain, "rlp1".to_string());
         assert_eq!(msg.descriptors.first().unwrap().entries[0].key, "key1");
         assert_eq!(msg.descriptors.first().unwrap().entries[0].value, "value1");
-        assert_eq!(msg.unknown_fields, UnknownFields::default());
-        assert_eq!(msg.cached_size, CachedSize::default());
+        assert_eq!(msg.special_fields, SpecialFields::default());
     }
     /*#[test]
     fn sends_message() {

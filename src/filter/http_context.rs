@@ -1,11 +1,11 @@
 use crate::configuration::{FailureMode, FilterConfig};
-use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
+use crate::envoy::rls::{rate_limit_response, RateLimitResponse};
 use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
 use crate::policy::Policy;
 use crate::service::rate_limit::RateLimitService;
 use crate::service::Service;
 use log::{debug, warn};
-use protobuf::Message;
+use protobuf::{EnumOrUnknown, Message};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Bytes};
 use std::rc::Rc;
@@ -163,26 +163,26 @@ impl Context for Filter {
 
         match rl_resp {
             RateLimitResponse {
-                overall_code: RateLimitResponse_Code::UNKNOWN,
+                overall_code: EnumOrUnknown::new(rate_limit_response::Code::UNKNOWN),
                 ..
             } => {
                 self.handle_error_on_grpc_response();
                 return;
             }
             RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OVER_LIMIT,
+                overall_code: EnumOrUnknown::new(rate_limit_response::Code::OVER_LIMIT),
                 response_headers_to_add: rl_headers,
                 ..
             } => {
                 let mut response_headers = vec![];
                 for header in &rl_headers {
-                    response_headers.push((header.get_key(), header.get_value()));
+                    response_headers.push((header.key.as_str(), header.value.as_str()));
                 }
                 self.send_http_response(429, response_headers, Some(b"Too Many Requests\n"));
                 return;
             }
             RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OK,
+                overall_code: EnumOrUnknown::new(rate_limit_response::Code::OK),
                 response_headers_to_add: additional_headers,
                 ..
             } => {
