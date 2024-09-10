@@ -3,10 +3,12 @@ use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
     AttributeContext_Request, CheckRequest, Metadata, SocketAddress,
 };
+use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use chrono::{DateTime, FixedOffset, Timelike};
 use protobuf::well_known_types::Timestamp;
+use protobuf::Message;
 use proxy_wasm::hostcalls;
-use proxy_wasm::types::MapType;
+use proxy_wasm::types::{Bytes, MapType};
 use std::collections::HashMap;
 
 pub const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
@@ -16,8 +18,33 @@ pub struct AuthService;
 
 #[allow(dead_code)]
 impl AuthService {
-    pub fn message(ce_host: String) -> CheckRequest {
+    pub fn request_message(ce_host: String) -> CheckRequest {
         AuthService::build_check_req(ce_host)
+    }
+
+    pub fn response_message(
+        res_body_bytes: &Bytes,
+        status_code: u32,
+    ) -> GrpcMessageResult<GrpcMessageResponse> {
+        if status_code % 2 == 0 {
+            AuthService::response_message_ok(res_body_bytes)
+        } else {
+            AuthService::response_message_denied(res_body_bytes)
+        }
+    }
+
+    fn response_message_ok(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
+        match Message::parse_from_bytes(res_body_bytes) {
+            Ok(res) => Ok(GrpcMessageResponse::AuthOk(res)),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn response_message_denied(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
+        match Message::parse_from_bytes(res_body_bytes) {
+            Ok(res) => Ok(GrpcMessageResponse::AuthDenied(res)),
+            Err(e) => Err(e),
+        }
     }
 
     fn build_check_req(ce_host: String) -> CheckRequest {

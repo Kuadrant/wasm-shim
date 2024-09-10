@@ -37,7 +37,7 @@ pub use {
         AttributeContext_Request,
     },
     base::Metadata,
-    external_auth::CheckRequest,
+    external_auth::{CheckRequest, DeniedHttpResponse, OkHttpResponse},
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
 };

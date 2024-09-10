@@ -1,5 +1,7 @@
 use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
-use protobuf::RepeatedField;
+use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
+use protobuf::{Message, RepeatedField};
+use proxy_wasm::types::Bytes;
 
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -7,7 +9,7 @@ pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 pub struct RateLimitService;
 
 impl RateLimitService {
-    pub fn message(
+    pub fn request_message(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
     ) -> RateLimitRequest {
@@ -17,6 +19,13 @@ impl RateLimitService {
             hits_addend: 1,
             unknown_fields: Default::default(),
             cached_size: Default::default(),
+        }
+    }
+
+    pub fn response_message(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
+        match Message::parse_from_bytes(res_body_bytes) {
+            Ok(res) => Ok(GrpcMessageResponse::RateLimit(res)),
+            Err(e) => Err(e),
         }
     }
 }
@@ -37,7 +46,7 @@ mod tests {
         field.set_entries(RepeatedField::from_vec(vec![entry]));
         let descriptors = RepeatedField::from_vec(vec![field]);
 
-        RateLimitService::message(domain.to_string(), descriptors.clone())
+        RateLimitService::request_message(domain.to_string(), descriptors.clone())
     }
     #[test]
     fn builds_correct_message() {
