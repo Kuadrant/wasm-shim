@@ -179,6 +179,18 @@ fn it_limits() {
             Some(LogLevel::Debug),
             Some("#2 ratelimitpolicy selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: request.host path: [\"request\", \"host\"]"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: request.method path: [\"request\", \"method\"]"),
+        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -316,6 +328,18 @@ fn it_passes_additional_headers() {
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 ratelimitpolicy selected some-name"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: request.host path: [\"request\", \"host\"]"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: request.method path: [\"request\", \"method\"]"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -555,6 +579,10 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 ratelimitpolicy selected some-name"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
         )
         .expect_log(
             Some(LogLevel::Debug),
