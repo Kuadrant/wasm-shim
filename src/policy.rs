@@ -148,10 +148,19 @@ impl Policy {
                         }
                         // TODO(eastizle): not all fields are strings
                         // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => Attribute::parse(attribute_bytes)
-                            .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    filter.context_id, attribute_path, e))
-                            .ok()?,
+                        Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
+                            Ok(attr_str) => attr_str,
+                            Err(e) => {
+                                debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    filter.context_id, attribute_path, e);
+                                return None;
+                            }
+                        },
+                        // Alternative implementation (for rust >= 1.76)
+                        // Attribute::parse(attribute_bytes)
+                        //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
+                        //           filter.context_id, attribute_path, e))
+                        //   .ok()?,
                     };
                     let mut descriptor_entry = RateLimitDescriptor_Entry::new();
                     descriptor_entry.set_key(descriptor_key);
