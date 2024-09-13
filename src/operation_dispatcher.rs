@@ -75,20 +75,20 @@ impl Operation {
         }
     }
 
-    pub fn get_state(&self) -> State {
-        self.state.clone()
+    pub fn get_state(&self) -> &State {
+        &self.state
     }
 
     pub fn get_result(&self) -> Result<u32, Status> {
         self.result
     }
 
-    pub fn get_extension_type(&self) -> ExtensionType {
-        self.extension.extension_type.clone()
+    pub fn get_extension_type(&self) -> &ExtensionType {
+        &self.extension.extension_type
     }
 
-    pub fn get_failure_mode(&self) -> FailureMode {
-        self.extension.failure_mode.clone()
+    pub fn get_failure_mode(&self) -> &FailureMode {
+        &self.extension.failure_mode
     }
 }
 
@@ -260,9 +260,9 @@ mod tests {
     fn operation_getters() {
         let operation = build_operation();
 
-        assert_eq!(operation.get_state(), State::Pending);
-        assert_eq!(operation.get_extension_type(), ExtensionType::RateLimit);
-        assert_eq!(operation.get_failure_mode(), FailureMode::Deny);
+        assert_eq!(*operation.get_state(), State::Pending);
+        assert_eq!(*operation.get_extension_type(), ExtensionType::RateLimit);
+        assert_eq!(*operation.get_failure_mode(), FailureMode::Deny);
         assert_eq!(operation.get_result(), Ok(0));
     }
 
@@ -270,14 +270,14 @@ mod tests {
     fn operation_transition() {
         let mut operation = build_operation();
         assert_eq!(operation.result, Ok(0));
-        assert_eq!(operation.get_state(), State::Pending);
+        assert_eq!(*operation.get_state(), State::Pending);
         let mut res = operation.trigger();
         assert_eq!(res, Ok(200));
-        assert_eq!(operation.get_state(), State::Waiting);
+        assert_eq!(*operation.get_state(), State::Waiting);
         res = operation.trigger();
         assert_eq!(res, Ok(200));
         assert_eq!(operation.result, Ok(200));
-        assert_eq!(operation.get_state(), State::Done);
+        assert_eq!(*operation.get_state(), State::Done);
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
 
         let mut op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Waiting);
+        assert_eq!(*op.unwrap().get_state(), State::Waiting);
         assert_eq!(
             operation_dispatcher.waiting_operations.borrow_mut().len(),
             1
@@ -325,11 +325,11 @@ mod tests {
 
         op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Done);
+        assert_eq!(*op.unwrap().get_state(), State::Done);
 
         op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(0));
-        assert_eq!(op.unwrap().get_state(), State::Pending);
+        assert_eq!(*op.unwrap().get_state(), State::Pending);
         assert_eq!(
             operation_dispatcher.waiting_operations.borrow_mut().len(),
             0
@@ -337,7 +337,7 @@ mod tests {
 
         op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Waiting);
+        assert_eq!(*op.unwrap().get_state(), State::Waiting);
         assert_eq!(
             operation_dispatcher.waiting_operations.borrow_mut().len(),
             1
@@ -345,7 +345,7 @@ mod tests {
 
         op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Done);
+        assert_eq!(*op.unwrap().get_state(), State::Done);
 
         op = operation_dispatcher.next();
         assert!(op.is_none());

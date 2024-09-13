@@ -261,7 +261,7 @@ impl Message for GrpcMessageResponse {
 
 impl GrpcMessageResponse {
     pub fn new(
-        extension_type: ExtensionType,
+        extension_type: &ExtensionType,
         res_body_bytes: &Bytes,
         status_code: u32,
     ) -> GrpcMessageResult<GrpcMessageResponse> {
