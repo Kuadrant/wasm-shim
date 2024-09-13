@@ -46,6 +46,7 @@ impl GrpcService {
     fn method(&self) -> &str {
         self.method
     }
+    #[allow(dead_code)]
     pub fn failure_mode(&self) -> &FailureMode {
         &self.extension.failure_mode
     }

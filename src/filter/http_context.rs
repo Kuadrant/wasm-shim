@@ -63,16 +63,8 @@ impl Filter {
         }
     }
 
-    fn handle_error_on_grpc_response(&self) {
-        // todo(adam-cattermole): We need a method of knowing which service is the one currently
-        // being used (the current action) so that we can get the failure mode
-        let rls = self
-            .config
-            .services
-            .values()
-            .next()
-            .expect("expect a value");
-        match rls.failure_mode() {
+    fn handle_error_on_grpc_response(&self, failure_mode: &FailureMode) {
+        match failure_mode {
             FailureMode::Deny => {
                 self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
             }
@@ -80,13 +72,17 @@ impl Filter {
         }
     }
 
-    fn process_ratelimit_grpc_response(&mut self, rl_resp: GrpcMessageResponse) {
+    fn process_ratelimit_grpc_response(
+        &mut self,
+        rl_resp: GrpcMessageResponse,
+        failure_mode: &FailureMode,
+    ) {
         match rl_resp {
             GrpcMessageResponse::RateLimit(RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             }) => {
-                self.handle_error_on_grpc_response();
+                self.handle_error_on_grpc_response(failure_mode);
             }
             GrpcMessageResponse::RateLimit(RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OVER_LIMIT,
@@ -158,16 +154,16 @@ impl Context for Filter {
             self.context_id
         );
 
-        let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
-            Some(bytes) => bytes,
-            None => {
-                warn!("grpc response body is empty!");
-                self.handle_error_on_grpc_response();
-                return;
-            }
-        };
-
         if let Some(operation) = self.operation_dispatcher.get_operation(token_id) {
+            let failure_mode = &operation.get_failure_mode();
+            let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
+                Some(bytes) => bytes,
+                None => {
+                    warn!("grpc response body is empty!");
+                    self.handle_error_on_grpc_response(failure_mode);
+                    return;
+                }
+            };
             let res = match GrpcMessageResponse::new(
                 operation.get_extension_type(),
                 &res_body_bytes,
@@ -178,13 +174,13 @@ impl Context for Filter {
                     warn!(
                         "failed to parse grpc response body into GrpcMessageResponse message: {e}"
                     );
-                    self.handle_error_on_grpc_response();
+                    self.handle_error_on_grpc_response(failure_mode);
                     return;
                 }
             };
             match operation.get_extension_type() {
-                ExtensionType::Auth => {}
-                ExtensionType::RateLimit => self.process_ratelimit_grpc_response(res),
+                ExtensionType::Auth => {} // TODO(didierofrivia): Process auth grpc response.
+                ExtensionType::RateLimit => self.process_ratelimit_grpc_response(res, failure_mode),
             }
 
             if let Some(_op) = self.operation_dispatcher.next() {
@@ -193,7 +189,7 @@ impl Context for Filter {
             }
         } else {
             warn!("No Operation found with token_id: {token_id}");
-            self.handle_error_on_grpc_response();
+            self.handle_error_on_grpc_response(&FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
         }
     }
 }
