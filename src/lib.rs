@@ -1,5 +1,6 @@
 mod attribute;
 mod configuration;
+#[allow(renamed_and_removed_lints)]
 mod envoy;
 mod filter;
 mod glob;
