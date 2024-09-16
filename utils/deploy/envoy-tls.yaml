@@ -144,13 +144,25 @@ data:
                               "@type": "type.googleapis.com/google.protobuf.StringValue"
                               value: >
                                 {
-                                  "failureMode": "deny",
-                                  "rateLimitPolicies": [
+                                  "extensions": {
+                                    "authorino": {
+                                      "type": "auth",
+                                      "endpoint": "authorino_wasm",
+                                      "failureMode": "deny"
+                                    },
+                                    "limitador": {
+                                      "type": "ratelimit",
+                                      "endpoint": "limitador",
+                                      "failureMode": "deny"
+                                    }
+                                  },
+                                  "policies": [
                                     {
                                       "name": "rlp-ns-A/rlp-name-A",
                                       "domain": "rlp-ns-A/rlp-name-A",
-                                      "service": "authorino_wasm",
-                                      "hostnames": ["talker-api.127.0.0.1.nip.io"],
+                                      "hostnames": [
+                                        "talker-api.127.0.0.1.nip.io"
+                                      ],
                                       "rules": [
                                         {
                                           "conditions": [
@@ -172,6 +184,17 @@ data:
                                               }
                                             }
                                           ]
+                                        }
+                                      ],
+                                      "actions": [
+                                        {
+                                          "extension": "authorino",
+                                          "data": {
+                                            "static": {
+                                              "key": "host",
+                                              "value": "effective-route-1"
+                                            }
+                                          }
                                         }
                                       ]
                                     }
