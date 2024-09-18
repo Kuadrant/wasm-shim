@@ -29,8 +29,8 @@ impl Filter {
         }
     }
 
-    fn process_rate_limit_policy(&self, rlp: &Policy) -> Action {
-        let descriptors = rlp.build_descriptors(self);
+    fn process_policy(&self, policy: &Policy) -> Action {
+        let descriptors = policy.build_descriptors(self);
         if descriptors.is_empty() {
             debug!(
                 "#{} process_rate_limit_policy: empty descriptors",
@@ -39,7 +39,8 @@ impl Filter {
             return Action::Continue;
         }
 
-        self.operation_dispatcher.build_operations(rlp, descriptors);
+        self.operation_dispatcher
+            .build_operations(policy, descriptors);
 
         if let Some(operation) = self.operation_dispatcher.next() {
             match operation.get_result() {
@@ -127,9 +128,12 @@ impl HttpContext for Filter {
                 );
                 Action::Continue
             }
-            Some(rlp) => {
-                debug!("#{} ratelimitpolicy selected {}", self.context_id, rlp.name);
-                self.process_rate_limit_policy(rlp)
+            Some(policy) => {
+                debug!(
+                    "#{} ratelimitpolicy selected {}",
+                    self.context_id, policy.name
+                );
+                self.process_policy(policy)
             }
         }
     }
