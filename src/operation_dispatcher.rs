@@ -165,16 +165,18 @@ impl OperationDispatcher {
                 if let Ok(token_id) = operation.result {
                     self.waiting_operations.borrow_mut().remove(&token_id);
                 } // If result was Err, means the operation wasn't indexed
-
                 operations.remove(i);
-                operations.get(i).cloned() // The next op is now at `i`
-            } else {
+                // The next op is now at `i`
+            }
+            if let Some(operation) = operations.get_mut(i) {
                 if let Ok(token_id) = operation.trigger() {
                     self.waiting_operations
                         .borrow_mut()
                         .insert(token_id, operation.clone());
                 } // TODO(didierofrivia): Decide on indexing the failed operations.
                 Some(operation.clone())
+            } else {
+                None
             }
         } else {
             None
@@ -328,14 +330,6 @@ mod tests {
         assert_eq!(*op.unwrap().get_state(), State::Done);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(0));
-        assert_eq!(*op.unwrap().get_state(), State::Pending);
-        assert_eq!(
-            operation_dispatcher.waiting_operations.borrow_mut().len(),
-            0
-        );
-
-        op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(200));
         assert_eq!(*op.unwrap().get_state(), State::Waiting);
         assert_eq!(
@@ -346,6 +340,10 @@ mod tests {
         op = operation_dispatcher.next();
         assert_eq!(op.clone().unwrap().get_result(), Ok(200));
         assert_eq!(*op.unwrap().get_state(), State::Done);
+        assert_eq!(
+            operation_dispatcher.waiting_operations.borrow_mut().len(),
+            1
+        );
 
         op = operation_dispatcher.next();
         assert!(op.is_none());
