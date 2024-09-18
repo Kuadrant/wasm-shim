@@ -212,7 +212,7 @@ mod tests {
     use crate::envoy::RateLimitRequest;
     use std::time::Duration;
 
-    fn grpc_call_fn_stub(
+    fn default_grpc_call_fn_stub(
         _upstream_name: &str,
         _service_name: &str,
         _method_name: &str,
@@ -244,11 +244,15 @@ mod tests {
         }
     }
 
-    fn build_operation() -> Operation {
+    fn build_operation(grpc_call_fn_stub: GrpcCallFn, extension_type: ExtensionType) -> Operation {
         Operation {
             state: State::Pending,
             result: Ok(0),
-            extension: Rc::new(Extension::default()),
+            extension: Rc::new(Extension {
+                extension_type,
+                endpoint: "local".to_string(),
+                failure_mode: FailureMode::Deny,
+            }),
             procedure: (
                 Rc::new(build_grpc_service_handler()),
                 GrpcMessageRequest::RateLimit(build_message()),
@@ -260,7 +264,7 @@ mod tests {
 
     #[test]
     fn operation_getters() {
-        let operation = build_operation();
+        let operation = build_operation(default_grpc_call_fn_stub, ExtensionType::RateLimit);
 
         assert_eq!(*operation.get_state(), State::Pending);
         assert_eq!(*operation.get_extension_type(), ExtensionType::RateLimit);
@@ -270,7 +274,7 @@ mod tests {
 
     #[test]
     fn operation_transition() {
-        let mut operation = build_operation();
+        let mut operation = build_operation(default_grpc_call_fn_stub, ExtensionType::RateLimit);
         assert_eq!(operation.result, Ok(0));
         assert_eq!(*operation.get_state(), State::Pending);
         let mut res = operation.trigger();
@@ -287,7 +291,10 @@ mod tests {
         let operation_dispatcher = OperationDispatcher::default();
 
         assert_eq!(operation_dispatcher.operations.borrow().len(), 0);
-        operation_dispatcher.push_operations(vec![build_operation()]);
+        operation_dispatcher.push_operations(vec![build_operation(
+            default_grpc_call_fn_stub,
+            ExtensionType::RateLimit,
+        )]);
 
         assert_eq!(operation_dispatcher.operations.borrow().len(), 1);
     }
@@ -295,7 +302,10 @@ mod tests {
     #[test]
     fn operation_dispatcher_get_current_action_state() {
         let operation_dispatcher = OperationDispatcher::default();
-        operation_dispatcher.push_operations(vec![build_operation()]);
+        operation_dispatcher.push_operations(vec![build_operation(
+            default_grpc_call_fn_stub,
+            ExtensionType::RateLimit,
+        )]);
         assert_eq!(
             operation_dispatcher.get_current_operation_state(),
             Some(State::Pending)
@@ -305,7 +315,33 @@ mod tests {
     #[test]
     fn operation_dispatcher_next() {
         let operation_dispatcher = OperationDispatcher::default();
-        operation_dispatcher.push_operations(vec![build_operation(), build_operation()]);
+
+        fn grpc_call_fn_stub_66(
+            _upstream_name: &str,
+            _service_name: &str,
+            _method_name: &str,
+            _initial_metadata: Vec<(&str, &[u8])>,
+            _message: Option<&[u8]>,
+            _timeout: Duration,
+        ) -> Result<u32, Status> {
+            Ok(66)
+        }
+
+        fn grpc_call_fn_stub_77(
+            _upstream_name: &str,
+            _service_name: &str,
+            _method_name: &str,
+            _initial_metadata: Vec<(&str, &[u8])>,
+            _message: Option<&[u8]>,
+            _timeout: Duration,
+        ) -> Result<u32, Status> {
+            Ok(77)
+        }
+
+        operation_dispatcher.push_operations(vec![
+            build_operation(grpc_call_fn_stub_66, ExtensionType::RateLimit),
+            build_operation(grpc_call_fn_stub_77, ExtensionType::Auth),
+        ]);
 
         assert_eq!(operation_dispatcher.get_current_operation_result(), Ok(0));
         assert_eq!(
@@ -318,7 +354,11 @@ mod tests {
         );
 
         let mut op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.clone().unwrap().get_result(), Ok(66));
+        assert_eq!(
+            *op.clone().unwrap().get_extension_type(),
+            ExtensionType::RateLimit
+        );
         assert_eq!(*op.unwrap().get_state(), State::Waiting);
         assert_eq!(
             operation_dispatcher.waiting_operations.borrow_mut().len(),
@@ -326,11 +366,15 @@ mod tests {
         );
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.clone().unwrap().get_result(), Ok(66));
         assert_eq!(*op.unwrap().get_state(), State::Done);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.clone().unwrap().get_result(), Ok(77));
+        assert_eq!(
+            *op.clone().unwrap().get_extension_type(),
+            ExtensionType::Auth
+        );
         assert_eq!(*op.unwrap().get_state(), State::Waiting);
         assert_eq!(
             operation_dispatcher.waiting_operations.borrow_mut().len(),
@@ -338,7 +382,7 @@ mod tests {
         );
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
+        assert_eq!(op.clone().unwrap().get_result(), Ok(77));
         assert_eq!(*op.unwrap().get_state(), State::Done);
         assert_eq!(
             operation_dispatcher.waiting_operations.borrow_mut().len(),
