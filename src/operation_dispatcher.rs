@@ -170,10 +170,13 @@ impl OperationDispatcher {
             }
             if let Some(operation) = operations.get_mut(i) {
                 if let Ok(token_id) = operation.trigger() {
-                    self.waiting_operations
-                        .borrow_mut()
-                        .insert(token_id, operation.clone());
-                } // TODO(didierofrivia): Decide on indexing the failed operations.
+                    if *operation.get_state() == State::Waiting {
+                        // We index only if it was just transitioned to Waiting after triggering
+                        self.waiting_operations
+                            .borrow_mut()
+                            .insert(token_id, operation.clone());
+                    } // TODO(didierofrivia): Decide on indexing the failed operations.
+                }
                 Some(operation.clone())
             } else {
                 None
