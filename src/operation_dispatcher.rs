@@ -1,7 +1,8 @@
 use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::envoy::RateLimitDescriptor;
 use crate::policy::Policy;
-use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcMessage, GrpcServiceHandler};
+use crate::service::grpc_message::GrpcMessageRequest;
+use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcServiceHandler};
 use protobuf::RepeatedField;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
@@ -29,7 +30,7 @@ impl State {
     }
 }
 
-type Procedure = (Rc<GrpcServiceHandler>, GrpcMessage);
+type Procedure = (Rc<GrpcServiceHandler>, GrpcMessageRequest);
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -47,7 +48,7 @@ impl Operation {
     pub fn new(extension: Rc<Extension>, procedure: Procedure) -> Self {
         Self {
             state: State::Pending,
-            result: Err(Status::Empty),
+            result: Ok(0), // Heuristics: zero represents that it's not been triggered, following `hostcalls` example
             extension,
             procedure,
             grpc_call_fn,
@@ -55,38 +56,46 @@ impl Operation {
         }
     }
 
-    fn trigger(&mut self) {
-        if let State::Done = self.state {
-        } else {
-            self.result = self.procedure.0.send(
-                self.get_map_values_bytes_fn,
-                self.grpc_call_fn,
-                self.procedure.1.clone(),
-            );
-            self.state.next();
+    fn trigger(&mut self) -> Result<u32, Status> {
+        match self.state {
+            State::Pending => {
+                self.result = self.procedure.0.send(
+                    self.get_map_values_bytes_fn,
+                    self.grpc_call_fn,
+                    self.procedure.1.clone(),
+                );
+                self.state.next();
+                self.result
+            }
+            State::Waiting => {
+                self.state.next();
+                self.result
+            }
+            State::Done => self.result,
         }
     }
 
-    pub fn get_state(&self) -> State {
-        self.state.clone()
+    pub fn get_state(&self) -> &State {
+        &self.state
     }
 
     pub fn get_result(&self) -> Result<u32, Status> {
         self.result
     }
 
-    pub fn get_extension_type(&self) -> ExtensionType {
-        self.extension.extension_type.clone()
+    pub fn get_extension_type(&self) -> &ExtensionType {
+        &self.extension.extension_type
     }
 
-    pub fn get_failure_mode(&self) -> FailureMode {
-        self.extension.failure_mode.clone()
+    pub fn get_failure_mode(&self) -> &FailureMode {
+        &self.extension.failure_mode
     }
 }
 
 #[allow(dead_code)]
 pub struct OperationDispatcher {
     operations: RefCell<Vec<Operation>>,
+    waiting_operations: RefCell<HashMap<u32, Operation>>, // TODO(didierofrivia): Maybe keep references or Rc
     service_handlers: HashMap<String, Rc<GrpcServiceHandler>>,
 }
 
@@ -95,6 +104,7 @@ impl OperationDispatcher {
     pub fn default() -> Self {
         OperationDispatcher {
             operations: RefCell::new(vec![]),
+            waiting_operations: RefCell::new(HashMap::default()),
             service_handlers: HashMap::default(),
         }
     }
@@ -102,7 +112,12 @@ impl OperationDispatcher {
         Self {
             service_handlers,
             operations: RefCell::new(vec![]),
+            waiting_operations: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn get_operation(&self, token_id: u32) -> Option<Operation> {
+        self.waiting_operations.borrow_mut().get(&token_id).cloned()
     }
 
     pub fn build_operations(
@@ -114,7 +129,7 @@ impl OperationDispatcher {
         policy.actions.iter().for_each(|action| {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
-                let message = GrpcMessage::new(
+                let message = GrpcMessageRequest::new(
                     service.get_extension_type(),
                     policy.domain.clone(),
                     descriptors.clone(),
@@ -147,11 +162,24 @@ impl OperationDispatcher {
         let mut operations = self.operations.borrow_mut();
         if let Some((i, operation)) = operations.iter_mut().enumerate().next() {
             if let State::Done = operation.get_state() {
+                if let Ok(token_id) = operation.result {
+                    self.waiting_operations.borrow_mut().remove(&token_id);
+                } // If result was Err, means the operation wasn't indexed
                 operations.remove(i);
-                operations.get(i).cloned() // The next op is now at `i`
-            } else {
-                operation.trigger();
+                // The next op is now at `i`
+            }
+            if let Some(operation) = operations.get_mut(i) {
+                if let Ok(token_id) = operation.trigger() {
+                    if *operation.get_state() == State::Waiting {
+                        // We index only if it was just transitioned to Waiting after triggering
+                        self.waiting_operations
+                            .borrow_mut()
+                            .insert(token_id, operation.clone());
+                    } // TODO(didierofrivia): Decide on indexing the failed operations.
+                }
                 Some(operation.clone())
+            } else {
+                None
             }
         } else {
             None
@@ -187,7 +215,7 @@ mod tests {
     use crate::envoy::RateLimitRequest;
     use std::time::Duration;
 
-    fn grpc_call_fn_stub(
+    fn default_grpc_call_fn_stub(
         _upstream_name: &str,
         _service_name: &str,
         _method_name: &str,
@@ -219,14 +247,18 @@ mod tests {
         }
     }
 
-    fn build_operation() -> Operation {
+    fn build_operation(grpc_call_fn_stub: GrpcCallFn, extension_type: ExtensionType) -> Operation {
         Operation {
             state: State::Pending,
-            result: Ok(1),
-            extension: Rc::new(Extension::default()),
+            result: Ok(0),
+            extension: Rc::new(Extension {
+                extension_type,
+                endpoint: "local".to_string(),
+                failure_mode: FailureMode::Deny,
+            }),
             procedure: (
                 Rc::new(build_grpc_service_handler()),
-                GrpcMessage::RateLimit(build_message()),
+                GrpcMessageRequest::RateLimit(build_message()),
             ),
             grpc_call_fn: grpc_call_fn_stub,
             get_map_values_bytes_fn: get_map_values_bytes_fn_stub,
@@ -235,23 +267,26 @@ mod tests {
 
     #[test]
     fn operation_getters() {
-        let operation = build_operation();
+        let operation = build_operation(default_grpc_call_fn_stub, ExtensionType::RateLimit);
 
-        assert_eq!(operation.get_state(), State::Pending);
-        assert_eq!(operation.get_extension_type(), ExtensionType::RateLimit);
-        assert_eq!(operation.get_failure_mode(), FailureMode::Deny);
-        assert_eq!(operation.get_result(), Ok(1));
+        assert_eq!(*operation.get_state(), State::Pending);
+        assert_eq!(*operation.get_extension_type(), ExtensionType::RateLimit);
+        assert_eq!(*operation.get_failure_mode(), FailureMode::Deny);
+        assert_eq!(operation.get_result(), Ok(0));
     }
 
     #[test]
     fn operation_transition() {
-        let mut operation = build_operation();
-        assert_eq!(operation.get_state(), State::Pending);
-        operation.trigger();
-        assert_eq!(operation.get_state(), State::Waiting);
-        operation.trigger();
+        let mut operation = build_operation(default_grpc_call_fn_stub, ExtensionType::RateLimit);
+        assert_eq!(operation.result, Ok(0));
+        assert_eq!(*operation.get_state(), State::Pending);
+        let mut res = operation.trigger();
+        assert_eq!(res, Ok(200));
+        assert_eq!(*operation.get_state(), State::Waiting);
+        res = operation.trigger();
+        assert_eq!(res, Ok(200));
         assert_eq!(operation.result, Ok(200));
-        assert_eq!(operation.get_state(), State::Done);
+        assert_eq!(*operation.get_state(), State::Done);
     }
 
     #[test]
@@ -259,7 +294,10 @@ mod tests {
         let operation_dispatcher = OperationDispatcher::default();
 
         assert_eq!(operation_dispatcher.operations.borrow().len(), 0);
-        operation_dispatcher.push_operations(vec![build_operation()]);
+        operation_dispatcher.push_operations(vec![build_operation(
+            default_grpc_call_fn_stub,
+            ExtensionType::RateLimit,
+        )]);
 
         assert_eq!(operation_dispatcher.operations.borrow().len(), 1);
     }
@@ -267,7 +305,10 @@ mod tests {
     #[test]
     fn operation_dispatcher_get_current_action_state() {
         let operation_dispatcher = OperationDispatcher::default();
-        operation_dispatcher.push_operations(vec![build_operation()]);
+        operation_dispatcher.push_operations(vec![build_operation(
+            default_grpc_call_fn_stub,
+            ExtensionType::RateLimit,
+        )]);
         assert_eq!(
             operation_dispatcher.get_current_operation_state(),
             Some(State::Pending)
@@ -277,36 +318,86 @@ mod tests {
     #[test]
     fn operation_dispatcher_next() {
         let operation_dispatcher = OperationDispatcher::default();
-        operation_dispatcher.push_operations(vec![build_operation(), build_operation()]);
 
-        assert_eq!(operation_dispatcher.get_current_operation_result(), Ok(1));
+        fn grpc_call_fn_stub_66(
+            _upstream_name: &str,
+            _service_name: &str,
+            _method_name: &str,
+            _initial_metadata: Vec<(&str, &[u8])>,
+            _message: Option<&[u8]>,
+            _timeout: Duration,
+        ) -> Result<u32, Status> {
+            Ok(66)
+        }
+
+        fn grpc_call_fn_stub_77(
+            _upstream_name: &str,
+            _service_name: &str,
+            _method_name: &str,
+            _initial_metadata: Vec<(&str, &[u8])>,
+            _message: Option<&[u8]>,
+            _timeout: Duration,
+        ) -> Result<u32, Status> {
+            Ok(77)
+        }
+
+        operation_dispatcher.push_operations(vec![
+            build_operation(grpc_call_fn_stub_66, ExtensionType::RateLimit),
+            build_operation(grpc_call_fn_stub_77, ExtensionType::Auth),
+        ]);
+
+        assert_eq!(operation_dispatcher.get_current_operation_result(), Ok(0));
         assert_eq!(
             operation_dispatcher.get_current_operation_state(),
             Some(State::Pending)
         );
+        assert_eq!(
+            operation_dispatcher.waiting_operations.borrow_mut().len(),
+            0
+        );
 
         let mut op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Waiting);
+        assert_eq!(op.clone().unwrap().get_result(), Ok(66));
+        assert_eq!(
+            *op.clone().unwrap().get_extension_type(),
+            ExtensionType::RateLimit
+        );
+        assert_eq!(*op.unwrap().get_state(), State::Waiting);
+        assert_eq!(
+            operation_dispatcher.waiting_operations.borrow_mut().len(),
+            1
+        );
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Done);
+        assert_eq!(op.clone().unwrap().get_result(), Ok(66));
+        assert_eq!(*op.unwrap().get_state(), State::Done);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(1));
-        assert_eq!(op.unwrap().get_state(), State::Pending);
+        assert_eq!(op.clone().unwrap().get_result(), Ok(77));
+        assert_eq!(
+            *op.clone().unwrap().get_extension_type(),
+            ExtensionType::Auth
+        );
+        assert_eq!(*op.unwrap().get_state(), State::Waiting);
+        assert_eq!(
+            operation_dispatcher.waiting_operations.borrow_mut().len(),
+            1
+        );
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Waiting);
-
-        op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(200));
-        assert_eq!(op.unwrap().get_state(), State::Done);
+        assert_eq!(op.clone().unwrap().get_result(), Ok(77));
+        assert_eq!(*op.unwrap().get_state(), State::Done);
+        assert_eq!(
+            operation_dispatcher.waiting_operations.borrow_mut().len(),
+            1
+        );
 
         op = operation_dispatcher.next();
         assert!(op.is_none());
         assert!(operation_dispatcher.get_current_operation_state().is_none());
+        assert_eq!(
+            operation_dispatcher.waiting_operations.borrow_mut().len(),
+            0
+        );
     }
 }
