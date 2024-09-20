@@ -1,9 +1,9 @@
 use crate::configuration::{Extension, ExtensionType, FailureMode};
-use crate::envoy::RateLimitDescriptor;
+use crate::filter::http_context::Filter;
 use crate::policy::Policy;
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcServiceHandler};
-use protobuf::RepeatedField;
+use log::debug;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
 use std::cell::RefCell;
@@ -120,15 +120,26 @@ impl OperationDispatcher {
         self.waiting_operations.borrow_mut().get(&token_id).cloned()
     }
 
-    pub fn build_operations(
-        &self,
-        policy: &Policy,
-        descriptors: RepeatedField<RateLimitDescriptor>,
-    ) {
+    pub fn build_operations(&self, policy: &Policy, filter: &Filter) {
         let mut operations: Vec<Operation> = vec![];
-        policy.actions.iter().for_each(|action| {
+        for action in policy.actions.iter() {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
+                let descriptors = match service.get_extension_type() {
+                    ExtensionType::Auth => None,
+                    ExtensionType::RateLimit => {
+                        let desc = action.build_descriptors(policy.rules.clone(), filter);
+                        if desc.is_empty() {
+                            debug!(
+                                "#{} process_rate_limit_policy: empty descriptors",
+                                filter.context_id
+                            );
+                            continue;
+                        }
+                        Some(desc)
+                    }
+                };
+
                 let message = GrpcMessageRequest::new(
                     service.get_extension_type(),
                     action.scope.clone(),
@@ -139,7 +150,7 @@ impl OperationDispatcher {
                     (Rc::clone(service), message),
                 ))
             }
-        });
+        }
         self.push_operations(operations);
     }
 
@@ -213,6 +224,7 @@ fn get_map_values_bytes_fn(map_type: MapType, key: &str) -> Result<Option<Bytes>
 mod tests {
     use super::*;
     use crate::envoy::RateLimitRequest;
+    use protobuf::RepeatedField;
     use std::time::Duration;
 
     fn default_grpc_call_fn_stub(

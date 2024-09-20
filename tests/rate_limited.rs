@@ -105,43 +105,34 @@ fn it_limits() {
             {
                 "conditions": [
                     {
-                        "allOf": [
-                        {
-                            "selector": "request.url_path",
-                            "operator": "startswith",
-                            "value": "/admin/toy"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "eq",
-                            "value": "cars.toystore.com"
-                        },
-                        {
-                            "selector": "request.method",
-                            "operator": "eq",
-                            "value": "POST"
-                        }]
+                        "selector": "request.url_path",
+                        "operator": "startswith",
+                        "value": "/admin/toy"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "eq",
+                        "value": "cars.toystore.com"
+                    },
+                    {
+                        "selector": "request.method",
+                        "operator": "eq",
+                        "value": "POST"
                     }
-                ],
-                "data": [
-                  {
-                    "static": {
-                      "key": "admin",
-                      "value": "1"
-                    }
-                  }
                 ]
             }],
             "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
+                    "data": [
+                        {
+                            "static": {
+                                "key": "admin",
+                                "value": "1"
+                            }
                         }
-                    }
+                    ]
                 }
             ]
         }]
@@ -271,43 +262,34 @@ fn it_passes_additional_headers() {
             {
                 "conditions": [
                     {
-                        "allOf": [
-                        {
-                            "selector": "request.url_path",
-                            "operator": "startswith",
-                            "value": "/admin/toy"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "eq",
-                            "value": "cars.toystore.com"
-                        },
-                        {
-                            "selector": "request.method",
-                            "operator": "eq",
-                            "value": "POST"
-                        }]
+                        "selector": "request.url_path",
+                        "operator": "startswith",
+                        "value": "/admin/toy"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "eq",
+                        "value": "cars.toystore.com"
+                    },
+                    {
+                        "selector": "request.method",
+                        "operator": "eq",
+                        "value": "POST"
                     }
-                ],
-                "data": [
-                  {
-                    "static": {
-                      "key": "admin",
-                      "value": "1"
-                    }
-                  }
                 ]
             }],
             "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
+                    "data": [
+                        {
+                            "static": {
+                                "key": "admin",
+                                "value": "1"
+                            }
                         }
-                    }
+                    ]
                 }
             ]
         }]
@@ -448,26 +430,22 @@ fn it_rate_limits_with_empty_conditions() {
             "name": "some-name",
             "hostnames": ["*.com"],
             "rules": [
-            {
-                "data": [
-                  {
-                    "static": {
-                      "key": "admin",
-                      "value": "1"
-                    }
-                  }
-                ]
-            }],
+                {
+                    "conditions": []
+                }
+            ],
             "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
+                    "data": [
+                        {
+                            "static": {
+                                "key": "admin",
+                                "value": "1"
+                            }
                         }
-                    }
+                    ]
                 }
             ]
         }]
@@ -576,25 +554,21 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             "name": "some-name",
             "hostnames": ["*.com"],
             "rules": [
-            {
-                "data": [
                 {
-                    "selector": {
-                        "selector": "unknown.path"
-                    }
+                    "conditions": []
                 }
-                ]
-            }],
+            ],
             "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
+                    "data": [
+                        {
+                            "selector": {
+                                "selector": "unknown.path"
+                            }
                         }
-                    }
+                    ]
                 }
             ]
         }]

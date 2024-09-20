@@ -30,17 +30,7 @@ impl Filter {
     }
 
     fn process_policy(&self, policy: &Policy) -> Action {
-        let descriptors = policy.build_descriptors(self);
-        if descriptors.is_empty() {
-            debug!(
-                "#{} process_rate_limit_policy: empty descriptors",
-                self.context_id
-            );
-            return Action::Continue;
-        }
-
-        self.operation_dispatcher
-            .build_operations(policy, descriptors);
+        self.operation_dispatcher.build_operations(policy, self);
 
         if let Some(operation) = self.operation_dispatcher.next() {
             match operation.get_result() {

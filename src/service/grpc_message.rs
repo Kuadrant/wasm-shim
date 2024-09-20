@@ -127,12 +127,15 @@ impl GrpcMessageRequest {
     pub fn new(
         extension_type: ExtensionType,
         domain: String,
-        descriptors: protobuf::RepeatedField<RateLimitDescriptor>,
+        descriptors: Option<protobuf::RepeatedField<RateLimitDescriptor>>,
     ) -> Self {
         match extension_type {
-            ExtensionType::RateLimit => GrpcMessageRequest::RateLimit(
-                RateLimitService::request_message(domain.clone(), descriptors),
-            ),
+            ExtensionType::RateLimit => {
+                GrpcMessageRequest::RateLimit(RateLimitService::request_message(
+                    domain.clone(),
+                    descriptors.expect("rate limit message expects descriptors"),
+                ))
+            }
             ExtensionType::Auth => {
                 GrpcMessageRequest::Auth(AuthService::request_message(domain.clone()))
             }
