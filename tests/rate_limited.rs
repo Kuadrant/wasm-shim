@@ -100,7 +100,6 @@ fn it_limits() {
         "policies": [
         {
             "name": "some-name",
-            "domain": "RLS-domain",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -136,6 +135,7 @@ fn it_limits() {
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "RLS-domain",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -266,7 +266,6 @@ fn it_passes_additional_headers() {
         "policies": [
         {
             "name": "some-name",
-            "domain": "RLS-domain",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -302,6 +301,7 @@ fn it_passes_additional_headers() {
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "RLS-domain",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -446,7 +446,6 @@ fn it_rate_limits_with_empty_conditions() {
         "policies": [
         {
             "name": "some-name",
-            "domain": "RLS-domain",
             "hostnames": ["*.com"],
             "rules": [
             {
@@ -462,6 +461,7 @@ fn it_rate_limits_with_empty_conditions() {
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "RLS-domain",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -574,7 +574,6 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         "policies": [
         {
             "name": "some-name",
-            "domain": "RLS-domain",
             "hostnames": ["*.com"],
             "rules": [
             {
@@ -589,6 +588,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "RLS-domain",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",

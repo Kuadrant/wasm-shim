@@ -41,13 +41,7 @@ mod tests {
     use crate::policy_index::PolicyIndex;
 
     fn build_ratelimit_policy(name: &str) -> Policy {
-        Policy::new(
-            name.to_owned(),
-            "".to_owned(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+        Policy::new(name.to_owned(), Vec::new(), Vec::new(), Vec::new())
     }
 
     #[test]

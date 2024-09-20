@@ -159,7 +159,6 @@ data:
                                   "policies": [
                                     {
                                       "name": "auth-ns-A/auth-name-A",
-                                      "domain": "effective-route-1",
                                       "hostnames": [
                                         "*.a.auth.com"
                                       ],
@@ -189,6 +188,7 @@ data:
                                       "actions": [
                                         {
                                           "extension": "authorino",
+                                          "scope": "effective-route-1",
                                           "data": {
                                             "static": {
                                               "key": "host",
@@ -200,7 +200,6 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-A/rlp-name-A",
-                                      "domain": "rlp-ns-A/rlp-name-A",
                                       "hostnames": [
                                         "*.a.rlp.com"
                                       ],
@@ -218,6 +217,7 @@ data:
                                       "actions": [
                                         {
                                           "extension": "limitador",
+                                          "scope": "rlp-ns-A/rlp-name-A",
                                           "data": {
                                             "static": {
                                               "key": "rlp-ns-A/rlp-name-A",
@@ -229,7 +229,6 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-B/rlp-name-B",
-                                      "domain": "rlp-ns-B/rlp-name-B",
                                       "hostnames": [
                                         "*.b.rlp.com"
                                       ],
@@ -259,6 +258,7 @@ data:
                                       "actions": [
                                         {
                                           "extension": "limitador",
+                                          "scope": "rlp-ns-B/rlp-name-B",
                                           "data": {
                                             "static": {
                                               "key": "rlp-ns-B/rlp-name-B",
@@ -270,7 +270,6 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-C/rlp-name-C",
-                                      "domain": "rlp-ns-C/rlp-name-C",
                                       "hostnames": [
                                         "*.c.rlp.com"
                                       ],
@@ -401,6 +400,7 @@ data:
                                       "actions": [
                                         {
                                           "extension": "limitador",
+                                          "scope": "rlp-ns-C/rlp-name-C",
                                           "data": {
                                             "static": {
                                               "key": "rlp-ns-C/rlp-name-C",

@@ -131,7 +131,7 @@ impl OperationDispatcher {
             if let Some(service) = self.service_handlers.get(&action.extension) {
                 let message = GrpcMessageRequest::new(
                     service.get_extension_type(),
-                    policy.domain.clone(),
+                    action.scope.clone(),
                     descriptors.clone(),
                 );
                 operations.push(Operation::new(

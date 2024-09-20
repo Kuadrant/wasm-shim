@@ -533,6 +533,7 @@ pub struct Extension {
 #[serde(rename_all = "camelCase")]
 pub struct Action {
     pub extension: String,
+    pub scope: String,
     #[allow(dead_code)]
     pub data: DataType,
 }
@@ -552,7 +553,6 @@ mod test {
         "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "domain": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -591,6 +591,7 @@ mod test {
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -681,7 +682,6 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -697,6 +697,7 @@ mod test {
                 "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -747,7 +748,6 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -785,6 +785,7 @@ mod test {
                 "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -842,7 +843,6 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -862,6 +862,7 @@ mod test {
                 "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -902,7 +903,6 @@ mod test {
         "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "domain": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
@@ -920,6 +920,7 @@ mod test {
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -945,7 +946,6 @@ mod test {
         "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "domain": "rlp-ns-A/rlp-name-A",
             "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
@@ -961,6 +961,7 @@ mod test {
             "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
@@ -986,7 +987,6 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
@@ -1004,6 +1004,7 @@ mod test {
                 "actions": [
                 {
                     "extension": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "data": {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",

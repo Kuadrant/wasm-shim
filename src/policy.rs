@@ -25,7 +25,6 @@ pub struct Rule {
 #[serde(rename_all = "camelCase")]
 pub struct Policy {
     pub name: String,
-    pub domain: String,
     pub hostnames: Vec<String>,
     pub rules: Vec<Rule>,
     pub actions: Vec<Action>,
@@ -35,14 +34,12 @@ impl Policy {
     #[cfg(test)]
     pub fn new(
         name: String,
-        domain: String,
         hostnames: Vec<String>,
         rules: Vec<Rule>,
         actions: Vec<Action>,
     ) -> Self {
         Policy {
             name,
-            domain,
             hostnames,
             rules,
             actions,
