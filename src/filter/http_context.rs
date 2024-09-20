@@ -1,5 +1,5 @@
 use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
-use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
+use crate::envoy::{CheckResponse_oneof_http_response, RateLimitResponse, RateLimitResponse_Code};
 use crate::operation_dispatcher::OperationDispatcher;
 use crate::policy::Policy;
 use crate::service::grpc_message::GrpcMessageResponse;
@@ -45,14 +45,11 @@ impl Filter {
         if let Some(operation) = self.operation_dispatcher.next() {
             match operation.get_result() {
                 Ok(call_id) => {
-                    debug!(
-                        "#{} initiated gRPC call (id# {}) to Limitador",
-                        self.context_id, call_id
-                    );
+                    debug!("#{} initiated gRPC call (id# {})", self.context_id, call_id);
                     Action::Pause
                 }
                 Err(e) => {
-                    warn!("gRPC call to Limitador failed! {e:?}");
+                    warn!("gRPC call failed! {e:?}");
                     if let FailureMode::Deny = operation.get_failure_mode() {
                         self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
                     }
@@ -107,6 +104,52 @@ impl Filter {
                 }
             }
             _ => {}
+        }
+        self.operation_dispatcher.next();
+    }
+
+    fn process_auth_grpc_response(
+        &mut self,
+        auth_resp: GrpcMessageResponse,
+        failure_mode: &FailureMode,
+    ) {
+        if let GrpcMessageResponse::Auth(check_response) = auth_resp {
+            match check_response.http_response {
+                Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
+                    debug!("Handling OkHttpResponse...");
+
+                    ok_response
+                        .get_response_headers_to_add()
+                        .iter()
+                        .for_each(|header| {
+                            self.add_http_response_header(
+                                header.get_header().get_key(),
+                                header.get_header().get_value(),
+                            )
+                        });
+                }
+                Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
+                    debug!("Handling DeniedHttpResponse...");
+
+                    let mut response_headers = vec![];
+                    denied_response.get_headers().iter().for_each(|header| {
+                        response_headers.push((
+                            header.get_header().get_key(),
+                            header.get_header().get_value(),
+                        ))
+                    });
+                    self.send_http_response(
+                        denied_response.get_status().code as u32,
+                        response_headers,
+                        Some(denied_response.get_body().as_ref()),
+                    );
+                    return;
+                }
+                None => {
+                    self.handle_error_on_grpc_response(failure_mode);
+                    return;
+                }
+            }
         }
         self.operation_dispatcher.next();
     }
@@ -168,22 +211,19 @@ impl Context for Filter {
                     return;
                 }
             };
-            let res = match GrpcMessageResponse::new(
-                operation.get_extension_type(),
-                &res_body_bytes,
-                status_code,
-            ) {
-                Ok(res) => res,
-                Err(e) => {
-                    warn!(
+            let res =
+                match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!(
                         "failed to parse grpc response body into GrpcMessageResponse message: {e}"
                     );
-                    self.handle_error_on_grpc_response(failure_mode);
-                    return;
-                }
-            };
+                        self.handle_error_on_grpc_response(failure_mode);
+                        return;
+                    }
+                };
             match operation.get_extension_type() {
-                ExtensionType::Auth => {} // TODO(didierofrivia): Process auth grpc response.
+                ExtensionType::Auth => self.process_auth_grpc_response(res, failure_mode),
                 ExtensionType::RateLimit => self.process_ratelimit_grpc_response(res, failure_mode),
             }
 

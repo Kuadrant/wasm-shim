@@ -150,7 +150,7 @@ data:
                                   "policies": [
                                     {
                                       "name": "auth-ns-A/auth-name-A",
-                                      "domain": "auth-ns-A/auth-name-A",
+                                      "domain": "effective-route-1",
                                       "hostnames": [
                                         "*.a.auth.com"
                                       ],
