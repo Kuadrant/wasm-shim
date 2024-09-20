@@ -116,7 +116,10 @@ impl Filter {
         if let GrpcMessageResponse::Auth(check_response) = auth_resp {
             match check_response.http_response {
                 Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
-                    debug!("Handling OkHttpResponse...");
+                    debug!(
+                        "#{} process_auth_grpc_response: received OkHttpResponse",
+                        self.context_id
+                    );
 
                     ok_response
                         .get_response_headers_to_add()
@@ -129,7 +132,10 @@ impl Filter {
                         });
                 }
                 Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
-                    debug!("Handling DeniedHttpResponse...");
+                    debug!(
+                        "#{} process_auth_grpc_response: received DeniedHttpResponse",
+                        self.context_id
+                    );
 
                     let mut response_headers = vec![];
                     denied_response.get_headers().iter().for_each(|header| {
