@@ -167,6 +167,12 @@ There is then a single auth policy defined for e2e testing:
 
 ```sh
 curl -H "Host: test.a.auth.com" http://127.0.0.1:8000/get -i
+# HTTP/1.1 401 Unauthorized
+```
+
+```sh
+curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY ndyBzreUzF4zqDQsqSPMHkRhriEOtcRx" http://127.0.0.1:8000/get -i
+# HTTP/1.1 200 OK
 ```
 
 And three rate limit policies defined for e2e testing:

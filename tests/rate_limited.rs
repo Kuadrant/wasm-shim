@@ -215,7 +215,7 @@ fn it_limits() {
         .returning(Some(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42) to Limitador"),
+            Some("#2 initiated gRPC call (id# 42)"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -381,7 +381,7 @@ fn it_passes_additional_headers() {
         .returning(Some(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42) to Limitador"),
+            Some("#2 initiated gRPC call (id# 42)"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -523,7 +523,7 @@ fn it_rate_limits_with_empty_conditions() {
         .returning(Some(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42) to Limitador"),
+            Some("#2 initiated gRPC call (id# 42)"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();

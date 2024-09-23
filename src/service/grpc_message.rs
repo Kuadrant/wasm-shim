@@ -1,7 +1,6 @@
 use crate::configuration::ExtensionType;
 use crate::envoy::{
-    CheckRequest, DeniedHttpResponse, OkHttpResponse, RateLimitDescriptor, RateLimitRequest,
-    RateLimitResponse,
+    CheckRequest, CheckResponse, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
 };
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
@@ -143,8 +142,7 @@ impl GrpcMessageRequest {
 
 #[derive(Clone, Debug)]
 pub enum GrpcMessageResponse {
-    AuthOk(OkHttpResponse),
-    AuthDenied(DeniedHttpResponse),
+    Auth(CheckResponse),
     RateLimit(RateLimitResponse),
 }
 
@@ -163,80 +161,70 @@ impl Clear for GrpcMessageResponse {
 impl Message for GrpcMessageResponse {
     fn descriptor(&self) -> &'static MessageDescriptor {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.descriptor(),
-            GrpcMessageResponse::AuthDenied(res) => res.descriptor(),
+            GrpcMessageResponse::Auth(res) => res.descriptor(),
             GrpcMessageResponse::RateLimit(res) => res.descriptor(),
         }
     }
 
     fn is_initialized(&self) -> bool {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.is_initialized(),
-            GrpcMessageResponse::AuthDenied(res) => res.is_initialized(),
+            GrpcMessageResponse::Auth(res) => res.is_initialized(),
             GrpcMessageResponse::RateLimit(res) => res.is_initialized(),
         }
     }
 
     fn merge_from(&mut self, is: &mut CodedInputStream) -> ProtobufResult<()> {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.merge_from(is),
-            GrpcMessageResponse::AuthDenied(res) => res.merge_from(is),
+            GrpcMessageResponse::Auth(res) => res.merge_from(is),
             GrpcMessageResponse::RateLimit(res) => res.merge_from(is),
         }
     }
 
     fn write_to_with_cached_sizes(&self, os: &mut CodedOutputStream) -> ProtobufResult<()> {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.write_to_with_cached_sizes(os),
-            GrpcMessageResponse::AuthDenied(res) => res.write_to_with_cached_sizes(os),
+            GrpcMessageResponse::Auth(res) => res.write_to_with_cached_sizes(os),
             GrpcMessageResponse::RateLimit(res) => res.write_to_with_cached_sizes(os),
         }
     }
 
     fn write_to_bytes(&self) -> ProtobufResult<Vec<u8>> {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.write_to_bytes(),
-            GrpcMessageResponse::AuthDenied(res) => res.write_to_bytes(),
+            GrpcMessageResponse::Auth(res) => res.write_to_bytes(),
             GrpcMessageResponse::RateLimit(res) => res.write_to_bytes(),
         }
     }
 
     fn compute_size(&self) -> u32 {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.compute_size(),
-            GrpcMessageResponse::AuthDenied(res) => res.compute_size(),
+            GrpcMessageResponse::Auth(res) => res.compute_size(),
             GrpcMessageResponse::RateLimit(res) => res.compute_size(),
         }
     }
 
     fn get_cached_size(&self) -> u32 {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.get_cached_size(),
-            GrpcMessageResponse::AuthDenied(res) => res.get_cached_size(),
+            GrpcMessageResponse::Auth(res) => res.get_cached_size(),
             GrpcMessageResponse::RateLimit(res) => res.get_cached_size(),
         }
     }
 
     fn get_unknown_fields(&self) -> &UnknownFields {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.get_unknown_fields(),
-            GrpcMessageResponse::AuthDenied(res) => res.get_unknown_fields(),
+            GrpcMessageResponse::Auth(res) => res.get_unknown_fields(),
             GrpcMessageResponse::RateLimit(res) => res.get_unknown_fields(),
         }
     }
 
     fn mut_unknown_fields(&mut self) -> &mut UnknownFields {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.mut_unknown_fields(),
-            GrpcMessageResponse::AuthDenied(res) => res.mut_unknown_fields(),
+            GrpcMessageResponse::Auth(res) => res.mut_unknown_fields(),
             GrpcMessageResponse::RateLimit(res) => res.mut_unknown_fields(),
         }
     }
 
     fn as_any(&self) -> &dyn Any {
         match self {
-            GrpcMessageResponse::AuthOk(res) => res.as_any(),
-            GrpcMessageResponse::AuthDenied(res) => res.as_any(),
+            GrpcMessageResponse::Auth(res) => res.as_any(),
             GrpcMessageResponse::RateLimit(res) => res.as_any(),
         }
     }
@@ -263,11 +251,10 @@ impl GrpcMessageResponse {
     pub fn new(
         extension_type: &ExtensionType,
         res_body_bytes: &Bytes,
-        status_code: u32,
     ) -> GrpcMessageResult<GrpcMessageResponse> {
         match extension_type {
             ExtensionType::RateLimit => RateLimitService::response_message(res_body_bytes),
-            ExtensionType::Auth => AuthService::response_message(res_body_bytes, status_code),
+            ExtensionType::Auth => AuthService::response_message(res_body_bytes),
         }
     }
 }

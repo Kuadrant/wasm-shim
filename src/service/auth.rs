@@ -22,27 +22,9 @@ impl AuthService {
         AuthService::build_check_req(ce_host)
     }
 
-    pub fn response_message(
-        res_body_bytes: &Bytes,
-        status_code: u32,
-    ) -> GrpcMessageResult<GrpcMessageResponse> {
-        if status_code % 2 == 0 {
-            AuthService::response_message_ok(res_body_bytes)
-        } else {
-            AuthService::response_message_denied(res_body_bytes)
-        }
-    }
-
-    fn response_message_ok(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
+    pub fn response_message(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
         match Message::parse_from_bytes(res_body_bytes) {
-            Ok(res) => Ok(GrpcMessageResponse::AuthOk(res)),
-            Err(e) => Err(e),
-        }
-    }
-
-    fn response_message_denied(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
-        match Message::parse_from_bytes(res_body_bytes) {
-            Ok(res) => Ok(GrpcMessageResponse::AuthDenied(res)),
+            Ok(res) => Ok(GrpcMessageResponse::Auth(res)),
             Err(e) => Err(e),
         }
     }
