@@ -1,3 +1,4 @@
+use crate::attribute::store_metadata;
 use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
 use crate::envoy::{CheckResponse_oneof_http_response, RateLimitResponse, RateLimitResponse_Code};
 use crate::operation_dispatcher::OperationDispatcher;
@@ -104,6 +105,9 @@ impl Filter {
         failure_mode: &FailureMode,
     ) {
         if let GrpcMessageResponse::Auth(check_response) = auth_resp {
+            // store dynamic metadata in filter state
+            store_metadata(check_response.get_dynamic_metadata());
+
             match check_response.http_response {
                 Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                     debug!(
