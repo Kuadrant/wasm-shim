@@ -171,7 +171,7 @@ curl -H "Host: test.a.auth.com" http://127.0.0.1:8000/get -i
 ```
 
 ```sh
-curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY ndyBzreUzF4zqDQsqSPMHkRhriEOtcRx" http://127.0.0.1:8000/get -i
+curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY IAMALICE" http://127.0.0.1:8000/get -i
 # HTTP/1.1 200 OK
 ```
 
@@ -194,6 +194,23 @@ curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
 
 ```sh
 curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+```
+
+* `multi-a` which defines two actions for authenticated ratelimiting.
+
+```sh
+curl -H "Host: test.a.multi.com" http://127.0.0.1:8000/get -i
+# HTTP/1.1 401 Unauthorized
+```
+
+Alice has 5 requests per 10 seconds:
+```sh
+while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMALICE" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
+```
+
+Bob has 2 requests per 10 seconds:
+```sh
+while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
 The expected descriptors:

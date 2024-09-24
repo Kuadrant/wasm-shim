@@ -292,6 +292,42 @@ data:
                                           ]
                                         }
                                       ]
+                                    },
+                                    {
+                                      "name": "multi-ns-A/multi-name-A",
+                                      "hostnames": [
+                                        "*.a.multi.com"
+                                      ],
+                                      "rules": [
+                                        {
+                                          "conditions": [
+                                            {
+                                              "selector": "request.path",
+                                              "operator": "eq",
+                                              "value": "/get"
+                                            }
+                                          ]
+                                        }
+                                      ],
+                                      "actions": [
+                                        {
+                                          "extension": "authorino",
+                                          "scope": "effective-route-1",
+                                          "data": []
+                                        },
+                                        {
+                                          "extension": "limitador",
+                                          "scope": "multi-ns-A/multi-name-A",
+                                          "data": [
+                                            {
+                                              "selector": {
+                                                "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                                "key": "user_id"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
                                     }
                                   ]
                                 }
