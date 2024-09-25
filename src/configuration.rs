@@ -462,10 +462,12 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
 
         for rlp in config.policies.iter() {
             for rule in &rlp.rules {
-                for datum in &rule.data {
-                    let result = datum.item.compile();
-                    if result.is_err() {
-                        return Err(result.err().unwrap());
+                for action in &rule.actions {
+                    for datum in &action.data {
+                        let result = datum.item.compile();
+                        if result.is_err() {
+                            return Err(result.err().unwrap());
+                        }
                     }
                 }
                 for condition in &rule.conditions {
@@ -534,7 +536,7 @@ pub struct Extension {
 pub struct Action {
     pub extension: String,
     #[allow(dead_code)]
-    pub data: DataType,
+    pub data: Vec<DataItem>,
 }
 
 #[cfg(test)]
@@ -575,30 +577,24 @@ mod test {
                         "value": "cars.toystore.com"
                     }]
                 }],
-                "data": [
-                {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
-                },
-                {
-                    "selector": {
-                        "selector": "auth.metadata.username"
-                    }
-                }]
-            }],
-            "actions": [
+                "actions": [
                 {
                     "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
+                    "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            }
+                        },
+                        {
+                            "selector": {
+                                "selector": "auth.metadata.username"
+                            }
                         }
-                    }
-                }
-            ]
+                    ]
+                }]
+            }]
         }]
     }"#;
 
@@ -622,7 +618,7 @@ mod test {
         let all_of_conditions = &conditions[0].all_of;
         assert_eq!(all_of_conditions.len(), 3);
 
-        let data_items = &rules[0].data;
+        let data_items = &rules[0].actions[0].data;
         assert_eq!(data_items.len(), 2);
 
         // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
@@ -685,26 +681,19 @@ mod test {
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
-                    "data": [
+                    "actions": [
                     {
-                        "selector": {
-                            "selector": "my.selector.path",
-                            "key": "mykey",
-                            "default": "my_selector_default_value"
-                        }
+                        "extension": "limitador",
+                        "data": [
+                        {
+                            "selector": {
+                                "selector": "my.selector.path",
+                                "key": "mykey",
+                                "default": "my_selector_default_value"
+                            }
+                        }]
                     }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -719,7 +708,7 @@ mod test {
         let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
-        let data_items = &rules[0].data;
+        let data_items = &rules[0].actions[0].data;
         assert_eq!(data_items.len(), 1);
 
         if let DataType::Selector(selector_item) = &data_items[0].item {
@@ -780,19 +769,12 @@ mod test {
                             "value": "*.com"
                         }]
                     }],
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                    "actions": [
+                    {
+                        "extension": "limitador",
+                        "data": [ { "selector": { "selector": "my.selector.path" } }]
+                    }]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -846,30 +828,23 @@ mod test {
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
-                    "data": [
+                    "actions": [
                     {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    },
-                    {
-                        "selector": {
-                            "selector": "auth.metadata.username"
-                        }
+                        "extension": "limitador",
+                        "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            }
+                        },
+                        {
+                            "selector": {
+                                "selector": "auth.metadata.username"
+                            }
+                        }]
                     }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -906,28 +881,22 @@ mod test {
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
-                "data": [
-                {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    },
-                    "selector": {
-                        "selector": "auth.metadata.username"
+                "actions": [
+                    {
+                        "extension": "limitador",
+                        "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            },
+                            "selector": {
+                                "selector": "auth.metadata.username"
+                            }
+                        }]
                     }
-                }]
-            }],
-            "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                ]
+            }]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -950,25 +919,18 @@ mod test {
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
-                "data": [
-                {
-                    "unknown": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
-                }]
-            }],
-            "actions": [
+                "actions": [
                 {
                     "extension": "limitador",
-                    "data": {
-                        "static": {
+                    "data": [
+                    {
+                        "unknown": {
                             "key": "rlp-ns-A/rlp-name-A",
                             "value": "1"
                         }
-                    }
-                }
-            ]
+                    }]
+                }]
+            }]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -999,19 +961,12 @@ mod test {
                             "value": "/admin/toy"
                         }]
                     }],
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                    "actions": [
+                    {
+                        "extension": "limitador",
+                        "data": [ { "selector": { "selector": "my.selector.path" } }]
+                    }]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);

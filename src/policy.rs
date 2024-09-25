@@ -1,9 +1,9 @@
 use crate::attribute::Attribute;
 use crate::configuration::{Action, DataItem, DataType, PatternExpression};
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
-use crate::filter::http_context::Filter;
 use log::debug;
-use proxy_wasm::traits::Context;
+use protobuf::RepeatedField;
+use proxy_wasm::hostcalls;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -18,7 +18,7 @@ pub struct Rule {
     #[serde(default)]
     pub conditions: Vec<Condition>,
     //
-    pub data: Vec<DataItem>,
+    pub actions: Vec<Action>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -28,41 +28,33 @@ pub struct Policy {
     pub domain: String,
     pub hostnames: Vec<String>,
     pub rules: Vec<Rule>,
-    pub actions: Vec<Action>,
 }
 
 impl Policy {
     #[cfg(test)]
-    pub fn new(
-        name: String,
-        domain: String,
-        hostnames: Vec<String>,
-        rules: Vec<Rule>,
-        actions: Vec<Action>,
-    ) -> Self {
+    pub fn new(name: String, domain: String, hostnames: Vec<String>, rules: Vec<Rule>) -> Self {
         Policy {
             name,
             domain,
             hostnames,
             rules,
-            actions,
         }
     }
 
-    pub fn build_descriptors(
-        &self,
-        filter: &Filter,
-    ) -> protobuf::RepeatedField<RateLimitDescriptor> {
+    pub fn find_rule_that_applies(&self) -> Option<&Rule> {
         self.rules
             .iter()
-            .filter(|rule: &&Rule| self.filter_rule_by_conditions(filter, &rule.conditions))
-            // Mapping 1 Rule -> 1 Descriptor
-            // Filter out empty descriptors
-            .filter_map(|rule| self.build_single_descriptor(filter, &rule.data))
+            .find(|rule: &&Rule| self.filter_rule_by_conditions(&rule.conditions))
+    }
+
+    pub fn build_descriptors(&self, rule: &Rule) -> RepeatedField<RateLimitDescriptor> {
+        rule.actions
+            .iter()
+            .filter_map(|action| self.build_single_descriptor(&action.data))
             .collect()
     }
 
-    fn filter_rule_by_conditions(&self, filter: &Filter, conditions: &[Condition]) -> bool {
+    fn filter_rule_by_conditions(&self, conditions: &[Condition]) -> bool {
         if conditions.is_empty() {
             // no conditions is equivalent to matching all the requests.
             return true;
@@ -70,27 +62,28 @@ impl Policy {
 
         conditions
             .iter()
-            .any(|condition| self.condition_applies(filter, condition))
+            .any(|condition| self.condition_applies(condition))
     }
 
-    fn condition_applies(&self, filter: &Filter, condition: &Condition) -> bool {
+    fn condition_applies(&self, condition: &Condition) -> bool {
         condition
             .all_of
             .iter()
-            .all(|pattern_expression| self.pattern_expression_applies(filter, pattern_expression))
+            .all(|pattern_expression| self.pattern_expression_applies(pattern_expression))
     }
 
-    fn pattern_expression_applies(&self, filter: &Filter, p_e: &PatternExpression) -> bool {
+    fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
         let attribute_path = p_e.path();
         debug!(
-            "#{} get_property:  selector: {} path: {:?}",
-            filter.context_id, p_e.selector, attribute_path
+            "get_property:  selector: {} path: {:?}",
+            p_e.selector, attribute_path
         );
-        let attribute_value = match filter.get_property(attribute_path) {
+        let attribute_value = match hostcalls::get_property(attribute_path).unwrap() {
+            //TODO(didierofrivia): Replace hostcalls by DI
             None => {
                 debug!(
-                    "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
-                    filter.context_id, p_e.selector
+                    "pattern_expression_applies:  selector not found: {}, defaulting to ``",
+                    p_e.selector
                 );
                 b"".to_vec()
             }
@@ -98,21 +91,14 @@ impl Policy {
         };
         match p_e.eval(attribute_value) {
             Err(e) => {
-                debug!(
-                    "#{} pattern_expression_applies failed: {}",
-                    filter.context_id, e
-                );
+                debug!("pattern_expression_applies failed: {}", e);
                 false
             }
             Ok(result) => result,
         }
     }
 
-    fn build_single_descriptor(
-        &self,
-        filter: &Filter,
-        data_list: &[DataItem],
-    ) -> Option<RateLimitDescriptor> {
+    fn build_single_descriptor(&self, data_list: &[DataItem]) -> Option<RateLimitDescriptor> {
         let mut entries = ::protobuf::RepeatedField::default();
 
         // iterate over data items to allow any data item to skip the entire descriptor
@@ -132,14 +118,15 @@ impl Policy {
 
                     let attribute_path = selector_item.path();
                     debug!(
-                        "#{} get_property:  selector: {} path: {:?}",
-                        filter.context_id, selector_item.selector, attribute_path
+                        "get_property:  selector: {} path: {:?}",
+                        selector_item.selector, attribute_path
                     );
-                    let value = match filter.get_property(attribute_path.tokens()) {
+                    let value = match hostcalls::get_property(attribute_path.tokens()).unwrap() {
+                        //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(
-                                "#{} build_single_descriptor: selector not found: {}",
-                                filter.context_id, attribute_path
+                                "build_single_descriptor: selector not found: {}",
+                                attribute_path
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -151,8 +138,8 @@ impl Policy {
                         Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
                             Ok(attr_str) => attr_str,
                             Err(e) => {
-                                debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    filter.context_id, attribute_path, e);
+                                debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    attribute_path, e);
                                 return None;
                             }
                         },
