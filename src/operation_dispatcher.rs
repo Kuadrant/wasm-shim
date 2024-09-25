@@ -1,6 +1,6 @@
 use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::envoy::RateLimitDescriptor;
-use crate::policy::Policy;
+use crate::policy::Rule;
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcServiceHandler};
 use protobuf::RepeatedField;
@@ -122,16 +122,17 @@ impl OperationDispatcher {
 
     pub fn build_operations(
         &self,
-        policy: &Policy,
+        domain: String, // TODO(didierofrivia): See if can work with &str
+        rule: &Rule,
         descriptors: RepeatedField<RateLimitDescriptor>,
     ) {
         let mut operations: Vec<Operation> = vec![];
-        policy.actions.iter().for_each(|action| {
+        rule.actions.iter().for_each(|action| {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
                 let message = GrpcMessageRequest::new(
                     service.get_extension_type(),
-                    policy.domain.clone(),
+                    domain.clone(),
                     descriptors.clone(),
                 );
                 operations.push(Operation::new(

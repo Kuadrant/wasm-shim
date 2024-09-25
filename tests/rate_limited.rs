@@ -124,26 +124,19 @@ fn it_limits() {
                         }]
                     }
                 ],
-                "data": [
-                  {
-                    "static": {
-                      "key": "admin",
-                      "value": "1"
+                "actions": [
+                    {
+                        "extension": "limitador",
+                        "data": [
+                        {
+                            "static": {
+                              "key": "admin",
+                              "value": "1"
+                            }
+                        }]
                     }
-                  }
                 ]
-            }],
-            "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+            }]
         }]
     }"#;
 
@@ -191,15 +184,15 @@ fn it_limits() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.host path: [\"request\", \"host\"]"),
+            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.method path: [\"request\", \"method\"]"),
+            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -290,26 +283,20 @@ fn it_passes_additional_headers() {
                         }]
                     }
                 ],
-                "data": [
-                  {
-                    "static": {
-                      "key": "admin",
-                      "value": "1"
+                "actions": [
+                    {
+                        "extension": "limitador",
+                        "data": [
+                          {
+                            "static": {
+                              "key": "admin",
+                              "value": "1"
+                            }
+                          }
+                        ]
                     }
-                  }
                 ]
-            }],
-            "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+            }]
         }]
     }"#;
 
@@ -357,15 +344,15 @@ fn it_passes_additional_headers() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.host path: [\"request\", \"host\"]"),
+            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.method path: [\"request\", \"method\"]"),
+            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -450,26 +437,19 @@ fn it_rate_limits_with_empty_conditions() {
             "hostnames": ["*.com"],
             "rules": [
             {
-                "data": [
-                  {
-                    "static": {
-                      "key": "admin",
-                      "value": "1"
-                    }
-                  }
-                ]
-            }],
-            "actions": [
+                "actions": [
                 {
                     "extension": "limitador",
-                    "data": {
+                    "data": [
+                      {
                         "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
+                          "key": "admin",
+                          "value": "1"
                         }
-                    }
-                }
-            ]
+                      }
+                    ]
+                }]
+            }]
         }]
     }"#;
 
@@ -578,25 +558,19 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             "hostnames": ["*.com"],
             "rules": [
             {
-                "data": [
-                {
-                    "selector": {
-                        "selector": "unknown.path"
+                "actions": [
+                    {
+                        "extension": "limitador",
+                        "data": [
+                            {
+                                "selector": {
+                                    "selector": "unknown.path"
+                                }
+                            }
+                        ]
                     }
-                }
                 ]
-            }],
-            "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+            }]
         }]
     }"#;
 
@@ -634,15 +608,15 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
+            Some("get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 build_single_descriptor: selector not found: unknown.path"),
+            Some("build_single_descriptor: selector not found: unknown.path"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 process_rate_limit_policy: empty descriptors"),
+            Some("#2 process_policy: empty descriptors"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
