@@ -31,7 +31,12 @@ impl Filter {
     }
 
     fn process_policy(&self, policy: &Policy) -> Action {
-        self.operation_dispatcher.build_operations(policy, self);
+        if let Some(rule) = policy.find_rule_that_applies() {
+            self.operation_dispatcher.build_operations(rule);
+        } else {
+            debug!("#{} process_policy: no rule applied", self.context_id);
+            return Action::Continue;
+        }
 
         if let Some(operation) = self.operation_dispatcher.next() {
             match operation.get_result() {
@@ -172,10 +177,7 @@ impl HttpContext for Filter {
                 Action::Continue
             }
             Some(policy) => {
-                debug!(
-                    "#{} ratelimitpolicy selected {}",
-                    self.context_id, policy.name
-                );
+                debug!("#{} policy selected {}", self.context_id, policy.name);
                 self.process_policy(policy)
             }
         }

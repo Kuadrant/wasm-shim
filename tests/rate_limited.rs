@@ -119,9 +119,8 @@ fn it_limits() {
                         "operator": "eq",
                         "value": "POST"
                     }
-                ]
-            }],
-            "actions": [
+                ],
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
@@ -133,8 +132,8 @@ fn it_limits() {
                             }
                         }
                     ]
-                }
-            ]
+                }]
+            }]
         }]
     }"#;
 
@@ -176,21 +175,18 @@ fn it_limits() {
         .returning(Some("cars.toystore.com".as_bytes()))
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 ratelimitpolicy selected some-name"),
+            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.host path: [\"request\", \"host\"]"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.method path: [\"request\", \"method\"]"),
+            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -276,9 +272,8 @@ fn it_passes_additional_headers() {
                         "operator": "eq",
                         "value": "POST"
                     }
-                ]
-            }],
-            "actions": [
+                ],
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
@@ -290,8 +285,8 @@ fn it_passes_additional_headers() {
                             }
                         }
                     ]
-                }
-            ]
+                }]
+            }]
         }]
     }"#;
 
@@ -333,21 +328,18 @@ fn it_passes_additional_headers() {
         .returning(Some("cars.toystore.com".as_bytes()))
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 ratelimitpolicy selected some-name"),
+            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.host path: [\"request\", \"host\"]"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: request.method path: [\"request\", \"method\"]"),
+            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -430,11 +422,9 @@ fn it_rate_limits_with_empty_conditions() {
             "name": "some-name",
             "hostnames": ["*.com"],
             "rules": [
-                {
-                    "conditions": []
-                }
-            ],
-            "actions": [
+            {
+                "conditions": [],
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
@@ -446,8 +436,8 @@ fn it_rate_limits_with_empty_conditions() {
                             }
                         }
                     ]
-                }
-            ]
+                }]
+            }]
         }]
     }"#;
 
@@ -483,10 +473,7 @@ fn it_rate_limits_with_empty_conditions() {
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 ratelimitpolicy selected some-name"),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -554,11 +541,9 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             "name": "some-name",
             "hostnames": ["*.com"],
             "rules": [
-                {
-                    "conditions": []
-                }
-            ],
-            "actions": [
+            {
+                "conditions": [],
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "RLS-domain",
@@ -569,8 +554,8 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
                             }
                         }
                     ]
-                }
-            ]
+                }]
+            }]
         }]
     }"#;
 
@@ -604,19 +589,19 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 ratelimitpolicy selected some-name"),
+            Some("#2 policy selected some-name"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
+            Some("get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 build_single_descriptor: selector not found: unknown.path"),
+            Some("build_single_descriptor: selector not found: unknown.path"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 process_rate_limit_policy: empty descriptors"),
+            Some("process_policy: empty descriptors"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();

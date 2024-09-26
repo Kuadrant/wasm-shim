@@ -1,6 +1,5 @@
 use crate::configuration::{Extension, ExtensionType, FailureMode};
-use crate::filter::http_context::Filter;
-use crate::policy::Policy;
+use crate::policy::Rule;
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcServiceHandler};
 use log::debug;
@@ -120,20 +119,17 @@ impl OperationDispatcher {
         self.waiting_operations.borrow_mut().get(&token_id).cloned()
     }
 
-    pub fn build_operations(&self, policy: &Policy, filter: &Filter) {
+    pub fn build_operations(&self, rule: &Rule) {
         let mut operations: Vec<Operation> = vec![];
-        for action in policy.actions.iter() {
+        for action in rule.actions.iter() {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
                 let descriptors = match service.get_extension_type() {
                     ExtensionType::Auth => None,
                     ExtensionType::RateLimit => {
-                        let desc = action.build_descriptors(policy.rules.clone(), filter);
+                        let desc = action.build_descriptors();
                         if desc.is_empty() {
-                            debug!(
-                                "#{} process_rate_limit_policy: empty descriptors",
-                                filter.context_id
-                            );
+                            debug!("process_policy: empty descriptors");
                             continue;
                         }
                         Some(desc)

@@ -170,14 +170,14 @@ data:
                                               "operator": "eq",
                                               "value": "/get"
                                             }
+                                          ],
+                                          "actions": [
+                                            {
+                                              "extension": "authorino",
+                                              "scope": "effective-route-1",
+                                              "data": []
+                                            }
                                           ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "authorino",
-                                          "scope": "effective-route-1",
-                                          "data": []
                                         }
                                       ]
                                     },
@@ -188,18 +188,18 @@ data:
                                       ],
                                       "rules": [
                                         {
-                                          "conditions": []
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "limitador",
-                                          "scope": "rlp-ns-A/rlp-name-A",
-                                          "data": [
+                                          "conditions": [],
+                                          "actions": [
                                             {
-                                              "selector": {
-                                                "selector": "unknown.path"
-                                              }
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-A/rlp-name-A",
+                                              "data": [
+                                                {
+                                                  "selector": {
+                                                    "selector": "unknown.path"
+                                                  }
+                                                }
+                                              ]
                                             }
                                           ]
                                         }
@@ -218,19 +218,19 @@ data:
                                               "operator": "startswith",
                                               "value": "/unknown-path"
                                             }
-                                          ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "limitador",
-                                          "scope": "rlp-ns-B/rlp-name-B",
-                                          "data": [
+                                          ],
+                                          "actions": [
                                             {
-                                              "static": {
-                                                "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
-                                                "value": "1"
-                                              }
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-B/rlp-name-B",
+                                              "data": [
+                                                {
+                                                  "static": {
+                                                    "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
+                                                    "value": "1"
+                                                  }
+                                                }
+                                              ]
                                             }
                                           ]
                                         }
@@ -259,35 +259,35 @@ data:
                                               "operator": "eq",
                                               "value": "GET"
                                             }
-                                          ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "limitador",
-                                          "scope": "rlp-ns-C/rlp-name-C",
-                                          "data": [
+                                          ],
+                                          "actions": [
                                             {
-                                              "static": {
-                                                "key": "limit_to_be_activated",
-                                                "value": "1"
-                                              }
-                                            },
-                                            {
-                                              "selector": {
-                                                "selector": "source.address"
-                                              }
-                                            },
-                                            {
-                                              "selector": {
-                                                "selector": "request.headers.My-Custom-Header-01"
-                                              }
-                                            },
-                                            {
-                                              "selector": {
-                                                "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
-                                                "key": "user_id"
-                                              }
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-C/rlp-name-C",
+                                              "data": [
+                                                {
+                                                  "static": {
+                                                    "key": "limit_to_be_activated",
+                                                    "value": "1"
+                                                  }
+                                                },
+                                                {
+                                                  "selector": {
+                                                    "selector": "source.address"
+                                                  }
+                                                },
+                                                {
+                                                  "selector": {
+                                                    "selector": "request.headers.My-Custom-Header-01"
+                                                  }
+                                                },
+                                                {
+                                                  "selector": {
+                                                    "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
+                                                    "key": "user_id"
+                                                  }
+                                                }
+                                              ]
                                             }
                                           ]
                                         }
@@ -306,24 +306,24 @@ data:
                                               "operator": "eq",
                                               "value": "/get"
                                             }
-                                          ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "authorino",
-                                          "scope": "effective-route-1",
-                                          "data": []
-                                        },
-                                        {
-                                          "extension": "limitador",
-                                          "scope": "multi-ns-A/multi-name-A",
-                                          "data": [
+                                          ],
+                                          "actions": [
                                             {
-                                              "selector": {
-                                                "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
-                                                "key": "user_id"
-                                              }
+                                              "extension": "authorino",
+                                              "scope": "effective-route-1",
+                                              "data": []
+                                            },
+                                            {
+                                              "extension": "limitador",
+                                              "scope": "multi-ns-A/multi-name-A",
+                                              "data": [
+                                                {
+                                                  "selector": {
+                                                    "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                                    "key": "user_id"
+                                                  }
+                                                }
+                                              ]
                                             }
                                           ]
                                         }

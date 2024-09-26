@@ -8,13 +8,13 @@ use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
 use log::debug;
-use proxy_wasm::traits::Context as _;
+use protobuf::RepeatedField;
+use proxy_wasm::hostcalls;
 use serde::Deserialize;
 
 use crate::attribute::Attribute;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
-use crate::filter::http_context::Filter;
-use crate::policy::{Policy, Rule};
+use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
 use crate::service::GrpcService;
 
@@ -472,15 +472,16 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                         return Err(result.err().unwrap());
                     }
                 }
-            }
-            for action in &rlp.actions {
-                for datum in &action.data {
-                    let result = datum.item.compile();
-                    if result.is_err() {
-                        return Err(result.err().unwrap());
+                for action in &rule.actions {
+                    for datum in &action.data {
+                        let result = datum.item.compile();
+                        if result.is_err() {
+                            return Err(result.err().unwrap());
+                        }
                     }
                 }
             }
+
             for hostname in rlp.hostnames.iter() {
                 index.insert(hostname, rlp.clone());
             }
@@ -543,68 +544,19 @@ pub struct Action {
 }
 
 impl Action {
-    pub fn build_descriptors(
-        &self,
-        rules: Vec<Rule>,
-        filter: &Filter,
-    ) -> protobuf::RepeatedField<RateLimitDescriptor> {
-        rules
-            .iter()
-            .filter(|rule: &&Rule| self.filter_rule_by_conditions(filter, &rule.conditions))
-            // Mapping 1 Rule -> 1 Descriptor
-            // Filter out empty descriptors
-            .filter_map(|_| self.build_single_descriptor(filter, &self.data))
-            .collect()
-    }
-
-    fn filter_rule_by_conditions(&self, filter: &Filter, conditions: &[PatternExpression]) -> bool {
-        if conditions.is_empty() {
-            // no conditions is equivalent to matching all the requests.
-            return true;
+    pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
+        let mut entries = RepeatedField::new();
+        if let Some(desc) = self.build_single_descriptor() {
+            entries.push(desc);
         }
-
-        conditions
-            .iter()
-            .all(|pattern_expression| self.pattern_expression_applies(filter, pattern_expression))
+        entries
     }
 
-    fn pattern_expression_applies(&self, filter: &Filter, p_e: &PatternExpression) -> bool {
-        let attribute_path = p_e.path();
-        debug!(
-            "#{} get_property:  selector: {} path: {:?}",
-            filter.context_id, p_e.selector, attribute_path
-        );
-        let attribute_value = match filter.get_property(attribute_path) {
-            None => {
-                debug!(
-                    "#{} pattern_expression_applies:  selector not found: {}, defaulting to ``",
-                    filter.context_id, p_e.selector
-                );
-                b"".to_vec()
-            }
-            Some(attribute_bytes) => attribute_bytes,
-        };
-        match p_e.eval(attribute_value) {
-            Err(e) => {
-                debug!(
-                    "#{} pattern_expression_applies failed: {}",
-                    filter.context_id, e
-                );
-                false
-            }
-            Ok(result) => result,
-        }
-    }
-
-    fn build_single_descriptor(
-        &self,
-        filter: &Filter,
-        data_list: &[DataItem],
-    ) -> Option<RateLimitDescriptor> {
-        let mut entries = ::protobuf::RepeatedField::default();
+    fn build_single_descriptor(&self) -> Option<RateLimitDescriptor> {
+        let mut entries = RepeatedField::default();
 
         // iterate over data items to allow any data item to skip the entire descriptor
-        for data in data_list.iter() {
+        for data in self.data.iter() {
             match &data.item {
                 DataType::Static(static_item) => {
                     let mut descriptor_entry = RateLimitDescriptor_Entry::new();
@@ -620,14 +572,15 @@ impl Action {
 
                     let attribute_path = selector_item.path();
                     debug!(
-                        "#{} get_property:  selector: {} path: {:?}",
-                        filter.context_id, selector_item.selector, attribute_path
+                        "get_property:  selector: {} path: {:?}",
+                        selector_item.selector, attribute_path
                     );
-                    let value = match filter.get_property(attribute_path.tokens()) {
+                    let value = match hostcalls::get_property(attribute_path.tokens()).unwrap() {
+                        //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(
-                                "#{} build_single_descriptor: selector not found: {}",
-                                filter.context_id, attribute_path
+                                "build_single_descriptor: selector not found: {}",
+                                attribute_path
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -639,8 +592,8 @@ impl Action {
                         Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
                             Ok(attr_str) => attr_str,
                             Err(e) => {
-                                debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    filter.context_id, attribute_path, e);
+                                debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    attribute_path, e);
                                 return None;
                             }
                         },
@@ -657,7 +610,6 @@ impl Action {
                 }
             }
         }
-
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
@@ -697,9 +649,8 @@ mod test {
                     "selector": "request.host",
                     "operator": "eq",
                     "value": "cars.toystore.com"
-                }]
-            }],
-            "actions": [
+                }],
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
@@ -715,8 +666,8 @@ mod test {
                             "selector": "auth.metadata.username"
                         }
                     }]
-                }
-            ]
+                }]
+            }]
         }]
     }"#;
 
@@ -737,7 +688,7 @@ mod test {
         let conditions = &rules[0].conditions;
         assert_eq!(conditions.len(), 3);
 
-        let actions = &filter_config.policies[0].actions;
+        let actions = &rules[0].actions;
         assert_eq!(actions.len(), 1);
 
         let data_items = &actions[0].data;
@@ -800,21 +751,23 @@ mod test {
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [],
-                "actions": [
+                "rules": [
                 {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
+                    "conditions": [],
+                    "actions": [
                     {
-                        "selector": {
-                            "selector": "my.selector.path",
-                            "key": "mykey",
-                            "default": "my_selector_default_value"
-                        }
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [
+                        {
+                            "selector": {
+                                "selector": "my.selector.path",
+                                "key": "mykey",
+                                "default": "my_selector_default_value"
+                            }
+                        }]
                     }]
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -827,9 +780,9 @@ mod test {
         assert_eq!(filter_config.policies.len(), 1);
 
         let rules = &filter_config.policies[0].rules;
-        assert_eq!(rules.len(), 0);
+        assert_eq!(rules.len(), 1);
 
-        let actions = &filter_config.policies[0].actions;
+        let actions = &rules[0].actions;
         assert_eq!(actions.len(), 1);
 
         let data_items = &actions[0].data;
@@ -888,15 +841,14 @@ mod test {
                         "selector": "request.host",
                         "operator": "matches",
                         "value": "*.com"
+                    }],
+                    "actions": [
+                    {
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [ { "selector": { "selector": "my.selector.path" } }]
                     }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -944,27 +896,27 @@ mod test {
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [{
-                    "conditions": []
-                }],
-                "actions": [
+                "rules": [
                 {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
+                    "conditions": [],
+                    "actions": [
                     {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    },
-                    {
-                        "selector": {
-                            "selector": "auth.metadata.username"
-                        }
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            }
+                        },
+                        {
+                            "selector": {
+                                "selector": "auth.metadata.username"
+                            }
+                        }]
                     }]
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -998,8 +950,9 @@ mod test {
         {
             "name": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [],
-            "actions": [
+            "rules": [
+            {
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
@@ -1013,8 +966,8 @@ mod test {
                             "selector": "auth.metadata.username"
                         }
                     }]
-                }
-            ]
+                }]
+            }]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -1034,8 +987,9 @@ mod test {
             "name": "rlp-ns-A/rlp-name-A",
             "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [],
-            "actions": [
+            "rules": [
+            {
+                "actions": [
                 {
                     "extension": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
@@ -1046,8 +1000,8 @@ mod test {
                             "value": "1"
                         }
                     }]
-                }
-            ]
+                }]
+            }]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -1073,15 +1027,14 @@ mod test {
                         "selector": "request.path",
                         "operator": "unknown",
                         "value": "/admin/toy"
+                    }],
+                    "actions": [
+                    {
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [ { "selector": { "selector": "my.selector.path" } }]
                     }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
