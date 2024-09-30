@@ -41,7 +41,7 @@ impl Policy {
 
         conditions
             .iter()
-            .any(|condition| self.pattern_expression_applies(condition))
+            .all(|condition| self.pattern_expression_applies(condition))
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
