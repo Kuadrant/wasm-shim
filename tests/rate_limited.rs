@@ -163,31 +163,31 @@ fn it_limits() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "url_path"]))
+        .returning(Some("/admin/toy".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some("POST".as_bytes()))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
         .returning(None)
-        .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some("/admin/toy".as_bytes()))
-        .expect_get_property(Some(vec!["request", "host"]))
-        .returning(Some("cars.toystore.com".as_bytes()))
-        .expect_get_property(Some(vec!["request", "method"]))
-        .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -316,31 +316,31 @@ fn it_passes_additional_headers() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "url_path"]))
+        .returning(Some("/admin/toy".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some("POST".as_bytes()))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
         .returning(None)
-        .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some("/admin/toy".as_bytes()))
-        .expect_get_property(Some(vec!["request", "host"]))
-        .returning(Some("cars.toystore.com".as_bytes()))
-        .expect_get_property(Some(vec!["request", "method"]))
-        .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -467,13 +467,13 @@ fn it_rate_limits_with_empty_conditions() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("a.com"))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
         .returning(None)
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -585,8 +585,6 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("a.com"))
-        .expect_get_property(Some(vec!["unknown", "path"]))
-        .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 policy selected some-name"),
@@ -595,6 +593,8 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             Some(LogLevel::Debug),
             Some("get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
         )
+        .expect_get_property(Some(vec!["unknown", "path"]))
+        .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("build_single_descriptor: selector not found: unknown.path"),
