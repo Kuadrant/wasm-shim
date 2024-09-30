@@ -601,7 +601,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_policy: empty descriptors"),
+            Some("grpc_message_request: empty descriptors"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();

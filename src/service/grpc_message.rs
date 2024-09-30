@@ -1,9 +1,8 @@
-use crate::configuration::ExtensionType;
-use crate::envoy::{
-    CheckRequest, CheckResponse, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
-};
+use crate::configuration::{Action, ExtensionType};
+use crate::envoy::{CheckRequest, CheckResponse, RateLimitRequest, RateLimitResponse};
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
+use log::debug;
 use protobuf::reflect::MessageDescriptor;
 use protobuf::{
     Clear, CodedInputStream, CodedOutputStream, Message, ProtobufError, ProtobufResult,
@@ -124,21 +123,22 @@ impl Message for GrpcMessageRequest {
 
 impl GrpcMessageRequest {
     // Using domain as ce_host for the time being, we might pass a DataType in the future.
-    pub fn new(
-        extension_type: ExtensionType,
-        domain: String,
-        descriptors: Option<protobuf::RepeatedField<RateLimitDescriptor>>,
-    ) -> Self {
+    pub fn new(extension_type: &ExtensionType, action: &Action) -> Option<Self> {
         match extension_type {
             ExtensionType::RateLimit => {
-                GrpcMessageRequest::RateLimit(RateLimitService::request_message(
-                    domain.clone(),
-                    descriptors.expect("rate limit message expects descriptors"),
-                ))
+                let descriptors = action.build_descriptors();
+                if descriptors.is_empty() {
+                    debug!("grpc_message_request: empty descriptors");
+                    None
+                } else {
+                    Some(GrpcMessageRequest::RateLimit(
+                        RateLimitService::request_message(action.scope.clone(), descriptors),
+                    ))
+                }
             }
-            ExtensionType::Auth => {
-                GrpcMessageRequest::Auth(AuthService::request_message(domain.clone()))
-            }
+            ExtensionType::Auth => Some(GrpcMessageRequest::Auth(AuthService::request_message(
+                action.scope.clone(),
+            ))),
         }
     }
 }
