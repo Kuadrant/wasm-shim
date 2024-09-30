@@ -159,7 +159,6 @@ data:
                                   "policies": [
                                     {
                                       "name": "auth-ns-A/auth-name-A",
-                                      "domain": "effective-route-1",
                                       "hostnames": [
                                         "*.a.auth.com"
                                       ],
@@ -167,69 +166,47 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.path",
-                                                  "operator": "eq",
-                                                  "value": "/get"
-                                                }
-                                              ]
+                                              "selector": "request.path",
+                                              "operator": "eq",
+                                              "value": "/get"
                                             }
                                           ],
-                                          "data": [
+                                          "actions": [
                                             {
-                                              "static": {
-                                                "key": "host",
-                                                "value": "effective-route-1"
-                                              }
+                                              "extension": "authorino",
+                                              "scope": "effective-route-1",
+                                              "data": []
                                             }
                                           ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "authorino",
-                                          "data": {
-                                            "static": {
-                                              "key": "host",
-                                              "value": "effective-route-1"
-                                            }
-                                          }
                                         }
                                       ]
                                     },
                                     {
                                       "name": "rlp-ns-A/rlp-name-A",
-                                      "domain": "rlp-ns-A/rlp-name-A",
                                       "hostnames": [
                                         "*.a.rlp.com"
                                       ],
                                       "rules": [
                                         {
-                                          "data": [
+                                          "conditions": [],
+                                          "actions": [
                                             {
-                                              "selector": {
-                                                "selector": "unknown.path"
-                                              }
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-A/rlp-name-A",
+                                              "data": [
+                                                {
+                                                  "selector": {
+                                                    "selector": "unknown.path"
+                                                  }
+                                                }
+                                              ]
                                             }
                                           ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "limitador",
-                                          "data": {
-                                            "static": {
-                                              "key": "rlp-ns-A/rlp-name-A",
-                                              "value": "1"
-                                            }
-                                          }
                                         }
                                       ]
                                     },
                                     {
                                       "name": "rlp-ns-B/rlp-name-B",
-                                      "domain": "rlp-ns-B/rlp-name-B",
                                       "hostnames": [
                                         "*.b.rlp.com"
                                       ],
@@ -237,40 +214,30 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "allOf": [
+                                              "selector": "request.url_path",
+                                              "operator": "startswith",
+                                              "value": "/unknown-path"
+                                            }
+                                          ],
+                                          "actions": [
+                                            {
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-B/rlp-name-B",
+                                              "data": [
                                                 {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/unknown-path"
+                                                  "static": {
+                                                    "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
+                                                    "value": "1"
+                                                  }
                                                 }
                                               ]
                                             }
-                                          ],
-                                          "data": [
-                                            {
-                                              "static": {
-                                                "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
-                                                "value": "1"
-                                              }
-                                            }
                                           ]
-                                        }
-                                      ],
-                                      "actions": [
-                                        {
-                                          "extension": "limitador",
-                                          "data": {
-                                            "static": {
-                                              "key": "rlp-ns-B/rlp-name-B",
-                                              "value": "1"
-                                            }
-                                          }
                                         }
                                       ]
                                     },
                                     {
                                       "name": "rlp-ns-C/rlp-name-C",
-                                      "domain": "rlp-ns-C/rlp-name-C",
                                       "hostnames": [
                                         "*.c.rlp.com"
                                       ],
@@ -278,135 +245,87 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/get"
-                                                },
-                                                {
-                                                  "selector": "request.host",
-                                                  "operator": "eq",
-                                                  "value": "test.c.rlp.com"
-                                                },
-                                                {
-                                                  "selector": "request.method",
-                                                  "operator": "eq",
-                                                  "value": "GET"
-                                                }
-                                              ]
+                                              "selector": "request.url_path",
+                                              "operator": "startswith",
+                                              "value": "/get"
+                                            },
+                                            {
+                                              "selector": "request.host",
+                                              "operator": "eq",
+                                              "value": "test.c.rlp.com"
+                                            },
+                                            {
+                                              "selector": "request.method",
+                                              "operator": "eq",
+                                              "value": "GET"
                                             }
                                           ],
-                                          "data": [
+                                          "actions": [
                                             {
-                                              "static": {
-                                                "key": "limit_to_be_activated",
-                                                "value": "1"
-                                              }
-                                            }
-                                          ]
-                                        },
-                                        {
-                                          "conditions": [
-                                            {
-                                              "allOf": [
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-C/rlp-name-C",
+                                              "data": [
                                                 {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/get"
+                                                  "static": {
+                                                    "key": "limit_to_be_activated",
+                                                    "value": "1"
+                                                  }
                                                 },
                                                 {
-                                                  "selector": "request.host",
-                                                  "operator": "eq",
-                                                  "value": "test.c.rlp.com"
+                                                  "selector": {
+                                                    "selector": "source.address"
+                                                  }
                                                 },
                                                 {
-                                                  "selector": "request.method",
-                                                  "operator": "eq",
-                                                  "value": "GET"
+                                                  "selector": {
+                                                    "selector": "request.headers.My-Custom-Header-01"
+                                                  }
+                                                },
+                                                {
+                                                  "selector": {
+                                                    "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
+                                                    "key": "user_id"
+                                                  }
                                                 }
                                               ]
-                                            }
-                                          ],
-                                          "data": [
-                                            {
-                                              "selector": {
-                                                "selector": "source.address"
-                                              }
-                                            }
-                                          ]
-                                        },
-                                        {
-                                          "conditions": [
-                                            {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/get"
-                                                },
-                                                {
-                                                  "selector": "request.host",
-                                                  "operator": "eq",
-                                                  "value": "test.c.rlp.com"
-                                                },
-                                                {
-                                                  "selector": "request.method",
-                                                  "operator": "eq",
-                                                  "value": "GET"
-                                                }
-                                              ]
-                                            }
-                                          ],
-                                          "data": [
-                                            {
-                                              "selector": {
-                                                "selector": "request.headers.My-Custom-Header-01"
-                                              }
-                                            }
-                                          ]
-                                        },
-                                        {
-                                          "conditions": [
-                                            {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/get"
-                                                },
-                                                {
-                                                  "selector": "request.host",
-                                                  "operator": "eq",
-                                                  "value": "test.c.rlp.com"
-                                                },
-                                                {
-                                                  "selector": "request.method",
-                                                  "operator": "eq",
-                                                  "value": "GET"
-                                                }
-                                              ]
-                                            }
-                                          ],
-                                          "data": [
-                                            {
-                                              "selector": {
-                                                "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
-                                                "key": "user_id"
-                                              }
                                             }
                                           ]
                                         }
+                                      ]
+                                    },
+                                    {
+                                      "name": "multi-ns-A/multi-name-A",
+                                      "hostnames": [
+                                        "*.a.multi.com"
                                       ],
-                                      "actions": [
+                                      "rules": [
                                         {
-                                          "extension": "limitador",
-                                          "data": {
-                                            "static": {
-                                              "key": "rlp-ns-C/rlp-name-C",
-                                              "value": "1"
+                                          "conditions": [
+                                            {
+                                              "selector": "request.path",
+                                              "operator": "eq",
+                                              "value": "/get"
                                             }
-                                          }
+                                          ],
+                                          "actions": [
+                                            {
+                                              "extension": "authorino",
+                                              "scope": "effective-route-1",
+                                              "data": []
+                                            },
+                                            {
+                                              "extension": "limitador",
+                                              "scope": "multi-ns-A/multi-name-A",
+                                              "data": [
+                                                {
+                                                  "selector": {
+                                                    "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                                    "key": "user_id"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
                                         }
                                       ]
                                     }

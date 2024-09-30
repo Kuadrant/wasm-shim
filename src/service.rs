@@ -2,7 +2,7 @@ pub(crate) mod auth;
 pub(crate) mod grpc_message;
 pub(crate) mod rate_limit;
 
-use crate::configuration::{Extension, ExtensionType, FailureMode};
+use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
@@ -63,6 +63,9 @@ pub type GrpcCallFn = fn(
 
 pub type GetMapValuesBytesFn = fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status>;
 
+pub type GrpcMessageBuildFn =
+    fn(extension_type: &ExtensionType, action: &Action) -> Option<GrpcMessageRequest>;
+
 pub struct GrpcServiceHandler {
     service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
@@ -102,10 +105,6 @@ impl GrpcServiceHandler {
 
     pub fn get_extension(&self) -> Rc<Extension> {
         Rc::clone(&self.service.extension)
-    }
-
-    pub fn get_extension_type(&self) -> ExtensionType {
-        self.service.extension.extension_type.clone()
     }
 }
 

@@ -1,12 +1,11 @@
-use crate::configuration::{Extension, ExtensionType, FailureMode};
-use crate::envoy::RateLimitDescriptor;
-use crate::policy::Policy;
+use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
+use crate::policy::Rule;
 use crate::service::grpc_message::GrpcMessageRequest;
-use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcServiceHandler};
-use protobuf::RepeatedField;
+use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler};
+use log::error;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
@@ -28,9 +27,11 @@ impl State {
             _ => {}
         }
     }
-}
 
-type Procedure = (Rc<GrpcServiceHandler>, GrpcMessageRequest);
+    fn done(&mut self) {
+        *self = State::Done
+    }
+}
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -38,34 +39,44 @@ pub(crate) struct Operation {
     state: State,
     result: Result<u32, Status>,
     extension: Rc<Extension>,
-    procedure: Procedure,
+    action: Action,
+    service: Rc<GrpcServiceHandler>,
     grpc_call_fn: GrpcCallFn,
     get_map_values_bytes_fn: GetMapValuesBytesFn,
+    grpc_message_build_fn: GrpcMessageBuildFn,
 }
 
 #[allow(dead_code)]
 impl Operation {
-    pub fn new(extension: Rc<Extension>, procedure: Procedure) -> Self {
+    pub fn new(extension: Rc<Extension>, action: Action, service: Rc<GrpcServiceHandler>) -> Self {
         Self {
             state: State::Pending,
             result: Ok(0), // Heuristics: zero represents that it's not been triggered, following `hostcalls` example
             extension,
-            procedure,
+            action,
+            service,
             grpc_call_fn,
             get_map_values_bytes_fn,
+            grpc_message_build_fn,
         }
     }
 
     fn trigger(&mut self) -> Result<u32, Status> {
         match self.state {
             State::Pending => {
-                self.result = self.procedure.0.send(
-                    self.get_map_values_bytes_fn,
-                    self.grpc_call_fn,
-                    self.procedure.1.clone(),
-                );
-                self.state.next();
-                self.result
+                if let Some(message) =
+                    (self.grpc_message_build_fn)(self.get_extension_type(), &self.action)
+                {
+                    self.result =
+                        self.service
+                            .send(self.get_map_values_bytes_fn, self.grpc_call_fn, message);
+                    self.state.next();
+                    self.result
+                } else {
+                    //todo: we need to move to and start the next action
+                    self.state.done();
+                    Ok(1234)
+                }
             }
             State::Waiting => {
                 self.state.next();
@@ -120,26 +131,18 @@ impl OperationDispatcher {
         self.waiting_operations.borrow_mut().get(&token_id).cloned()
     }
 
-    pub fn build_operations(
-        &self,
-        policy: &Policy,
-        descriptors: RepeatedField<RateLimitDescriptor>,
-    ) {
+    pub fn build_operations(&self, rule: &Rule) {
         let mut operations: Vec<Operation> = vec![];
-        policy.actions.iter().for_each(|action| {
+        for action in rule.actions.iter() {
             // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.extension) {
-                let message = GrpcMessageRequest::new(
-                    service.get_extension_type(),
-                    policy.domain.clone(),
-                    descriptors.clone(),
-                );
                 operations.push(Operation::new(
                     service.get_extension(),
-                    (Rc::clone(service), message),
+                    action.clone(),
+                    Rc::clone(service),
                 ))
             }
-        });
+        }
         self.push_operations(operations);
     }
 
@@ -159,27 +162,48 @@ impl OperationDispatcher {
     }
 
     pub fn next(&self) -> Option<Operation> {
-        let mut operations = self.operations.borrow_mut();
+        let operations = self.operations.borrow_mut();
+        self.step(operations)
+    }
+
+    fn step(&self, mut operations: RefMut<Vec<Operation>>) -> Option<Operation> {
         if let Some((i, operation)) = operations.iter_mut().enumerate().next() {
-            if let State::Done = operation.get_state() {
-                if let Ok(token_id) = operation.result {
-                    self.waiting_operations.borrow_mut().remove(&token_id);
-                } // If result was Err, means the operation wasn't indexed
-                operations.remove(i);
-                // The next op is now at `i`
-            }
-            if let Some(operation) = operations.get_mut(i) {
-                if let Ok(token_id) = operation.trigger() {
-                    if *operation.get_state() == State::Waiting {
-                        // We index only if it was just transitioned to Waiting after triggering
-                        self.waiting_operations
-                            .borrow_mut()
-                            .insert(token_id, operation.clone());
-                    } // TODO(didierofrivia): Decide on indexing the failed operations.
+            match operation.get_state() {
+                State::Pending => {
+                    match operation.trigger() {
+                        Ok(token_id) => {
+                            match operation.get_state() {
+                                State::Pending => {
+                                    panic!("Operation dispatcher reached an undefined state");
+                                }
+                                State::Waiting => {
+                                    // We index only if it was just transitioned to Waiting after triggering
+                                    self.waiting_operations
+                                        .borrow_mut()
+                                        .insert(token_id, operation.clone());
+                                    // TODO(didierofrivia): Decide on indexing the failed operations.
+                                    Some(operation.clone())
+                                }
+                                State::Done => self.step(operations),
+                            }
+                        }
+                        Err(status) => {
+                            error!("{status:?}");
+                            None
+                        }
+                    }
                 }
-                Some(operation.clone())
-            } else {
-                None
+                State::Waiting => {
+                    let _ = operation.trigger();
+                    Some(operation.clone())
+                }
+                State::Done => {
+                    if let Ok(token_id) = operation.result {
+                        self.waiting_operations.borrow_mut().remove(&token_id);
+                    } // If result was Err, means the operation wasn't indexed
+                    operations.remove(i);
+                    self.step(operations)
+                }
             }
         } else {
             None
@@ -209,10 +233,18 @@ fn get_map_values_bytes_fn(map_type: MapType, key: &str) -> Result<Option<Bytes>
     hostcalls::get_map_value_bytes(map_type, key)
 }
 
+fn grpc_message_build_fn(
+    extension_type: &ExtensionType,
+    action: &Action,
+) -> Option<GrpcMessageRequest> {
+    GrpcMessageRequest::new(extension_type, action)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::envoy::RateLimitRequest;
+    use protobuf::RepeatedField;
     use std::time::Duration;
 
     fn default_grpc_call_fn_stub(
@@ -231,6 +263,13 @@ mod tests {
         _key: &str,
     ) -> Result<Option<Bytes>, Status> {
         Ok(Some(Vec::new()))
+    }
+
+    fn grpc_message_build_fn_stub(
+        _extension_type: &ExtensionType,
+        _action: &Action,
+    ) -> Option<GrpcMessageRequest> {
+        Some(GrpcMessageRequest::RateLimit(build_message()))
     }
 
     fn build_grpc_service_handler() -> GrpcServiceHandler {
@@ -256,12 +295,15 @@ mod tests {
                 endpoint: "local".to_string(),
                 failure_mode: FailureMode::Deny,
             }),
-            procedure: (
-                Rc::new(build_grpc_service_handler()),
-                GrpcMessageRequest::RateLimit(build_message()),
-            ),
+            action: Action {
+                extension: "local".to_string(),
+                scope: "".to_string(),
+                data: vec![],
+            },
+            service: Rc::new(build_grpc_service_handler()),
             grpc_call_fn: grpc_call_fn_stub,
             get_map_values_bytes_fn: get_map_values_bytes_fn_stub,
+            grpc_message_build_fn: grpc_message_build_fn_stub,
         }
     }
 

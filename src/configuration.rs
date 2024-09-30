@@ -7,9 +7,13 @@ use std::sync::Arc;
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
+use log::debug;
+use protobuf::RepeatedField;
+use proxy_wasm::hostcalls;
 use serde::Deserialize;
 
 use crate::attribute::Attribute;
+use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
 use crate::service::GrpcService;
@@ -462,21 +466,22 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
 
         for rlp in config.policies.iter() {
             for rule in &rlp.rules {
-                for datum in &rule.data {
-                    let result = datum.item.compile();
+                for pe in &rule.conditions {
+                    let result = pe.compile();
                     if result.is_err() {
                         return Err(result.err().unwrap());
                     }
                 }
-                for condition in &rule.conditions {
-                    for pe in &condition.all_of {
-                        let result = pe.compile();
+                for action in &rule.actions {
+                    for datum in &action.data {
+                        let result = datum.item.compile();
                         if result.is_err() {
                             return Err(result.err().unwrap());
                         }
                     }
                 }
             }
+
             for hostname in rlp.hostnames.iter() {
                 index.insert(hostname, rlp.clone());
             }
@@ -533,8 +538,82 @@ pub struct Extension {
 #[serde(rename_all = "camelCase")]
 pub struct Action {
     pub extension: String,
+    pub scope: String,
     #[allow(dead_code)]
-    pub data: DataType,
+    pub data: Vec<DataItem>,
+}
+
+impl Action {
+    pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
+        let mut entries = RepeatedField::new();
+        if let Some(desc) = self.build_single_descriptor() {
+            entries.push(desc);
+        }
+        entries
+    }
+
+    fn build_single_descriptor(&self) -> Option<RateLimitDescriptor> {
+        let mut entries = RepeatedField::default();
+
+        // iterate over data items to allow any data item to skip the entire descriptor
+        for data in self.data.iter() {
+            match &data.item {
+                DataType::Static(static_item) => {
+                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                    descriptor_entry.set_key(static_item.key.to_owned());
+                    descriptor_entry.set_value(static_item.value.to_owned());
+                    entries.push(descriptor_entry);
+                }
+                DataType::Selector(selector_item) => {
+                    let descriptor_key = match &selector_item.key {
+                        None => selector_item.path().to_string(),
+                        Some(key) => key.to_owned(),
+                    };
+
+                    let attribute_path = selector_item.path();
+                    debug!(
+                        "get_property:  selector: {} path: {:?}",
+                        selector_item.selector, attribute_path
+                    );
+                    let value = match hostcalls::get_property(attribute_path.tokens()).unwrap() {
+                        //TODO(didierofrivia): Replace hostcalls by DI
+                        None => {
+                            debug!(
+                                "build_single_descriptor: selector not found: {}",
+                                attribute_path
+                            );
+                            match &selector_item.default {
+                                None => return None, // skipping the entire descriptor
+                                Some(default_value) => default_value.clone(),
+                            }
+                        }
+                        // TODO(eastizle): not all fields are strings
+                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
+                        Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
+                            Ok(attr_str) => attr_str,
+                            Err(e) => {
+                                debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
+                                    attribute_path, e);
+                                return None;
+                            }
+                        },
+                        // Alternative implementation (for rust >= 1.76)
+                        // Attribute::parse(attribute_bytes)
+                        //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
+                        //           filter.context_id, attribute_path, e))
+                        //   .ok()?,
+                    };
+                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+                    descriptor_entry.set_key(descriptor_key);
+                    descriptor_entry.set_value(value);
+                    entries.push(descriptor_entry);
+                }
+            }
+        }
+        let mut res = RateLimitDescriptor::new();
+        res.set_entries(entries);
+        Some(res)
+    }
 }
 
 #[cfg(test)]
@@ -552,53 +631,43 @@ mod test {
         "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "domain": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
                 "conditions": [
                 {
-                    "allOf": [
-                    {
-                        "selector": "request.path",
-                        "operator": "eq",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    }]
-                }],
-                "data": [
-                {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
+                    "selector": "request.path",
+                    "operator": "eq",
+                    "value": "/admin/toy"
                 },
                 {
-                    "selector": {
-                        "selector": "auth.metadata.username"
-                    }
-                }]
-            }],
-            "actions": [
+                    "selector": "request.method",
+                    "operator": "eq",
+                    "value": "POST"
+                },
+                {
+                    "selector": "request.host",
+                    "operator": "eq",
+                    "value": "cars.toystore.com"
+                }],
+                "actions": [
                 {
                     "extension": "limitador",
-                    "data": {
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "data": [
+                    {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
                             "value": "1"
                         }
-                    }
-                }
-            ]
+                    },
+                    {
+                        "selector": {
+                            "selector": "auth.metadata.username"
+                        }
+                    }]
+                }]
+            }]
         }]
     }"#;
 
@@ -617,12 +686,12 @@ mod test {
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 1);
+        assert_eq!(conditions.len(), 3);
 
-        let all_of_conditions = &conditions[0].all_of;
-        assert_eq!(all_of_conditions.len(), 3);
+        let actions = &rules[0].actions;
+        assert_eq!(actions.len(), 1);
 
-        let data_items = &rules[0].data;
+        let data_items = &actions[0].data;
         assert_eq!(data_items.len(), 2);
 
         // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
@@ -681,30 +750,24 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
-                    "data": [
+                    "conditions": [],
+                    "actions": [
                     {
-                        "selector": {
-                            "selector": "my.selector.path",
-                            "key": "mykey",
-                            "default": "my_selector_default_value"
-                        }
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [
+                        {
+                            "selector": {
+                                "selector": "my.selector.path",
+                                "key": "mykey",
+                                "default": "my_selector_default_value"
+                            }
+                        }]
                     }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -719,7 +782,10 @@ mod test {
         let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
-        let data_items = &rules[0].data;
+        let actions = &rules[0].actions;
+        assert_eq!(actions.len(), 1);
+
+        let data_items = &actions[0].data;
         assert_eq!(data_items.len(), 1);
 
         if let DataType::Selector(selector_item) = &data_items[0].item {
@@ -747,52 +813,42 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
                     "conditions": [
                     {
-                        "allOf": [
-                        {
-                            "selector": "request.path",
-                            "operator": "eq",
-                            "value": "/admin/toy"
-                        },
-                        {
-                            "selector": "request.method",
-                            "operator": "neq",
-                            "value": "POST"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "startswith",
-                            "value": "cars."
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "endswith",
-                            "value": ".com"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "matches",
-                            "value": "*.com"
-                        }]
+                        "selector": "request.path",
+                        "operator": "eq",
+                        "value": "/admin/toy"
+                    },
+                    {
+                        "selector": "request.method",
+                        "operator": "neq",
+                        "value": "POST"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "startswith",
+                        "value": "cars."
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "endswith",
+                        "value": ".com"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "matches",
+                        "value": "*.com"
                     }],
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                    "actions": [
+                    {
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [ { "selector": { "selector": "my.selector.path" } }]
+                    }]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -808,10 +864,7 @@ mod test {
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 1);
-
-        let all_of_conditions = &conditions[0].all_of;
-        assert_eq!(all_of_conditions.len(), 5);
+        assert_eq!(conditions.len(), 5);
 
         let expected_conditions = [
             // selector, value, operator
@@ -823,9 +876,9 @@ mod test {
         ];
 
         for i in 0..expected_conditions.len() {
-            assert_eq!(all_of_conditions[i].selector, expected_conditions[i].0);
-            assert_eq!(all_of_conditions[i].value, expected_conditions[i].1);
-            assert_eq!(all_of_conditions[i].operator, expected_conditions[i].2);
+            assert_eq!(conditions[i].selector, expected_conditions[i].0);
+            assert_eq!(conditions[i].value, expected_conditions[i].1);
+            assert_eq!(conditions[i].operator, expected_conditions[i].2);
         }
     }
 
@@ -842,34 +895,28 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
-                    "data": [
+                    "conditions": [],
+                    "actions": [
                     {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    },
-                    {
-                        "selector": {
-                            "selector": "auth.metadata.username"
-                        }
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            }
+                        },
+                        {
+                            "selector": {
+                                "selector": "auth.metadata.username"
+                            }
+                        }]
                     }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -902,32 +949,25 @@ mod test {
         "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "domain": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
-                "data": [
-                {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    },
-                    "selector": {
-                        "selector": "auth.metadata.username"
-                    }
-                }]
-            }],
-            "actions": [
+                "actions": [
                 {
                     "extension": "limitador",
-                    "data": {
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "data": [
+                    {
                         "static": {
                             "key": "rlp-ns-A/rlp-name-A",
                             "value": "1"
+                        },
+                        "selector": {
+                            "selector": "auth.metadata.username"
                         }
-                    }
-                }
-            ]
+                    }]
+                }]
+            }]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -945,30 +985,23 @@ mod test {
         "policies": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "domain": "rlp-ns-A/rlp-name-A",
             "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
             "rules": [
             {
-                "data": [
-                {
-                    "unknown": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
-                }]
-            }],
-            "actions": [
+                "actions": [
                 {
                     "extension": "limitador",
-                    "data": {
-                        "static": {
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "data": [
+                    {
+                        "unknown": {
                             "key": "rlp-ns-A/rlp-name-A",
                             "value": "1"
                         }
-                    }
-                }
-            ]
+                    }]
+                }]
+            }]
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -986,32 +1019,22 @@ mod test {
             "policies": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "domain": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
                     "conditions": [
                     {
-                        "allOf": [
-                        {
-                            "selector": "request.path",
-                            "operator": "unknown",
-                            "value": "/admin/toy"
-                        }]
+                        "selector": "request.path",
+                        "operator": "unknown",
+                        "value": "/admin/toy"
                     }],
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "data": {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }
-                }
-            ]
+                    "actions": [
+                    {
+                        "extension": "limitador",
+                        "scope": "rlp-ns-A/rlp-name-A",
+                        "data": [ { "selector": { "selector": "my.selector.path" } }]
+                    }]
+                }]
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);

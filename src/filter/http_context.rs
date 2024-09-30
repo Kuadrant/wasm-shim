@@ -1,3 +1,4 @@
+use crate::attribute::store_metadata;
 use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
 use crate::envoy::{CheckResponse_oneof_http_response, RateLimitResponse, RateLimitResponse_Code};
 use crate::operation_dispatcher::OperationDispatcher;
@@ -30,17 +31,12 @@ impl Filter {
     }
 
     fn process_policy(&self, policy: &Policy) -> Action {
-        let descriptors = policy.build_descriptors(self);
-        if descriptors.is_empty() {
-            debug!(
-                "#{} process_rate_limit_policy: empty descriptors",
-                self.context_id
-            );
+        if let Some(rule) = policy.find_rule_that_applies() {
+            self.operation_dispatcher.build_operations(rule);
+        } else {
+            debug!("#{} process_policy: no rule applied", self.context_id);
             return Action::Continue;
         }
-
-        self.operation_dispatcher
-            .build_operations(policy, descriptors);
 
         if let Some(operation) = self.operation_dispatcher.next() {
             match operation.get_result() {
@@ -114,6 +110,9 @@ impl Filter {
         failure_mode: &FailureMode,
     ) {
         if let GrpcMessageResponse::Auth(check_response) = auth_resp {
+            // store dynamic metadata in filter state
+            store_metadata(check_response.get_dynamic_metadata());
+
             match check_response.http_response {
                 Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                     debug!(
@@ -178,10 +177,7 @@ impl HttpContext for Filter {
                 Action::Continue
             }
             Some(policy) => {
-                debug!(
-                    "#{} ratelimitpolicy selected {}",
-                    self.context_id, policy.name
-                );
+                debug!("#{} policy selected {}", self.context_id, policy.name);
                 self.process_policy(policy)
             }
         }

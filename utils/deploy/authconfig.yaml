@@ -7,22 +7,45 @@ spec:
   hosts:
     - effective-route-1
   authentication:
-    "friends":
+    "api-key-users":
       apiKey:
         selector:
           matchLabels:
-            group: friends
+            app: toystore
       credentials:
         authorizationHeader:
           prefix: APIKEY
+  response:
+    success:
+      dynamicMetadata:
+        "identity":
+          json:
+            properties:
+              "userid":
+                selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/user-id
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: api-key-1
+  name: bob-key
   labels:
     authorino.kuadrant.io/managed-by: authorino
-    group: friends
+    app: toystore
+  annotations:
+    secret.kuadrant.io/user-id: bob
 stringData:
-  api_key: "ndyBzreUzF4zqDQsqSPMHkRhriEOtcRx"
+  api_key: "IAMBOB"
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alice-key
+  labels:
+    authorino.kuadrant.io/managed-by: authorino
+    app: toystore
+  annotations:
+    secret.kuadrant.io/user-id: alice
+stringData:
+  api_key: "IAMALICE"
 type: Opaque
