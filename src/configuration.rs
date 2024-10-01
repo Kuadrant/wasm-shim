@@ -541,7 +541,7 @@ pub struct Extension {
 pub struct Action {
     pub extension: String,
     pub scope: String,
-    #[allow(dead_code)]
+    #[serde(default)]
     pub data: Vec<DataItem>,
 }
 
@@ -663,8 +663,7 @@ mod test {
                 "actions": [
                 {
                     "extension": "authorino",
-                    "scope": "authconfig-A",
-                    "data": []
+                    "scope": "authconfig-A"
                 },
                 {
                     "extension": "limitador",
