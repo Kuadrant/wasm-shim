@@ -62,28 +62,17 @@ impl Operation {
     }
 
     fn trigger(&self) -> Result<u32, Status> {
-        match self.get_state() {
-            State::Pending => {
-                if let Some(message) =
-                    (self.grpc_message_build_fn)(self.get_extension_type(), &self.action)
-                {
-                    let res =
-                        self.service
-                            .send(self.get_map_values_bytes_fn, self.grpc_call_fn, message);
-                    self.set_result(res);
-                    self.next_state();
-                    res
-                } else {
-                    //todo: we need to move to and start the next action
-                    self.done();
-                    self.get_result()
-                }
-            }
-            State::Waiting => {
-                self.next_state();
-                self.get_result()
-            }
-            State::Done => self.get_result(),
+        if let Some(message) = (self.grpc_message_build_fn)(self.get_extension_type(), &self.action)
+        {
+            let res = self
+                .service
+                .send(self.get_map_values_bytes_fn, self.grpc_call_fn, message);
+            self.set_result(res);
+            self.next_state();
+            res
+        } else {
+            self.done();
+            self.get_result()
         }
     }
 
@@ -195,7 +184,7 @@ impl OperationDispatcher {
                     }
                 }
                 State::Waiting => {
-                    let _ = operation.trigger();
+                    operation.next_state();
                     Some(operation.clone())
                 }
                 State::Done => {
