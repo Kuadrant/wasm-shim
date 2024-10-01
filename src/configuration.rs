@@ -624,10 +624,15 @@ mod test {
 
     const CONFIG: &str = r#"{
         "extensions": {
+            "authorino": {
+                "type": "auth",
+                "endpoint": "authorino-cluster",
+                "failureMode": "deny"
+            },
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "deny"
+                "failureMode": "allow"
             }
         },
         "policies": [
@@ -656,6 +661,11 @@ mod test {
                     }]
                 }],
                 "actions": [
+                {
+                    "extension": "authorino",
+                    "scope": "authconfig-A",
+                    "data": []
+                },
                 {
                     "extension": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
@@ -687,6 +697,25 @@ mod test {
         let filter_config = res.unwrap();
         assert_eq!(filter_config.policies.len(), 1);
 
+        let extensions = &filter_config.extensions;
+        assert_eq!(extensions.len(), 2);
+
+        if let Some(auth_extension) = extensions.get("authorino") {
+            assert_eq!(auth_extension.extension_type, ExtensionType::Auth);
+            assert_eq!(auth_extension.endpoint, "authorino-cluster");
+            assert_eq!(auth_extension.failure_mode, FailureMode::Deny);
+        } else {
+            panic!()
+        }
+
+        if let Some(rl_extension) = extensions.get("limitador") {
+            assert_eq!(rl_extension.extension_type, ExtensionType::RateLimit);
+            assert_eq!(rl_extension.endpoint, "limitador-cluster");
+            assert_eq!(rl_extension.failure_mode, FailureMode::Allow);
+        } else {
+            panic!()
+        }
+
         let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
 
@@ -697,10 +726,21 @@ mod test {
         assert_eq!(all_of_conditions.len(), 3);
 
         let actions = &rules[0].actions;
-        assert_eq!(actions.len(), 1);
+        assert_eq!(actions.len(), 2);
 
-        let data_items = &actions[0].data;
-        assert_eq!(data_items.len(), 2);
+        let auth_action = &actions[0];
+        assert_eq!(auth_action.extension, "authorino");
+        assert_eq!(auth_action.scope, "authconfig-A");
+
+        let rl_action = &actions[1];
+        assert_eq!(rl_action.extension, "limitador");
+        assert_eq!(rl_action.scope, "rlp-ns-A/rlp-name-A");
+
+        let auth_data_items = &auth_action.data;
+        assert_eq!(auth_data_items.len(), 0);
+
+        let rl_data_items = &rl_action.data;
+        assert_eq!(rl_data_items.len(), 2);
 
         // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
         //assert_eq!(
@@ -713,14 +753,14 @@ mod test {
         //    }
         //);
 
-        if let DataType::Static(static_item) = &data_items[0].item {
+        if let DataType::Static(static_item) = &rl_data_items[0].item {
             assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
             assert_eq!(static_item.value, "1");
         } else {
             panic!();
         }
 
-        if let DataType::Selector(selector_item) = &data_items[1].item {
+        if let DataType::Selector(selector_item) = &rl_data_items[1].item {
             assert_eq!(selector_item.selector, "auth.metadata.username");
             assert!(selector_item.key.is_none());
             assert!(selector_item.default.is_none());
