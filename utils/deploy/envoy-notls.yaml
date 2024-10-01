@@ -157,9 +157,13 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "selector": "request.path",
-                                              "operator": "eq",
-                                              "value": "/get"
+                                              "allOf": [
+                                                {
+                                                  "selector": "request.path",
+                                                  "operator": "eq",
+                                                  "value": "/get"
+                                                }
+                                              ]
                                             }
                                           ],
                                           "actions": [
@@ -179,7 +183,6 @@ data:
                                       ],
                                       "rules": [
                                         {
-                                          "conditions": [],
                                           "actions": [
                                             {
                                               "extension": "limitador",
@@ -205,9 +208,13 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "selector": "request.url_path",
-                                              "operator": "startswith",
-                                              "value": "/unknown-path"
+                                              "allOf": [
+                                                {
+                                                  "selector": "request.url_path",
+                                                  "operator": "startswith",
+                                                  "value": "/unknown-path"
+                                                }
+                                              ]
                                             }
                                           ],
                                           "actions": [
@@ -236,19 +243,23 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "selector": "request.url_path",
-                                              "operator": "startswith",
-                                              "value": "/get"
-                                            },
-                                            {
-                                              "selector": "request.host",
-                                              "operator": "eq",
-                                              "value": "test.c.rlp.com"
-                                            },
-                                            {
-                                              "selector": "request.method",
-                                              "operator": "eq",
-                                              "value": "GET"
+                                              "allOf": [
+                                                {
+                                                  "selector": "request.url_path",
+                                                  "operator": "startswith",
+                                                  "value": "/get"
+                                                },
+                                                {
+                                                  "selector": "request.host",
+                                                  "operator": "eq",
+                                                  "value": "test.c.rlp.com"
+                                                },
+                                                {
+                                                  "selector": "request.method",
+                                                  "operator": "eq",
+                                                  "value": "GET"
+                                                }
+                                              ]
                                             }
                                           ],
                                           "actions": [
@@ -293,9 +304,13 @@ data:
                                         {
                                           "conditions": [
                                             {
-                                              "selector": "request.path",
-                                              "operator": "eq",
-                                              "value": "/get"
+                                              "allOf": [
+                                                {
+                                                  "selector": "request.path",
+                                                  "operator": "eq",
+                                                  "value": "/get"
+                                                }
+                                              ]
                                             }
                                           ],
                                           "actions": [

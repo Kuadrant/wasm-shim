@@ -104,6 +104,8 @@ fn it_limits() {
             "rules": [
             {
                 "conditions": [
+                {
+                    "allOf": [
                     {
                         "selector": "request.url_path",
                         "operator": "startswith",
@@ -118,8 +120,8 @@ fn it_limits() {
                         "selector": "request.method",
                         "operator": "eq",
                         "value": "POST"
-                    }
-                ],
+                    }]
+                }],
                 "actions": [
                 {
                     "extension": "limitador",
@@ -257,6 +259,8 @@ fn it_passes_additional_headers() {
             "rules": [
             {
                 "conditions": [
+                {
+                   "allOf": [
                     {
                         "selector": "request.url_path",
                         "operator": "startswith",
@@ -271,8 +275,8 @@ fn it_passes_additional_headers() {
                         "selector": "request.method",
                         "operator": "eq",
                         "value": "POST"
-                    }
-                ],
+                    }]
+                }],
                 "actions": [
                 {
                     "extension": "limitador",
@@ -423,7 +427,6 @@ fn it_rate_limits_with_empty_conditions() {
             "hostnames": ["*.com"],
             "rules": [
             {
-                "conditions": [],
                 "actions": [
                 {
                     "extension": "limitador",
@@ -542,7 +545,6 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             "hostnames": ["*.com"],
             "rules": [
             {
-                "conditions": [],
                 "actions": [
                 {
                     "extension": "limitador",
