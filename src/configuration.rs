@@ -466,10 +466,12 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
 
         for rlp in config.policies.iter() {
             for rule in &rlp.rules {
-                for pe in &rule.conditions {
-                    let result = pe.compile();
-                    if result.is_err() {
-                        return Err(result.err().unwrap());
+                for condition in &rule.conditions {
+                    for pe in &condition.all_of {
+                        let result = pe.compile();
+                        if result.is_err() {
+                            return Err(result.err().unwrap());
+                        }
                     }
                 }
                 for action in &rule.actions {
@@ -636,19 +638,22 @@ mod test {
             {
                 "conditions": [
                 {
-                    "selector": "request.path",
-                    "operator": "eq",
-                    "value": "/admin/toy"
-                },
-                {
-                    "selector": "request.method",
-                    "operator": "eq",
-                    "value": "POST"
-                },
-                {
-                    "selector": "request.host",
-                    "operator": "eq",
-                    "value": "cars.toystore.com"
+                   "allOf": [
+                    {
+                        "selector": "request.path",
+                        "operator": "eq",
+                        "value": "/admin/toy"
+                    },
+                    {
+                        "selector": "request.method",
+                        "operator": "eq",
+                        "value": "POST"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "eq",
+                        "value": "cars.toystore.com"
+                    }]
                 }],
                 "actions": [
                 {
@@ -686,7 +691,10 @@ mod test {
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 3);
+        assert_eq!(conditions.len(), 1);
+
+        let all_of_conditions = &conditions[0].all_of;
+        assert_eq!(all_of_conditions.len(), 3);
 
         let actions = &rules[0].actions;
         assert_eq!(actions.len(), 1);
@@ -753,7 +761,6 @@ mod test {
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
-                    "conditions": [],
                     "actions": [
                     {
                         "extension": "limitador",
@@ -818,29 +825,32 @@ mod test {
                 {
                     "conditions": [
                     {
-                        "selector": "request.path",
-                        "operator": "eq",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "neq",
-                        "value": "POST"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "startswith",
-                        "value": "cars."
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "endswith",
-                        "value": ".com"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "matches",
-                        "value": "*.com"
+                        "allOf": [
+                        {
+                            "selector": "request.path",
+                            "operator": "eq",
+                            "value": "/admin/toy"
+                        },
+                        {
+                            "selector": "request.method",
+                            "operator": "neq",
+                            "value": "POST"
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "startswith",
+                            "value": "cars."
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "endswith",
+                            "value": ".com"
+                        },
+                        {
+                            "selector": "request.host",
+                            "operator": "matches",
+                            "value": "*.com"
+                        }]
                     }],
                     "actions": [
                     {
@@ -864,7 +874,10 @@ mod test {
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 5);
+        assert_eq!(conditions.len(), 1);
+
+        let all_of_conditions = &conditions[0].all_of;
+        assert_eq!(all_of_conditions.len(), 5);
 
         let expected_conditions = [
             // selector, value, operator
@@ -876,9 +889,9 @@ mod test {
         ];
 
         for i in 0..expected_conditions.len() {
-            assert_eq!(conditions[i].selector, expected_conditions[i].0);
-            assert_eq!(conditions[i].value, expected_conditions[i].1);
-            assert_eq!(conditions[i].operator, expected_conditions[i].2);
+            assert_eq!(all_of_conditions[i].selector, expected_conditions[i].0);
+            assert_eq!(all_of_conditions[i].value, expected_conditions[i].1);
+            assert_eq!(all_of_conditions[i].operator, expected_conditions[i].2);
         }
     }
 
@@ -898,7 +911,6 @@ mod test {
                 "hostnames": ["*.toystore.com", "example.com"],
                 "rules": [
                 {
-                    "conditions": [],
                     "actions": [
                     {
                         "extension": "limitador",
@@ -1024,9 +1036,12 @@ mod test {
                 {
                     "conditions": [
                     {
-                        "selector": "request.path",
-                        "operator": "unknown",
-                        "value": "/admin/toy"
+                       "allOf": [
+                        {
+                            "selector": "request.path",
+                            "operator": "unknown",
+                            "value": "/admin/toy"
+                        }]
                     }],
                     "actions": [
                     {

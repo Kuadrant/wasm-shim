@@ -4,8 +4,15 @@ use proxy_wasm::hostcalls;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Condition {
+    pub all_of: Vec<PatternExpression>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
-    pub conditions: Vec<PatternExpression>,
+    #[serde(default)]
+    pub conditions: Vec<Condition>,
     pub actions: Vec<Action>,
 }
 
@@ -33,7 +40,7 @@ impl Policy {
             .find(|rule: &&Rule| self.filter_rule_by_conditions(&rule.conditions))
     }
 
-    fn filter_rule_by_conditions(&self, conditions: &[PatternExpression]) -> bool {
+    fn filter_rule_by_conditions(&self, conditions: &[Condition]) -> bool {
         if conditions.is_empty() {
             // no conditions is equivalent to matching all the requests.
             return true;
@@ -41,7 +48,14 @@ impl Policy {
 
         conditions
             .iter()
-            .all(|condition| self.pattern_expression_applies(condition))
+            .any(|condition| self.condition_applies(condition))
+    }
+
+    fn condition_applies(&self, condition: &Condition) -> bool {
+        condition
+            .all_of
+            .iter()
+            .all(|pattern_expression| self.pattern_expression_applies(pattern_expression))
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
