@@ -7,13 +7,14 @@ use crate::service::grpc_message::GrpcMessageResponse;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
-    pub operation_dispatcher: OperationDispatcher,
+    pub operation_dispatcher: RefCell<OperationDispatcher>,
 }
 
 impl Filter {
@@ -32,13 +33,15 @@ impl Filter {
 
     fn process_policy(&self, policy: &Policy) -> Action {
         if let Some(rule) = policy.find_rule_that_applies() {
-            self.operation_dispatcher.build_operations(rule);
+            self.operation_dispatcher
+                .borrow_mut()
+                .build_operations(rule);
         } else {
             debug!("#{} process_policy: no rule applied", self.context_id);
             return Action::Continue;
         }
 
-        if let Some(operation) = self.operation_dispatcher.next() {
+        if let Some(operation) = self.operation_dispatcher.borrow_mut().next() {
             match operation.get_result() {
                 Ok(call_id) => {
                     debug!("#{} initiated gRPC call (id# {})", self.context_id, call_id);
@@ -101,11 +104,11 @@ impl Filter {
             }
             _ => {}
         }
-        self.operation_dispatcher.next();
+        self.operation_dispatcher.borrow_mut().next();
     }
 
     fn process_auth_grpc_response(
-        &mut self,
+        &self,
         auth_resp: GrpcMessageResponse,
         failure_mode: &FailureMode,
     ) {
@@ -156,7 +159,7 @@ impl Filter {
                 }
             }
         }
-        self.operation_dispatcher.next();
+        self.operation_dispatcher.borrow_mut().next();
     }
 }
 
@@ -203,7 +206,9 @@ impl Context for Filter {
             self.context_id
         );
 
-        if let Some(operation) = self.operation_dispatcher.get_operation(token_id) {
+        let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
+
+        if let Some(operation) = some_op {
             let failure_mode = &operation.get_failure_mode();
             let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
                 Some(bytes) => bytes,
@@ -229,7 +234,7 @@ impl Context for Filter {
                 ExtensionType::RateLimit => self.process_ratelimit_grpc_response(res, failure_mode),
             }
 
-            if let Some(_op) = self.operation_dispatcher.next() {
+            if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
             } else {
                 self.resume_http_request()
             }
