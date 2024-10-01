@@ -1,16 +1,9 @@
+use crate::util::wasm_module;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
-use std::path::Path;
 
-fn wasm_module() -> String {
-    let wasm_file = Path::new("target/wasm32-unknown-unknown/release/wasm_shim.wasm");
-    assert!(
-        wasm_file.exists(),
-        "Run `cargo build --release --target=wasm32-unknown-unknown` first"
-    );
-    wasm_file.to_str().unwrap().to_string()
-}
+pub(crate) mod util;
 
 #[test]
 #[serial]
