@@ -1,7 +1,10 @@
 use crate::configuration::Path;
-use crate::filter::http_context::Filter;
 use chrono::{DateTime, FixedOffset};
-use proxy_wasm::traits::Context;
+use log::{debug, error};
+use protobuf::well_known_types::Struct;
+use proxy_wasm::hostcalls;
+
+pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
 pub trait Attribute {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String>
@@ -104,16 +107,135 @@ impl Attribute for DateTime<FixedOffset> {
     }
 }
 
-#[allow(dead_code)]
-pub fn get_attribute<T>(f: &Filter, attr: &str) -> Result<T, String>
+pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
     T: Attribute,
 {
-    match f.get_property(Path::from(attr).tokens()) {
-        None => Err(format!(
-            "#{} get_attribute: not found: {}",
-            f.context_id, attr
-        )),
-        Some(attribute_bytes) => T::parse(attribute_bytes),
+    match hostcalls::get_property(Path::from(attr).tokens()) {
+        Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
+        Ok(None) => Err(format!("get_attribute: not found or null: {attr}")),
+        Err(e) => Err(format!("get_attribute: error: {e:?}")),
+    }
+}
+
+pub fn set_attribute(attr: &str, value: &[u8]) {
+    match hostcalls::set_property(Path::from(attr).tokens(), Some(value)) {
+        Ok(_) => (),
+        Err(_) => error!("set_attribute: failed to set property {attr}"),
+    };
+}
+
+pub fn store_metadata(metastruct: &Struct) {
+    let metadata = process_metadata(metastruct, String::new());
+    for (key, value) in metadata {
+        let attr = format!("{KUADRANT_NAMESPACE}\\.{key}");
+        debug!("set_attribute: {attr} = {value}");
+        set_attribute(attr.as_str(), value.into_bytes().as_slice());
+    }
+}
+
+fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    for (key, value) in s.get_fields() {
+        let current_prefix = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}\\.{key}")
+        };
+
+        if value.has_string_value() {
+            result.push((current_prefix, value.get_string_value().to_string()));
+        } else if value.has_struct_value() {
+            let nested_struct = value.get_struct_value();
+            result.extend(process_metadata(nested_struct, current_prefix));
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::attribute::process_metadata;
+    use protobuf::well_known_types::{Struct, Value, Value_oneof_kind};
+    use std::collections::HashMap;
+
+    pub fn struct_from(values: Vec<(String, Value)>) -> Struct {
+        let mut hm = HashMap::new();
+        for (key, value) in values {
+            hm.insert(key, value);
+        }
+        Struct {
+            fields: hm,
+            unknown_fields: Default::default(),
+            cached_size: Default::default(),
+        }
+    }
+
+    pub fn string_value_from(value: String) -> Value {
+        Value {
+            kind: Some(Value_oneof_kind::string_value(value)),
+            unknown_fields: Default::default(),
+            cached_size: Default::default(),
+        }
+    }
+
+    pub fn struct_value_from(value: Struct) -> Value {
+        Value {
+            kind: Some(Value_oneof_kind::struct_value(value)),
+            unknown_fields: Default::default(),
+            cached_size: Default::default(),
+        }
+    }
+    #[test]
+    fn get_metadata_one() {
+        let metadata = struct_from(vec![(
+            "identity".to_string(),
+            struct_value_from(struct_from(vec![(
+                "userid".to_string(),
+                string_value_from("bob".to_string()),
+            )])),
+        )]);
+        let output = process_metadata(&metadata, String::new());
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output,
+            vec![("identity\\.userid".to_string(), "bob".to_string())]
+        );
+    }
+
+    #[test]
+    fn get_metadata_two() {
+        let metadata = struct_from(vec![(
+            "identity".to_string(),
+            struct_value_from(struct_from(vec![
+                ("userid".to_string(), string_value_from("bob".to_string())),
+                ("type".to_string(), string_value_from("test".to_string())),
+            ])),
+        )]);
+        let output = process_metadata(&metadata, String::new());
+        assert_eq!(output.len(), 2);
+        assert!(output.contains(&("identity\\.userid".to_string(), "bob".to_string())));
+        assert!(output.contains(&("identity\\.type".to_string(), "test".to_string())));
+    }
+
+    #[test]
+    fn get_metadata_three() {
+        let metadata = struct_from(vec![
+            (
+                "identity".to_string(),
+                struct_value_from(struct_from(vec![(
+                    "userid".to_string(),
+                    string_value_from("bob".to_string()),
+                )])),
+            ),
+            (
+                "other_data".to_string(),
+                string_value_from("other_value".to_string()),
+            ),
+        ]);
+        let output = process_metadata(&metadata, String::new());
+        assert_eq!(output.len(), 2);
+        assert!(output.contains(&("identity\\.userid".to_string(), "bob".to_string())));
+        assert!(output.contains(&("other_data".to_string(), "other_value".to_string())));
     }
 }

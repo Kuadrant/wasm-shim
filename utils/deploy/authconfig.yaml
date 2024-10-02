@@ -1,0 +1,51 @@
+---
+apiVersion: authorino.kuadrant.io/v1beta2
+kind: AuthConfig
+metadata:
+  name: talker-api-protection
+spec:
+  hosts:
+    - effective-route-1
+  authentication:
+    "api-key-users":
+      apiKey:
+        selector:
+          matchLabels:
+            app: toystore
+      credentials:
+        authorizationHeader:
+          prefix: APIKEY
+  response:
+    success:
+      dynamicMetadata:
+        "identity":
+          json:
+            properties:
+              "userid":
+                selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/user-id
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bob-key
+  labels:
+    authorino.kuadrant.io/managed-by: authorino
+    app: toystore
+  annotations:
+    secret.kuadrant.io/user-id: bob
+stringData:
+  api_key: "IAMBOB"
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alice-key
+  labels:
+    authorino.kuadrant.io/managed-by: authorino
+    app: toystore
+  annotations:
+    secret.kuadrant.io/user-id: alice
+stringData:
+  api_key: "IAMALICE"
+type: Opaque

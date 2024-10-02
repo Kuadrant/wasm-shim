@@ -1,26 +1,15 @@
 use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
-use crate::filter::http_context::TracingHeader;
-use crate::service::Service;
+use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use protobuf::{Message, RepeatedField};
-use proxy_wasm::hostcalls::dispatch_grpc_call;
-use proxy_wasm::types::{Bytes, Status};
-use std::time::Duration;
+use proxy_wasm::types::Bytes;
 
-const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
-const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
-pub struct RateLimitService {
-    endpoint: String,
-    tracing_headers: Vec<(TracingHeader, Bytes)>,
-}
+pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
+pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
+
+pub struct RateLimitService;
 
 impl RateLimitService {
-    pub fn new(endpoint: &str, metadata: Vec<(TracingHeader, Bytes)>) -> RateLimitService {
-        Self {
-            endpoint: String::from(endpoint),
-            tracing_headers: metadata,
-        }
-    }
-    pub fn message(
+    pub fn request_message(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
     ) -> RateLimitRequest {
@@ -32,34 +21,12 @@ impl RateLimitService {
             cached_size: Default::default(),
         }
     }
-}
 
-fn grpc_call(
-    upstream_name: &str,
-    initial_metadata: Vec<(&str, &[u8])>,
-    message: RateLimitRequest,
-) -> Result<u32, Status> {
-    let msg = Message::write_to_bytes(&message).unwrap(); // TODO(didierofrivia): Error Handling
-    dispatch_grpc_call(
-        upstream_name,
-        RATELIMIT_SERVICE_NAME,
-        RATELIMIT_METHOD_NAME,
-        initial_metadata,
-        Some(&msg),
-        Duration::from_secs(5),
-    )
-}
-
-impl Service<RateLimitRequest> for RateLimitService {
-    fn send(&self, message: RateLimitRequest) -> Result<u32, Status> {
-        grpc_call(
-            self.endpoint.as_str(),
-            self.tracing_headers
-                .iter()
-                .map(|(header, value)| (header.as_str(), value.as_slice()))
-                .collect(),
-            message,
-        )
+    pub fn response_message(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
+        match Message::parse_from_bytes(res_body_bytes) {
+            Ok(res) => Ok(GrpcMessageResponse::RateLimit(res)),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -69,8 +36,6 @@ mod tests {
     use crate::service::rate_limit::RateLimitService;
     //use crate::service::Service;
     use protobuf::{CachedSize, RepeatedField, UnknownFields};
-    //use proxy_wasm::types::Status;
-    //use crate::filter::http_context::{Filter};
 
     fn build_message() -> RateLimitRequest {
         let domain = "rlp1";
@@ -81,7 +46,7 @@ mod tests {
         field.set_entries(RepeatedField::from_vec(vec![entry]));
         let descriptors = RepeatedField::from_vec(vec![field]);
 
-        RateLimitService::message(domain.to_string(), descriptors.clone())
+        RateLimitService::request_message(domain.to_string(), descriptors.clone())
     }
     #[test]
     fn builds_correct_message() {
@@ -94,20 +59,4 @@ mod tests {
         assert_eq!(msg.unknown_fields, UnknownFields::default());
         assert_eq!(msg.cached_size, CachedSize::default());
     }
-    /*#[test]
-    fn sends_message() {
-        let msg = build_message();
-        let metadata   = vec![("header-1", "value-1".as_bytes())];
-        let rls = RateLimitService::new("limitador-cluster", metadata);
-
-        // TODO(didierofrivia): When we have a grpc response type, assert the async response
-    }
-
-    fn grpc_call(
-        _upstream_name: &str,
-        _initial_metadata: Vec<(&str, &[u8])>,
-        _message: RateLimitRequest,
-    ) -> Result<u32, Status> {
-        Ok(1)
-    } */
 }

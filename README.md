@@ -6,15 +6,23 @@
 A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador.
 
 ## Sample configuration
+
 Following is a sample configuration used by the shim.
 
 ```yaml
-failureMode: deny
-rateLimitPolicies:
+extensions:
+  auth-ext:
+    type: auth
+    endpoint: auth-cluster
+    failureMode: deny
+  ratelimit-ext:
+    type: ratelimit
+    endpoint: ratelimit-cluster
+    failureMode: deny
+policies:
   - name: rlp-ns-A/rlp-name-A
     domain: rlp-ns-A/rlp-name-A
-    service: rate-limit-cluster
-    hostnames: ["*.toystore.com"]
+    hostnames: [ "*.toystore.com" ]
     rules:
     - conditions:
       - allOf:
@@ -27,12 +35,15 @@ rateLimitPolicies:
         - selector: request.method
           operator: eq
           value: GET
-      data:
-      - selector:
-          selector: request.headers.My-Custom-Header
-      - static:
-          key: admin
-          value: "1"
+      actions:
+      - extension: ratelimit-ext
+        scope: rlp-ns-A/rlp-name-A
+        data:
+          - selector:
+              selector: request.headers.My-Custom-Header
+          - static:
+              key: admin
+              value: "1"
 ```
 
 ## Features
@@ -57,6 +68,7 @@ pub enum WhenConditionOperator {
 
 The `matches` operator is a a simple globbing pattern implementation based on regular expressions.
 The only characters taken into account are:
+
 * `?`: 0 or 1 characters
 * `*`: 0 or more characters
 * `+`: 1 or more characters
@@ -95,9 +107,9 @@ Example:
 Input: this.is.a.exam\.ple -> Retuns: ["this", "is", "a", "exam.ple"].
 ```
 
-Some path segments include dot `.` char in them. For instance envoy filter names: `envoy.filters.http.header_to_metadata`.
+Some path segments include dot `.` char in them. For instance envoy filter
+names: `envoy.filters.http.header_to_metadata`.
 In that particular cases, the dot chat (separator), needs to be escaped.
-
 
 ## Building
 
@@ -127,7 +139,108 @@ make build BUILD=release
 cargo test
 ```
 
-## Running local development environment
+## Running local development environment (kind)
+
+`docker` is required.
+
+Run local development environment
+
+```sh
+make local-setup
+```
+
+This deploys a local kubernetes cluster using kind, with the local build of wasm-shim mapped to the envoy container. An
+echo API as well as limitador, authorino, and some test policies are configured.
+
+To expose the envoy endpoint run the following:
+
+```sh
+kubectl port-forward --namespace default deployment/envoy 8000:8000
+```
+
+There is then a single auth policy defined for e2e testing:
+
+* `auth-a` which defines auth is required for requests to `/get` for the `AuthConfig` with `effective-route-1`
+
+```sh
+curl -H "Host: test.a.auth.com" http://127.0.0.1:8000/get -i
+# HTTP/1.1 401 Unauthorized
+```
+
+```sh
+curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY IAMALICE" http://127.0.0.1:8000/get -i
+# HTTP/1.1 200 OK
+```
+
+And three rate limit policies defined for e2e testing:
+
+* `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and
+  rate limiting service should **not** be called.
+
+```sh
+curl -H "Host: test.a.rlp.com" http://127.0.0.1:8000/get -i
+```
+
+* `rlp-b`: Conditions do not match. Hence, rate limiting service should **not** be called.
+
+```sh
+curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
+```
+
+* `rlp-c`: Four descriptors from multiple rules should be generated. Hence, rate limiting service should be called.
+
+```sh
+curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+```
+
+* `multi-a` which defines two actions for authenticated ratelimiting.
+
+```sh
+curl -H "Host: test.a.multi.com" http://127.0.0.1:8000/get -i
+# HTTP/1.1 401 Unauthorized
+```
+
+Alice has 5 requests per 10 seconds:
+```sh
+while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMALICE" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
+```
+
+Bob has 2 requests per 10 seconds:
+```sh
+while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
+```
+
+The expected descriptors:
+
+```
+RateLimitDescriptor { entries: [Entry { key: "limit_to_be_activated", value: "1" }], limit: None }
+```
+
+```
+RateLimitDescriptor { entries: [Entry { key: "source.address", value: "127.0.0.1:0" }], limit: None }
+```
+
+```
+RateLimitDescriptor { entries: [Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }], limit: None }
+```
+
+```
+RateLimitDescriptor { entries: [Entry { key: "user_id", value: "bob" }], limit: None }
+```
+
+To rebuild and deploy to the cluster:
+
+```sh
+make build local-rollout
+```
+
+Stop and clean up resources:
+
+```sh
+make local-cleanup
+```
+
+## Running local development environment (docker-compose legacy)
 
 `docker` and `docker-compose` required.
 
@@ -139,7 +252,8 @@ make development
 
 Three rate limit policies defined for e2e testing:
 
-* `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and rate limiting service should **not** be called.
+* `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and
+  rate limiting service should **not** be called.
 
 ```
 curl -H "Host: test.a.com" http://127.0.0.1:18000/get
@@ -175,7 +289,9 @@ RateLimitDescriptor { entries: [Entry { key: "request.headers.My-Custom-Header-0
 RateLimitDescriptor { entries: [Entry { key: "user_id", value: "bob" }], limit: None }
 ```
 
-**Note:** Using [Header-To-Metadata filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/header_to_metadata_filter#config-http-filters-header-to-metadata), `x-dyn-user-id` header value is available in the metadata struct with the `user-id` key.
+**Note:**
+Using [Header-To-Metadata filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/header_to_metadata_filter#config-http-filters-header-to-metadata), `x-dyn-user-id`
+header value is available in the metadata struct with the `user-id` key.
 
 According to the defined limits:
 
@@ -187,7 +303,7 @@ According to the defined limits:
   conditions:
     - "limit_to_be_activated == '1'"
     - "user_id == 'bob'"
-  variables: []
+  variables: [ ]
 ```
 
 The third request in less than 10 seconds should return `429 Too Many Requests`.

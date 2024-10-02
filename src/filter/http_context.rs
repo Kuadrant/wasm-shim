@@ -1,42 +1,20 @@
-use crate::configuration::{FailureMode, FilterConfig};
-use crate::envoy::{RateLimitResponse, RateLimitResponse_Code};
-use crate::filter::http_context::TracingHeader::{Baggage, Traceparent, Tracestate};
+use crate::attribute::store_metadata;
+use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
+use crate::envoy::{CheckResponse_oneof_http_response, RateLimitResponse, RateLimitResponse_Code};
+use crate::operation_dispatcher::OperationDispatcher;
 use crate::policy::Policy;
-use crate::service::rate_limit::RateLimitService;
-use crate::service::Service;
+use crate::service::grpc_message::GrpcMessageResponse;
 use log::{debug, warn};
-use protobuf::Message;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::{Action, Bytes};
+use proxy_wasm::types::Action;
+use std::cell::RefCell;
 use std::rc::Rc;
-
-// tracing headers
-#[derive(Clone)]
-pub enum TracingHeader {
-    Traceparent,
-    Tracestate,
-    Baggage,
-}
-
-impl TracingHeader {
-    fn all() -> [Self; 3] {
-        [Traceparent, Tracestate, Baggage]
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Traceparent => "traceparent",
-            Tracestate => "tracestate",
-            Baggage => "baggage",
-        }
-    }
-}
 
 pub struct Filter {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
-    pub tracing_headers: Vec<(TracingHeader, Bytes)>,
+    pub operation_dispatcher: RefCell<OperationDispatcher>,
 }
 
 impl Filter {
@@ -53,56 +31,141 @@ impl Filter {
         }
     }
 
-    fn process_rate_limit_policy(&self, rlp: &Policy) -> Action {
-        let descriptors = rlp.build_descriptors(self);
-        if descriptors.is_empty() {
-            debug!(
-                "#{} process_rate_limit_policy: empty descriptors",
-                self.context_id
-            );
+    fn process_policy(&self, policy: &Policy) -> Action {
+        if let Some(rule) = policy.find_rule_that_applies() {
+            self.operation_dispatcher
+                .borrow_mut()
+                .build_operations(rule);
+        } else {
+            debug!("#{} process_policy: no rule applied", self.context_id);
             return Action::Continue;
         }
 
-        let rls = RateLimitService::new(rlp.service.as_str(), self.tracing_headers.clone());
-        let message = RateLimitService::message(rlp.domain.clone(), descriptors);
-
-        match rls.send(message) {
-            Ok(call_id) => {
-                debug!(
-                    "#{} initiated gRPC call (id# {}) to Limitador",
-                    self.context_id, call_id
-                );
-                Action::Pause
-            }
-            Err(e) => {
-                warn!("gRPC call to Limitador failed! {e:?}");
-                if let FailureMode::Deny = self.config.failure_mode {
-                    self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+        if let Some(operation) = self.operation_dispatcher.borrow_mut().next() {
+            match operation.get_result() {
+                Ok(call_id) => {
+                    debug!("#{} initiated gRPC call (id# {})", self.context_id, call_id);
+                    Action::Pause
                 }
-                Action::Continue
+                Err(e) => {
+                    warn!("gRPC call failed! {e:?}");
+                    if let FailureMode::Deny = operation.get_failure_mode() {
+                        self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                    }
+                    Action::Continue
+                }
             }
+        } else {
+            Action::Continue
         }
     }
 
-    fn handle_error_on_grpc_response(&self) {
-        match &self.config.failure_mode {
+    fn handle_error_on_grpc_response(&self, failure_mode: &FailureMode) {
+        match failure_mode {
             FailureMode::Deny => {
                 self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
             }
             FailureMode::Allow => self.resume_http_request(),
         }
     }
+
+    fn process_ratelimit_grpc_response(
+        &mut self,
+        rl_resp: GrpcMessageResponse,
+        failure_mode: &FailureMode,
+    ) {
+        match rl_resp {
+            GrpcMessageResponse::RateLimit(RateLimitResponse {
+                overall_code: RateLimitResponse_Code::UNKNOWN,
+                ..
+            }) => {
+                self.handle_error_on_grpc_response(failure_mode);
+            }
+            GrpcMessageResponse::RateLimit(RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OVER_LIMIT,
+                response_headers_to_add: rl_headers,
+                ..
+            }) => {
+                let mut response_headers = vec![];
+                for header in &rl_headers {
+                    response_headers.push((header.get_key(), header.get_value()));
+                }
+                self.send_http_response(429, response_headers, Some(b"Too Many Requests\n"));
+            }
+            GrpcMessageResponse::RateLimit(RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OK,
+                response_headers_to_add: additional_headers,
+                ..
+            }) => {
+                for header in additional_headers {
+                    self.response_headers_to_add
+                        .push((header.key, header.value));
+                }
+            }
+            _ => {}
+        }
+        self.operation_dispatcher.borrow_mut().next();
+    }
+
+    fn process_auth_grpc_response(
+        &self,
+        auth_resp: GrpcMessageResponse,
+        failure_mode: &FailureMode,
+    ) {
+        if let GrpcMessageResponse::Auth(check_response) = auth_resp {
+            // store dynamic metadata in filter state
+            store_metadata(check_response.get_dynamic_metadata());
+
+            match check_response.http_response {
+                Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
+                    debug!(
+                        "#{} process_auth_grpc_response: received OkHttpResponse",
+                        self.context_id
+                    );
+
+                    ok_response
+                        .get_response_headers_to_add()
+                        .iter()
+                        .for_each(|header| {
+                            self.add_http_response_header(
+                                header.get_header().get_key(),
+                                header.get_header().get_value(),
+                            )
+                        });
+                }
+                Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
+                    debug!(
+                        "#{} process_auth_grpc_response: received DeniedHttpResponse",
+                        self.context_id
+                    );
+
+                    let mut response_headers = vec![];
+                    denied_response.get_headers().iter().for_each(|header| {
+                        response_headers.push((
+                            header.get_header().get_key(),
+                            header.get_header().get_value(),
+                        ))
+                    });
+                    self.send_http_response(
+                        denied_response.get_status().code as u32,
+                        response_headers,
+                        Some(denied_response.get_body().as_ref()),
+                    );
+                    return;
+                }
+                None => {
+                    self.handle_error_on_grpc_response(failure_mode);
+                    return;
+                }
+            }
+        }
+        self.operation_dispatcher.borrow_mut().next();
+    }
 }
 
 impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
-
-        for header in TracingHeader::all() {
-            if let Some(value) = self.get_http_request_header_bytes(header.as_str()) {
-                self.tracing_headers.push((header, value))
-            }
-        }
 
         match self
             .config
@@ -116,9 +179,9 @@ impl HttpContext for Filter {
                 );
                 Action::Continue
             }
-            Some(rlp) => {
-                debug!("#{} ratelimitpolicy selected {}", self.context_id, rlp.name);
-                self.process_rate_limit_policy(rlp)
+            Some(policy) => {
+                debug!("#{} policy selected {}", self.context_id, policy.name);
+                self.process_policy(policy)
             }
         }
     }
@@ -143,55 +206,41 @@ impl Context for Filter {
             self.context_id
         );
 
-        let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
-            Some(bytes) => bytes,
-            None => {
-                warn!("grpc response body is empty!");
-                self.handle_error_on_grpc_response();
-                return;
-            }
-        };
+        let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
 
-        let rl_resp: RateLimitResponse = match Message::parse_from_bytes(&res_body_bytes) {
-            Ok(res) => res,
-            Err(e) => {
-                warn!("failed to parse grpc response body into RateLimitResponse message: {e}");
-                self.handle_error_on_grpc_response();
-                return;
+        if let Some(operation) = some_op {
+            let failure_mode = &operation.get_failure_mode();
+            let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
+                Some(bytes) => bytes,
+                None => {
+                    warn!("grpc response body is empty!");
+                    self.handle_error_on_grpc_response(failure_mode);
+                    return;
+                }
+            };
+            let res =
+                match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!(
+                        "failed to parse grpc response body into GrpcMessageResponse message: {e}"
+                    );
+                        self.handle_error_on_grpc_response(failure_mode);
+                        return;
+                    }
+                };
+            match operation.get_extension_type() {
+                ExtensionType::Auth => self.process_auth_grpc_response(res, failure_mode),
+                ExtensionType::RateLimit => self.process_ratelimit_grpc_response(res, failure_mode),
             }
-        };
 
-        match rl_resp {
-            RateLimitResponse {
-                overall_code: RateLimitResponse_Code::UNKNOWN,
-                ..
-            } => {
-                self.handle_error_on_grpc_response();
-                return;
+            if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
+            } else {
+                self.resume_http_request()
             }
-            RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OVER_LIMIT,
-                response_headers_to_add: rl_headers,
-                ..
-            } => {
-                let mut response_headers = vec![];
-                for header in &rl_headers {
-                    response_headers.push((header.get_key(), header.get_value()));
-                }
-                self.send_http_response(429, response_headers, Some(b"Too Many Requests\n"));
-                return;
-            }
-            RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OK,
-                response_headers_to_add: additional_headers,
-                ..
-            } => {
-                for header in additional_headers {
-                    self.response_headers_to_add
-                        .push((header.key, header.value));
-                }
-            }
+        } else {
+            warn!("No Operation found with token_id: {token_id}");
+            self.handle_error_on_grpc_response(&FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
         }
-        self.resume_http_request();
     }
 }

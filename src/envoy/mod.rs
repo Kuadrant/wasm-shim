@@ -31,6 +31,13 @@ mod token_bucket;
 mod value;
 
 pub use {
+    address::{Address, SocketAddress},
+    attribute_context::{
+        AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
+        AttributeContext_Request,
+    },
+    base::Metadata,
+    external_auth::{CheckRequest, CheckResponse, CheckResponse_oneof_http_response},
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
 };
