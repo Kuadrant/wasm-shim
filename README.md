@@ -35,18 +35,15 @@ policies:
         - selector: request.method
           operator: eq
           value: GET
-      data:
-      - selector:
-          selector: request.headers.My-Custom-Header
-      - static:
-          key: admin
-          value: "1"
-    actions:
-    - extension: ratelimit-ext
-      data:
-        static:
-          key: host
-          value: rlp-ns-A/rlp-name-A
+      actions:
+      - extension: ratelimit-ext
+        scope: rlp-ns-A/rlp-name-A
+        data:
+          - selector:
+              selector: request.headers.My-Custom-Header
+          - static:
+              key: admin
+              value: "1"
 ```
 
 ## Features
