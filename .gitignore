@@ -2,6 +2,9 @@
 
 /src/envoy/*
 !/src/envoy/mod.rs
-.vscode/*
 
 /bin
+
+## IDEs
+.vscode/*
+.idea
