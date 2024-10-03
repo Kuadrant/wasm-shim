@@ -3,12 +3,15 @@ pub(crate) mod grpc_message;
 pub(crate) mod rate_limit;
 
 use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
-use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
-use crate::service::grpc_message::GrpcMessageRequest;
-use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
+use crate::operation_dispatcher::Operation;
+use crate::service::auth::{AuthService, AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
+use crate::service::grpc_message::{GrpcMessageRequest, GrpcMessageResponse};
+use crate::service::rate_limit::{RateLimitService, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
+use log::warn;
 use protobuf::Message;
-use proxy_wasm::types::{Bytes, MapType, Status};
+use proxy_wasm::hostcalls;
+use proxy_wasm::types::{BufferType, Bytes, MapType, Status};
 use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -49,6 +52,49 @@ impl GrpcService {
     #[allow(dead_code)]
     pub fn failure_mode(&self) -> &FailureMode {
         &self.extension.failure_mode
+    }
+
+    pub fn process_grpc_response(
+        operation: Rc<Operation>,
+        resp_size: usize,
+        response_headers_to_add: &mut Vec<(String, String)>,
+    ) {
+        let failure_mode = operation.get_failure_mode();
+        let res_body_bytes =
+            match hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap() {
+                Some(bytes) => bytes,
+                None => {
+                    warn!("grpc response body is empty!");
+                    GrpcService::handle_error_on_grpc_response(failure_mode);
+                    return;
+                }
+            };
+        let res = match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
+            Ok(res) => res,
+            Err(e) => {
+                warn!("failed to parse grpc response body into GrpcMessageResponse message: {e}");
+                GrpcService::handle_error_on_grpc_response(failure_mode);
+                return;
+            }
+        };
+        match operation.get_extension_type() {
+            ExtensionType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
+            ExtensionType::RateLimit => RateLimitService::process_ratelimit_grpc_response(
+                res,
+                failure_mode,
+                response_headers_to_add,
+            ),
+        }
+    }
+
+    pub fn handle_error_on_grpc_response(failure_mode: &FailureMode) {
+        match failure_mode {
+            FailureMode::Deny => {
+                hostcalls::send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                    .unwrap()
+            }
+            FailureMode::Allow => hostcalls::resume_http_request().unwrap(),
+        }
     }
 }
 

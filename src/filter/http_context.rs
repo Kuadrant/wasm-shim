@@ -1,9 +1,7 @@
-use crate::attribute::store_metadata;
-use crate::configuration::{ExtensionType, FailureMode, FilterConfig};
-use crate::envoy::{CheckResponse_oneof_http_response, RateLimitResponse, RateLimitResponse_Code};
+use crate::configuration::{FailureMode, FilterConfig};
 use crate::operation_dispatcher::OperationDispatcher;
 use crate::policy::Policy;
-use crate::service::grpc_message::GrpcMessageResponse;
+use crate::service::GrpcService;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
@@ -59,108 +57,6 @@ impl Filter {
             Action::Continue
         }
     }
-
-    fn handle_error_on_grpc_response(&self, failure_mode: &FailureMode) {
-        match failure_mode {
-            FailureMode::Deny => {
-                self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
-            }
-            FailureMode::Allow => self.resume_http_request(),
-        }
-    }
-
-    fn process_ratelimit_grpc_response(
-        &mut self,
-        rl_resp: GrpcMessageResponse,
-        failure_mode: &FailureMode,
-    ) {
-        match rl_resp {
-            GrpcMessageResponse::RateLimit(RateLimitResponse {
-                overall_code: RateLimitResponse_Code::UNKNOWN,
-                ..
-            }) => {
-                self.handle_error_on_grpc_response(failure_mode);
-            }
-            GrpcMessageResponse::RateLimit(RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OVER_LIMIT,
-                response_headers_to_add: rl_headers,
-                ..
-            }) => {
-                let mut response_headers = vec![];
-                for header in &rl_headers {
-                    response_headers.push((header.get_key(), header.get_value()));
-                }
-                self.send_http_response(429, response_headers, Some(b"Too Many Requests\n"));
-            }
-            GrpcMessageResponse::RateLimit(RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OK,
-                response_headers_to_add: additional_headers,
-                ..
-            }) => {
-                for header in additional_headers {
-                    self.response_headers_to_add
-                        .push((header.key, header.value));
-                }
-            }
-            _ => {}
-        }
-        self.operation_dispatcher.borrow_mut().next();
-    }
-
-    fn process_auth_grpc_response(
-        &self,
-        auth_resp: GrpcMessageResponse,
-        failure_mode: &FailureMode,
-    ) {
-        if let GrpcMessageResponse::Auth(check_response) = auth_resp {
-            // store dynamic metadata in filter state
-            store_metadata(check_response.get_dynamic_metadata());
-
-            match check_response.http_response {
-                Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
-                    debug!(
-                        "#{} process_auth_grpc_response: received OkHttpResponse",
-                        self.context_id
-                    );
-
-                    ok_response
-                        .get_response_headers_to_add()
-                        .iter()
-                        .for_each(|header| {
-                            self.add_http_response_header(
-                                header.get_header().get_key(),
-                                header.get_header().get_value(),
-                            )
-                        });
-                }
-                Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
-                    debug!(
-                        "#{} process_auth_grpc_response: received DeniedHttpResponse",
-                        self.context_id
-                    );
-
-                    let mut response_headers = vec![];
-                    denied_response.get_headers().iter().for_each(|header| {
-                        response_headers.push((
-                            header.get_header().get_key(),
-                            header.get_header().get_value(),
-                        ))
-                    });
-                    self.send_http_response(
-                        denied_response.get_status().code as u32,
-                        response_headers,
-                        Some(denied_response.get_body().as_ref()),
-                    );
-                    return;
-                }
-                None => {
-                    self.handle_error_on_grpc_response(failure_mode);
-                    return;
-                }
-            }
-        }
-        self.operation_dispatcher.borrow_mut().next();
-    }
 }
 
 impl HttpContext for Filter {
@@ -209,30 +105,12 @@ impl Context for Filter {
         let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
 
         if let Some(operation) = some_op {
-            let failure_mode = &operation.get_failure_mode();
-            let res_body_bytes = match self.get_grpc_call_response_body(0, resp_size) {
-                Some(bytes) => bytes,
-                None => {
-                    warn!("grpc response body is empty!");
-                    self.handle_error_on_grpc_response(failure_mode);
-                    return;
-                }
-            };
-            let res =
-                match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        warn!(
-                        "failed to parse grpc response body into GrpcMessageResponse message: {e}"
-                    );
-                        self.handle_error_on_grpc_response(failure_mode);
-                        return;
-                    }
-                };
-            match operation.get_extension_type() {
-                ExtensionType::Auth => self.process_auth_grpc_response(res, failure_mode),
-                ExtensionType::RateLimit => self.process_ratelimit_grpc_response(res, failure_mode),
-            }
+            GrpcService::process_grpc_response(
+                operation,
+                resp_size,
+                &mut self.response_headers_to_add,
+            );
+            self.operation_dispatcher.borrow_mut().next();
 
             if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
             } else {
@@ -240,7 +118,7 @@ impl Context for Filter {
             }
         } else {
             warn!("No Operation found with token_id: {token_id}");
-            self.handle_error_on_grpc_response(&FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
+            GrpcService::handle_error_on_grpc_response(&FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
         }
     }
 }
