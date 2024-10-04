@@ -15,6 +15,7 @@ extensions:
     type: auth
     endpoint: auth-cluster
     failureMode: deny
+    timeout: 10ms
   ratelimit-ext:
     type: ratelimit
     endpoint: ratelimit-cluster
