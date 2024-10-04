@@ -23,11 +23,7 @@ pub struct FilterRoot {
 impl RootContext for FilterRoot {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         let full_version: &'static str = formatcp!(
-            "v{} ({}) {} {}",
-            WASM_SHIM_VERSION,
-            WASM_SHIM_GIT_HASH,
-            WASM_SHIM_FEATURES,
-            WASM_SHIM_PROFILE,
+            "v{WASM_SHIM_VERSION} ({WASM_SHIM_GIT_HASH}) {WASM_SHIM_FEATURES} {WASM_SHIM_PROFILE}"
         );
 
         info!(
@@ -40,6 +36,7 @@ impl RootContext for FilterRoot {
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         debug!("#{} create_http_context", context_id);
         let mut service_handlers: HashMap<String, Rc<GrpcServiceHandler>> = HashMap::new();
+        let header_resolver = Rc::new(HeaderResolver::new());
         self.config
             .services
             .iter()
@@ -48,7 +45,7 @@ impl RootContext for FilterRoot {
                     .entry(extension.clone())
                     .or_insert(Rc::from(GrpcServiceHandler::new(
                         Rc::clone(service),
-                        Rc::new(HeaderResolver::new()),
+                        Rc::clone(&header_resolver),
                     )));
             });
         Some(Box::new(Filter {
