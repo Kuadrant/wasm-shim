@@ -4,19 +4,21 @@ use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::attribute::Attribute;
+use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
+use crate::policy::Policy;
+use crate::policy_index::PolicyIndex;
+use crate::service::GrpcService;
+use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
 use log::debug;
 use protobuf::RepeatedField;
 use proxy_wasm::hostcalls;
-use serde::Deserialize;
-
-use crate::attribute::Attribute;
-use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
-use crate::policy::Policy;
-use crate::policy_index::PolicyIndex;
-use crate::service::GrpcService;
+use serde::de::{Error, Visitor};
+use serde::{Deserialize, Deserializer};
+use std::time::Duration;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -534,6 +536,52 @@ pub struct Extension {
     pub endpoint: String,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
+    #[serde(default)]
+    pub timeout: Timeout,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Timeout(pub Duration);
+impl Default for Timeout {
+    fn default() -> Self {
+        Timeout(Duration::from_millis(20))
+    }
+}
+
+impl<'de> Deserialize<'de> for Timeout {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(TimeoutVisitor)
+    }
+}
+
+struct TimeoutVisitor;
+impl<'de> Visitor<'de> for TimeoutVisitor {
+    type Value = Timeout;
+
+    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+        formatter.write_str("DurationString -> Sign? Number Unit String? Sign -> '-' Number -> Digit+ ('.' Digit+)? Digit -> '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' Unit -> 'h' | 'm' | 's' | 'ms' | 'us' | 'ns' String -> DurationString")
+    }
+
+    fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        self.visit_string(String::from(string))
+    }
+
+    fn visit_string<E>(self, string: String) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        match duration(Arc::new(string)) {
+            Ok(Value::Duration(duration)) => Ok(Timeout(duration.to_std().unwrap())),
+            Err(e) => Err(E::custom(e)),
+            _ => Err(E::custom("Unsupported Duration Value")),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -628,11 +676,13 @@ mod test {
                 "type": "auth",
                 "endpoint": "authorino-cluster",
                 "failureMode": "deny"
+                "timeout": "24ms"
             },
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
                 "failureMode": "allow"
+                "timeout": "42ms"
             }
         },
         "policies": [
@@ -703,6 +753,7 @@ mod test {
             assert_eq!(auth_extension.extension_type, ExtensionType::Auth);
             assert_eq!(auth_extension.endpoint, "authorino-cluster");
             assert_eq!(auth_extension.failure_mode, FailureMode::Deny);
+            assert_eq!(auth_extension.timeout, Timeout(Duration::from_millis(24)));
         } else {
             panic!()
         }
@@ -711,6 +762,7 @@ mod test {
             assert_eq!(rl_extension.extension_type, ExtensionType::RateLimit);
             assert_eq!(rl_extension.endpoint, "limitador-cluster");
             assert_eq!(rl_extension.failure_mode, FailureMode::Allow);
+            assert_eq!(rl_extension.timeout, Timeout(Duration::from_millis(42)));
         } else {
             panic!()
         }
@@ -978,6 +1030,12 @@ mod test {
 
         let filter_config = res.unwrap();
         assert_eq!(filter_config.policies.len(), 1);
+
+        let extensions = &filter_config.extensions;
+        assert_eq!(
+            extensions.get("limitador").unwrap().timeout,
+            Timeout(Duration::from_millis(20))
+        );
 
         let rules = &filter_config.policies[0].rules;
         assert_eq!(rules.len(), 1);
