@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-#[allow(dead_code)]
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub(crate) enum State {
     Pending,
@@ -18,7 +17,6 @@ pub(crate) enum State {
     Done,
 }
 
-#[allow(dead_code)]
 impl State {
     fn next(&mut self) {
         match self {
@@ -33,7 +31,6 @@ impl State {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct Operation {
     state: RefCell<State>,
@@ -46,7 +43,6 @@ pub(crate) struct Operation {
     grpc_message_build_fn: GrpcMessageBuildFn,
 }
 
-#[allow(dead_code)]
 impl Operation {
     pub fn new(extension: Rc<Extension>, action: Action, service: Rc<GrpcServiceHandler>) -> Self {
         Self {
@@ -105,22 +101,13 @@ impl Operation {
     }
 }
 
-#[allow(dead_code)]
 pub struct OperationDispatcher {
     operations: Vec<Rc<Operation>>,
     waiting_operations: HashMap<u32, Rc<Operation>>,
     service_handlers: HashMap<String, Rc<GrpcServiceHandler>>,
 }
 
-#[allow(dead_code)]
 impl OperationDispatcher {
-    pub fn default() -> Self {
-        OperationDispatcher {
-            operations: vec![],
-            waiting_operations: HashMap::default(),
-            service_handlers: HashMap::default(),
-        }
-    }
     pub fn new(service_handlers: HashMap<String, Rc<GrpcServiceHandler>>) -> Self {
         Self {
             service_handlers,
@@ -150,12 +137,6 @@ impl OperationDispatcher {
 
     pub fn push_operations(&mut self, operations: Vec<Rc<Operation>>) {
         self.operations.extend(operations);
-    }
-
-    pub fn get_current_operation_state(&self) -> Option<State> {
-        self.operations
-            .first()
-            .map(|operation| operation.get_state())
     }
 
     pub fn next(&mut self) -> Option<Rc<Operation>> {
@@ -198,6 +179,21 @@ impl OperationDispatcher {
         } else {
             None
         }
+    }
+
+    #[cfg(test)]
+    pub fn default() -> Self {
+        OperationDispatcher {
+            operations: vec![],
+            waiting_operations: HashMap::default(),
+            service_handlers: HashMap::default(),
+        }
+    }
+    #[cfg(test)]
+    pub fn get_current_operation_state(&self) -> Option<State> {
+        self.operations
+            .first()
+            .map(|operation| operation.get_state())
     }
 }
 
