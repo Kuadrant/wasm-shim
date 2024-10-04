@@ -3,7 +3,10 @@ SHELL := /bin/bash
 MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 PROJECT_PATH := $(patsubst %/,%,$(dir $(MKFILE_PATH)))
 
-WASM_RELEASE_PATH = $(PROJECT_PATH)/target/wasm32-unknown-unknown/release/wasm_shim.wasm
+BUILD ?= debug
+
+WASM_RELEASE_BIN = $(PROJECT_PATH)/target/wasm32-unknown-unknown/$(BUILD)/wasm_shim.wasm
+WASM_RELEASE_PATH = $(dir $(WASM_RELEASE_BIN))
 
 PROTOC_BIN=$(PROJECT_PATH)/bin/protoc
 PROTOC_VERSION=21.1
@@ -18,7 +21,6 @@ $(PROTOC_BIN):
 	$(call get-protoc,$(PROJECT_PATH),https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-$(PROTOC_OS).zip)
 
 # builds the module and move to deploy folder
-build: export BUILD?=debug
 build: $(PROTOC_BIN)
 	@echo "Building the wasm filter"
     ifeq ($(BUILD), release)
@@ -56,15 +58,8 @@ update-protobufs:
 
 RUST_SOURCES := $(shell find $(PROJECT_PATH)/src -name '*.rs')
 
-$(WASM_RELEASE_PATH): export BUILD = release
-$(WASM_RELEASE_PATH): $(RUST_SOURCES)
-	make -C $(PROJECT_PATH) -f $(MKFILE_PATH) build
-
-development: $(WASM_RELEASE_PATH)
-	docker compose up
-
-stop-development:
-	docker compose down
+$(WASM_RELEASE_BIN): $(RUST_SOURCES)
+	make -C $(PROJECT_PATH) -f $(MKFILE_PATH) build BUILD=$(BUILD)
 
 # get-protoc will download zip from $2 and install it to $1.
 define get-protoc
