@@ -675,13 +675,13 @@ mod test {
             "authorino": {
                 "type": "auth",
                 "endpoint": "authorino-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
                 "timeout": "24ms"
             },
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "allow"
+                "failureMode": "allow",
                 "timeout": "42ms"
             }
         },
@@ -753,7 +753,7 @@ mod test {
             assert_eq!(auth_extension.extension_type, ExtensionType::Auth);
             assert_eq!(auth_extension.endpoint, "authorino-cluster");
             assert_eq!(auth_extension.failure_mode, FailureMode::Deny);
-            assert_eq!(auth_extension.timeout, Timeout(Duration::from_millis(24)));
+            assert_eq!(auth_extension.timeout, Timeout(Duration::from_millis(24)))
         } else {
             panic!()
         }
@@ -762,7 +762,7 @@ mod test {
             assert_eq!(rl_extension.extension_type, ExtensionType::RateLimit);
             assert_eq!(rl_extension.endpoint, "limitador-cluster");
             assert_eq!(rl_extension.failure_mode, FailureMode::Allow);
-            assert_eq!(rl_extension.timeout, Timeout(Duration::from_millis(42)));
+            assert_eq!(rl_extension.timeout, Timeout(Duration::from_millis(42)))
         } else {
             panic!()
         }

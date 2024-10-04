@@ -60,9 +60,12 @@ impl Operation {
     fn trigger(&self) -> Result<u32, Status> {
         if let Some(message) = (self.grpc_message_build_fn)(self.get_extension_type(), &self.action)
         {
-            let res = self
-                .service
-                .send(self.get_map_values_bytes_fn, self.grpc_call_fn, message);
+            let res = self.service.send(
+                self.get_map_values_bytes_fn,
+                self.grpc_call_fn,
+                message,
+                self.extension.timeout.0,
+            );
             self.set_result(res);
             self.next_state();
             res
@@ -229,6 +232,7 @@ fn grpc_message_build_fn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::configuration::Timeout;
     use crate::envoy::RateLimitRequest;
     use protobuf::RepeatedField;
     use std::time::Duration;
@@ -283,6 +287,7 @@ mod tests {
                 extension_type,
                 endpoint: "local".to_string(),
                 failure_mode: FailureMode::Deny,
+                timeout: Timeout(Duration::from_millis(42)),
             }),
             action: Action {
                 extension: "local".to_string(),
