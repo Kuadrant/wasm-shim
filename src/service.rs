@@ -3,6 +3,7 @@ pub(crate) mod grpc_message;
 pub(crate) mod rate_limit;
 
 use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
+use crate::envoy::StatusCode;
 use crate::operation_dispatcher::Operation;
 use crate::service::auth::{AuthService, AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::grpc_message::{GrpcMessageRequest, GrpcMessageResponse};
@@ -54,27 +55,35 @@ impl GrpcService {
         &self.extension.failure_mode
     }
 
-    pub fn process_grpc_response(operation: Rc<Operation>, resp_size: usize) {
+    pub fn process_grpc_response(
+        operation: Rc<Operation>,
+        resp_size: usize,
+    ) -> Result<(), StatusCode> {
         let failure_mode = operation.get_failure_mode();
-        if let Some(res_body_bytes) = hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap() {
+        if let Some(res_body_bytes) =
+            hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap()
+        {
             match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
-                Ok(res)  =>  {
-                    match operation.get_extension_type() {
-                        ExtensionType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
-                        ExtensionType::RateLimit => {
-                            RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
-                        }
+                Ok(res) => match operation.get_extension_type() {
+                    ExtensionType::Auth => {
+                        AuthService::process_auth_grpc_response(res, failure_mode)
                     }
-                }
+                    ExtensionType::RateLimit => {
+                        RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
+                    }
+                },
                 Err(e) => {
-                    warn!("failed to parse grpc response body into GrpcMessageResponse message: {e}");
+                    warn!(
+                        "failed to parse grpc response body into GrpcMessageResponse message: {e}"
+                    );
                     GrpcService::handle_error_on_grpc_response(failure_mode);
+                    Err(StatusCode::InternalServerError)
                 }
-            };
-        }
-        else {
-                warn!("grpc response body is empty!");
-                GrpcService::handle_error_on_grpc_response(failure_mode);
+            }
+        } else {
+            warn!("grpc response body is empty!");
+            GrpcService::handle_error_on_grpc_response(failure_mode);
+            Err(StatusCode::InternalServerError)
         }
     }
 

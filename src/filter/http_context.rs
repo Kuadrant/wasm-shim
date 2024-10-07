@@ -105,12 +105,12 @@ impl Context for Filter {
         let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
 
         if let Some(operation) = some_op {
-            GrpcService::process_grpc_response(operation, resp_size);
-            self.operation_dispatcher.borrow_mut().next();
-
-            if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
-            } else {
-                self.resume_http_request()
+            if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
+                self.operation_dispatcher.borrow_mut().next();
+                if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
+                } else {
+                    self.resume_http_request()
+                }
             }
         } else {
             warn!("No Operation found with token_id: {token_id}");

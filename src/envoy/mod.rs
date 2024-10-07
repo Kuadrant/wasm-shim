@@ -38,6 +38,7 @@ pub use {
     },
     base::Metadata,
     external_auth::{CheckRequest, CheckResponse, CheckResponse_oneof_http_response},
+    http_status::StatusCode,
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
 };

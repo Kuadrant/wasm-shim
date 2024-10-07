@@ -1,9 +1,10 @@
 use crate::configuration::FailureMode;
 use crate::envoy::{
-    RateLimitDescriptor, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code,
+    RateLimitDescriptor, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code, StatusCode,
 };
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use crate::service::GrpcService;
+use log::warn;
 use protobuf::{Message, RepeatedField};
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType};
@@ -37,13 +38,14 @@ impl RateLimitService {
     pub fn process_ratelimit_grpc_response(
         rl_resp: GrpcMessageResponse,
         failure_mode: &FailureMode,
-    ) {
+    ) -> Result<(), StatusCode> {
         match rl_resp {
             GrpcMessageResponse::RateLimit(RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             }) => {
                 GrpcService::handle_error_on_grpc_response(failure_mode);
+                Err(StatusCode::InternalServerError)
             }
             GrpcMessageResponse::RateLimit(RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OVER_LIMIT,
@@ -56,6 +58,7 @@ impl RateLimitService {
                 }
                 hostcalls::send_http_response(429, response_headers, Some(b"Too Many Requests\n"))
                     .unwrap();
+                Err(StatusCode::TooManyRequests)
             }
             GrpcMessageResponse::RateLimit(RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OK,
@@ -70,8 +73,13 @@ impl RateLimitService {
                     )
                     .unwrap()
                 });
+                Ok(())
             }
-            _ => {}
+            _ => {
+                warn!("not a valid GrpcMessageResponse::RateLimit(RateLimitResponse)!");
+                GrpcService::handle_error_on_grpc_response(failure_mode);
+                Err(StatusCode::InternalServerError)
+            }
         }
     }
 }
