@@ -105,11 +105,7 @@ impl Context for Filter {
         let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
 
         if let Some(operation) = some_op {
-            GrpcService::process_grpc_response(
-                operation,
-                resp_size,
-                &mut self.response_headers_to_add,
-            );
+            GrpcService::process_grpc_response(operation, resp_size);
             self.operation_dispatcher.borrow_mut().next();
 
             if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {

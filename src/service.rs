@@ -54,11 +54,7 @@ impl GrpcService {
         &self.extension.failure_mode
     }
 
-    pub fn process_grpc_response(
-        operation: Rc<Operation>,
-        resp_size: usize,
-        response_headers_to_add: &mut Vec<(String, String)>,
-    ) {
+    pub fn process_grpc_response(operation: Rc<Operation>, resp_size: usize) {
         let failure_mode = operation.get_failure_mode();
         let res_body_bytes =
             match hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap() {
@@ -79,11 +75,9 @@ impl GrpcService {
         };
         match operation.get_extension_type() {
             ExtensionType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
-            ExtensionType::RateLimit => RateLimitService::process_ratelimit_grpc_response(
-                res,
-                failure_mode,
-                response_headers_to_add,
-            ),
+            ExtensionType::RateLimit => {
+                RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
+            }
         }
     }
 

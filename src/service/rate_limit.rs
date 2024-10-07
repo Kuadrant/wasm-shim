@@ -6,7 +6,7 @@ use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use crate::service::GrpcService;
 use protobuf::{Message, RepeatedField};
 use proxy_wasm::hostcalls;
-use proxy_wasm::types::Bytes;
+use proxy_wasm::types::{Bytes, MapType};
 
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -37,7 +37,6 @@ impl RateLimitService {
     pub fn process_ratelimit_grpc_response(
         rl_resp: GrpcMessageResponse,
         failure_mode: &FailureMode,
-        response_headers_to_add: &mut Vec<(String, String)>,
     ) {
         match rl_resp {
             GrpcMessageResponse::RateLimit(RateLimitResponse {
@@ -63,9 +62,14 @@ impl RateLimitService {
                 response_headers_to_add: additional_headers,
                 ..
             }) => {
-                for header in additional_headers {
-                    response_headers_to_add.push((header.key, header.value));
-                }
+                additional_headers.iter().for_each(|header| {
+                    hostcalls::add_map_value(
+                        MapType::HttpResponseHeaders,
+                        header.get_key(),
+                        header.get_value(),
+                    )
+                    .unwrap()
+                });
             }
             _ => {}
         }
