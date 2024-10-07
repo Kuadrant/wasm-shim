@@ -197,7 +197,7 @@ fn it_performs_authenticated_rate_limiting() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_auth_grpc_response: received OkHttpResponse"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -374,7 +374,7 @@ fn unauthenticated_does_not_ratelimit() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 process_auth_grpc_response: received DeniedHttpResponse"),
+            Some("process_auth_grpc_response: received DeniedHttpResponse"),
         )
         .expect_send_local_response(
             Some(401),

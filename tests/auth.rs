@@ -186,7 +186,7 @@ fn it_auths() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_auth_grpc_response: received OkHttpResponse"),
         )
         .execute_and_expect(ReturnType::None)
         .unwrap();
@@ -339,7 +339,7 @@ fn it_denies() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 process_auth_grpc_response: received DeniedHttpResponse"),
+            Some("process_auth_grpc_response: received DeniedHttpResponse"),
         )
         .expect_send_local_response(
             Some(401),
