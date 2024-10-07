@@ -21,7 +21,6 @@ extensions:
     failureMode: deny
 policies:
   - name: rlp-ns-A/rlp-name-A
-    domain: rlp-ns-A/rlp-name-A
     hostnames: [ "*.toystore.com" ]
     rules:
     - conditions:
