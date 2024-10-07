@@ -1,7 +1,12 @@
-use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
+use crate::configuration::FailureMode;
+use crate::envoy::{
+    RateLimitDescriptor, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code,
+};
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
+use crate::service::GrpcService;
 use protobuf::{Message, RepeatedField};
-use proxy_wasm::types::Bytes;
+use proxy_wasm::hostcalls;
+use proxy_wasm::types::{Bytes, MapType};
 
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -26,6 +31,47 @@ impl RateLimitService {
         match Message::parse_from_bytes(res_body_bytes) {
             Ok(res) => Ok(GrpcMessageResponse::RateLimit(res)),
             Err(e) => Err(e),
+        }
+    }
+
+    pub fn process_ratelimit_grpc_response(
+        rl_resp: GrpcMessageResponse,
+        failure_mode: &FailureMode,
+    ) {
+        match rl_resp {
+            GrpcMessageResponse::RateLimit(RateLimitResponse {
+                overall_code: RateLimitResponse_Code::UNKNOWN,
+                ..
+            }) => {
+                GrpcService::handle_error_on_grpc_response(failure_mode);
+            }
+            GrpcMessageResponse::RateLimit(RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OVER_LIMIT,
+                response_headers_to_add: rl_headers,
+                ..
+            }) => {
+                let mut response_headers = vec![];
+                for header in &rl_headers {
+                    response_headers.push((header.get_key(), header.get_value()));
+                }
+                hostcalls::send_http_response(429, response_headers, Some(b"Too Many Requests\n"))
+                    .unwrap();
+            }
+            GrpcMessageResponse::RateLimit(RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OK,
+                response_headers_to_add: additional_headers,
+                ..
+            }) => {
+                additional_headers.iter().for_each(|header| {
+                    hostcalls::add_map_value(
+                        MapType::HttpResponseHeaders,
+                        header.get_key(),
+                        header.get_value(),
+                    )
+                    .unwrap()
+                });
+            }
+            _ => {}
         }
     }
 }
