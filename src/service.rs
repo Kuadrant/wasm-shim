@@ -56,28 +56,25 @@ impl GrpcService {
 
     pub fn process_grpc_response(operation: Rc<Operation>, resp_size: usize) {
         let failure_mode = operation.get_failure_mode();
-        let res_body_bytes =
-            match hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap() {
-                Some(bytes) => bytes,
-                None => {
-                    warn!("grpc response body is empty!");
+        if let Some(res_body_bytes) = hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap() {
+            match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
+                Ok(res)  =>  {
+                    match operation.get_extension_type() {
+                        ExtensionType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
+                        ExtensionType::RateLimit => {
+                            RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("failed to parse grpc response body into GrpcMessageResponse message: {e}");
                     GrpcService::handle_error_on_grpc_response(failure_mode);
-                    return;
                 }
             };
-        let res = match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
-            Ok(res) => res,
-            Err(e) => {
-                warn!("failed to parse grpc response body into GrpcMessageResponse message: {e}");
+        }
+        else {
+                warn!("grpc response body is empty!");
                 GrpcService::handle_error_on_grpc_response(failure_mode);
-                return;
-            }
-        };
-        match operation.get_extension_type() {
-            ExtensionType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
-            ExtensionType::RateLimit => {
-                RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
-            }
         }
     }
 
