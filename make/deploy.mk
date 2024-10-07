@@ -11,8 +11,7 @@ kind: $(KIND) ## Download kind locally if necessary.
 
 KIND_CLUSTER_NAME ?= wasm-auth-local
 
-kind-create-cluster: BUILD?=debug
-kind-create-cluster: WASM_PATH=$(subst /,\/,$(PROJECT_PATH)/target/wasm32-unknown-unknown/$(BUILD))
+kind-create-cluster: WASM_PATH=$(subst /,\/,$(WASM_RELEASE_PATH))
 kind-create-cluster: kind ## Create the "wasm-auth-local" kind cluster.
 	@{ \
   	TEMP_FILE=/tmp/kind-cluster-$$(openssl rand -hex 4).yaml ;\
@@ -66,7 +65,7 @@ deploy-authorino: certs sed ## Deploys an instance of Authorino into the Kuberne
 ##@ Limitador
 
 deploy-limitador:
-	kubectl create configmap limits --from-file=$(PROJECT_PATH)/utils/docker-compose/limits.yaml
+	kubectl create configmap limits --from-file=$(PROJECT_PATH)/utils/deploy/limits.yaml
 	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/limitador.yaml
 
 
@@ -98,7 +97,7 @@ local-setup: local-env-setup
 	echo "After that, you can curl -H \"Host: myhost.com\" localhost:8000"; \
 	}
 
-local-env-setup:
+local-env-setup: $(WASM_RELEASE_BIN)
 	$(MAKE) kind-delete-cluster
 	$(MAKE) kind-create-cluster
 	$(MAKE) install-authorino-operator
