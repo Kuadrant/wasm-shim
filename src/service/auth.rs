@@ -103,6 +103,17 @@ impl AuthService {
                 Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                     debug!("process_auth_grpc_response: received OkHttpResponse");
                     ok_response
+                        .get_headers_to_remove()
+                        .iter()
+                        .for_each(|header| {
+                            hostcalls::set_map_value(
+                                MapType::HttpResponseHeaders,
+                                header.as_str(),
+                                None,
+                            )
+                            .unwrap()
+                        });
+                    ok_response
                         .get_response_headers_to_add()
                         .iter()
                         .for_each(|header| {
@@ -116,8 +127,7 @@ impl AuthService {
                     Ok(())
                 }
                 Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
-                    debug!("process_auth_grpc_response: received DeniedHttpResponse",);
-
+                    debug!("process_auth_grpc_response: received DeniedHttpResponse");
                     let mut response_headers = vec![];
                     let status_code = denied_response.get_status().code;
                     denied_response.get_headers().iter().for_each(|header| {
