@@ -178,8 +178,7 @@ data:
                                           "actions": [
                                             {
                                               "extension": "authorino",
-                                              "scope": "effective-route-1",
-                                              "data": []
+                                              "scope": "effective-route-1"
                                             }
                                           ]
                                         }
@@ -325,8 +324,7 @@ data:
                                           "actions": [
                                             {
                                               "extension": "authorino",
-                                              "scope": "effective-route-1",
-                                              "data": []
+                                              "scope": "effective-route-1"
                                             },
                                             {
                                               "extension": "limitador",

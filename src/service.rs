@@ -19,7 +19,6 @@ use std::time::Duration;
 
 #[derive(Default)]
 pub struct GrpcService {
-    #[allow(dead_code)]
     extension: Rc<Extension>,
     name: &'static str,
     method: &'static str,
@@ -49,10 +48,6 @@ impl GrpcService {
     }
     fn method(&self) -> &str {
         self.method
-    }
-    #[allow(dead_code)]
-    pub fn failure_mode(&self) -> &FailureMode {
-        &self.extension.failure_mode
     }
 
     pub fn process_grpc_response(

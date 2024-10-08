@@ -20,7 +20,6 @@ pub const AUTH_METHOD_NAME: &str = "Check";
 
 pub struct AuthService;
 
-#[allow(dead_code)]
 impl AuthService {
     pub fn request_message(ce_host: String) -> CheckRequest {
         AuthService::build_check_req(ce_host)
