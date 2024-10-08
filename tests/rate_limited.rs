@@ -87,7 +87,8 @@ fn it_limits() {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
+                "timeout": "5s"
             }
         },
         "policies": [
@@ -242,7 +243,8 @@ fn it_passes_additional_headers() {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
+                "timeout": "5s"
             }
         },
         "policies": [
@@ -411,7 +413,8 @@ fn it_rate_limits_with_empty_conditions() {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
+                "timeout": "5s"
             }
         },
         "policies": [
@@ -529,7 +532,8 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
+                "timeout": "5s"
             }
         },
         "policies": [

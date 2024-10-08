@@ -125,6 +125,7 @@ impl GrpcServiceHandler {
         get_map_values_bytes_fn: GetMapValuesBytesFn,
         grpc_call_fn: GrpcCallFn,
         message: GrpcMessageRequest,
+        timeout: Duration,
     ) -> Result<u32, Status> {
         let msg = Message::write_to_bytes(&message).unwrap();
         let metadata = self
@@ -140,7 +141,7 @@ impl GrpcServiceHandler {
             self.service.method(),
             metadata,
             Some(&msg),
-            Duration::from_secs(5),
+            timeout,
         )
     }
 

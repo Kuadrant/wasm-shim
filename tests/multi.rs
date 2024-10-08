@@ -10,12 +10,14 @@ const CONFIG: &str = r#"{
             "authorino": {
                 "type": "auth",
                 "endpoint": "authorino-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
+                "timeout": "5s"
             },
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
-                "failureMode": "deny"
+                "failureMode": "deny",
+                "timeout": "5s"
             }
         },
         "policies": [
