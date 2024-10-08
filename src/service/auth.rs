@@ -3,12 +3,12 @@ use crate::configuration::FailureMode;
 use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
     AttributeContext_Request, CheckRequest, CheckResponse_oneof_http_response, Metadata,
-    SocketAddress,
+    SocketAddress, StatusCode,
 };
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use crate::service::GrpcService;
 use chrono::{DateTime, FixedOffset, Timelike};
-use log::debug;
+use log::{debug, warn};
 use protobuf::well_known_types::Timestamp;
 use protobuf::Message;
 use proxy_wasm::hostcalls;
@@ -92,7 +92,10 @@ impl AuthService {
         peer
     }
 
-    pub fn process_auth_grpc_response(auth_resp: GrpcMessageResponse, failure_mode: &FailureMode) {
+    pub fn process_auth_grpc_response(
+        auth_resp: GrpcMessageResponse,
+        failure_mode: &FailureMode,
+    ) -> Result<(), StatusCode> {
         if let GrpcMessageResponse::Auth(check_response) = auth_resp {
             // store dynamic metadata in filter state
             store_metadata(check_response.get_dynamic_metadata());
@@ -100,7 +103,6 @@ impl AuthService {
             match check_response.http_response {
                 Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                     debug!("process_auth_grpc_response: received OkHttpResponse");
-
                     ok_response
                         .get_response_headers_to_add()
                         .iter()
@@ -112,11 +114,13 @@ impl AuthService {
                             )
                             .unwrap()
                         });
+                    Ok(())
                 }
                 Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
                     debug!("process_auth_grpc_response: received DeniedHttpResponse",);
 
                     let mut response_headers = vec![];
+                    let status_code = denied_response.get_status().code;
                     denied_response.get_headers().iter().for_each(|header| {
                         response_headers.push((
                             header.get_header().get_key(),
@@ -124,16 +128,22 @@ impl AuthService {
                         ))
                     });
                     hostcalls::send_http_response(
-                        denied_response.get_status().code as u32,
+                        status_code as u32,
                         response_headers,
                         Some(denied_response.get_body().as_ref()),
                     )
                     .unwrap();
+                    Err(status_code)
                 }
                 None => {
                     GrpcService::handle_error_on_grpc_response(failure_mode);
+                    Err(StatusCode::InternalServerError)
                 }
             }
+        } else {
+            warn!("not a GrpcMessageResponse::Auth(CheckResponse)!");
+            GrpcService::handle_error_on_grpc_response(failure_mode);
+            Err(StatusCode::InternalServerError)
         }
     }
 }
