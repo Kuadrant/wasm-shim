@@ -92,7 +92,6 @@ fn it_auths() {
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
         // retrieving properties for conditions
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
@@ -111,6 +110,7 @@ fn it_auths() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
@@ -244,7 +244,6 @@ fn it_denies() {
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
         // retrieving properties for conditions
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
@@ -263,6 +262,7 @@ fn it_denies() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)

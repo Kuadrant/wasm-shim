@@ -466,8 +466,8 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = PolicyIndex::new();
 
-        for rlp in config.policies.iter() {
-            for rule in &rlp.rules {
+        for policy in config.policies.iter() {
+            for rule in &policy.rules {
                 for condition in &rule.conditions {
                     for pe in &condition.all_of {
                         let result = pe.compile();
@@ -486,8 +486,8 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                 }
             }
 
-            for hostname in rlp.hostnames.iter() {
-                index.insert(hostname, rlp.clone());
+            for hostname in policy.hostnames.iter() {
+                index.insert(hostname, Rc::new(policy.clone()));
             }
         }
 
@@ -1163,15 +1163,17 @@ mod test {
 
         let result = FilterConfig::try_from(res.unwrap());
         let filter_config = result.expect("That didn't work");
-        let rlp_option = filter_config.index.get_longest_match_policy("example.com");
+        let rlp_option = filter_config
+            .index
+            .get_longest_match_policies("example.com");
         assert!(rlp_option.is_some());
 
         let rlp_option = filter_config
             .index
-            .get_longest_match_policy("test.toystore.com");
+            .get_longest_match_policies("test.toystore.com");
         assert!(rlp_option.is_some());
 
-        let rlp_option = filter_config.index.get_longest_match_policy("unknown");
+        let rlp_option = filter_config.index.get_longest_match_policies("unknown");
         assert!(rlp_option.is_none());
     }
 

@@ -29,8 +29,13 @@ impl Filter {
         }
     }
 
-    fn process_policy(&self, policy: &Policy) -> Action {
-        if let Some(rule) = policy.find_rule_that_applies() {
+    fn process_policies(&self, policies: &[Rc<Policy>]) -> Action {
+        if let Some(rule) = policies.iter().find_map(|policy| {
+            policy.find_rule_that_applies().map(|rule| {
+                debug!("#{} policy selected {}", self.context_id, policy.name);
+                rule
+            })
+        }) {
             self.operation_dispatcher
                 .borrow_mut()
                 .build_operations(rule);
@@ -66,7 +71,7 @@ impl HttpContext for Filter {
         match self
             .config
             .index
-            .get_longest_match_policy(self.request_authority().as_str())
+            .get_longest_match_policies(self.request_authority().as_str())
         {
             None => {
                 debug!(
@@ -75,10 +80,7 @@ impl HttpContext for Filter {
                 );
                 Action::Continue
             }
-            Some(policy) => {
-                debug!("#{} policy selected {}", self.context_id, policy.name);
-                self.process_policy(policy)
-            }
+            Some(policies) => self.process_policies(policies),
         }
     }
 

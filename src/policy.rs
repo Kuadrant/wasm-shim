@@ -16,7 +16,7 @@ pub struct Rule {
     pub actions: Vec<Action>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Default, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Policy {
     pub name: String,
