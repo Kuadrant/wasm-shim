@@ -29,6 +29,7 @@ impl Filter {
         }
     }
 
+    #[allow(clippy::manual_inspect)]
     fn process_policies(&self, policies: &[Rc<Policy>]) -> Action {
         if let Some(rule) = policies.iter().find_map(|policy| {
             policy.find_rule_that_applies().map(|rule| {
