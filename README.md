@@ -20,7 +20,7 @@ extensions:
     type: ratelimit
     endpoint: ratelimit-cluster
     failureMode: deny
-policies:
+actionSets:
   - name: rlp-ns-A/rlp-name-A
     hostnames: [ "*.toystore.com" ]
     rules:
@@ -158,7 +158,7 @@ To expose the envoy endpoint run the following:
 kubectl port-forward --namespace default deployment/envoy 8000:8000
 ```
 
-There is then a single auth policy defined for e2e testing:
+There is then a single auth action set defined for e2e testing:
 
 * `auth-a` which defines auth is required for requests to `/get` for the `AuthConfig` with `effective-route-1`
 

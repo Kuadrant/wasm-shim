@@ -1,31 +1,30 @@
+use crate::configuration::action_set::ActionSet;
 use radix_trie::Trie;
 use std::rc::Rc;
 
-use crate::policy::Policy;
-
-pub struct PolicyIndex {
-    raw_tree: Trie<String, Vec<Rc<Policy>>>,
+pub struct ActionSetIndex {
+    raw_tree: Trie<String, Vec<Rc<ActionSet>>>,
 }
 
-impl PolicyIndex {
+impl ActionSetIndex {
     pub fn new() -> Self {
         Self {
             raw_tree: Trie::new(),
         }
     }
 
-    pub fn insert(&mut self, subdomain: &str, policy: Rc<Policy>) {
+    pub fn insert(&mut self, subdomain: &str, action_set: Rc<ActionSet>) {
         let rev = Self::reverse_subdomain(subdomain);
         self.raw_tree.map_with_default(
             rev,
-            |policies| {
-                policies.push(Rc::clone(&policy));
+            |action_sets| {
+                action_sets.push(Rc::clone(&action_set));
             },
-            vec![Rc::clone(&policy)],
+            vec![Rc::clone(&action_set)],
         );
     }
 
-    pub fn get_longest_match_policies(&self, subdomain: &str) -> Option<&Vec<Rc<Policy>>> {
+    pub fn get_longest_match_action_sets(&self, subdomain: &str) -> Option<&Vec<Rc<ActionSet>>> {
         let rev = Self::reverse_subdomain(subdomain);
         self.raw_tree.get_ancestor_value(&rev)
     }
@@ -44,51 +43,51 @@ impl PolicyIndex {
 
 #[cfg(test)]
 mod tests {
-    use crate::policy::Policy;
-    use crate::policy_index::PolicyIndex;
+    use crate::configuration::action_set::ActionSet;
+    use crate::configuration::action_set_index::ActionSetIndex;
     use std::rc::Rc;
 
-    fn build_ratelimit_policy(name: &str) -> Policy {
-        Policy::new(name.to_owned(), Vec::new(), Vec::new())
+    fn build_ratelimit_action_set(name: &str) -> ActionSet {
+        ActionSet::new(name.to_owned(), Vec::new(), Vec::new())
     }
 
     #[test]
     fn not_wildcard_subdomain() {
-        let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy("rlp1");
+        let mut index = ActionSetIndex::new();
+        let rlp1 = build_ratelimit_action_set("rlp1");
         index.insert("example.com", Rc::new(rlp1));
 
-        let val = index.get_longest_match_policies("test.example.com");
+        let val = index.get_longest_match_action_sets("test.example.com");
         assert!(val.is_none());
 
-        let val = index.get_longest_match_policies("other.com");
+        let val = index.get_longest_match_action_sets("other.com");
         assert!(val.is_none());
 
-        let val = index.get_longest_match_policies("net");
+        let val = index.get_longest_match_action_sets("net");
         assert!(val.is_none());
 
-        let val = index.get_longest_match_policies("example.com");
+        let val = index.get_longest_match_action_sets("example.com");
         assert!(val.is_some());
         assert_eq!(val.unwrap()[0].name, "rlp1");
     }
 
     #[test]
     fn wildcard_subdomain_does_not_match_domain() {
-        let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy("rlp1");
+        let mut index = ActionSetIndex::new();
+        let rlp1 = build_ratelimit_action_set("rlp1");
 
         index.insert("*.example.com", Rc::new(rlp1));
-        let val = index.get_longest_match_policies("example.com");
+        let val = index.get_longest_match_action_sets("example.com");
         assert!(val.is_none());
     }
 
     #[test]
     fn wildcard_subdomain_matches_subdomains() {
-        let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy("rlp1");
+        let mut index = ActionSetIndex::new();
+        let rlp1 = build_ratelimit_action_set("rlp1");
 
         index.insert("*.example.com", Rc::new(rlp1));
-        let val = index.get_longest_match_policies("test.example.com");
+        let val = index.get_longest_match_action_sets("test.example.com");
 
         assert!(val.is_some());
         assert_eq!(val.unwrap()[0].name, "rlp1");
@@ -96,28 +95,28 @@ mod tests {
 
     #[test]
     fn longest_domain_match() {
-        let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy("rlp1");
+        let mut index = ActionSetIndex::new();
+        let rlp1 = build_ratelimit_action_set("rlp1");
         index.insert("*.com", Rc::new(rlp1));
-        let rlp2 = build_ratelimit_policy("rlp2");
+        let rlp2 = build_ratelimit_action_set("rlp2");
         index.insert("*.example.com", Rc::new(rlp2));
 
-        let val = index.get_longest_match_policies("test.example.com");
+        let val = index.get_longest_match_action_sets("test.example.com");
         assert!(val.is_some());
         assert_eq!(val.unwrap()[0].name, "rlp2");
 
-        let val = index.get_longest_match_policies("example.com");
+        let val = index.get_longest_match_action_sets("example.com");
         assert!(val.is_some());
         assert_eq!(val.unwrap()[0].name, "rlp1");
     }
 
     #[test]
     fn global_wildcard_match_all() {
-        let mut index = PolicyIndex::new();
-        let rlp1 = build_ratelimit_policy("rlp1");
+        let mut index = ActionSetIndex::new();
+        let rlp1 = build_ratelimit_action_set("rlp1");
         index.insert("*", Rc::new(rlp1));
 
-        let val = index.get_longest_match_policies("test.example.com");
+        let val = index.get_longest_match_action_sets("test.example.com");
         assert!(val.is_some());
         assert_eq!(val.unwrap()[0].name, "rlp1");
     }
