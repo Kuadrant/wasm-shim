@@ -13,7 +13,7 @@ const CONFIG: &str = r#"{
                 "timeout": "5s"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "some-name",
             "hostnames": ["*.toystore.com", "example.com"],
@@ -110,7 +110,10 @@ fn it_auths() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
@@ -302,7 +305,10 @@ fn it_denies() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)

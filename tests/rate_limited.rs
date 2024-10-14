@@ -23,7 +23,7 @@ fn it_loads() {
     let root_context = 1;
     let cfg = r#"{
         "extensions": {},
-        "policies": []
+        "actionSets": []
     }"#;
 
     module
@@ -91,7 +91,7 @@ fn it_limits() {
                 "timeout": "5s"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "some-name",
             "hostnames": ["*.toystore.com", "example.com"],
@@ -178,7 +178,10 @@ fn it_limits() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -249,7 +252,7 @@ fn it_passes_additional_headers() {
                 "timeout": "5s"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "some-name",
             "hostnames": ["*.toystore.com", "example.com"],
@@ -336,7 +339,10 @@ fn it_passes_additional_headers() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -421,7 +427,7 @@ fn it_rate_limits_with_empty_conditions() {
                 "timeout": "5s"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "some-name",
             "hostnames": ["*.com"],
@@ -470,7 +476,10 @@ fn it_rate_limits_with_empty_conditions() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("a.com"))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -541,7 +550,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
                 "timeout": "5s"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "some-name",
             "hostnames": ["*.com"],
@@ -589,7 +598,10 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("a.com"))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for RateLimitRequest
         .expect_log(
             Some(LogLevel::Debug),

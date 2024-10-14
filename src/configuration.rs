@@ -5,9 +5,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::attribute::Attribute;
+use crate::configuration::action_set::ActionSet;
+use crate::configuration::action_set_index::ActionSetIndex;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
-use crate::policy::Policy;
-use crate::policy_index::PolicyIndex;
 use crate::property_path::Path;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
@@ -19,6 +19,9 @@ use protobuf::RepeatedField;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
+
+pub mod action_set;
+mod action_set_index;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -397,14 +400,14 @@ pub fn type_of(path: &str) -> Option<ValueType> {
 }
 
 pub struct FilterConfig {
-    pub index: PolicyIndex,
+    pub index: ActionSetIndex,
     pub services: Rc<HashMap<String, Rc<GrpcService>>>,
 }
 
 impl Default for FilterConfig {
     fn default() -> Self {
         Self {
-            index: PolicyIndex::new(),
+            index: ActionSetIndex::new(),
             services: Rc::new(HashMap::new()),
         }
     }
@@ -414,10 +417,10 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
     type Error = String;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        let mut index = PolicyIndex::new();
+        let mut index = ActionSetIndex::new();
 
-        for policy in config.policies.iter() {
-            for rule in &policy.rules {
+        for action_set in config.action_sets.iter() {
+            for rule in &action_set.rules {
                 for condition in &rule.conditions {
                     for pe in &condition.all_of {
                         let result = pe.compile();
@@ -436,8 +439,8 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                 }
             }
 
-            for hostname in policy.hostnames.iter() {
-                index.insert(hostname, Rc::new(policy.clone()));
+            for hostname in action_set.hostnames.iter() {
+                index.insert(hostname, Rc::new(action_set.clone()));
             }
         }
 
@@ -475,7 +478,7 @@ pub enum ExtensionType {
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
     pub extensions: HashMap<String, Extension>,
-    pub policies: Vec<Policy>,
+    pub action_sets: Vec<ActionSet>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -634,7 +637,7 @@ mod test {
                 "timeout": "42ms"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
@@ -693,7 +696,7 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
         let extensions = &filter_config.extensions;
         assert_eq!(extensions.len(), 2);
@@ -716,7 +719,7 @@ mod test {
             panic!()
         }
 
-        let rules = &filter_config.policies[0].rules;
+        let rules = &filter_config.action_sets[0].rules;
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
@@ -773,7 +776,7 @@ mod test {
     fn parse_config_min() {
         let config = r#"{
             "extensions": {},
-            "policies": []
+            "actionSets": []
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
         if let Err(ref e) = res {
@@ -782,7 +785,7 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 0);
+        assert_eq!(filter_config.action_sets.len(), 0);
     }
 
     #[test]
@@ -795,7 +798,7 @@ mod test {
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
@@ -824,9 +827,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
-        let rules = &filter_config.policies[0].rules;
+        let rules = &filter_config.action_sets[0].rules;
         assert_eq!(rules.len(), 1);
 
         let actions = &rules[0].actions;
@@ -857,7 +860,7 @@ mod test {
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
@@ -908,9 +911,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
-        let rules = &filter_config.policies[0].rules;
+        let rules = &filter_config.action_sets[0].rules;
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
@@ -945,7 +948,7 @@ mod test {
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
@@ -978,7 +981,7 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
         let extensions = &filter_config.extensions;
         assert_eq!(
@@ -986,7 +989,7 @@ mod test {
             Timeout(Duration::from_millis(20))
         );
 
-        let rules = &filter_config.policies[0].rules;
+        let rules = &filter_config.action_sets[0].rules;
         assert_eq!(rules.len(), 1);
 
         let conditions = &rules[0].conditions;
@@ -1004,7 +1007,7 @@ mod test {
                 "failureMode": "deny"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
@@ -1040,7 +1043,7 @@ mod test {
                 "failureMode": "deny"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
             "service": "limitador-cluster",
@@ -1074,7 +1077,7 @@ mod test {
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
@@ -1114,15 +1117,15 @@ mod test {
         let filter_config = result.expect("That didn't work");
         let rlp_option = filter_config
             .index
-            .get_longest_match_policies("example.com");
+            .get_longest_match_action_sets("example.com");
         assert!(rlp_option.is_some());
 
         let rlp_option = filter_config
             .index
-            .get_longest_match_policies("test.toystore.com");
+            .get_longest_match_action_sets("test.toystore.com");
         assert!(rlp_option.is_some());
 
-        let rlp_option = filter_config.index.get_longest_match_policies("unknown");
+        let rlp_option = filter_config.index.get_longest_match_action_sets("unknown");
         assert!(rlp_option.is_none());
     }
 

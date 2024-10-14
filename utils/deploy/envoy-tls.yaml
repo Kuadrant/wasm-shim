@@ -157,7 +157,7 @@ data:
                                       "failureMode": "deny"
                                     }
                                   },
-                                  "policies": [
+                                  "actionSets": [
                                     {
                                       "name": "auth-ns-A/auth-name-A",
                                       "hostnames": [

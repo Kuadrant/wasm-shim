@@ -17,16 +17,16 @@ pub struct Rule {
 
 #[derive(Default, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct Policy {
+pub struct ActionSet {
     pub name: String,
     pub hostnames: Vec<String>,
     pub rules: Vec<Rule>,
 }
 
-impl Policy {
+impl ActionSet {
     #[cfg(test)]
     pub fn new(name: String, hostnames: Vec<String>, rules: Vec<Rule>) -> Self {
-        Policy {
+        ActionSet {
             name,
             hostnames,
             rules,

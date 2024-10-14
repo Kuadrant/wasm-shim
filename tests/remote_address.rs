@@ -30,7 +30,7 @@ fn it_limits_based_on_source_address() {
                 "timeout": "5s"
             }
         },
-        "policies": [
+        "actionSets": [
             {
                 "name": "some-name",
                 "hostnames": ["*.example.com"],
@@ -100,7 +100,10 @@ fn it_limits_based_on_source_address() {
         )
         .expect_get_property(Some(vec!["source", "address"]))
         .returning(Some("40.0.0.1:0".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for data
         .expect_log(
             Some(LogLevel::Debug),

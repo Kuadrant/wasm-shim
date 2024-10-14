@@ -50,7 +50,7 @@ static_resources:
                               "failureMode": "deny"
                             }
                           },
-                          "policies": [
+                          "actionSets": [
                             {
                               "name": "ratelimit-source",
                               "hostnames": [
