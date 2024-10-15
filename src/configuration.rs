@@ -1,6 +1,6 @@
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -8,6 +8,7 @@ use crate::attribute::Attribute;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
+use crate::property::Path;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
@@ -15,7 +16,6 @@ use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
 use log::debug;
 use protobuf::RepeatedField;
-use proxy_wasm::hostcalls;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
@@ -34,73 +34,6 @@ pub struct SelectorItem {
     // If not set and the selector is not found in the context, then no data is generated.
     #[serde(default)]
     pub default: Option<String>,
-
-    #[serde(skip_deserializing)]
-    path: OnceCell<Path>,
-}
-
-impl SelectorItem {
-    pub fn compile(&self) -> Result<(), String> {
-        self.path
-            .set(self.selector.as_str().into())
-            .map_err(|p| format!("Err on {p:?}"))
-    }
-
-    pub fn path(&self) -> &Path {
-        self.path
-            .get()
-            .expect("SelectorItem wasn't previously compiled!")
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Path {
-    tokens: Vec<String>,
-}
-
-impl Display for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.tokens
-                .iter()
-                .map(|t| t.replace('.', "\\."))
-                .collect::<Vec<String>>()
-                .join(".")
-        )
-    }
-}
-
-impl From<&str> for Path {
-    fn from(value: &str) -> Self {
-        let mut token = String::new();
-        let mut tokens: Vec<String> = Vec::new();
-        let mut chars = value.chars();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '.' => {
-                    tokens.push(token);
-                    token = String::new();
-                }
-                '\\' => {
-                    if let Some(next) = chars.next() {
-                        token.push(next);
-                    }
-                }
-                _ => token.push(ch),
-            }
-        }
-        tokens.push(token);
-
-        Self { tokens }
-    }
-}
-
-impl Path {
-    pub fn tokens(&self) -> Vec<&str> {
-        self.tokens.iter().map(String::as_str).collect()
-    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -115,15 +48,6 @@ pub struct StaticItem {
 pub enum DataType {
     Static(StaticItem),
     Selector(SelectorItem),
-}
-
-impl DataType {
-    pub fn compile(&self) -> Result<(), String> {
-        match self {
-            DataType::Static(_) => Ok(()),
-            DataType::Selector(selector) => selector.compile(),
-        }
-    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -155,25 +79,14 @@ pub struct PatternExpression {
     pub value: String,
 
     #[serde(skip_deserializing)]
-    path: OnceCell<Path>,
-    #[serde(skip_deserializing)]
     compiled: OnceCell<CelExpression>,
 }
 
 impl PatternExpression {
     pub fn compile(&self) -> Result<(), String> {
-        self.path
-            .set(self.selector.as_str().into())
-            .map_err(|_| "Duh!")?;
         self.compiled
             .set(self.try_into()?)
             .map_err(|_| "Ooops".to_string())
-    }
-    pub fn path(&self) -> Vec<&str> {
-        self.path
-            .get()
-            .expect("PatternExpression wasn't previously compiled!")
-            .tokens()
     }
 
     pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
@@ -476,14 +389,6 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                         }
                     }
                 }
-                for action in &rule.actions {
-                    for datum in &action.data {
-                        let result = datum.item.compile();
-                        if result.is_err() {
-                            return Err(result.err().unwrap());
-                        }
-                    }
-                }
             }
 
             for hostname in policy.hostnames.iter() {
@@ -615,17 +520,15 @@ impl Action {
                     entries.push(descriptor_entry);
                 }
                 DataType::Selector(selector_item) => {
+                    let attribute_path = Path::from(selector_item.selector.as_str());
                     let descriptor_key = match &selector_item.key {
-                        None => selector_item.path().to_string(),
+                        None => attribute_path.to_string(),
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = selector_item.path();
-                    debug!(
-                        "get_property:  selector: {} path: {:?}",
-                        selector_item.selector, attribute_path
-                    );
-                    let value = match hostcalls::get_property(attribute_path.tokens()).unwrap() {
+                    let value = match crate::property::get_property(selector_item.selector.as_str())
+                        .unwrap()
+                    {
                         //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(

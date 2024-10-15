@@ -1,6 +1,5 @@
 use crate::configuration::{Action, PatternExpression};
 use log::debug;
-use proxy_wasm::hostcalls;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -59,12 +58,7 @@ impl Policy {
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_path = p_e.path();
-        debug!(
-            "get_property:  selector: {} path: {:?}",
-            p_e.selector, attribute_path
-        );
-        let attribute_value = match hostcalls::get_property(attribute_path).unwrap() {
+        let attribute_value = match crate::property::get_property(p_e.selector.as_str()).unwrap() {
             //TODO(didierofrivia): Replace hostcalls by DI
             None => {
                 debug!(

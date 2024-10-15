@@ -1,4 +1,3 @@
-use crate::configuration::Path;
 use chrono::{DateTime, FixedOffset};
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
@@ -111,7 +110,7 @@ pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
     T: Attribute,
 {
-    match hostcalls::get_property(Path::from(attr).tokens()) {
+    match crate::property::get_property(attr) {
         Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
         Ok(None) => Err(format!("get_attribute: not found or null: {attr}")),
         Err(e) => Err(format!("get_attribute: error: {e:?}")),
@@ -119,7 +118,7 @@ where
 }
 
 pub fn set_attribute(attr: &str, value: &[u8]) {
-    match hostcalls::set_property(Path::from(attr).tokens(), Some(value)) {
+    match hostcalls::set_property(crate::property::Path::from(attr).tokens(), Some(value)) {
         Ok(_) => (),
         Err(_) => error!("set_attribute: failed to set property {attr}"),
     };
