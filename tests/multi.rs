@@ -23,8 +23,8 @@ const CONFIG: &str = r#"{
         "actionSets": [
         {
             "name": "some-name",
-            "hostnames": ["*.toystore.com", "example.com"],
             "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"],
                 "matches": [
                 {
                     "selector": "request.url_path",
