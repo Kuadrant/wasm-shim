@@ -41,22 +41,22 @@ fn it_limits_based_on_source_address() {
                             "operator": "neq",
                             "value": "50.0.0.1"
                         }
-                    ],
-                    "actions": [
-                        {
-                            "extension": "limitador",
-                            "scope": "RLS-domain",
-                            "data": [
-                                {
-                                    "selector": {
-                                        "selector": "source.remote_address",
-                                        "value": "1"
-                                    }
-                                }
-                            ]
-                        }
                     ]
-                }
+                },
+                "actions": [
+                    {
+                        "extension": "limitador",
+                        "scope": "RLS-domain",
+                        "data": [
+                            {
+                                "selector": {
+                                    "selector": "source.remote_address",
+                                    "value": "1"
+                                }
+                            }
+                        ]
+                    }
+                ]
             }
         ]
     }"#;

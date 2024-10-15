@@ -111,21 +111,21 @@ fn it_limits() {
                     "selector": "request.method",
                     "operator": "eq",
                     "value": "POST"
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "RLS-domain",
-                    "data": [
-                        {
-                            "static": {
-                                "key": "admin",
-                                "value": "1"
-                            }
-                        }
-                    ]
                 }]
-            }
+            },
+            "actions": [
+            {
+                "extension": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "static": {
+                            "key": "admin",
+                            "value": "1"
+                        }
+                    }
+                ]
+            }]
         }]
     }"#;
 
@@ -268,21 +268,21 @@ fn it_passes_additional_headers() {
                     "selector": "request.method",
                     "operator": "eq",
                     "value": "POST"
-                }],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "RLS-domain",
-                    "data": [
-                        {
-                            "static": {
-                                "key": "admin",
-                                "value": "1"
-                            }
-                        }
-                    ]
                 }]
-            }
+            },
+            "actions": [
+            {
+                "extension": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "static": {
+                            "key": "admin",
+                            "value": "1"
+                        }
+                    }
+                ]
+            }]
         }]
     }"#;
 
@@ -423,21 +423,21 @@ fn it_rate_limits_with_empty_conditions() {
         {
             "name": "some-name",
             "routeRuleConditions": {
-                "hostnames": ["*.com"],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "RLS-domain",
-                    "data": [
-                        {
-                            "static": {
-                                "key": "admin",
-                                "value": "1"
-                            }
+                "hostnames": ["*.com"]
+            },
+            "actions": [
+            {
+                "extension": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "static": {
+                            "key": "admin",
+                            "value": "1"
                         }
-                    ]
-                }]
-            }
+                    }
+                ]
+            }]
         }]
     }"#;
 
@@ -545,20 +545,20 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         {
             "name": "some-name",
             "routeRuleConditions": {
-                "hostnames": ["*.com"],
-                "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "RLS-domain",
-                    "data": [
-                        {
-                            "selector": {
-                                "selector": "unknown.path"
-                            }
+                "hostnames": ["*.com"]
+            },
+            "actions": [
+            {
+                "extension": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "selector": {
+                            "selector": "unknown.path"
                         }
-                    ]
-                }]
-            }
+                    }
+                ]
+            }]
         }]
     }"#;
 

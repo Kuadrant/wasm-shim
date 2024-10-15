@@ -24,21 +24,21 @@ The Wasm configuration defines a set of rules for `*.example.com`.
                 "operator": "neq",
                 "value": "50.0.0.1"
             }
-        ],
-        "actions": [
-            {
-                "extension": "limitador",
-                "scope": "ratelimit-source",
-                "data": [
-                    {
-                        "selector": {
-                            "selector": "source.remote_address"
-                        }
-                    }
-                ]
-            }
         ]
-    }
+    },
+    "actions": [
+        {
+            "extension": "limitador",
+            "scope": "ratelimit-source",
+            "data": [
+                {
+                    "selector": {
+                        "selector": "source.remote_address"
+                    }
+                }
+            ]
+        }
+    ]
 }
 ```
 

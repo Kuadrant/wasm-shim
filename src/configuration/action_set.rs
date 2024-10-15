@@ -7,7 +7,6 @@ pub struct RouteRuleConditions {
     pub hostnames: Vec<String>,
     #[serde(default)]
     pub matches: Vec<PatternExpression>,
-    pub actions: Vec<Action>,
 }
 
 #[derive(Default, Deserialize, Debug, Clone)]
@@ -15,29 +14,30 @@ pub struct RouteRuleConditions {
 pub struct ActionSet {
     pub name: String,
     pub route_rule_conditions: RouteRuleConditions,
+    pub actions: Vec<Action>,
 }
 
 impl ActionSet {
     #[cfg(test)]
-    pub fn new(name: String, rules: RouteRuleConditions) -> Self {
+    pub fn new(
+        name: String,
+        route_rule_conditions: RouteRuleConditions,
+        actions: Vec<Action>,
+    ) -> Self {
         ActionSet {
             name,
-            route_rule_conditions: rules,
+            route_rule_conditions,
+            actions,
         }
     }
 
-    pub fn find_rule_that_applies(&self) -> Option<&RouteRuleConditions> {
-        if self.route_rule_conditions.matches.is_empty()
+    pub fn conditions_apply(&self) -> bool {
+        self.route_rule_conditions.matches.is_empty()
             || self
                 .route_rule_conditions
                 .matches
                 .iter()
                 .all(|m| self.pattern_expression_applies(m))
-        {
-            Some(&self.route_rule_conditions)
-        } else {
-            None
-        }
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {

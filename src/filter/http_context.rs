@@ -31,20 +31,22 @@ impl Filter {
 
     #[allow(clippy::manual_inspect)]
     fn process_action_sets(&self, action_sets: &[Rc<ActionSet>]) -> Action {
-        if let Some(rule) = action_sets.iter().find_map(|action_set| {
-            action_set.find_rule_that_applies().map(|rule| {
-                debug!(
-                    "#{} action_set selected {}",
-                    self.context_id, action_set.name
-                );
-                rule
-            })
-        }) {
+        if let Some(action_set) = action_sets
+            .iter()
+            .find(|action_set| action_set.conditions_apply())
+        {
+            debug!(
+                "#{} action_set selected {}",
+                self.context_id, action_set.name
+            );
             self.operation_dispatcher
                 .borrow_mut()
-                .build_operations(rule);
+                .build_operations(&action_set.actions);
         } else {
-            debug!("#{} process_action_sets: no rule applied", self.context_id);
+            debug!(
+                "#{} process_action_sets: no action_set with conditions applies",
+                self.context_id
+            );
             return Action::Continue;
         }
 
