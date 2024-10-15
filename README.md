@@ -37,6 +37,7 @@ actionSets:
     actions:
     - service: ratelimit-service
       scope: rlp-ns-A/rlp-name-A
+      conditions: []
       data:
       - selector:
           selector: request.headers.My-Custom-Header

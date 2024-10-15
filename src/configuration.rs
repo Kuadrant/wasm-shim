@@ -12,6 +12,8 @@ use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
+use log::debug;
+use proxy_wasm::hostcalls;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
@@ -202,6 +204,29 @@ impl PatternExpression {
                 }
             })
             .map_err(|err| format!("Error evaluating {:?}: {}", self.compiled, err))
+    }
+
+    fn applies(&self) -> bool {
+        let attribute_path = self.path();
+        debug!(
+            "get_property:  selector: {} path: {:?}",
+            self.selector, attribute_path
+        );
+        let attribute_value = match hostcalls::get_property(attribute_path).unwrap() {
+            //TODO(didierofrivia): Replace hostcalls by DI
+            None => {
+                debug!(
+                    "pattern_expression_applies:  selector not found: {}, defaulting to ``",
+                    self.selector
+                );
+                b"".to_vec()
+            }
+            Some(attribute_bytes) => attribute_bytes,
+        };
+        self.eval(attribute_value).unwrap_or_else(|e| {
+            debug!("pattern_expression_applies failed: {}", e);
+            false
+        })
     }
 }
 
@@ -473,6 +498,12 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                 }
             }
             for action in &action_set.actions {
+                for condition in &action.conditions {
+                    let result = condition.compile();
+                    if result.is_err() {
+                        return Err(result.err().unwrap());
+                    }
+                }
                 for datum in &action.data {
                     let result = datum.item.compile();
                     if result.is_err() {
