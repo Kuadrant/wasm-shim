@@ -22,7 +22,7 @@ fn it_loads() {
 
     let root_context = 1;
     let cfg = r#"{
-        "extensions": {},
+        "services": {},
         "actionSets": []
     }"#;
 
@@ -83,7 +83,7 @@ fn it_limits() {
 
     let root_context = 1;
     let cfg = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -115,7 +115,7 @@ fn it_limits() {
             },
             "actions": [
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "RLS-domain",
                 "data": [
                     {
@@ -240,7 +240,7 @@ fn it_passes_additional_headers() {
 
     let root_context = 1;
     let cfg = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -272,7 +272,7 @@ fn it_passes_additional_headers() {
             },
             "actions": [
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "RLS-domain",
                 "data": [
                     {
@@ -411,7 +411,7 @@ fn it_rate_limits_with_empty_conditions() {
 
     let root_context = 1;
     let cfg = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -427,7 +427,7 @@ fn it_rate_limits_with_empty_conditions() {
             },
             "actions": [
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "RLS-domain",
                 "data": [
                     {
@@ -533,7 +533,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
 
     let root_context = 1;
     let cfg = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -549,7 +549,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
             },
             "actions": [
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "RLS-domain",
                 "data": [
                     {

@@ -486,9 +486,9 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
             }
         }
 
-        // configure grpc services from the extensions in config
+        // configure grpc services from the services in config
         let services = config
-            .extensions
+            .services
             .into_iter()
             .map(|(name, ext)| (name, Rc::new(GrpcService::new(Rc::new(ext)))))
             .collect();
@@ -510,7 +510,7 @@ pub enum FailureMode {
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum ExtensionType {
+pub enum ServiceType {
     Auth,
     #[default]
     RateLimit,
@@ -519,15 +519,15 @@ pub enum ExtensionType {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    pub extensions: HashMap<String, Extension>,
+    pub services: HashMap<String, Service>,
     pub action_sets: Vec<ActionSet>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Extension {
+pub struct Service {
     #[serde(rename = "type")]
-    pub extension_type: ExtensionType,
+    pub service_type: ServiceType,
     pub endpoint: String,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
@@ -584,7 +584,7 @@ mod test {
     use super::*;
 
     const CONFIG: &str = r#"{
-        "extensions": {
+        "services": {
             "authorino": {
                 "type": "auth",
                 "endpoint": "authorino-cluster",
@@ -622,11 +622,11 @@ mod test {
             },
             "actions": [
             {
-                "extension": "authorino",
+                "service": "authorino",
                 "scope": "authconfig-A"
             },
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
                 "data": [
                 {
@@ -655,23 +655,23 @@ mod test {
         let filter_config = res.unwrap();
         assert_eq!(filter_config.action_sets.len(), 1);
 
-        let extensions = &filter_config.extensions;
-        assert_eq!(extensions.len(), 2);
+        let services = &filter_config.services;
+        assert_eq!(services.len(), 2);
 
-        if let Some(auth_extension) = extensions.get("authorino") {
-            assert_eq!(auth_extension.extension_type, ExtensionType::Auth);
-            assert_eq!(auth_extension.endpoint, "authorino-cluster");
-            assert_eq!(auth_extension.failure_mode, FailureMode::Deny);
-            assert_eq!(auth_extension.timeout, Timeout(Duration::from_millis(24)))
+        if let Some(auth_service) = services.get("authorino") {
+            assert_eq!(auth_service.service_type, ServiceType::Auth);
+            assert_eq!(auth_service.endpoint, "authorino-cluster");
+            assert_eq!(auth_service.failure_mode, FailureMode::Deny);
+            assert_eq!(auth_service.timeout, Timeout(Duration::from_millis(24)))
         } else {
             panic!()
         }
 
-        if let Some(rl_extension) = extensions.get("limitador") {
-            assert_eq!(rl_extension.extension_type, ExtensionType::RateLimit);
-            assert_eq!(rl_extension.endpoint, "limitador-cluster");
-            assert_eq!(rl_extension.failure_mode, FailureMode::Allow);
-            assert_eq!(rl_extension.timeout, Timeout(Duration::from_millis(42)))
+        if let Some(rl_service) = services.get("limitador") {
+            assert_eq!(rl_service.service_type, ServiceType::RateLimit);
+            assert_eq!(rl_service.endpoint, "limitador-cluster");
+            assert_eq!(rl_service.failure_mode, FailureMode::Allow);
+            assert_eq!(rl_service.timeout, Timeout(Duration::from_millis(42)))
         } else {
             panic!()
         }
@@ -683,11 +683,11 @@ mod test {
         assert_eq!(actions.len(), 2);
 
         let auth_action = &actions[0];
-        assert_eq!(auth_action.extension, "authorino");
+        assert_eq!(auth_action.service, "authorino");
         assert_eq!(auth_action.scope, "authconfig-A");
 
         let rl_action = &actions[1];
-        assert_eq!(rl_action.extension, "limitador");
+        assert_eq!(rl_action.service, "limitador");
         assert_eq!(rl_action.scope, "rlp-ns-A/rlp-name-A");
 
         let auth_data_items = &auth_action.data;
@@ -726,7 +726,7 @@ mod test {
     #[test]
     fn parse_config_min() {
         let config = r#"{
-            "extensions": {},
+            "services": {},
             "actionSets": []
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -742,7 +742,7 @@ mod test {
     #[test]
     fn parse_config_data_selector() {
         let config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
@@ -757,7 +757,7 @@ mod test {
                 },
                 "actions": [
                 {
-                    "extension": "limitador",
+                    "service": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
                     "data": [
                     {
@@ -800,7 +800,7 @@ mod test {
     #[test]
     fn parse_config_condition_selector_operators() {
         let config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
@@ -841,7 +841,7 @@ mod test {
                 },
                 "actions": [
                 {
-                    "extension": "limitador",
+                    "service": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
                     "data": [ { "selector": { "selector": "my.selector.path" } }]
                 }]
@@ -878,7 +878,7 @@ mod test {
     #[test]
     fn parse_config_conditions_optional() {
         let config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
@@ -893,7 +893,7 @@ mod test {
                 },
                 "actions": [
                 {
-                    "extension": "limitador",
+                    "service": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
                     "data": [
                     {
@@ -919,9 +919,9 @@ mod test {
         let filter_config = res.unwrap();
         assert_eq!(filter_config.action_sets.len(), 1);
 
-        let extensions = &filter_config.extensions;
+        let services = &filter_config.services;
         assert_eq!(
-            extensions.get("limitador").unwrap().timeout,
+            services.get("limitador").unwrap().timeout,
             Timeout(Duration::from_millis(20))
         );
 
@@ -933,7 +933,7 @@ mod test {
     fn parse_config_invalid_data() {
         // data item fields are mutually exclusive
         let bad_config = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -948,7 +948,7 @@ mod test {
             },
             "actions": [
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
                 "data": [
                 {
@@ -968,7 +968,7 @@ mod test {
 
         // data item unknown fields are forbidden
         let bad_config = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -983,7 +983,7 @@ mod test {
             },
             "actions": [
             {
-                "extension": "limitador",
+                "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
                 "data": [
                 {
@@ -1000,7 +1000,7 @@ mod test {
 
         // condition selector operator unknown
         let bad_config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
@@ -1021,7 +1021,7 @@ mod test {
                 },
                 "actions": [
                 {
-                    "extension": "limitador",
+                    "service": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
                     "data": [ { "selector": { "selector": "my.selector.path" } }]
                 }]

@@ -10,13 +10,13 @@ A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitado
 Following is a sample configuration used by the shim.
 
 ```yaml
-extensions:
-  auth-ext:
+services:
+  auth-service:
     type: auth
     endpoint: auth-cluster
     failureMode: deny
     timeout: 10ms
-  ratelimit-ext:
+  ratelimit-service:
     type: ratelimit
     endpoint: ratelimit-cluster
     failureMode: deny
@@ -35,7 +35,7 @@ actionSets:
         operator: eq
         value: GET
     actions:
-    - extension: ratelimit-ext
+    - service: ratelimit-service
       scope: rlp-ns-A/rlp-name-A
       data:
       - selector:
