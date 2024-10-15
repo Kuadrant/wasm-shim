@@ -1,4 +1,5 @@
-use crate::configuration::{Action, PatternExpression};
+use crate::configuration::action::Action;
+use crate::configuration::PatternExpression;
 use log::debug;
 use serde::Deserialize;
 
