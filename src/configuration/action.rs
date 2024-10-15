@@ -1,5 +1,5 @@
 use crate::attribute::Attribute;
-use crate::configuration::{DataItem, DataType};
+use crate::configuration::{DataItem, DataType, PatternExpression};
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use log::debug;
 use protobuf::RepeatedField;
@@ -11,10 +11,16 @@ pub struct Action {
     pub service: String,
     pub scope: String,
     #[serde(default)]
+    pub conditions: Vec<PatternExpression>,
+    #[serde(default)]
     pub data: Vec<DataItem>,
 }
 
 impl Action {
+    pub fn conditions_apply(&self) -> bool {
+        self.conditions.is_empty() || self.conditions.iter().all(|m| m.applies())
+    }
+
     pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
         let mut entries = RepeatedField::new();
         if let Some(desc) = self.build_single_descriptor() {

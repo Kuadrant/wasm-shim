@@ -2,7 +2,7 @@ use crate::configuration::action::Action;
 use crate::configuration::{FailureMode, Service, ServiceType};
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler};
-use log::error;
+use log::{debug, error};
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
 use std::cell::RefCell;
@@ -41,6 +41,7 @@ pub(crate) struct Operation {
     grpc_call_fn: GrpcCallFn,
     get_map_values_bytes_fn: GetMapValuesBytesFn,
     grpc_message_build_fn: GrpcMessageBuildFn,
+    conditions_apply_fn: ConditionsApplyFn,
 }
 
 impl Operation {
@@ -58,6 +59,7 @@ impl Operation {
             grpc_call_fn,
             get_map_values_bytes_fn,
             grpc_message_build_fn,
+            conditions_apply_fn,
         }
     }
 
@@ -126,7 +128,7 @@ impl OperationDispatcher {
         self.waiting_operations.get(&token_id).cloned()
     }
 
-    pub fn build_operations(&mut self, actions: &Vec<Action>) {
+    pub fn build_operations(&mut self, actions: &[Action]) {
         let mut operations: Vec<Rc<Operation>> = vec![];
         for action in actions.iter() {
             // TODO(didierofrivia): Error handling
@@ -149,25 +151,31 @@ impl OperationDispatcher {
         if let Some((i, operation)) = self.operations.iter_mut().enumerate().next() {
             match operation.get_state() {
                 State::Pending => {
-                    match operation.trigger() {
-                        Ok(token_id) => {
-                            match operation.get_state() {
-                                State::Pending => {
-                                    panic!("Operation dispatcher reached an undefined state");
+                    if (operation.conditions_apply_fn)(&operation.action) {
+                        match operation.trigger() {
+                            Ok(token_id) => {
+                                match operation.get_state() {
+                                    State::Pending => {
+                                        panic!("Operation dispatcher reached an undefined state");
+                                    }
+                                    State::Waiting => {
+                                        // We index only if it was just transitioned to Waiting after triggering
+                                        self.waiting_operations.insert(token_id, operation.clone());
+                                        // TODO(didierofrivia): Decide on indexing the failed operations.
+                                        Some(operation.clone())
+                                    }
+                                    State::Done => self.next(),
                                 }
-                                State::Waiting => {
-                                    // We index only if it was just transitioned to Waiting after triggering
-                                    self.waiting_operations.insert(token_id, operation.clone());
-                                    // TODO(didierofrivia): Decide on indexing the failed operations.
-                                    Some(operation.clone())
-                                }
-                                State::Done => self.next(),
+                            }
+                            Err(status) => {
+                                error!("{status:?}");
+                                None
                             }
                         }
-                        Err(status) => {
-                            error!("{status:?}");
-                            None
-                        }
+                    } else {
+                        debug!("actions conditions do not apply, skipping");
+                        self.operations.remove(i);
+                        self.next()
                     }
                 }
                 State::Waiting => {
@@ -232,6 +240,12 @@ fn grpc_message_build_fn(
     GrpcMessageRequest::new(extension_type, action)
 }
 
+type ConditionsApplyFn = fn(action: &Action) -> bool;
+
+fn conditions_apply_fn(action: &Action) -> bool {
+    action.conditions_apply()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +283,10 @@ mod tests {
         GrpcServiceHandler::new(Rc::new(Default::default()), Rc::new(Default::default()))
     }
 
+    fn conditions_apply_fn_stub(_action: &Action) -> bool {
+        true
+    }
+
     fn build_message() -> RateLimitRequest {
         RateLimitRequest {
             domain: "example.org".to_string(),
@@ -295,12 +313,14 @@ mod tests {
             action: Action {
                 service: "local".to_string(),
                 scope: "".to_string(),
+                conditions: vec![],
                 data: vec![],
             },
             service_handler: Rc::new(build_grpc_service_handler()),
             grpc_call_fn: grpc_call_fn_stub,
             get_map_values_bytes_fn: get_map_values_bytes_fn_stub,
             grpc_message_build_fn: grpc_message_build_fn_stub,
+            conditions_apply_fn: conditions_apply_fn_stub,
         })
     }
 

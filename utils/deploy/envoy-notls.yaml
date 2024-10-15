@@ -342,6 +342,46 @@ data:
                                           ]
                                         }
                                       ]
+                                    },
+                                    {
+                                      "name": "multi-ns-B/multi-name-B",
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.b.multi.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "request.path",
+                                            "operator": "eq",
+                                            "value": "/get"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
+                                        {
+                                          "service": "authorino",
+                                          "scope": "effective-route-1"
+                                        },
+                                        {
+                                          "service": "limitador",
+                                          "scope": "multi-ns-B/multi-name-B",
+                                          "conditions": [
+                                            {
+                                              "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                              "operator": "eq",
+                                              "value": "alice"
+                                            }
+                                          ],
+                                          "data": [
+                                            {
+                                              "static": {
+                                                "key": "user_id",
+                                                "value": "alice"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
                                     }
                                   ]
                                 }
