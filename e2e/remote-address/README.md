@@ -28,7 +28,7 @@ The Wasm configuration defines a set of rules for `*.example.com`.
     },
     "actions": [
         {
-            "extension": "limitador",
+            "service": "limitador",
             "scope": "ratelimit-source",
             "data": [
                 {

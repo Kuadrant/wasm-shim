@@ -1,5 +1,5 @@
 use crate::configuration::action::Action;
-use crate::configuration::ExtensionType;
+use crate::configuration::ServiceType;
 use crate::envoy::{CheckRequest, CheckResponse, RateLimitRequest, RateLimitResponse};
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
@@ -124,9 +124,9 @@ impl Message for GrpcMessageRequest {
 
 impl GrpcMessageRequest {
     // Using domain as ce_host for the time being, we might pass a DataType in the future.
-    pub fn new(extension_type: &ExtensionType, action: &Action) -> Option<Self> {
-        match extension_type {
-            ExtensionType::RateLimit => {
+    pub fn new(service_type: &ServiceType, action: &Action) -> Option<Self> {
+        match service_type {
+            ServiceType::RateLimit => {
                 let descriptors = action.build_descriptors();
                 if descriptors.is_empty() {
                     debug!("grpc_message_request: empty descriptors");
@@ -137,7 +137,7 @@ impl GrpcMessageRequest {
                     ))
                 }
             }
-            ExtensionType::Auth => Some(GrpcMessageRequest::Auth(AuthService::request_message(
+            ServiceType::Auth => Some(GrpcMessageRequest::Auth(AuthService::request_message(
                 action.scope.clone(),
             ))),
         }
@@ -253,12 +253,12 @@ impl Message for GrpcMessageResponse {
 
 impl GrpcMessageResponse {
     pub fn new(
-        extension_type: &ExtensionType,
+        service_type: &ServiceType,
         res_body_bytes: &Bytes,
     ) -> GrpcMessageResult<GrpcMessageResponse> {
-        match extension_type {
-            ExtensionType::RateLimit => RateLimitService::response_message(res_body_bytes),
-            ExtensionType::Auth => AuthService::response_message(res_body_bytes),
+        match service_type {
+            ServiceType::RateLimit => RateLimitService::response_message(res_body_bytes),
+            ServiceType::Auth => AuthService::response_message(res_body_bytes),
         }
     }
 }

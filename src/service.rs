@@ -3,7 +3,7 @@ pub(crate) mod grpc_message;
 pub(crate) mod rate_limit;
 
 use crate::configuration::action::Action;
-use crate::configuration::{Extension, ExtensionType, FailureMode};
+use crate::configuration::{FailureMode, Service, ServiceType};
 use crate::envoy::StatusCode;
 use crate::operation_dispatcher::Operation;
 use crate::service::auth::{AuthService, AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
@@ -20,21 +20,21 @@ use std::time::Duration;
 
 #[derive(Default)]
 pub struct GrpcService {
-    extension: Rc<Extension>,
+    service: Rc<Service>,
     name: &'static str,
     method: &'static str,
 }
 
 impl GrpcService {
-    pub fn new(extension: Rc<Extension>) -> Self {
-        match extension.extension_type {
-            ExtensionType::Auth => Self {
-                extension,
+    pub fn new(service: Rc<Service>) -> Self {
+        match service.service_type {
+            ServiceType::Auth => Self {
+                service,
                 name: AUTH_SERVICE_NAME,
                 method: AUTH_METHOD_NAME,
             },
-            ExtensionType::RateLimit => Self {
-                extension,
+            ServiceType::RateLimit => Self {
+                service,
                 name: RATELIMIT_SERVICE_NAME,
                 method: RATELIMIT_METHOD_NAME,
             },
@@ -42,7 +42,7 @@ impl GrpcService {
     }
 
     fn endpoint(&self) -> &str {
-        &self.extension.endpoint
+        &self.service.endpoint
     }
     fn name(&self) -> &str {
         self.name
@@ -59,12 +59,10 @@ impl GrpcService {
         if let Some(res_body_bytes) =
             hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap()
         {
-            match GrpcMessageResponse::new(operation.get_extension_type(), &res_body_bytes) {
-                Ok(res) => match operation.get_extension_type() {
-                    ExtensionType::Auth => {
-                        AuthService::process_auth_grpc_response(res, failure_mode)
-                    }
-                    ExtensionType::RateLimit => {
+            match GrpcMessageResponse::new(operation.get_service_type(), &res_body_bytes) {
+                Ok(res) => match operation.get_service_type() {
+                    ServiceType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
+                    ServiceType::RateLimit => {
                         RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
                     }
                 },
@@ -106,17 +104,17 @@ pub type GrpcCallFn = fn(
 pub type GetMapValuesBytesFn = fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status>;
 
 pub type GrpcMessageBuildFn =
-    fn(extension_type: &ExtensionType, action: &Action) -> Option<GrpcMessageRequest>;
+    fn(service_type: &ServiceType, action: &Action) -> Option<GrpcMessageRequest>;
 
 pub struct GrpcServiceHandler {
-    service: Rc<GrpcService>,
+    grpc_service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
 }
 
 impl GrpcServiceHandler {
-    pub fn new(service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
+    pub fn new(grpc_service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
         Self {
-            service,
+            grpc_service,
             header_resolver,
         }
     }
@@ -137,17 +135,17 @@ impl GrpcServiceHandler {
             .collect();
 
         grpc_call_fn(
-            self.service.endpoint(),
-            self.service.name(),
-            self.service.method(),
+            self.grpc_service.endpoint(),
+            self.grpc_service.name(),
+            self.grpc_service.method(),
             metadata,
             Some(&msg),
             timeout,
         )
     }
 
-    pub fn get_extension(&self) -> Rc<Extension> {
-        Rc::clone(&self.service.extension)
+    pub fn get_service(&self) -> Rc<Service> {
+        Rc::clone(&self.grpc_service.service)
     }
 }
 

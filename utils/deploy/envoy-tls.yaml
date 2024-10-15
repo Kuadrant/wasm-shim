@@ -145,7 +145,7 @@ data:
                               "@type": "type.googleapis.com/google.protobuf.StringValue"
                               value: >
                                 {
-                                  "extensions": {
+                                  "services": {
                                     "authorino": {
                                       "type": "auth",
                                       "endpoint": "authorino_wasm",
@@ -174,7 +174,7 @@ data:
                                       },
                                       "actions": [
                                         {
-                                          "extension": "authorino",
+                                          "service": "authorino",
                                           "scope": "effective-route-1"
                                         }
                                       ]
@@ -188,7 +188,7 @@ data:
                                       },
                                       "actions": [
                                         {
-                                          "extension": "limitador",
+                                          "service": "limitador",
                                           "scope": "rlp-ns-A/rlp-name-A",
                                           "data": [
                                             {
@@ -216,7 +216,7 @@ data:
                                       },
                                       "actions": [
                                         {
-                                          "extension": "limitador",
+                                          "service": "limitador",
                                           "scope": "rlp-ns-B/rlp-name-B",
                                           "data": [
                                             {
@@ -255,7 +255,7 @@ data:
                                       },
                                       "actions": [
                                         {
-                                          "extension": "limitador",
+                                          "service": "limitador",
                                           "scope": "rlp-ns-C/rlp-name-C",
                                           "data": [
                                             {
@@ -334,11 +334,11 @@ data:
                                       },
                                       "actions": [
                                         {
-                                          "extension": "authorino",
+                                          "service": "authorino",
                                           "scope": "effective-route-1"
                                         },
                                         {
-                                          "extension": "limitador",
+                                          "service": "limitador",
                                           "scope": "multi-ns-A/multi-name-A",
                                           "data": [
                                             {

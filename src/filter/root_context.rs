@@ -40,11 +40,11 @@ impl RootContext for FilterRoot {
         self.config
             .services
             .iter()
-            .for_each(|(extension, service)| {
+            .for_each(|(service_name, grpc_service)| {
                 service_handlers
-                    .entry(extension.clone())
+                    .entry(service_name.clone())
                     .or_insert(Rc::from(GrpcServiceHandler::new(
-                        Rc::clone(service),
+                        Rc::clone(grpc_service),
                         Rc::clone(&header_resolver),
                     )));
             });

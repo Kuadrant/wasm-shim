@@ -22,7 +22,7 @@ fn it_limits_based_on_source_address() {
 
     let root_context = 1;
     let cfg = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
@@ -45,7 +45,7 @@ fn it_limits_based_on_source_address() {
                 },
                 "actions": [
                     {
-                        "extension": "limitador",
+                        "service": "limitador",
                         "scope": "RLS-domain",
                         "data": [
                             {

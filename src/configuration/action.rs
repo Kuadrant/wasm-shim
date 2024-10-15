@@ -8,7 +8,7 @@ use serde::Deserialize;
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Action {
-    pub extension: String,
+    pub service: String,
     pub scope: String,
     #[serde(default)]
     pub data: Vec<DataItem>,

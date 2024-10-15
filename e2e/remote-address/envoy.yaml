@@ -43,7 +43,7 @@ static_resources:
                       "@type": "type.googleapis.com/google.protobuf.StringValue"
                       value: >
                         {
-                          "extensions": {
+                          "services": {
                             "limitador": {
                               "type": "ratelimit",
                               "endpoint": "limitador",
@@ -67,7 +67,7 @@ static_resources:
                               },
                               "actions": [
                                 {
-                                  "extension": "limitador",
+                                  "service": "limitador",
                                   "scope": "ratelimit-source",
                                   "data": [
                                     {

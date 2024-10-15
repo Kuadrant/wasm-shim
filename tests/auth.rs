@@ -5,7 +5,7 @@ use serial_test::serial;
 pub(crate) mod util;
 
 const CONFIG: &str = r#"{
-        "extensions": {
+        "services": {
             "authorino": {
                 "type": "auth",
                 "endpoint": "authorino-cluster",
@@ -37,7 +37,7 @@ const CONFIG: &str = r#"{
             },
             "actions": [
             {
-                "extension": "authorino",
+                "service": "authorino",
                 "scope": "authconfig-A"
             }]
         }]
