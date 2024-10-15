@@ -152,10 +152,10 @@ data:
                                   "actionSets": [
                                     {
                                       "name": "auth-ns-A/auth-name-A",
-                                      "hostnames": [
-                                        "*.a.auth.com"
-                                      ],
                                       "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.a.auth.com"
+                                        ],
                                         "matches": [
                                           {
                                             "selector": "request.path",
@@ -173,10 +173,10 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-A/rlp-name-A",
-                                      "hostnames": [
-                                        "*.a.rlp.com"
-                                      ],
                                       "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.a.rlp.com"
+                                        ],
                                         "actions": [
                                           {
                                             "extension": "limitador",
@@ -194,10 +194,10 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-B/rlp-name-B",
-                                      "hostnames": [
-                                        "*.b.rlp.com"
-                                      ],
                                       "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.b.rlp.com"
+                                        ],
                                         "matches": [
                                           {
                                             "selector": "request.url_path",
@@ -223,10 +223,10 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-C/rlp-name-C",
-                                      "hostnames": [
-                                        "*.c.rlp.com"
-                                      ],
                                       "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.c.rlp.com"
+                                        ],
                                         "matches": [
                                           {
                                             "selector": "request.url_path",
@@ -312,10 +312,10 @@ data:
                                     },
                                     {
                                       "name": "multi-ns-A/multi-name-A",
-                                      "hostnames": [
-                                        "*.a.multi.com"
-                                      ],
                                       "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.a.multi.com"
+                                        ],
                                         "matches": [
                                           {
                                             "selector": "request.path",

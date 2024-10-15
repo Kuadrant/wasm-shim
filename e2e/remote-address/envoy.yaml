@@ -53,10 +53,10 @@ static_resources:
                           "actionSets": [
                             {
                               "name": "ratelimit-source",
-                              "hostnames": [
-                                "*.example.com"
-                              ],
                               "routeRuleConditions": {
+                                "hostnames": [
+                                  "*.example.com"
+                                ],
                                 "matches": [
                                   {
                                     "selector": "source.remote_address",

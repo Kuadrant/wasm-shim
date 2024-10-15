@@ -434,7 +434,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                 }
             }
 
-            for hostname in action_set.hostnames.iter() {
+            for hostname in action_set.route_rule_conditions.hostnames.iter() {
                 index.insert(hostname, Rc::new(action_set.clone()));
             }
         }
@@ -635,8 +635,8 @@ mod test {
         "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "hostnames": ["*.toystore.com", "example.com"],
             "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"],
                 "matches": [
                 {
                     "selector": "request.path",
@@ -787,8 +787,8 @@ mod test {
             "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
                 "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"],
                     "actions": [
                     {
                         "extension": "limitador",
@@ -846,8 +846,8 @@ mod test {
             "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
                 "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"],
                     "matches": [
                     {
                         "selector": "request.path",
@@ -925,8 +925,8 @@ mod test {
             "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
                 "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"],
                     "actions": [
                     {
                         "extension": "limitador",
@@ -981,8 +981,8 @@ mod test {
         "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "hostnames": ["*.toystore.com", "example.com"],
             "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"],
                 "actions": [
                 {
                     "extension": "limitador",
@@ -1016,10 +1016,8 @@ mod test {
         "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "service": "limitador-cluster",
-            "hostnames": ["*.toystore.com", "example.com"],
-            "routeRuleConditions": [
-            {
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"],
                 "actions": [
                 {
                     "extension": "limitador",
@@ -1032,7 +1030,7 @@ mod test {
                         }
                     }]
                 }]
-            }]
+            }
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -1050,8 +1048,8 @@ mod test {
             "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
                 "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"],
                     "matches": [
                     {
                         "selector": "request.path",

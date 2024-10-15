@@ -4,6 +4,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct RouteRuleConditions {
+    pub hostnames: Vec<String>,
     #[serde(default)]
     pub matches: Vec<PatternExpression>,
     pub actions: Vec<Action>,
@@ -13,16 +14,14 @@ pub struct RouteRuleConditions {
 #[serde(rename_all = "camelCase")]
 pub struct ActionSet {
     pub name: String,
-    pub hostnames: Vec<String>,
     pub route_rule_conditions: RouteRuleConditions,
 }
 
 impl ActionSet {
     #[cfg(test)]
-    pub fn new(name: String, hostnames: Vec<String>, rules: RouteRuleConditions) -> Self {
+    pub fn new(name: String, rules: RouteRuleConditions) -> Self {
         ActionSet {
             name,
-            hostnames,
             route_rule_conditions: rules,
         }
     }

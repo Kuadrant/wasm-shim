@@ -33,8 +33,8 @@ fn it_limits_based_on_source_address() {
         "actionSets": [
             {
                 "name": "some-name",
-                "hostnames": ["*.example.com"],
                 "routeRuleConditions": {
+                    "hostnames": ["*.example.com"],
                     "matches": [
                         {
                             "selector": "source.remote_address",

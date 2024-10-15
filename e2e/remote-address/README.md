@@ -14,10 +14,10 @@ The Wasm configuration defines a set of rules for `*.example.com`.
 ```yaml
 {
     "name": "ratelimit-source",
-    "hostnames": [
-        "*.example.com"
-    ],
     "routeRuleConditions": {
+        "hostnames": [
+          "*.example.com"
+        ],
         "matches": [
             {
                 "selector": "source.remote_address",

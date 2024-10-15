@@ -22,8 +22,8 @@ extensions:
     failureMode: deny
 actionSets:
   - name: rlp-ns-A/rlp-name-A
-    hostnames: [ "*.toystore.com" ]
     routeRuleConditions:
+      hostnames: [ "*.toystore.com" ]
       matches:
       - selector: request.url_path
         operator: startswith
