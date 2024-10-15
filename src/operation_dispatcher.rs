@@ -1,4 +1,4 @@
-use crate::configuration::action_set::Rule;
+use crate::configuration::action_set::RouteRuleConditions;
 use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler};
@@ -123,7 +123,7 @@ impl OperationDispatcher {
         self.waiting_operations.get(&token_id).cloned()
     }
 
-    pub fn build_operations(&mut self, rule: &Rule) {
+    pub fn build_operations(&mut self, rule: &RouteRuleConditions) {
         let mut operations: Vec<Rc<Operation>> = vec![];
         for action in rule.actions.iter() {
             // TODO(didierofrivia): Error handling

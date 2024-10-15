@@ -17,34 +17,28 @@ The Wasm configuration defines a set of rules for `*.example.com`.
     "hostnames": [
         "*.example.com"
     ],
-    "rules": [
-        {
-            "conditions": [
-                {
-                    "allOf": [
+    "routeRuleConditions": {
+        "matches": [
+            {
+                "selector": "source.remote_address",
+                "operator": "neq",
+                "value": "50.0.0.1"
+            }
+        ],
+        "actions": [
+            {
+                "extension": "limitador",
+                "scope": "ratelimit-source",
+                "data": [
                     {
-                        "selector": "source.remote_address",
-                        "operator": "neq",
-                        "value": "50.0.0.1"
-                    }
-                    ]
-                }
-            ],
-            "actions": [
-                {
-                    "extension": "limitador",
-                    "scope": "ratelimit-source",
-                    "data": [
-                        {
-                            "selector": {
-                                "selector": "source.remote_address"
-                            }
+                        "selector": {
+                            "selector": "source.remote_address"
                         }
-                    ]
-                }
-            ]
-        }
-    ]
+                    }
+                ]
+            }
+        ]
+    }
 }
 ```
 

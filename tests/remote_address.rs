@@ -34,35 +34,29 @@ fn it_limits_based_on_source_address() {
             {
                 "name": "some-name",
                 "hostnames": ["*.example.com"],
-                "rules": [
-                    {
-                        "conditions": [
-                            {
-                                "allOf": [
-                                    {
+                "routeRuleConditions": {
+                    "matches": [
+                        {
+                            "selector": "source.remote_address",
+                            "operator": "neq",
+                            "value": "50.0.0.1"
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "extension": "limitador",
+                            "scope": "RLS-domain",
+                            "data": [
+                                {
+                                    "selector": {
                                         "selector": "source.remote_address",
-                                        "operator": "neq",
-                                        "value": "50.0.0.1"
+                                        "value": "1"
                                     }
-                                ]
-                            }
-                        ],
-                        "actions": [
-                            {
-                                "extension": "limitador",
-                                "scope": "RLS-domain",
-                                "data": [
-                                    {
-                                        "selector": {
-                                            "selector": "source.remote_address",
-                                            "value": "1"
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
+                                }
+                            ]
+                        }
+                    ]
+                }
             }
         ]
     }"#;

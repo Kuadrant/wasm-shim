@@ -23,18 +23,17 @@ extensions:
 actionSets:
   - name: rlp-ns-A/rlp-name-A
     hostnames: [ "*.toystore.com" ]
-    rules:
-    - conditions:
-      - allOf:
-        - selector: request.url_path
-          operator: startswith
-          value: /get
-        - selector: request.host
-          operator: eq
-          value: test.toystore.com
-        - selector: request.method
-          operator: eq
-          value: GET
+    routeRuleConditions:
+      matches:
+      - selector: request.url_path
+        operator: startswith
+        value: /get
+      - selector: request.host
+        operator: eq
+        value: test.toystore.com
+      - selector: request.method
+        operator: eq
+        value: GET
       actions:
       - extension: ratelimit-ext
         scope: rlp-ns-A/rlp-name-A

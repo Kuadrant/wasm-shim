@@ -17,33 +17,29 @@ const CONFIG: &str = r#"{
         {
             "name": "some-name",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
-            {
-                "conditions": [
+            "routeRuleConditions": {
+                "matches": [
                 {
-                    "allOf": [
-                    {
-                        "selector": "request.url_path",
-                        "operator": "startswith",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    }]
+                    "selector": "request.url_path",
+                    "operator": "startswith",
+                    "value": "/admin/toy"
+                },
+                {
+                    "selector": "request.host",
+                    "operator": "eq",
+                    "value": "cars.toystore.com"
+                },
+                {
+                    "selector": "request.method",
+                    "operator": "eq",
+                    "value": "POST"
                 }],
                 "actions": [
                 {
                     "extension": "authorino",
                     "scope": "authconfig-A"
                 }]
-            }]
+            }
         }]
     }"#;
 
