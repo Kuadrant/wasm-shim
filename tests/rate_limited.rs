@@ -95,26 +95,22 @@ fn it_limits() {
         {
             "name": "some-name",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
-            {
-                "conditions": [
+            "routeRuleConditions": {
+                "matches": [
                 {
-                    "allOf": [
-                    {
-                        "selector": "request.url_path",
-                        "operator": "startswith",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    }]
+                    "selector": "request.url_path",
+                    "operator": "startswith",
+                    "value": "/admin/toy"
+                },
+                {
+                    "selector": "request.host",
+                    "operator": "eq",
+                    "value": "cars.toystore.com"
+                },
+                {
+                    "selector": "request.method",
+                    "operator": "eq",
+                    "value": "POST"
                 }],
                 "actions": [
                 {
@@ -129,7 +125,7 @@ fn it_limits() {
                         }
                     ]
                 }]
-            }]
+            }
         }]
     }"#;
 
@@ -256,26 +252,22 @@ fn it_passes_additional_headers() {
         {
             "name": "some-name",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
-            {
-                "conditions": [
+            "routeRuleConditions": {
+                "matches": [
                 {
-                   "allOf": [
-                    {
-                        "selector": "request.url_path",
-                        "operator": "startswith",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    }]
+                    "selector": "request.url_path",
+                    "operator": "startswith",
+                    "value": "/admin/toy"
+                },
+                {
+                    "selector": "request.host",
+                    "operator": "eq",
+                    "value": "cars.toystore.com"
+                },
+                {
+                    "selector": "request.method",
+                    "operator": "eq",
+                    "value": "POST"
                 }],
                 "actions": [
                 {
@@ -290,7 +282,7 @@ fn it_passes_additional_headers() {
                         }
                     ]
                 }]
-            }]
+            }
         }]
     }"#;
 
@@ -431,8 +423,7 @@ fn it_rate_limits_with_empty_conditions() {
         {
             "name": "some-name",
             "hostnames": ["*.com"],
-            "rules": [
-            {
+            "routeRuleConditions": {
                 "actions": [
                 {
                     "extension": "limitador",
@@ -446,7 +437,7 @@ fn it_rate_limits_with_empty_conditions() {
                         }
                     ]
                 }]
-            }]
+            }
         }]
     }"#;
 
@@ -554,8 +545,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         {
             "name": "some-name",
             "hostnames": ["*.com"],
-            "rules": [
-            {
+            "routeRuleConditions": {
                 "actions": [
                 {
                     "extension": "limitador",
@@ -568,7 +558,7 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
                         }
                     ]
                 }]
-            }]
+            }
         }]
     }"#;
 

@@ -468,23 +468,18 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = ActionSetIndex::new();
-
         for action_set in config.action_sets.iter() {
-            for rule in &action_set.rules {
-                for condition in &rule.conditions {
-                    for pe in &condition.all_of {
-                        let result = pe.compile();
-                        if result.is_err() {
-                            return Err(result.err().unwrap());
-                        }
-                    }
+            for pe in &action_set.route_rule_conditions.matches {
+                let result = pe.compile();
+                if result.is_err() {
+                    return Err(result.err().unwrap());
                 }
-                for action in &rule.actions {
-                    for datum in &action.data {
-                        let result = datum.item.compile();
-                        if result.is_err() {
-                            return Err(result.err().unwrap());
-                        }
+            }
+            for action in &action_set.route_rule_conditions.actions {
+                for datum in &action.data {
+                    let result = datum.item.compile();
+                    if result.is_err() {
+                        return Err(result.err().unwrap());
                     }
                 }
             }
@@ -692,26 +687,22 @@ mod test {
         {
             "name": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
-            {
-                "conditions": [
+            "routeRuleConditions": {
+                "matches": [
                 {
-                   "allOf": [
-                    {
-                        "selector": "request.path",
-                        "operator": "eq",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    }]
+                    "selector": "request.path",
+                    "operator": "eq",
+                    "value": "/admin/toy"
+                },
+                {
+                    "selector": "request.method",
+                    "operator": "eq",
+                    "value": "POST"
+                },
+                {
+                    "selector": "request.host",
+                    "operator": "eq",
+                    "value": "cars.toystore.com"
                 }],
                 "actions": [
                 {
@@ -734,7 +725,7 @@ mod test {
                         }
                     }]
                 }]
-            }]
+            }
         }]
     }"#;
 
@@ -770,16 +761,11 @@ mod test {
             panic!()
         }
 
-        let rules = &filter_config.action_sets[0].rules;
-        assert_eq!(rules.len(), 1);
+        let route_rule_conditions = &filter_config.action_sets[0].route_rule_conditions;
+        let matches = &route_rule_conditions.matches;
+        assert_eq!(matches.len(), 3);
 
-        let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 1);
-
-        let all_of_conditions = &conditions[0].all_of;
-        assert_eq!(all_of_conditions.len(), 3);
-
-        let actions = &rules[0].actions;
+        let actions = &route_rule_conditions.actions;
         assert_eq!(actions.len(), 2);
 
         let auth_action = &actions[0];
@@ -853,8 +839,7 @@ mod test {
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
-                {
+                "routeRuleConditions": {
                     "actions": [
                     {
                         "extension": "limitador",
@@ -868,7 +853,7 @@ mod test {
                             }
                         }]
                     }]
-                }]
+                }
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -880,10 +865,8 @@ mod test {
         let filter_config = res.unwrap();
         assert_eq!(filter_config.action_sets.len(), 1);
 
-        let rules = &filter_config.action_sets[0].rules;
-        assert_eq!(rules.len(), 1);
-
-        let actions = &rules[0].actions;
+        let route_rule_conditions = &filter_config.action_sets[0].route_rule_conditions;
+        let actions = &route_rule_conditions.actions;
         assert_eq!(actions.len(), 1);
 
         let data_items = &actions[0].data;
@@ -915,36 +898,32 @@ mod test {
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
-                {
-                    "conditions": [
+                "routeRuleConditions": {
+                    "matches": [
                     {
-                        "allOf": [
-                        {
-                            "selector": "request.path",
-                            "operator": "eq",
-                            "value": "/admin/toy"
-                        },
-                        {
-                            "selector": "request.method",
-                            "operator": "neq",
-                            "value": "POST"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "startswith",
-                            "value": "cars."
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "endswith",
-                            "value": ".com"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "matches",
-                            "value": "*.com"
-                        }]
+                        "selector": "request.path",
+                        "operator": "eq",
+                        "value": "/admin/toy"
+                    },
+                    {
+                        "selector": "request.method",
+                        "operator": "neq",
+                        "value": "POST"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "startswith",
+                        "value": "cars."
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "endswith",
+                        "value": ".com"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "matches",
+                        "value": "*.com"
                     }],
                     "actions": [
                     {
@@ -952,7 +931,7 @@ mod test {
                         "scope": "rlp-ns-A/rlp-name-A",
                         "data": [ { "selector": { "selector": "my.selector.path" } }]
                     }]
-                }]
+                }
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -964,14 +943,9 @@ mod test {
         let filter_config = res.unwrap();
         assert_eq!(filter_config.action_sets.len(), 1);
 
-        let rules = &filter_config.action_sets[0].rules;
-        assert_eq!(rules.len(), 1);
-
-        let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 1);
-
-        let all_of_conditions = &conditions[0].all_of;
-        assert_eq!(all_of_conditions.len(), 5);
+        let route_rule_conditions = &filter_config.action_sets[0].route_rule_conditions;
+        let matches = &route_rule_conditions.matches;
+        assert_eq!(matches.len(), 5);
 
         let expected_conditions = [
             // selector, value, operator
@@ -983,9 +957,9 @@ mod test {
         ];
 
         for i in 0..expected_conditions.len() {
-            assert_eq!(all_of_conditions[i].selector, expected_conditions[i].0);
-            assert_eq!(all_of_conditions[i].value, expected_conditions[i].1);
-            assert_eq!(all_of_conditions[i].operator, expected_conditions[i].2);
+            assert_eq!(matches[i].selector, expected_conditions[i].0);
+            assert_eq!(matches[i].value, expected_conditions[i].1);
+            assert_eq!(matches[i].operator, expected_conditions[i].2);
         }
     }
 
@@ -1003,8 +977,7 @@ mod test {
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
-                {
+                "routeRuleConditions": {
                     "actions": [
                     {
                         "extension": "limitador",
@@ -1022,7 +995,7 @@ mod test {
                             }
                         }]
                     }]
-                }]
+                }
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
@@ -1040,11 +1013,9 @@ mod test {
             Timeout(Duration::from_millis(20))
         );
 
-        let rules = &filter_config.action_sets[0].rules;
-        assert_eq!(rules.len(), 1);
-
-        let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 0);
+        let route_rule_conditions = &filter_config.action_sets[0].route_rule_conditions;
+        let matches = &route_rule_conditions.matches;
+        assert_eq!(matches.len(), 0);
     }
 
     #[test]
@@ -1062,8 +1033,7 @@ mod test {
         {
             "name": "rlp-ns-A/rlp-name-A",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
-            {
+            "routeRuleConditions": {
                 "actions": [
                 {
                     "extension": "limitador",
@@ -1079,7 +1049,7 @@ mod test {
                         }
                     }]
                 }]
-            }]
+            }
         }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
@@ -1099,7 +1069,7 @@ mod test {
             "name": "rlp-ns-A/rlp-name-A",
             "service": "limitador-cluster",
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
+            "routeRuleConditions": [
             {
                 "actions": [
                 {
@@ -1132,16 +1102,12 @@ mod test {
             {
                 "name": "rlp-ns-A/rlp-name-A",
                 "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
-                {
-                    "conditions": [
+                "routeRuleConditions": {
+                    "matches": [
                     {
-                       "allOf": [
-                        {
-                            "selector": "request.path",
-                            "operator": "unknown",
-                            "value": "/admin/toy"
-                        }]
+                        "selector": "request.path",
+                        "operator": "unknown",
+                        "value": "/admin/toy"
                     }],
                     "actions": [
                     {
@@ -1149,7 +1115,7 @@ mod test {
                         "scope": "rlp-ns-A/rlp-name-A",
                         "data": [ { "selector": { "selector": "my.selector.path" } }]
                     }]
-                }]
+                }
             }]
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
