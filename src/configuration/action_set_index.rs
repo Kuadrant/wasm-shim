@@ -48,7 +48,7 @@ mod tests {
     use std::rc::Rc;
 
     fn build_ratelimit_action_set(name: &str) -> ActionSet {
-        ActionSet::new(name.to_owned(), Default::default())
+        ActionSet::new(name.to_owned(), Default::default(), Vec::new())
     }
 
     #[test]

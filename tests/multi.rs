@@ -40,24 +40,24 @@ const CONFIG: &str = r#"{
                     "selector": "request.method",
                     "operator": "eq",
                     "value": "POST"
-                }],
-                "actions": [
-                {
-                    "extension": "authorino",
-                    "scope": "authconfig-A"
-                },
-                {
-                    "extension": "limitador",
-                    "scope": "RLS-domain",
-                    "data": [
-                    {
-                        "static": {
-                            "key": "admin",
-                            "value": "1"
-                        }
-                    }]
                 }]
-            }
+            },
+            "actions": [
+            {
+                "extension": "authorino",
+                "scope": "authconfig-A"
+            },
+            {
+                "extension": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                {
+                    "static": {
+                        "key": "admin",
+                        "value": "1"
+                    }
+                }]
+            }]
         }]
     }"#;
 

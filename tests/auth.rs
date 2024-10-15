@@ -33,13 +33,13 @@ const CONFIG: &str = r#"{
                     "selector": "request.method",
                     "operator": "eq",
                     "value": "POST"
-                }],
-                "actions": [
-                {
-                    "extension": "authorino",
-                    "scope": "authconfig-A"
                 }]
-            }
+            },
+            "actions": [
+            {
+                "extension": "authorino",
+                "scope": "authconfig-A"
+            }]
         }]
     }"#;
 
