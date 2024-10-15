@@ -2,7 +2,8 @@ pub(crate) mod auth;
 pub(crate) mod grpc_message;
 pub(crate) mod rate_limit;
 
-use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
+use crate::configuration::action::Action;
+use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::envoy::StatusCode;
 use crate::operation_dispatcher::Operation;
 use crate::service::auth::{AuthService, AUTH_METHOD_NAME, AUTH_SERVICE_NAME};

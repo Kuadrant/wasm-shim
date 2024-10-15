@@ -1,4 +1,5 @@
-use crate::configuration::{Action, ExtensionType};
+use crate::configuration::action::Action;
+use crate::configuration::ExtensionType;
 use crate::envoy::{CheckRequest, CheckResponse, RateLimitRequest, RateLimitResponse};
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;

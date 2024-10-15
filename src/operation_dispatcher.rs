@@ -1,4 +1,5 @@
-use crate::configuration::{Action, Extension, ExtensionType, FailureMode};
+use crate::configuration::action::Action;
+use crate::configuration::{Extension, ExtensionType, FailureMode};
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler};
 use log::error;

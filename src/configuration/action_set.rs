@@ -1,4 +1,5 @@
-use crate::configuration::{Action, PatternExpression};
+use crate::configuration::action::Action;
+use crate::configuration::PatternExpression;
 use log::debug;
 use proxy_wasm::hostcalls;
 use serde::Deserialize;
