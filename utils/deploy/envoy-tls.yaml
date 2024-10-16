@@ -108,6 +108,7 @@ data:
                     "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                     stat_prefix: local
                     use_remote_address: true
+                    xff_num_trusted_hops: 1
                     route_config:
                       name: local_route
                       virtual_hosts:
@@ -283,6 +284,11 @@ data:
                                                 },
                                                 {
                                                   "selector": {
+                                                    "selector": "source.remote_address"
+                                                  }
+                                                },
+                                                {
+                                                  "selector": {
                                                     "selector": "source.address"
                                                   }
                                                 },
@@ -347,7 +353,7 @@ data:
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-                    
+
                     # # Uncomment to enable tracing
                     # tracing:
                     #   provider:

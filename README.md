@@ -187,10 +187,32 @@ curl -H "Host: test.a.rlp.com" http://127.0.0.1:8000/get -i
 curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
 ```
 
-* `rlp-c`: Four descriptors from multiple rules should be generated. Hence, rate limiting service should be called.
+* `rlp-c`: Descriptor entries from multiple data items should be generated. Hence, rate limiting service should be called.
 
 ```sh
-curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+```
+
+The expected descriptor entries:
+
+```
+Entry { key: "limit_to_be_activated", value: "1" }
+```
+
+```
+Entry { key: "source.remote_address", value: "50.0.0.1" }
+```
+
+```
+Entry { key: "source.address", value: "50.0.0.1:0" }
+```
+
+```
+Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }
+```
+
+```
+Entry { key: "user_id", value: "bob" }
 ```
 
 * `multi-a` which defines two actions for authenticated ratelimiting.
@@ -210,23 +232,6 @@ Bob has 2 requests per 10 seconds:
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
-The expected descriptors:
-
-```
-RateLimitDescriptor { entries: [Entry { key: "limit_to_be_activated", value: "1" }], limit: None }
-```
-
-```
-RateLimitDescriptor { entries: [Entry { key: "source.address", value: "127.0.0.1:0" }], limit: None }
-```
-
-```
-RateLimitDescriptor { entries: [Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }], limit: None }
-```
-
-```
-RateLimitDescriptor { entries: [Entry { key: "user_id", value: "bob" }], limit: None }
-```
 
 To rebuild and deploy to the cluster:
 
