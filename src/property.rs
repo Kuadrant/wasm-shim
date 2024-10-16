@@ -59,7 +59,11 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
 
 fn host_get_property(property: &str) -> Result<Option<Vec<u8>>, Status> {
     let path = Path::from(property);
-    debug!("get_property:  property: {} path: {}", property, path);
+    debug!(
+        "get_property:  selector: {} path: {:?}",
+        property,
+        path.tokens()
+    );
     hostcalls::get_property(path.tokens())
 }
 

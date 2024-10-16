@@ -1122,7 +1122,6 @@ mod test {
                 selector: "request.id".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "request_id".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1140,7 +1139,6 @@ mod test {
                 selector: "request.id".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "\"request_id\"".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1158,7 +1156,6 @@ mod test {
                 selector: "request.id".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "123".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1176,7 +1173,6 @@ mod test {
                 selector: "foobar".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "\"123\"".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1194,7 +1190,6 @@ mod test {
                 selector: "destination.port".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "8080".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1212,7 +1207,6 @@ mod test {
                 selector: "foobar".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "8080".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1230,7 +1224,6 @@ mod test {
                 selector: "foobar".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "1.0".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1248,7 +1241,6 @@ mod test {
                 selector: "connection.mtls".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "true".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1266,7 +1258,6 @@ mod test {
                 selector: "request.time".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "2023-05-28T00:00:00+00:00".to_string(),
-                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
