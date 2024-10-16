@@ -5,43 +5,43 @@ use serial_test::serial;
 pub(crate) mod util;
 
 const CONFIG: &str = r#"{
-        "services": {
-            "authorino": {
-                "type": "auth",
-                "endpoint": "authorino-cluster",
-                "failureMode": "deny",
-                "timeout": "5s"
-            }
-        },
-        "actionSets": [
-        {
-            "name": "some-name",
-            "routeRuleConditions": {
-                "hostnames": ["*.toystore.com", "example.com"],
-                "matches": [
-                {
-                    "selector": "request.url_path",
-                    "operator": "startswith",
-                    "value": "/admin/toy"
-                },
-                {
-                    "selector": "request.host",
-                    "operator": "eq",
-                    "value": "cars.toystore.com"
-                },
-                {
-                    "selector": "request.method",
-                    "operator": "eq",
-                    "value": "POST"
-                }]
-            },
-            "actions": [
+    "services": {
+        "authorino": {
+            "type": "auth",
+            "endpoint": "authorino-cluster",
+            "failureMode": "deny",
+            "timeout": "5s"
+        }
+    },
+    "actionSets": [
+    {
+        "name": "some-name",
+        "routeRuleConditions": {
+            "hostnames": ["*.toystore.com", "example.com"],
+            "matches": [
             {
-                "service": "authorino",
-                "scope": "authconfig-A"
+                "selector": "request.url_path",
+                "operator": "startswith",
+                "value": "/admin/toy"
+            },
+            {
+                "selector": "request.host",
+                "operator": "eq",
+                "value": "cars.toystore.com"
+            },
+            {
+                "selector": "request.method",
+                "operator": "eq",
+                "value": "POST"
             }]
+        },
+        "actions": [
+        {
+            "service": "authorino",
+            "scope": "authconfig-A"
         }]
-    }"#;
+    }]
+}"#;
 
 #[test]
 #[serial]

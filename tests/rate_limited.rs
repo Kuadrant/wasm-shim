@@ -616,3 +616,100 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
+
+#[test]
+#[serial]
+fn it_does_not_rate_limits_when_condition_does_not_match() {
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.com"]
+            },
+            "actions": [
+            {
+                "service": "limitador",
+                "scope": "RLS-domain",
+                "conditions": [
+                {
+                    "selector": "request.url_path",
+                    "operator": "startswith",
+                    "value": "/admin/toy"
+                }]
+            }]
+        }]
+    }"#;
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_log(Some(LogLevel::Info), None)
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
+        .returning(Some("a.com"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
+        // retrieving properties for conditions
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"url_path\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "url_path"]))
+        .returning(Some("/admin".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("actions conditions do not apply, skipping"),
+        )
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+}

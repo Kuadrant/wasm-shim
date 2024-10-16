@@ -605,6 +605,12 @@ mod test {
             {
                 "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
+                "conditions": [
+                {
+                    "selector": "auth.metadata.username",
+                    "operator": "eq",
+                    "value": "alice"
+                }],
                 "data": [
                 {
                     "static": {
@@ -672,6 +678,9 @@ mod test {
 
         let rl_data_items = &rl_action.data;
         assert_eq!(rl_data_items.len(), 2);
+
+        let rl_conditions = &rl_action.conditions;
+        assert_eq!(rl_conditions.len(), 1);
 
         // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
         //assert_eq!(
@@ -820,6 +829,17 @@ mod test {
                 {
                     "service": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
+                    "conditions": [
+                    {
+                        "selector": "auth.metadata.username",
+                        "operator": "eq",
+                        "value": "alice"
+                    },
+                    {
+                        "selector": "request.path",
+                        "operator": "endswith",
+                        "value": "/car"
+                    }],
                     "data": [ { "selector": { "selector": "my.selector.path" } }]
                 }]
             }]
@@ -836,7 +856,7 @@ mod test {
         let matches = &filter_config.action_sets[0].route_rule_conditions.matches;
         assert_eq!(matches.len(), 5);
 
-        let expected_conditions = [
+        let expected_matches = [
             // selector, value, operator
             ("request.path", "/admin/toy", WhenConditionOperator::Equal),
             ("request.method", "POST", WhenConditionOperator::NotEqual),
@@ -845,10 +865,33 @@ mod test {
             ("request.host", "*.com", WhenConditionOperator::Matches),
         ];
 
-        for i in 0..expected_conditions.len() {
-            assert_eq!(matches[i].selector, expected_conditions[i].0);
-            assert_eq!(matches[i].value, expected_conditions[i].1);
-            assert_eq!(matches[i].operator, expected_conditions[i].2);
+        for (m, (expected_selector, expected_value, expected_operator)) in
+            matches.iter().zip(expected_matches.iter())
+        {
+            assert_eq!(m.selector, *expected_selector);
+            assert_eq!(m.value, *expected_value);
+            assert_eq!(m.operator, *expected_operator);
+        }
+
+        let conditions = &filter_config.action_sets[0].actions[0].conditions;
+        assert_eq!(conditions.len(), 2);
+
+        let expected_conditions = [
+            // selector, value, operator
+            (
+                "auth.metadata.username",
+                "alice",
+                WhenConditionOperator::Equal,
+            ),
+            ("request.path", "/car", WhenConditionOperator::EndsWith),
+        ];
+
+        for (condition, (expected_selector, expected_value, expected_operator)) in
+            conditions.iter().zip(expected_conditions.iter())
+        {
+            assert_eq!(condition.selector, *expected_selector);
+            assert_eq!(condition.value, *expected_value);
+            assert_eq!(condition.operator, *expected_operator);
         }
     }
 
