@@ -589,14 +589,11 @@ fn it_does_not_rate_limits_when_selector_does_not_exist_and_misses_default_value
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("a.com"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 policy selected some-name"),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
         // retrieving properties for RateLimitRequest
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: unknown.path path: Path { tokens: [\"unknown\", \"path\"] }"),
+            Some("get_property:  selector: unknown.path path: [\"unknown\", \"path\"]"),
         )
         .expect_get_property(Some(vec!["unknown", "path"]))
         .returning(None)

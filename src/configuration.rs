@@ -8,7 +8,7 @@ use crate::attribute::Attribute;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
-use crate::property::Path;
+use crate::property_path::Path;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
@@ -1078,39 +1078,6 @@ mod test {
 
         let rlp_option = filter_config.index.get_longest_match_policies("unknown");
         assert!(rlp_option.is_none());
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_basic() {
-        let path: Path = r"one\.two..three\\\\.four\\\.\five.".into();
-        assert_eq!(
-            path.tokens(),
-            vec!["one.two", "", r"three\\", r"four\.five", ""]
-        );
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_ends_with_separator() {
-        let path: Path = r"one.".into();
-        assert_eq!(path.tokens(), vec!["one", ""]);
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_ends_with_escape() {
-        let path: Path = r"one\".into();
-        assert_eq!(path.tokens(), vec!["one"]);
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_starts_with_separator() {
-        let path: Path = r".one".into();
-        assert_eq!(path.tokens(), vec!["", "one"]);
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_starts_with_escape() {
-        let path: Path = r"\one".into();
-        assert_eq!(path.tokens(), vec!["one"]);
     }
 
     mod pattern_expressions {

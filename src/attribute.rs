@@ -1,3 +1,4 @@
+use crate::property_path::Path;
 use chrono::{DateTime, FixedOffset};
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
@@ -118,7 +119,7 @@ where
 }
 
 pub fn set_attribute(attr: &str, value: &[u8]) {
-    match hostcalls::set_property(crate::property::Path::from(attr).tokens(), Some(value)) {
+    match hostcalls::set_property(Path::from(attr).tokens(), Some(value)) {
         Ok(_) => (),
         Err(_) => error!("set_attribute: failed to set property {attr}"),
     };
