@@ -1,0 +1,7 @@
+---
+- namespace: ratelimit-source
+  max_value: 30
+  seconds: 60
+  conditions: []
+  variables:
+    - source.remote_address

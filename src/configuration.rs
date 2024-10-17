@@ -1,6 +1,6 @@
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -8,6 +8,7 @@ use crate::attribute::Attribute;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use crate::policy::Policy;
 use crate::policy_index::PolicyIndex;
+use crate::property_path::Path;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
@@ -15,7 +16,6 @@ use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
 use log::debug;
 use protobuf::RepeatedField;
-use proxy_wasm::hostcalls;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
@@ -50,56 +50,6 @@ impl SelectorItem {
         self.path
             .get()
             .expect("SelectorItem wasn't previously compiled!")
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Path {
-    tokens: Vec<String>,
-}
-
-impl Display for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.tokens
-                .iter()
-                .map(|t| t.replace('.', "\\."))
-                .collect::<Vec<String>>()
-                .join(".")
-        )
-    }
-}
-
-impl From<&str> for Path {
-    fn from(value: &str) -> Self {
-        let mut token = String::new();
-        let mut tokens: Vec<String> = Vec::new();
-        let mut chars = value.chars();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '.' => {
-                    tokens.push(token);
-                    token = String::new();
-                }
-                '\\' => {
-                    if let Some(next) = chars.next() {
-                        token.push(next);
-                    }
-                }
-                _ => token.push(ch),
-            }
-        }
-        tokens.push(token);
-
-        Self { tokens }
-    }
-}
-
-impl Path {
-    pub fn tokens(&self) -> Vec<&str> {
-        self.tokens.iter().map(String::as_str).collect()
     }
 }
 
@@ -621,11 +571,10 @@ impl Action {
                     };
 
                     let attribute_path = selector_item.path();
-                    debug!(
-                        "get_property:  selector: {} path: {:?}",
-                        selector_item.selector, attribute_path
-                    );
-                    let value = match hostcalls::get_property(attribute_path.tokens()).unwrap() {
+
+                    let value = match crate::property::get_property(attribute_path.tokens())
+                        .unwrap()
+                    {
                         //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(
@@ -1175,39 +1124,6 @@ mod test {
 
         let rlp_option = filter_config.index.get_longest_match_policies("unknown");
         assert!(rlp_option.is_none());
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_basic() {
-        let path: Path = r"one\.two..three\\\\.four\\\.\five.".into();
-        assert_eq!(
-            path.tokens(),
-            vec!["one.two", "", r"three\\", r"four\.five", ""]
-        );
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_ends_with_separator() {
-        let path: Path = r"one.".into();
-        assert_eq!(path.tokens(), vec!["one", ""]);
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_ends_with_escape() {
-        let path: Path = r"one\".into();
-        assert_eq!(path.tokens(), vec!["one"]);
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_starts_with_separator() {
-        let path: Path = r".one".into();
-        assert_eq!(path.tokens(), vec!["", "one"]);
-    }
-
-    #[test]
-    fn path_tokenizes_with_escaping_starts_with_escape() {
-        let path: Path = r"\one".into();
-        assert_eq!(path.tokens(), vec!["one"]);
     }
 
     mod pattern_expressions {

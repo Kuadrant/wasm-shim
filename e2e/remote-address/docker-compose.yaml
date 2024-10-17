@@ -1,0 +1,56 @@
+---
+services:
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    depends_on:
+    - limitador
+    - upstream
+    command:
+    - /usr/local/bin/envoy
+    - --config-path
+    - /etc/envoy.yaml
+    - --log-level
+    - info
+    - --component-log-level
+    - wasm:debug,http:debug,router:debug
+    - --service-cluster
+    - proxy
+    expose:
+    - "80"
+    - "8001"
+    ports:
+    - "18000:80"
+    - "18001:8001"
+    volumes:
+    - ./envoy.yaml:/etc/envoy.yaml
+    - ../../target/wasm32-unknown-unknown/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
+  limitador:
+    image: quay.io/kuadrant/limitador:latest
+    command: ["limitador-server", "-vvv", "/opt/kuadrant/limits/limits.yaml"]
+    ports:
+    - "18080:8080"
+    - "18081:8081"
+    expose:
+    - "8080"
+    - "8081"
+    volumes:
+    - ./limits.yaml:/opt/kuadrant/limits/limits.yaml
+  upstream:
+    image: quay.io/kuadrant/authorino-examples:talker-api
+    environment:
+      PORT: 3000
+    expose:
+    - "3000"
+  start_services:
+    image: alpine
+    depends_on:
+    - envoy
+    command: >
+      /bin/sh -c "
+      while ! nc -z envoy 80;
+      do
+      echo sleeping;
+      sleep 1;
+      done;
+      echo Connected!
+      "

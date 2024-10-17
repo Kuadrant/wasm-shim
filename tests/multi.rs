@@ -112,19 +112,19 @@ fn it_performs_authenticated_rate_limiting() {
         // retrieving properties for conditions
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+            Some("get_property: path: [\"request\", \"url_path\"]"),
         )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some("/admin/toy".as_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
+            Some("get_property: path: [\"request\", \"host\"]"),
         )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some("cars.toystore.com".as_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
+            Some("get_property: path: [\"request\", \"method\"]"),
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
@@ -132,24 +132,64 @@ fn it_performs_authenticated_rate_limiting() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"host\"]"),
+        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"method\"]"),
+        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("GET".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"scheme\"]"),
+        )
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some("http".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"path\"]"),
+        )
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some("/admin/toy".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"protocol\"]"),
+        )
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some("HTTP".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"time\"]"),
+        )
         .expect_get_property(Some(vec!["request", "time"]))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"address\"]"),
+        )
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some("127.0.0.1:8000".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"port\"]"),
+        )
         .expect_get_property(Some(vec!["destination", "port"]))
         .returning(Some("8000".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"address\"]"),
+        )
         .expect_get_property(Some(vec!["source", "address"]))
         .returning(Some("127.0.0.1:45000".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"port\"]"),
+        )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some("45000".as_bytes()))
         // retrieving tracing headers
@@ -282,19 +322,19 @@ fn unauthenticated_does_not_ratelimit() {
         // retrieving properties for conditions
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: request.url_path path: [\"request\", \"url_path\"]"),
+            Some("get_property: path: [\"request\", \"url_path\"]"),
         )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some("/admin/toy".as_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: request.host path: [\"request\", \"host\"]"),
+            Some("get_property: path: [\"request\", \"host\"]"),
         )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some("cars.toystore.com".as_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property:  selector: request.method path: [\"request\", \"method\"]"),
+            Some("get_property: path: [\"request\", \"method\"]"),
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
@@ -302,24 +342,64 @@ fn unauthenticated_does_not_ratelimit() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"host\"]"),
+        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"method\"]"),
+        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("GET".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"scheme\"]"),
+        )
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some("http".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"path\"]"),
+        )
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some("/admin/toy".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"protocol\"]"),
+        )
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some("HTTP".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"time\"]"),
+        )
         .expect_get_property(Some(vec!["request", "time"]))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"address\"]"),
+        )
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some("127.0.0.1:8000".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"port\"]"),
+        )
         .expect_get_property(Some(vec!["destination", "port"]))
         .returning(Some("8000".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"address\"]"),
+        )
         .expect_get_property(Some(vec!["source", "address"]))
         .returning(Some("127.0.0.1:45000".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"port\"]"),
+        )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some("45000".as_bytes()))
         // retrieving tracing headers
