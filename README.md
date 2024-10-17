@@ -76,7 +76,7 @@ The only characters taken into account are:
 #### Selectors
 
 Selector of an attribute from the contextual properties provided by kuadrant.
-See [#Well-Known-Attributes] for more info about available attributes.
+See [Well Known Attributes](#Well-Known-Attributes) for more info about available attributes.
 
 The struct is
 
