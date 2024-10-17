@@ -7,7 +7,7 @@ use proxy_wasm::types::Status;
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
     // Envoy sets source.address to the trusted client address AND port.
-    match host_get_property("source.address")? {
+    match host_get_property(Path::from("source.address").tokens())? {
         None => {
             warn!("source.address property not found");
             Err(Status::BadArgument)
@@ -25,19 +25,14 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
-fn host_get_property(property: &str) -> Result<Option<Vec<u8>>, Status> {
-    let path = Path::from(property);
-    debug!(
-        "get_property:  selector: {} path: {:?}",
-        property,
-        path.tokens()
-    );
-    hostcalls::get_property(path.tokens())
+fn host_get_property(path: Vec<&str>) -> Result<Option<Vec<u8>>, Status> {
+    debug!("get_property: path: {:?}", path);
+    hostcalls::get_property(path)
 }
 
-pub fn get_property(property: &str) -> Result<Option<Vec<u8>>, Status> {
-    match property {
-        "source.remote_address" => remote_address(),
-        _ => host_get_property(property),
+pub fn get_property(path: Vec<&str>) -> Result<Option<Vec<u8>>, Status> {
+    match path[..] {
+        ["source", "remote_address"] => remote_address(),
+        _ => host_get_property(path),
     }
 }

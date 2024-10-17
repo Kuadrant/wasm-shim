@@ -58,7 +58,9 @@ impl Policy {
     }
 
     fn pattern_expression_applies(&self, p_e: &PatternExpression) -> bool {
-        let attribute_value = match crate::property::get_property(p_e.selector.as_str()).unwrap() {
+        let attribute_path = p_e.path();
+
+        let attribute_value = match crate::property::get_property(attribute_path).unwrap() {
             //TODO(didierofrivia): Replace hostcalls by DI
             None => {
                 debug!(

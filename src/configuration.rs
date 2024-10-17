@@ -34,6 +34,23 @@ pub struct SelectorItem {
     // If not set and the selector is not found in the context, then no data is generated.
     #[serde(default)]
     pub default: Option<String>,
+
+    #[serde(skip_deserializing)]
+    path: OnceCell<Path>,
+}
+
+impl SelectorItem {
+    pub fn compile(&self) -> Result<(), String> {
+        self.path
+            .set(self.selector.as_str().into())
+            .map_err(|p| format!("Err on {p:?}"))
+    }
+
+    pub fn path(&self) -> &Path {
+        self.path
+            .get()
+            .expect("SelectorItem wasn't previously compiled!")
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -48,6 +65,15 @@ pub struct StaticItem {
 pub enum DataType {
     Static(StaticItem),
     Selector(SelectorItem),
+}
+
+impl DataType {
+    pub fn compile(&self) -> Result<(), String> {
+        match self {
+            DataType::Static(_) => Ok(()),
+            DataType::Selector(selector) => selector.compile(),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -79,14 +105,25 @@ pub struct PatternExpression {
     pub value: String,
 
     #[serde(skip_deserializing)]
+    path: OnceCell<Path>,
+    #[serde(skip_deserializing)]
     compiled: OnceCell<CelExpression>,
 }
 
 impl PatternExpression {
     pub fn compile(&self) -> Result<(), String> {
+        self.path
+            .set(self.selector.as_str().into())
+            .map_err(|_| "Duh!")?;
         self.compiled
             .set(self.try_into()?)
             .map_err(|_| "Ooops".to_string())
+    }
+    pub fn path(&self) -> Vec<&str> {
+        self.path
+            .get()
+            .expect("PatternExpression wasn't previously compiled!")
+            .tokens()
     }
 
     pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
@@ -389,6 +426,14 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                         }
                     }
                 }
+                for action in &rule.actions {
+                    for datum in &action.data {
+                        let result = datum.item.compile();
+                        if result.is_err() {
+                            return Err(result.err().unwrap());
+                        }
+                    }
+                }
             }
 
             for hostname in policy.hostnames.iter() {
@@ -520,13 +565,14 @@ impl Action {
                     entries.push(descriptor_entry);
                 }
                 DataType::Selector(selector_item) => {
-                    let attribute_path = Path::from(selector_item.selector.as_str());
                     let descriptor_key = match &selector_item.key {
-                        None => attribute_path.to_string(),
+                        None => selector_item.path().to_string(),
                         Some(key) => key.to_owned(),
                     };
 
-                    let value = match crate::property::get_property(selector_item.selector.as_str())
+                    let attribute_path = selector_item.path();
+
+                    let value = match crate::property::get_property(attribute_path.tokens())
                         .unwrap()
                     {
                         //TODO(didierofrivia): Replace hostcalls by DI
@@ -1089,6 +1135,7 @@ mod test {
                 selector: "request.id".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "request_id".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1106,6 +1153,7 @@ mod test {
                 selector: "request.id".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "\"request_id\"".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1123,6 +1171,7 @@ mod test {
                 selector: "request.id".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "123".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1140,6 +1189,7 @@ mod test {
                 selector: "foobar".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "\"123\"".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1157,6 +1207,7 @@ mod test {
                 selector: "destination.port".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "8080".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1174,6 +1225,7 @@ mod test {
                 selector: "foobar".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "8080".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1191,6 +1243,7 @@ mod test {
                 selector: "foobar".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "1.0".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1208,6 +1261,7 @@ mod test {
                 selector: "connection.mtls".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "true".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
@@ -1225,6 +1279,7 @@ mod test {
                 selector: "request.time".to_string(),
                 operator: WhenConditionOperator::Equal,
                 value: "2023-05-28T00:00:00+00:00".to_string(),
+                path: Default::default(),
                 compiled: Default::default(),
             };
             p.compile().expect("Should compile fine!");
