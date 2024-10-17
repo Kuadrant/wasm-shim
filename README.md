@@ -76,9 +76,7 @@ The only characters taken into account are:
 #### Selectors
 
 Selector of an attribute from the contextual properties provided by kuadrant.
-Currently, only some of the
-[Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes)
-can be used.
+See [#Well-Known-Attributes] for more info about available attributes.
 
 The struct is
 
@@ -110,6 +108,13 @@ Input: this.is.a.exam\.ple -> Retuns: ["this", "is", "a", "exam.ple"].
 Some path segments include dot `.` char in them. For instance envoy filter
 names: `envoy.filters.http.header_to_metadata`.
 In that particular cases, the dot chat (separator), needs to be escaped.
+
+### Well Known Attributes
+
+| Attribute | Description |
+| ---  | --- |
+| [Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes) |  Contextual properties provided by Envoy during request and connection processing |
+| `source.remote_address` | This attribute evaluates to the `trusted client address` (IP address without port) as it is being defined by [Envoy Doc](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for)  |
 
 ## Building
 
