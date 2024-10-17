@@ -276,11 +276,6 @@ data:
                                                 },
                                                 {
                                                   "selector": {
-                                                    "selector": "source.remote_address"
-                                                  }
-                                                },
-                                                {
-                                                  "selector": {
                                                     "selector": "source.address"
                                                   }
                                                 },
@@ -293,6 +288,40 @@ data:
                                                   "selector": {
                                                     "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
                                                     "key": "user_id"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "rlp-ns-D/rlp-name-D",
+                                      "hostnames": [
+                                        "*.d.rlp.com"
+                                      ],
+                                      "rules": [
+                                        {
+                                          "conditions": [
+                                            {
+                                              "allOf": [
+                                                {
+                                                  "selector": "source.remote_address",
+                                                  "operator": "neq",
+                                                  "value": "50.0.0.1"
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "actions": [
+                                            {
+                                              "extension": "limitador",
+                                              "scope": "rlp-ns-D/rlp-name-D",
+                                              "data": [
+                                                {
+                                                  "selector": {
+                                                    "selector": "source.remote_address"
                                                   }
                                                 }
                                               ]

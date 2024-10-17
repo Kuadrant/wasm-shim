@@ -172,7 +172,7 @@ curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY IAMALICE" http://127.0
 # HTTP/1.1 200 OK
 ```
 
-And three rate limit policies defined for e2e testing:
+And some rate limit policies defined for e2e testing:
 
 * `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and
   rate limiting service should **not** be called.
@@ -197,10 +197,6 @@ The expected descriptor entries:
 
 ```
 Entry { key: "limit_to_be_activated", value: "1" }
-```
-
-```
-Entry { key: "source.remote_address", value: "50.0.0.1" }
 ```
 
 ```
@@ -231,7 +227,6 @@ Bob has 2 requests per 10 seconds:
 ```sh
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
-
 
 To rebuild and deploy to the cluster:
 
