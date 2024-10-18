@@ -10,40 +10,40 @@ A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitado
 Following is a sample configuration used by the shim.
 
 ```yaml
-extensions:
-  auth-ext:
+services:
+  auth-service:
     type: auth
     endpoint: auth-cluster
     failureMode: deny
     timeout: 10ms
-  ratelimit-ext:
+  ratelimit-service:
     type: ratelimit
     endpoint: ratelimit-cluster
     failureMode: deny
-policies:
+actionSets:
   - name: rlp-ns-A/rlp-name-A
-    hostnames: [ "*.toystore.com" ]
-    rules:
-    - conditions:
-      - allOf:
-        - selector: request.url_path
-          operator: startswith
-          value: /get
-        - selector: request.host
-          operator: eq
-          value: test.toystore.com
-        - selector: request.method
-          operator: eq
-          value: GET
-      actions:
-      - extension: ratelimit-ext
-        scope: rlp-ns-A/rlp-name-A
-        data:
-          - selector:
-              selector: request.headers.My-Custom-Header
-          - static:
-              key: admin
-              value: "1"
+    routeRuleConditions:
+      hostnames: [ "*.toystore.com" ]
+      matches:
+      - selector: request.url_path
+        operator: startswith
+        value: /get
+      - selector: request.host
+        operator: eq
+        value: test.toystore.com
+      - selector: request.method
+        operator: eq
+        value: GET
+    actions:
+    - service: ratelimit-service
+      scope: rlp-ns-A/rlp-name-A
+      conditions: []
+      data:
+      - selector:
+          selector: request.headers.My-Custom-Header
+      - static:
+          key: admin
+          value: "1"
 ```
 
 ## Features
@@ -163,7 +163,7 @@ To expose the envoy endpoint run the following:
 kubectl port-forward --namespace default deployment/envoy 8000:8000
 ```
 
-There is then a single auth policy defined for e2e testing:
+There is then a single auth action set defined for e2e testing:
 
 * `auth-a` which defines auth is required for requests to `/get` for the `AuthConfig` with `effective-route-1`
 
@@ -177,7 +177,7 @@ curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY IAMALICE" http://127.0
 # HTTP/1.1 200 OK
 ```
 
-And some rate limit policies defined for e2e testing:
+And some rate limit action sets defined for e2e testing:
 
 * `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and
   rate limiting service should **not** be called.

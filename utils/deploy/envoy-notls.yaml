@@ -137,7 +137,7 @@ data:
                               "@type": "type.googleapis.com/google.protobuf.StringValue"
                               value: >
                                 {
-                                  "extensions": {
+                                  "services": {
                                     "authorino": {
                                       "type": "auth",
                                       "endpoint": "authorino_wasm",
@@ -149,52 +149,44 @@ data:
                                       "failureMode": "deny"
                                     }
                                   },
-                                  "policies": [
+                                  "actionSets": [
                                     {
                                       "name": "auth-ns-A/auth-name-A",
-                                      "hostnames": [
-                                        "*.a.auth.com"
-                                      ],
-                                      "rules": [
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.a.auth.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "request.path",
+                                            "operator": "eq",
+                                            "value": "/get"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
                                         {
-                                          "conditions": [
-                                            {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.path",
-                                                  "operator": "eq",
-                                                  "value": "/get"
-                                                }
-                                              ]
-                                            }
-                                          ],
-                                          "actions": [
-                                            {
-                                              "extension": "authorino",
-                                              "scope": "effective-route-1"
-                                            }
-                                          ]
+                                          "service": "authorino",
+                                          "scope": "effective-route-1"
                                         }
                                       ]
                                     },
                                     {
                                       "name": "rlp-ns-A/rlp-name-A",
-                                      "hostnames": [
-                                        "*.a.rlp.com"
-                                      ],
-                                      "rules": [
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.a.rlp.com"
+                                        ]
+                                      },
+                                      "actions": [
                                         {
-                                          "actions": [
+                                          "service": "limitador",
+                                          "scope": "rlp-ns-A/rlp-name-A",
+                                          "data": [
                                             {
-                                              "extension": "limitador",
-                                              "scope": "rlp-ns-A/rlp-name-A",
-                                              "data": [
-                                                {
-                                                  "selector": {
-                                                    "selector": "unknown.path"
-                                                  }
-                                                }
-                                              ]
+                                              "selector": {
+                                                "selector": "unknown.path"
+                                              }
                                             }
                                           ]
                                         }
@@ -202,34 +194,28 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-B/rlp-name-B",
-                                      "hostnames": [
-                                        "*.b.rlp.com"
-                                      ],
-                                      "rules": [
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.b.rlp.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "request.url_path",
+                                            "operator": "startswith",
+                                            "value": "/unknown-path"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
                                         {
-                                          "conditions": [
+                                          "service": "limitador",
+                                          "scope": "rlp-ns-B/rlp-name-B",
+                                          "data": [
                                             {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/unknown-path"
-                                                }
-                                              ]
-                                            }
-                                          ],
-                                          "actions": [
-                                            {
-                                              "extension": "limitador",
-                                              "scope": "rlp-ns-B/rlp-name-B",
-                                              "data": [
-                                                {
-                                                  "static": {
-                                                    "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
-                                                    "value": "1"
-                                                  }
-                                                }
-                                              ]
+                                              "static": {
+                                                "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
+                                                "value": "1"
+                                              }
                                             }
                                           ]
                                         }
@@ -237,60 +223,54 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-C/rlp-name-C",
-                                      "hostnames": [
-                                        "*.c.rlp.com"
-                                      ],
-                                      "rules": [
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.c.rlp.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "request.url_path",
+                                            "operator": "startswith",
+                                            "value": "/get"
+                                          },
+                                          {
+                                            "selector": "request.host",
+                                            "operator": "eq",
+                                            "value": "test.c.rlp.com"
+                                          },
+                                          {
+                                            "selector": "request.method",
+                                            "operator": "eq",
+                                            "value": "GET"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
                                         {
-                                          "conditions": [
+                                          "service": "limitador",
+                                          "scope": "rlp-ns-C/rlp-name-C",
+                                          "data": [
                                             {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.url_path",
-                                                  "operator": "startswith",
-                                                  "value": "/get"
-                                                },
-                                                {
-                                                  "selector": "request.host",
-                                                  "operator": "eq",
-                                                  "value": "test.c.rlp.com"
-                                                },
-                                                {
-                                                  "selector": "request.method",
-                                                  "operator": "eq",
-                                                  "value": "GET"
-                                                }
-                                              ]
-                                            }
-                                          ],
-                                          "actions": [
+                                              "static": {
+                                                "key": "limit_to_be_activated",
+                                                "value": "1"
+                                              }
+                                            },
                                             {
-                                              "extension": "limitador",
-                                              "scope": "rlp-ns-C/rlp-name-C",
-                                              "data": [
-                                                {
-                                                  "static": {
-                                                    "key": "limit_to_be_activated",
-                                                    "value": "1"
-                                                  }
-                                                },
-                                                {
-                                                  "selector": {
-                                                    "selector": "source.address"
-                                                  }
-                                                },
-                                                {
-                                                  "selector": {
-                                                    "selector": "request.headers.My-Custom-Header-01"
-                                                  }
-                                                },
-                                                {
-                                                  "selector": {
-                                                    "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
-                                                    "key": "user_id"
-                                                  }
-                                                }
-                                              ]
+                                              "selector": {
+                                                "selector": "source.address"
+                                              }
+                                            },
+                                            {
+                                              "selector": {
+                                                "selector": "request.headers.My-Custom-Header-01"
+                                              }
+                                            },
+                                            {
+                                              "selector": {
+                                                "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
+                                                "key": "user_id"
+                                              }
                                             }
                                           ]
                                         }
@@ -332,38 +312,72 @@ data:
                                     },
                                     {
                                       "name": "multi-ns-A/multi-name-A",
-                                      "hostnames": [
-                                        "*.a.multi.com"
-                                      ],
-                                      "rules": [
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.a.multi.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "request.path",
+                                            "operator": "eq",
+                                            "value": "/get"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
                                         {
+                                          "service": "authorino",
+                                          "scope": "effective-route-1"
+                                        },
+                                        {
+                                          "service": "limitador",
+                                          "scope": "multi-ns-A/multi-name-A",
+                                          "data": [
+                                            {
+                                              "selector": {
+                                                "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                                "key": "user_id"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "multi-ns-B/multi-name-B",
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.b.multi.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "request.path",
+                                            "operator": "eq",
+                                            "value": "/get"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
+                                        {
+                                          "service": "authorino",
+                                          "scope": "effective-route-1"
+                                        },
+                                        {
+                                          "service": "limitador",
+                                          "scope": "multi-ns-B/multi-name-B",
                                           "conditions": [
                                             {
-                                              "allOf": [
-                                                {
-                                                  "selector": "request.path",
-                                                  "operator": "eq",
-                                                  "value": "/get"
-                                                }
-                                              ]
+                                              "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                              "operator": "eq",
+                                              "value": "alice"
                                             }
                                           ],
-                                          "actions": [
+                                          "data": [
                                             {
-                                              "extension": "authorino",
-                                              "scope": "effective-route-1"
-                                            },
-                                            {
-                                              "extension": "limitador",
-                                              "scope": "multi-ns-A/multi-name-A",
-                                              "data": [
-                                                {
-                                                  "selector": {
-                                                    "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
-                                                    "key": "user_id"
-                                                  }
-                                                }
-                                              ]
+                                              "static": {
+                                                "key": "user_id",
+                                                "value": "alice"
+                                              }
                                             }
                                           ]
                                         }

@@ -43,43 +43,37 @@ static_resources:
                       "@type": "type.googleapis.com/google.protobuf.StringValue"
                       value: >
                         {
-                          "extensions": {
+                          "services": {
                             "limitador": {
                               "type": "ratelimit",
                               "endpoint": "limitador",
                               "failureMode": "deny"
                             }
                           },
-                          "policies": [
+                          "actionSets": [
                             {
                               "name": "ratelimit-source",
-                              "hostnames": [
-                                "*.example.com"
-                              ],
-                              "rules": [
+                              "routeRuleConditions": {
+                                "hostnames": [
+                                  "*.example.com"
+                                ],
+                                "matches": [
+                                  {
+                                    "selector": "source.remote_address",
+                                    "operator": "neq",
+                                    "value": "50.0.0.1"
+                                  }
+                                ]
+                              },
+                              "actions": [
                                 {
-                                  "conditions": [
+                                  "service": "limitador",
+                                  "scope": "ratelimit-source",
+                                  "data": [
                                     {
-                                      "allOf": [
-                                        {
-                                          "selector": "source.remote_address",
-                                          "operator": "neq",
-                                          "value": "50.0.0.1"
-                                        }
-                                      ]
-                                    }
-                                  ],
-                                  "actions": [
-                                    {
-                                      "extension": "limitador",
-                                      "scope": "ratelimit-source",
-                                      "data": [
-                                        {
-                                          "selector": {
-                                            "selector": "source.remote_address"
-                                          }
-                                        }
-                                      ]
+                                      "selector": {
+                                        "selector": "source.remote_address"
+                                      }
                                     }
                                   ]
                                 }
