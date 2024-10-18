@@ -18,3 +18,9 @@
   conditions:
     - "user_id == 'bob'"
   variables: []
+- namespace: rlp-ns-D/rlp-name-D
+  max_value: 2
+  seconds: 10
+  conditions: []
+  variables:
+    - source.remote_address

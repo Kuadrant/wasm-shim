@@ -76,9 +76,7 @@ The only characters taken into account are:
 #### Selectors
 
 Selector of an attribute from the contextual properties provided by kuadrant.
-Currently, only some of the
-[Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes)
-can be used.
+See [Well Known Attributes](#Well-Known-Attributes) for more info about available attributes.
 
 The struct is
 
@@ -110,6 +108,13 @@ Input: this.is.a.exam\.ple -> Retuns: ["this", "is", "a", "exam.ple"].
 Some path segments include dot `.` char in them. For instance envoy filter
 names: `envoy.filters.http.header_to_metadata`.
 In that particular cases, the dot chat (separator), needs to be escaped.
+
+### Well Known Attributes
+
+| Attribute | Description |
+| ---  | --- |
+| [Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes) |  Contextual properties provided by Envoy during request and connection processing |
+| `source.remote_address` | This attribute evaluates to the `trusted client address` (IP address without port) as it is being defined by [Envoy Doc](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for)  |
 
 ## Building
 
@@ -172,7 +177,7 @@ curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY IAMALICE" http://127.0
 # HTTP/1.1 200 OK
 ```
 
-And three rate limit policies defined for e2e testing:
+And some rate limit policies defined for e2e testing:
 
 * `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and
   rate limiting service should **not** be called.
@@ -187,10 +192,28 @@ curl -H "Host: test.a.rlp.com" http://127.0.0.1:8000/get -i
 curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
 ```
 
-* `rlp-c`: Four descriptors from multiple rules should be generated. Hence, rate limiting service should be called.
+* `rlp-c`: Descriptor entries from multiple data items should be generated. Hence, rate limiting service should be called.
 
 ```sh
-curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 127.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+```
+
+The expected descriptor entries:
+
+```
+Entry { key: "limit_to_be_activated", value: "1" }
+```
+
+```
+Entry { key: "source.address", value: "50.0.0.1:0" }
+```
+
+```
+Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }
+```
+
+```
+Entry { key: "user_id", value: "bob" }
 ```
 
 * `multi-a` which defines two actions for authenticated ratelimiting.
@@ -208,24 +231,6 @@ while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Au
 Bob has 2 requests per 10 seconds:
 ```sh
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
-```
-
-The expected descriptors:
-
-```
-RateLimitDescriptor { entries: [Entry { key: "limit_to_be_activated", value: "1" }], limit: None }
-```
-
-```
-RateLimitDescriptor { entries: [Entry { key: "source.address", value: "127.0.0.1:0" }], limit: None }
-```
-
-```
-RateLimitDescriptor { entries: [Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }], limit: None }
-```
-
-```
-RateLimitDescriptor { entries: [Entry { key: "user_id", value: "bob" }], limit: None }
 ```
 
 To rebuild and deploy to the cluster:
