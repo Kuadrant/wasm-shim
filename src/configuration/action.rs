@@ -47,13 +47,12 @@ impl Action {
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = selector_item.path();
-                    let value = match crate::data::get_property(attribute_path.tokens()).unwrap() {
+                    let value = match crate::data::get_property(selector_item.path()).unwrap() {
                         //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(
                                 "build_single_descriptor: selector not found: {}",
-                                attribute_path
+                                selector_item.path()
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -66,7 +65,7 @@ impl Action {
                             Ok(attr_str) => attr_str,
                             Err(e) => {
                                 debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    attribute_path, e);
+                                    selector_item.path(), e);
                                 return None;
                             }
                         },

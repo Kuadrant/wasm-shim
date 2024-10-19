@@ -111,7 +111,7 @@ pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
     T: AttributeValue,
 {
-    match crate::data::property::get_property(Path::from(attr).tokens()) {
+    match crate::data::property::get_property(&attr.into()) {
         Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
         Ok(None) => Err(format!("get_attribute: not found or null: {attr}")),
         Err(e) => Err(format!("get_attribute: error: {e:?}")),
