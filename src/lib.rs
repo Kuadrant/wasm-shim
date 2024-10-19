@@ -5,8 +5,6 @@ mod envoy;
 mod filter;
 mod glob;
 mod operation_dispatcher;
-mod property;
-mod property_path;
 mod service;
 
 #[cfg(test)]

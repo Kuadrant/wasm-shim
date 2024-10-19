@@ -4,10 +4,10 @@ use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::data::AttributeValue;
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::action_set_index::ActionSetIndex;
-use crate::property_path::Path;
+use crate::data::AttributeValue;
+use crate::data::PropertyPath;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
@@ -38,7 +38,7 @@ pub struct SelectorItem {
     pub default: Option<String>,
 
     #[serde(skip_deserializing)]
-    path: OnceCell<Path>,
+    path: OnceCell<PropertyPath>,
 }
 
 impl SelectorItem {
@@ -48,7 +48,7 @@ impl SelectorItem {
             .map_err(|p| format!("Err on {p:?}"))
     }
 
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> &PropertyPath {
         self.path
             .get()
             .expect("SelectorItem wasn't previously compiled!")
@@ -107,7 +107,7 @@ pub struct PatternExpression {
     pub value: String,
 
     #[serde(skip_deserializing)]
-    path: OnceCell<Path>,
+    path: OnceCell<PropertyPath>,
     #[serde(skip_deserializing)]
     compiled: OnceCell<CelExpression>,
 }
@@ -158,7 +158,7 @@ impl PatternExpression {
 
     fn applies(&self) -> bool {
         let attribute_path = self.path();
-        let attribute_value = match crate::property::get_property(attribute_path).unwrap() {
+        let attribute_value = match crate::data::get_property(attribute_path).unwrap() {
             //TODO(didierofrivia): Replace hostcalls by DI
             None => {
                 debug!(
