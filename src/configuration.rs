@@ -4,7 +4,7 @@ use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::attribute::Attribute;
+use crate::data::AttributeValue;
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::action_set_index::ActionSetIndex;
 use crate::property_path::Path;
@@ -131,13 +131,13 @@ impl PatternExpression {
     pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
         let cel_type = &self.compiled.get().unwrap().cel_type;
         let value = match cel_type {
-            ValueType::String => Value::String(Arc::new(Attribute::parse(raw_attribute)?)),
-            ValueType::Int => Value::Int(Attribute::parse(raw_attribute)?),
-            ValueType::UInt => Value::UInt(Attribute::parse(raw_attribute)?),
-            ValueType::Float => Value::Float(Attribute::parse(raw_attribute)?),
-            ValueType::Bytes => Value::Bytes(Arc::new(Attribute::parse(raw_attribute)?)),
-            ValueType::Bool => Value::Bool(Attribute::parse(raw_attribute)?),
-            ValueType::Timestamp => Value::Timestamp(Attribute::parse(raw_attribute)?),
+            ValueType::String => Value::String(Arc::new(AttributeValue::parse(raw_attribute)?)),
+            ValueType::Int => Value::Int(AttributeValue::parse(raw_attribute)?),
+            ValueType::UInt => Value::UInt(AttributeValue::parse(raw_attribute)?),
+            ValueType::Float => Value::Float(AttributeValue::parse(raw_attribute)?),
+            ValueType::Bytes => Value::Bytes(Arc::new(AttributeValue::parse(raw_attribute)?)),
+            ValueType::Bool => Value::Bool(AttributeValue::parse(raw_attribute)?),
+            ValueType::Timestamp => Value::Timestamp(AttributeValue::parse(raw_attribute)?),
             // todo: Impl support for parsing these two types… Tho List/Map of what?
             // ValueType::List => {}
             // ValueType::Map => {}

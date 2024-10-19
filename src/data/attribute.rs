@@ -1,18 +1,18 @@
-use crate::property_path::Path;
-use chrono::{DateTime, FixedOffset};
+use proxy_wasm::hostcalls;
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
-use proxy_wasm::hostcalls;
+use chrono::{DateTime, FixedOffset};
+use crate::property_path::Path;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
-pub trait Attribute {
+pub trait AttributeValue {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String>
     where
         Self: Sized;
 }
 
-impl Attribute for String {
+impl AttributeValue for String {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         String::from_utf8(raw_attribute).map_err(|err| {
             format!(
@@ -23,7 +23,7 @@ impl Attribute for String {
     }
 }
 
-impl Attribute for i64 {
+impl AttributeValue for i64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -39,7 +39,7 @@ impl Attribute for i64 {
     }
 }
 
-impl Attribute for u64 {
+impl AttributeValue for u64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -55,7 +55,7 @@ impl Attribute for u64 {
     }
 }
 
-impl Attribute for f64 {
+impl AttributeValue for f64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -71,13 +71,13 @@ impl Attribute for f64 {
     }
 }
 
-impl Attribute for Vec<u8> {
+impl AttributeValue for Vec<u8> {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         Ok(raw_attribute)
     }
 }
 
-impl Attribute for bool {
+impl AttributeValue for bool {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 1 {
             return Err(format!(
@@ -89,7 +89,7 @@ impl Attribute for bool {
     }
 }
 
-impl Attribute for DateTime<FixedOffset> {
+impl AttributeValue for DateTime<FixedOffset> {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -109,7 +109,7 @@ impl Attribute for DateTime<FixedOffset> {
 
 pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
-    T: Attribute,
+    T: AttributeValue,
 {
     match crate::property::get_property(Path::from(attr).tokens()) {
         Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
@@ -155,7 +155,7 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::process_metadata;
+    use crate::data::attribute::process_metadata;
     use protobuf::well_known_types::{Struct, Value, Value_oneof_kind};
     use std::collections::HashMap;
 

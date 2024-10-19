@@ -1,4 +1,4 @@
-use crate::attribute::Attribute;
+use crate::data::AttributeValue;
 use crate::configuration::{DataItem, DataType, PatternExpression};
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use log::debug;
@@ -64,7 +64,7 @@ impl Action {
                         }
                         // TODO(eastizle): not all fields are strings
                         // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
+                        Some(attribute_bytes) => match AttributeValue::parse(attribute_bytes) {
                             Ok(attr_str) => attr_str,
                             Err(e) => {
                                 debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
