@@ -121,11 +121,10 @@ impl PatternExpression {
             .set(self.try_into()?)
             .map_err(|_| "Ooops".to_string())
     }
-    pub fn path(&self) -> Vec<&str> {
+    pub fn path(&self) -> &PropertyPath {
         self.path
             .get()
             .expect("PatternExpression wasn't previously compiled!")
-            .tokens()
     }
 
     pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
@@ -157,8 +156,7 @@ impl PatternExpression {
     }
 
     fn applies(&self) -> bool {
-        let attribute_path = self.path();
-        let attribute_value = match crate::data::get_property(attribute_path).unwrap() {
+        let attribute_value = match crate::data::get_property(self.path()).unwrap() {
             //TODO(didierofrivia): Replace hostcalls by DI
             None => {
                 debug!(
