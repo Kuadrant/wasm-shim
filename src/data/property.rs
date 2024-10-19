@@ -2,7 +2,7 @@ use log::debug;
 use log::warn;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::Status;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
@@ -26,7 +26,7 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
 }
 
 fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
-    debug!("get_property: path: {:?}", path);
+    debug!("get_property: {:?}", path);
     hostcalls::get_property(path.tokens())
 }
 
@@ -37,7 +37,7 @@ pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Path {
     tokens: Vec<String>,
 }
@@ -53,6 +53,12 @@ impl Display for Path {
                 .collect::<Vec<String>>()
                 .join(".")
         )
+    }
+}
+
+impl Debug for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "path: {:?}", self.tokens)
     }
 }
 
