@@ -1,4 +1,5 @@
 use crate::configuration::FailureMode;
+use crate::data::{get_attribute, store_metadata};
 use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
     AttributeContext_Request, CheckRequest, CheckResponse_oneof_http_response, Metadata,
@@ -13,7 +14,6 @@ use protobuf::Message;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType};
 use std::collections::HashMap;
-use crate::data::{get_attribute, store_metadata};
 
 pub const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
 pub const AUTH_METHOD_NAME: &str = "Check";
