@@ -7,7 +7,7 @@ use std::fmt::{Display, Formatter};
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
     // Envoy sets source.address to the trusted client address AND port.
-    match host_get_property(Path::from("source.address").tokens())? {
+    match host_get_property(&"source.address".into())? {
         None => {
             warn!("source.address property not found");
             Err(Status::BadArgument)
@@ -25,13 +25,13 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
-fn host_get_property(path: Vec<&str>) -> Result<Option<Vec<u8>>, Status> {
+fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: path: {:?}", path);
-    hostcalls::get_property(path)
+    hostcalls::get_property(path.tokens())
 }
 
-pub fn get_property(path: Vec<&str>) -> Result<Option<Vec<u8>>, Status> {
-    match path[..] {
+pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+    match path.tokens()[..] {
         ["source", "remote_address"] => remote_address(),
         _ => host_get_property(path),
     }
