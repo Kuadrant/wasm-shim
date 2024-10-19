@@ -1,5 +1,5 @@
-use crate::data::AttributeValue;
 use crate::configuration::{DataItem, DataType, PatternExpression};
+use crate::data::AttributeValue;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use log::debug;
 use protobuf::RepeatedField;
@@ -48,9 +48,7 @@ impl Action {
                     };
 
                     let attribute_path = selector_item.path();
-                    let value = match crate::property::get_property(attribute_path.tokens())
-                        .unwrap()
-                    {
+                    let value = match crate::data::get_property(attribute_path.tokens()).unwrap() {
                         //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(

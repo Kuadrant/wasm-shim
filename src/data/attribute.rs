@@ -1,8 +1,8 @@
-use proxy_wasm::hostcalls;
+use crate::data::property::Path;
+use chrono::{DateTime, FixedOffset};
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
-use chrono::{DateTime, FixedOffset};
-use crate::property_path::Path;
+use proxy_wasm::hostcalls;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
@@ -111,7 +111,7 @@ pub fn get_attribute<T>(attr: &str) -> Result<T, String>
 where
     T: AttributeValue,
 {
-    match crate::property::get_property(Path::from(attr).tokens()) {
+    match crate::data::property::get_property(Path::from(attr).tokens()) {
         Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
         Ok(None) => Err(format!("get_attribute: not found or null: {attr}")),
         Err(e) => Err(format!("get_attribute: error: {e:?}")),
