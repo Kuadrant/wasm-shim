@@ -37,12 +37,20 @@ impl AuthService {
         let mut attr = AttributeContext::default();
         attr.set_request(AuthService::build_request());
         attr.set_destination(AuthService::build_peer(
-            get_attribute::<String>("destination.address").unwrap_or_default(),
-            get_attribute::<i64>("destination.port").unwrap_or_default() as u32,
+            get_attribute::<String>(&"destination.address".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+            get_attribute::<i64>(&"destination.port".into())
+                .expect("Error!")
+                .unwrap_or_default() as u32,
         ));
         attr.set_source(AuthService::build_peer(
-            get_attribute::<String>("source.address").unwrap_or_default(),
-            get_attribute::<i64>("source.port").unwrap_or_default() as u32,
+            get_attribute::<String>(&"source.address".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+            get_attribute::<i64>(&"source.port".into())
+                .expect("Error!")
+                .unwrap_or_default() as u32,
         ));
         // the ce_host is the identifier for authorino to determine which authconfig to use
         let context_extensions = HashMap::from([("host".to_string(), ce_host)]);
@@ -60,22 +68,45 @@ impl AuthService {
             .into_iter()
             .collect();
 
-        http.set_host(get_attribute::<String>("request.host").unwrap_or_default());
-        http.set_method(get_attribute::<String>("request.method").unwrap_or_default());
-        http.set_scheme(get_attribute::<String>("request.scheme").unwrap_or_default());
-        http.set_path(get_attribute::<String>("request.path").unwrap_or_default());
-        http.set_protocol(get_attribute::<String>("request.protocol").unwrap_or_default());
+        http.set_host(
+            get_attribute::<String>(&"request.host".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+        );
+        http.set_method(
+            get_attribute::<String>(&"request.method".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+        );
+        http.set_scheme(
+            get_attribute::<String>(&"request.scheme".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+        );
+        http.set_path(
+            get_attribute::<String>(&"request.path".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+        );
+        http.set_protocol(
+            get_attribute::<String>(&"request.protocol".into())
+                .expect("Error!")
+                .unwrap_or_default(),
+        );
 
         http.set_headers(headers);
-        request.set_time(get_attribute("request.time").map_or(
-            Timestamp::new(),
-            |date_time: DateTime<FixedOffset>| Timestamp {
-                nanos: date_time.nanosecond() as i32,
-                seconds: date_time.second() as i64,
-                unknown_fields: Default::default(),
-                cached_size: Default::default(),
-            },
-        ));
+        request.set_time(
+            get_attribute(&"request.time".into())
+                .expect("Error!")
+                .map_or(Timestamp::new(), |date_time: DateTime<FixedOffset>| {
+                    Timestamp {
+                        nanos: date_time.nanosecond() as i32,
+                        seconds: date_time.second() as i64,
+                        unknown_fields: Default::default(),
+                        cached_size: Default::default(),
+                    }
+                }),
+        );
         request.set_http(http);
         request
     }

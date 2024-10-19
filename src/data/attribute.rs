@@ -1,4 +1,5 @@
 use crate::data::property::Path;
+use crate::data::PropertyPath;
 use chrono::{DateTime, FixedOffset};
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
@@ -107,13 +108,13 @@ impl AttributeValue for DateTime<FixedOffset> {
     }
 }
 
-pub fn get_attribute<T>(attr: &str) -> Result<T, String>
+pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, String>
 where
     T: AttributeValue,
 {
-    match crate::data::property::get_property(&attr.into()) {
-        Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
-        Ok(None) => Err(format!("get_attribute: not found or null: {attr}")),
+    match crate::data::property::get_property(path) {
+        Ok(Some(attribute_bytes)) => Ok(Some(T::parse(attribute_bytes)?)),
+        Ok(None) => Ok(None),
         Err(e) => Err(format!("get_attribute: error: {e:?}")),
     }
 }

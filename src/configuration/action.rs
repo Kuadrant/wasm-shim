@@ -1,5 +1,4 @@
 use crate::configuration::{DataItem, DataType, PatternExpression};
-use crate::data::AttributeValue;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use log::debug;
 use protobuf::RepeatedField;
@@ -47,7 +46,9 @@ impl Action {
                         Some(key) => key.to_owned(),
                     };
 
-                    let value = match crate::data::get_property(selector_item.path()).unwrap() {
+                    let value = match crate::data::get_attribute::<String>(selector_item.path())
+                        .expect("Error!")
+                    {
                         //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(
@@ -61,14 +62,7 @@ impl Action {
                         }
                         // TODO(eastizle): not all fields are strings
                         // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match AttributeValue::parse(attribute_bytes) {
-                            Ok(attr_str) => attr_str,
-                            Err(e) => {
-                                debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    selector_item.path(), e);
-                                return None;
-                            }
-                        },
+                        Some(attr_str) => attr_str,
                         // Alternative implementation (for rust >= 1.76)
                         // Attribute::parse(attribute_bytes)
                         //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
