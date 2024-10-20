@@ -1,11 +1,12 @@
 use crate::data::get_attribute;
 use crate::data::property::Path;
-use cel_interpreter::objects::{Key, ValueType};
+use cel_interpreter::objects::{Map, ValueType};
 use cel_interpreter::{Context, Value};
+use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::sync::OnceLock;
-use cel_parser::{parse, Expression as CelExpression, ParseError, Member};
 
 pub struct Expression {
     attributes: Vec<Attribute>,
@@ -19,25 +20,32 @@ impl Expression {
         let mut props = Vec::with_capacity(5);
         properties(&expression, &mut props, &mut Vec::default());
 
+        let attributes = props
+            .into_iter()
+            .map(|tokens| know_attribute_for(&Path::new(tokens)).expect("Unknown attribute"))
+            .collect();
+
         Ok(Self {
-            attributes: props.into_iter().map(|tokens| know_attribute_for(&Path::new(tokens)).expect("Unknown attribute")).collect(),
+            attributes,
             expression,
         })
     }
 
     pub fn eval(&self) -> Value {
-        let _data = self.build_data_map();
-        let ctx = Context::default();
-        // ctx.add_variable_from_value::<_, Map>("request", data.remove("request").unwrap_or_default().into());
-        // ctx.add_variable_from_value::<_, Value::Map>("metadata", data.remove("metadata").unwrap_or_default());
-        // ctx.add_variable_from_value::<_, Value::Map>("source", data.remove("source").unwrap_or_default());
-        // ctx.add_variable_from_value::<_, Value::Map>("destination", data.remove("destination").unwrap_or_default().into());
-        // ctx.add_variable_from_value::<_, Value::Map>("auth", data.remove("auth").unwrap_or_default().into());
+        let mut ctx = Context::default();
+        let Map { map } = self.build_data_map();
+
+        for binding in ["request", "metadata", "source", "destination", "auth"] {
+            ctx.add_variable_from_value(
+                binding,
+                map.get(&binding.into()).cloned().unwrap_or(Value::Null),
+            );
+        }
         Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
     }
 
-    fn build_data_map(&self) -> HashMap<String, HashMap<Key, Value>> {
-        HashMap::default()
+    fn build_data_map(&self) -> Map {
+        data::AttributeMap::new(self.attributes.clone()).into()
     }
 }
 
@@ -57,6 +65,21 @@ impl Predicate {
 pub struct Attribute {
     path: Path,
     cel_type: ValueType,
+}
+
+impl Debug for Attribute {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Attribute {{ {:?} }}", self.path)
+    }
+}
+
+impl Clone for Attribute {
+    fn clone(&self) -> Self {
+        Attribute {
+            path: self.path.clone(),
+            cel_type: copy(&self.cel_type),
+        }
+    }
 }
 
 impl Attribute {
@@ -194,11 +217,7 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     ])
 }
 
-fn properties<'e>(
-    exp: &'e CelExpression,
-    all: &mut Vec<Vec<&'e str>>,
-    path: &mut Vec<&'e str>,
-) {
+fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mut Vec<&'e str>) {
     match exp {
         CelExpression::Arithmetic(e1, _, e2)
         | CelExpression::Relation(e1, _, e2)
@@ -247,9 +266,135 @@ fn properties<'e>(
     }
 }
 
+pub mod data {
+    use crate::data::Attribute;
+    use cel_interpreter::objects::{Key, Map};
+    use cel_interpreter::Value;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    enum Token {
+        Node(HashMap<String, Token>),
+        Value(Attribute),
+    }
+
+    pub struct AttributeMap {
+        data: HashMap<String, Token>,
+    }
+
+    impl AttributeMap {
+        pub fn new(attributes: Vec<Attribute>) -> Self {
+            let mut root = HashMap::default();
+            for attr in attributes {
+                let mut node = &mut root;
+                let mut it = attr.path.tokens().into_iter();
+                while let Some(token) = it.next() {
+                    if it.len() != 0 {
+                        node = match node
+                            .entry(token.to_string())
+                            .or_insert_with(|| Token::Node(HashMap::default()))
+                        {
+                            Token::Node(node) => node,
+                            Token::Value(_) => unreachable!(), // that's a bit of a lie!
+                        };
+                    } else {
+                        node.insert(token.to_string(), Token::Value(attr.clone()));
+                    }
+                }
+            }
+            Self { data: root }
+        }
+    }
+
+    impl From<AttributeMap> for Map {
+        fn from(value: AttributeMap) -> Self {
+            map_to_value(value.data)
+        }
+    }
+
+    fn map_to_value(map: HashMap<String, Token>) -> Map {
+        let mut out: HashMap<Key, Value> = HashMap::default();
+        for (key, value) in map {
+            let k = key.into();
+            let v = match value {
+                Token::Value(v) => v.get(),
+                Token::Node(map) => Value::Map(map_to_value(map)),
+            };
+            out.insert(k, v);
+        }
+        Map { map: Arc::new(out) }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::data::cel::data::{AttributeMap, Token};
+        use crate::data::know_attribute_for;
+
+        #[test]
+        fn it_works() {
+            let map = AttributeMap::new(
+                [
+                    know_attribute_for(&"request.method".into()).unwrap(),
+                    know_attribute_for(&"request.referer".into()).unwrap(),
+                    know_attribute_for(&"source.address".into()).unwrap(),
+                    know_attribute_for(&"destination.port".into()).unwrap(),
+                ]
+                .into(),
+            );
+
+            println!("{:#?}", map.data);
+
+            assert_eq!(3, map.data.len());
+            assert!(map.data.get("source").is_some());
+            assert!(map.data.get("destination").is_some());
+            assert!(map.data.get("request").is_some());
+
+            match map.data.get("source").unwrap() {
+                Token::Node(map) => {
+                    assert_eq!(map.len(), 1);
+                    match map.get("address").unwrap() {
+                        Token::Node(_) => assert!(false),
+                        Token::Value(v) => assert_eq!(v.path, "source.address".into()),
+                    }
+                }
+                Token::Value(_) => assert!(false),
+            }
+
+            match map.data.get("destination").unwrap() {
+                Token::Node(map) => {
+                    assert_eq!(map.len(), 1);
+                    match map.get("port").unwrap() {
+                        Token::Node(_) => assert!(false),
+                        Token::Value(v) => assert_eq!(v.path, "destination.port".into()),
+                    }
+                }
+                Token::Value(_) => assert!(false),
+            }
+
+            match map.data.get("request").unwrap() {
+                Token::Node(map) => {
+                    assert_eq!(map.len(), 2);
+                    assert!(map.get("method").is_some());
+                    match map.get("method").unwrap() {
+                        Token::Node(_) => assert!(false),
+                        Token::Value(v) => assert_eq!(v.path, "request.method".into()),
+                    }
+                    assert!(map.get("referer").is_some());
+                    match map.get("referer").unwrap() {
+                        Token::Node(_) => assert!(false),
+                        Token::Value(v) => assert_eq!(v.path, "request.referer".into()),
+                    }
+                }
+                Token::Value(_) => assert!(false),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::data::know_attribute_for;
     use cel_interpreter::objects::ValueType;
 
     #[test]
