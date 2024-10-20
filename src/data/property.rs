@@ -37,7 +37,7 @@ pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Path {
     tokens: Vec<String>,
 }
@@ -88,6 +88,11 @@ impl From<&str> for Path {
 }
 
 impl Path {
+    pub fn new<T: Into<String>>(tokens: Vec<T>) -> Self {
+        Self {
+            tokens: tokens.into_iter().map(|i| i.into()).collect(),
+        }
+    }
     pub fn tokens(&self) -> Vec<&str> {
         self.tokens.iter().map(String::as_str).collect()
     }
