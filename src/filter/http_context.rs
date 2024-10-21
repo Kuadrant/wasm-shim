@@ -1,5 +1,6 @@
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::{FailureMode, FilterConfig};
+use crate::envoy::StatusCode;
 #[cfg(feature = "debug-host-behaviour")]
 use crate::data;
 use crate::operation_dispatcher::{OperationDispatcher, OperationError};
