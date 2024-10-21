@@ -90,6 +90,10 @@ impl GrpcService {
             FailureMode::Allow => hostcalls::resume_http_request().unwrap(),
         }
     }
+
+    pub fn get_service_type(&self) -> &ServiceType {
+        &self.service.service_type
+    }
 }
 
 pub type GrpcCallFn = fn(
@@ -109,13 +113,19 @@ pub type GrpcMessageBuildFn =
 pub struct GrpcServiceHandler {
     grpc_service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
+    pub service_metrics: Rc<ServiceMetrics>,
 }
 
 impl GrpcServiceHandler {
-    pub fn new(grpc_service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
+    pub fn new(
+        grpc_service: Rc<GrpcService>,
+        header_resolver: Rc<HeaderResolver>,
+        service_metrics: Rc<ServiceMetrics>,
+    ) -> Self {
         Self {
             grpc_service,
             header_resolver,
+            service_metrics,
         }
     }
 
@@ -199,5 +209,50 @@ impl TracingHeader {
             Tracestate => "tracestate",
             Baggage => "baggage",
         }
+    }
+}
+
+pub struct ServiceMetrics {
+    ok_metric_id: u32,
+    error_metric_id: u32,
+    rejected_metric_id: u32,
+    failure_mode_allowed_metric_id: u32,
+}
+
+impl ServiceMetrics {
+    pub fn new(
+        ok_metric_id: u32,
+        error_metric_id: u32,
+        rejected_metric_id: u32,
+        failure_mode_allowed_metric_id: u32,
+    ) -> Self {
+        Self {
+            ok_metric_id,
+            error_metric_id,
+            rejected_metric_id,
+            failure_mode_allowed_metric_id,
+        }
+    }
+
+    fn report(metric_id: u32, offset: i64) {
+        if let Err(e) = hostcalls::increment_metric(metric_id, offset) {
+            warn!("report metric {metric_id}, error: {e:?}");
+        }
+    }
+
+    pub fn report_error(&self) {
+        Self::report(self.error_metric_id, 1);
+    }
+
+    pub fn report_allowed_on_failure(&self) {
+        Self::report(self.failure_mode_allowed_metric_id, 1);
+    }
+
+    pub fn report_ok(&self) {
+        Self::report(self.ok_metric_id, 1);
+    }
+
+    pub fn report_rejected(&self) {
+        Self::report(self.rejected_metric_id, 1);
     }
 }

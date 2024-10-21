@@ -107,6 +107,10 @@ impl Operation {
     pub fn get_failure_mode(&self) -> &FailureMode {
         &self.service.failure_mode
     }
+
+    pub fn get_service_handler(&self) -> &GrpcServiceHandler {
+        &self.service_handler
+    }
 }
 
 pub struct OperationDispatcher {
