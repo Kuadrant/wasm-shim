@@ -346,30 +346,30 @@ pub mod data {
             println!("{:#?}", map.data);
 
             assert_eq!(3, map.data.len());
-            assert!(map.data.get("source").is_some());
-            assert!(map.data.get("destination").is_some());
-            assert!(map.data.get("request").is_some());
+            assert!(map.data.contains_key("source"));
+            assert!(map.data.contains_key("destination"));
+            assert!(map.data.contains_key("request"));
 
             match map.data.get("source").unwrap() {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("address").unwrap() {
-                        Token::Node(_) => assert!(false),
+                        Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "source.address".into()),
                     }
                 }
-                Token::Value(_) => assert!(false),
+                Token::Value(_) => panic!("Not supposed to get here!"),
             }
 
             match map.data.get("destination").unwrap() {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("port").unwrap() {
-                        Token::Node(_) => assert!(false),
+                        Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "destination.port".into()),
                     }
                 }
-                Token::Value(_) => assert!(false),
+                Token::Value(_) => panic!("Not supposed to get here!"),
             }
 
             match map.data.get("request").unwrap() {
@@ -377,16 +377,16 @@ pub mod data {
                     assert_eq!(map.len(), 2);
                     assert!(map.get("method").is_some());
                     match map.get("method").unwrap() {
-                        Token::Node(_) => assert!(false),
+                        Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.method".into()),
                     }
                     assert!(map.get("referer").is_some());
                     match map.get("referer").unwrap() {
-                        Token::Node(_) => assert!(false),
+                        Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.referer".into()),
                     }
                 }
-                Token::Value(_) => assert!(false),
+                Token::Value(_) => panic!("Not supposed to get here!"),
             }
         }
     }
@@ -404,7 +404,7 @@ mod tests {
         assert_eq!(attr.path, path);
         match attr.cel_type {
             ValueType::String => {}
-            _ => assert!(false),
+            _ => panic!("Not supposed to get here!"),
         }
     }
 }
