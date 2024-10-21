@@ -22,7 +22,16 @@ impl Expression {
 
         let attributes = props
             .into_iter()
-            .map(|tokens| know_attribute_for(&Path::new(tokens)).expect("Unknown attribute"))
+            .map(|tokens| {
+                know_attribute_for(&Path::new(tokens))
+                    // resolve to known root, and then inspect proper location
+                    // path = ["auth", "identity", "anonymous", ...]
+                    // UnknownAttribute { known_root: Path, Path }
+                    //
+                    // e.g. known part: ["auth", "identity"] => map it proper location
+                    // ...anonymous
+                    .expect("Unknown attribute")
+            })
             .collect();
 
         Ok(Self {
@@ -35,6 +44,10 @@ impl Expression {
         let mut ctx = Context::default();
         let Map { map } = self.build_data_map();
 
+        // if expression was "auth.identity.anonymous",
+        // {
+        //   "auth": { "identity": { "anonymous": true } }
+        // }
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
                 binding,
@@ -214,6 +227,7 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
         ("connection.mtls".into(), ValueType::Bool),
         ("request.raw_body".into(), ValueType::Bytes),
         ("auth.identity".into(), ValueType::Bytes),
+        ("auth.identity.anonymous".into(), ValueType::Bytes),
     ])
 }
 

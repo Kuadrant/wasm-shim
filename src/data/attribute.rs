@@ -130,7 +130,42 @@ pub fn store_metadata(metastruct: &Struct) {
     let metadata = process_metadata(metastruct, String::new());
     for (key, value) in metadata {
         let attr = format!("{KUADRANT_NAMESPACE}\\.{key}");
+        // stored into host_property: wasm.kuadrant.{key}
+        // example: wasm.kuadrant.identity.anonymous is how it's stored!
+        // but users would write the predicate: !auth.identity.anonymous
+        // two problems:
+        // - 1/ auth.identity doesn't resolve
+        // - 2/ the value is the string "true"
+
+        // struct User {
+        //   foo: bool,
+        //   bar: float, // 1 != 1.0
+        //   name: String,
+        // }
+        //
+        // Admin can store this:
+        // authorino: export auth.identity.user.foo = expression("auth.user != null") // {"foo": true, "bar": 123, "name": "dd"}
+        // Or that:
+        // authorino: export auth.identity.foo = expression("auth.user.long.ass.path.to.some.member.within.foo")
+        // authorino: export auth.identity.user.bar = 123
+        // authorino: export auth.identity.user.name = "dd"
+
+        // predicate: !auth.identity.user.foo && auth.identity.user.bar != 443.0
+        //      => properties [["auth", "identity", "user", "foo"], ["destination", "port"]]
+        //        known part ["auth", "identity"] + "user", resolves the key wasm.kuadrant.identity.user ? to lookup the value
+        //        value is a string, "{"foo": true, "bar": 123, "name": "dd"}"
+        //        value is json literal... string "true" is the Bool(true), we need to unmarshal that value form json
+        //        then evaluate the rest of the path against that structure and resolve the type from the value itself
+        //        e.g. : user.foo, .foo is that part that we don't know about, .foo => what's the value?
+        //        value is true, i.e. a boolean, so the value is cel_interpreter.Value::Bool(true)
+        //        within the value, we need to access the member "foo"
+        //
+        //      Split the work in 2:
+        //           - deal with scalar json values in the attribute: bool, number, string, null
+        //           - deal with: list, map, object
+        //               e.g. support auth.identity.groups[0] == "foo"
         debug!("set_attribute: {attr} = {value}");
+        // value is actually a json literal, e.g. 'true' != '"true"'
         set_attribute(attr.as_str(), value.into_bytes().as_slice());
     }
 }
