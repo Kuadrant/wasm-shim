@@ -167,6 +167,11 @@ impl PatternExpression {
             }
             Some(attribute_bytes) => attribute_bytes,
         };
+
+        // if someone would have the P_E be:
+        // selector: auth.identity.anonymous
+        // operator: eq
+        // value: \""true"\"
         self.eval(attribute_value).unwrap_or_else(|e| {
             debug!("pattern_expression_applies failed: {}", e);
             false
