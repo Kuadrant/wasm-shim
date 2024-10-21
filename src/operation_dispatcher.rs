@@ -248,11 +248,11 @@ fn conditions_apply_fn(action: &Action) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::OnceCell;
     use super::*;
     use crate::configuration::Timeout;
     use crate::envoy::RateLimitRequest;
     use protobuf::RepeatedField;
+    use std::cell::OnceCell;
     use std::time::Duration;
 
     fn default_grpc_call_fn_stub(
