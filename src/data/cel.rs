@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::OnceLock;
 
+#[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
     expression: CelExpression,
@@ -62,6 +63,7 @@ impl Expression {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Predicate {
     expression: Expression,
 }
@@ -287,7 +289,7 @@ fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mu
 }
 
 pub mod data {
-    use crate::data::Attribute;
+    use crate::data::cel::Attribute;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -349,7 +351,7 @@ pub mod data {
     #[cfg(test)]
     mod tests {
         use crate::data::cel::data::{AttributeMap, Token};
-        use crate::data::known_attribute_for;
+        use crate::data::cel::known_attribute_for;
 
         #[test]
         fn it_works() {
@@ -414,8 +416,7 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::cel::Predicate;
-    use crate::data::known_attribute_for;
+    use crate::data::cel::{known_attribute_for, Predicate};
     use cel_interpreter::objects::ValueType;
 
     #[test]

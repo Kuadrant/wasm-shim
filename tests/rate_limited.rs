@@ -253,22 +253,11 @@ fn it_passes_additional_headers() {
             "name": "some-name",
             "routeRuleConditions": {
                 "hostnames": ["*.toystore.com", "example.com"],
-                "matches": [
-                {
-                    "selector": "request.url_path",
-                    "operator": "startswith",
-                    "value": "/admin/toy"
-                },
-                {
-                    "selector": "request.host",
-                    "operator": "eq",
-                    "value": "cars.toystore.com"
-                },
-                {
-                    "selector": "request.method",
-                    "operator": "eq",
-                    "value": "POST"
-                }]
+                "predicates": [
+                    "request.url_path.startsWith('/admin/toy')",
+                    "request.host == 'cars.toystore.com'",
+                    "request.method == 'POST'"
+                ]
             },
             "actions": [
             {
