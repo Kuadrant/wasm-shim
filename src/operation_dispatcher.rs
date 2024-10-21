@@ -137,6 +137,10 @@ impl fmt::Display for OperationError {
             }
         }
     }
+
+    pub fn get_service_handler(&self) -> &GrpcServiceHandler {
+        &self.service_handler
+    }
 }
 
 pub struct OperationDispatcher {
