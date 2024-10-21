@@ -8,7 +8,7 @@ pub use attribute::store_metadata;
 pub use attribute::AttributeValue;
 
 #[allow(unused_imports)]
-pub use cel::know_attribute_for;
+pub use cel::known_attribute_for;
 #[allow(unused_imports)]
 pub use cel::Attribute;
 
