@@ -23,7 +23,7 @@ impl Expression {
         let attributes = props
             .into_iter()
             .map(|tokens| {
-                know_attribute_for(&Path::new(tokens))
+                known_attribute_for(&Path::new(tokens))
                     // resolve to known root, and then inspect proper location
                     // path = ["auth", "identity", "anonymous", ...]
                     // UnknownAttribute { known_root: Path, Path }
@@ -131,9 +131,9 @@ impl Attribute {
     }
 }
 
-pub fn know_attribute_for(path: &Path) -> Option<Attribute> {
-    static WELL_KNOWN_ATTTRIBUTES: OnceLock<HashMap<Path, ValueType>> = OnceLock::new();
-    WELL_KNOWN_ATTTRIBUTES
+pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
+    static WELL_KNOWN_ATTRIBUTES: OnceLock<HashMap<Path, ValueType>> = OnceLock::new();
+    WELL_KNOWN_ATTRIBUTES
         .get_or_init(new_well_known_attribute_map)
         .get(path)
         .map(|t| Attribute {
@@ -343,16 +343,16 @@ pub mod data {
     #[cfg(test)]
     mod tests {
         use crate::data::cel::data::{AttributeMap, Token};
-        use crate::data::know_attribute_for;
+        use crate::data::known_attribute_for;
 
         #[test]
         fn it_works() {
             let map = AttributeMap::new(
                 [
-                    know_attribute_for(&"request.method".into()).unwrap(),
-                    know_attribute_for(&"request.referer".into()).unwrap(),
-                    know_attribute_for(&"source.address".into()).unwrap(),
-                    know_attribute_for(&"destination.port".into()).unwrap(),
+                    known_attribute_for(&"request.method".into()).unwrap(),
+                    known_attribute_for(&"request.referer".into()).unwrap(),
+                    known_attribute_for(&"source.address".into()).unwrap(),
+                    known_attribute_for(&"destination.port".into()).unwrap(),
                 ]
                 .into(),
             );
@@ -408,13 +408,25 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::know_attribute_for;
+    use crate::data::known_attribute_for;
     use cel_interpreter::objects::ValueType;
+
+    #[test]
+    fn attribute_resolve() {
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some(80_i64.to_le_bytes().into()));
+        let value = known_attribute_for(&"destination.port".into())
+            .unwrap()
+            .get();
+        assert_eq!(value, 80.into());
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("GET".bytes().collect()));
+        let value = known_attribute_for(&"request.method".into()).unwrap().get();
+        assert_eq!(value, "GET".into());
+    }
 
     #[test]
     fn finds_known_attributes() {
         let path = "request.method".into();
-        let attr = know_attribute_for(&path).expect("Must be a hit!");
+        let attr = known_attribute_for(&path).expect("Must be a hit!");
         assert_eq!(attr.path, path);
         match attr.cel_type {
             ValueType::String => {}

@@ -1,6 +1,5 @@
 use log::debug;
 use log::warn;
-use proxy_wasm::hostcalls;
 use proxy_wasm::types::Status;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -25,9 +24,16 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
+#[cfg(test)]
 fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
-    hostcalls::get_property(path.tokens())
+    Ok(test::TEST_PROPERTY_VALUE.take())
+}
+
+#[cfg(not(test))]
+fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+    debug!("get_property: {:?}", path);
+    proxy_wasm::hostcalls::get_property(path.tokens())
 }
 
 pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
@@ -100,8 +106,14 @@ impl Path {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use crate::data::property::Path;
+    use std::cell::Cell;
+
+    thread_local!(
+        pub static TEST_PROPERTY_VALUE: Cell<Option<Vec<u8>>> = Cell::new(None);
+    );
+
     #[test]
     fn path_tokenizes_with_escaping_basic() {
         let path: Path = r"one\.two..three\\\\.four\\\.\five.".into();
