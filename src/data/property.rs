@@ -111,7 +111,7 @@ pub mod test {
     use std::cell::Cell;
 
     thread_local!(
-        pub static TEST_PROPERTY_VALUE: Cell<Option<Vec<u8>>> = Cell::new(None);
+        pub static TEST_PROPERTY_VALUE: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
     );
 
     #[test]
