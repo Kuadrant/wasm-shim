@@ -33,6 +33,7 @@ fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
 pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match path.tokens()[..] {
         ["source", "remote_address"] => remote_address(),
+        // for auth stuff => resolve_host_props() => json string literal as Bytes
         _ => host_get_property(path),
     }
 }
