@@ -67,6 +67,12 @@ pub struct Predicate {
 }
 
 impl Predicate {
+    pub fn new(predicate: &str) -> Result<Self, ParseError> {
+        Ok(Self {
+            expression: Expression::new(predicate)?,
+        })
+    }
+
     pub fn test(&self) -> bool {
         match self.expression.eval() {
             Value::Bool(result) => result,
@@ -408,8 +414,16 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
+    use crate::data::cel::Predicate;
     use crate::data::known_attribute_for;
     use cel_interpreter::objects::ValueType;
+
+    #[test]
+    fn predicates() {
+        let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some(65432_i64.to_le_bytes().into()));
+        assert!(predicate.test());
+    }
 
     #[test]
     fn attribute_resolve() {
