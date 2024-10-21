@@ -1,6 +1,44 @@
+use log::debug;
+use log::warn;
+use proxy_wasm::hostcalls;
+use proxy_wasm::types::Status;
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Debug, Clone)]
+fn remote_address() -> Result<Option<Vec<u8>>, Status> {
+    // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
+    // Envoy sets source.address to the trusted client address AND port.
+    match host_get_property(&"source.address".into())? {
+        None => {
+            warn!("source.address property not found");
+            Err(Status::BadArgument)
+        }
+        Some(host_vec) => match String::from_utf8(host_vec) {
+            Err(e) => {
+                warn!("source.address property value not string: {}", e);
+                Err(Status::BadArgument)
+            }
+            Ok(source_address) => {
+                let split_address = source_address.split(':').collect::<Vec<_>>();
+                Ok(Some(split_address[0].as_bytes().to_vec()))
+            }
+        },
+    }
+}
+
+fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+    debug!("get_property: {:?}", path);
+    hostcalls::get_property(path.tokens())
+}
+
+pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+    match path.tokens()[..] {
+        ["source", "remote_address"] => remote_address(),
+        // for auth stuff => resolve_host_props() => json string literal as Bytes
+        _ => host_get_property(path),
+    }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Path {
     tokens: Vec<String>,
 }
@@ -16,6 +54,12 @@ impl Display for Path {
                 .collect::<Vec<String>>()
                 .join(".")
         )
+    }
+}
+
+impl Debug for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "path: {:?}", self.tokens)
     }
 }
 
@@ -45,6 +89,11 @@ impl From<&str> for Path {
 }
 
 impl Path {
+    pub fn new<T: Into<String>>(tokens: Vec<T>) -> Self {
+        Self {
+            tokens: tokens.into_iter().map(|i| i.into()).collect(),
+        }
+    }
     pub fn tokens(&self) -> Vec<&str> {
         self.tokens.iter().map(String::as_str).collect()
     }
@@ -52,8 +101,7 @@ impl Path {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
+    use crate::data::property::Path;
     #[test]
     fn path_tokenizes_with_escaping_basic() {
         let path: Path = r"one\.two..three\\\\.four\\\.\five.".into();

@@ -5,47 +5,43 @@ use serial_test::serial;
 pub(crate) mod util;
 
 const CONFIG: &str = r#"{
-        "extensions": {
-            "authorino": {
-                "type": "auth",
-                "endpoint": "authorino-cluster",
-                "failureMode": "deny",
-                "timeout": "5s"
-            }
-        },
-        "policies": [
-        {
-            "name": "some-name",
+    "services": {
+        "authorino": {
+            "type": "auth",
+            "endpoint": "authorino-cluster",
+            "failureMode": "deny",
+            "timeout": "5s"
+        }
+    },
+    "actionSets": [
+    {
+        "name": "some-name",
+        "routeRuleConditions": {
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
+            "matches": [
             {
-                "conditions": [
-                {
-                    "allOf": [
-                    {
-                        "selector": "request.url_path",
-                        "operator": "startswith",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    }]
-                }],
-                "actions": [
-                {
-                    "extension": "authorino",
-                    "scope": "authconfig-A"
-                }]
+                "selector": "request.url_path",
+                "operator": "startswith",
+                "value": "/admin/toy"
+            },
+            {
+                "selector": "request.host",
+                "operator": "eq",
+                "value": "cars.toystore.com"
+            },
+            {
+                "selector": "request.method",
+                "operator": "eq",
+                "value": "POST"
             }]
+        },
+        "actions": [
+        {
+            "service": "authorino",
+            "scope": "authconfig-A"
         }]
-    }"#;
+    }]
+}"#;
 
 #[test]
 #[serial]
@@ -110,7 +106,10 @@ fn it_auths() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
@@ -161,7 +160,7 @@ fn it_auths() {
             Some("get_property: path: [\"destination\", \"port\"]"),
         )
         .expect_get_property(Some(vec!["destination", "port"]))
-        .returning(Some("8000".as_bytes()))
+        .returning(Some(&8000u64.to_le_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"source\", \"address\"]"),
@@ -173,7 +172,7 @@ fn it_auths() {
             Some("get_property: path: [\"source\", \"port\"]"),
         )
         .expect_get_property(Some(vec!["source", "port"]))
-        .returning(Some("45000".as_bytes()))
+        .returning(Some(&45000u64.to_le_bytes()))
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -187,18 +186,18 @@ fn it_auths() {
             Some("Check"),
             Some(&[0, 0, 0, 0]),
             Some(&[
-                10, 217, 1, 10, 23, 10, 21, 10, 19, 18, 15, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58,
-                52, 53, 48, 48, 48, 24, 0, 18, 22, 10, 20, 10, 18, 18, 14, 49, 50, 55, 46, 48, 46,
-                48, 46, 49, 58, 56, 48, 48, 48, 24, 0, 34, 141, 1, 10, 0, 18, 136, 1, 18, 3, 71,
-                69, 84, 26, 30, 10, 10, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 18, 16, 97,
-                98, 105, 95, 116, 101, 115, 116, 95, 104, 97, 114, 110, 101, 115, 115, 26, 14, 10,
-                7, 58, 109, 101, 116, 104, 111, 100, 18, 3, 71, 69, 84, 26, 38, 10, 5, 58, 112, 97,
-                116, 104, 18, 29, 47, 100, 101, 102, 97, 117, 108, 116, 47, 114, 101, 113, 117,
-                101, 115, 116, 47, 104, 101, 97, 100, 101, 114, 115, 47, 112, 97, 116, 104, 34, 10,
-                47, 97, 100, 109, 105, 110, 47, 116, 111, 121, 42, 17, 99, 97, 114, 115, 46, 116,
-                111, 121, 115, 116, 111, 114, 101, 46, 99, 111, 109, 50, 4, 104, 116, 116, 112, 82,
-                4, 72, 84, 84, 80, 82, 20, 10, 4, 104, 111, 115, 116, 18, 12, 97, 117, 116, 104,
-                99, 111, 110, 102, 105, 103, 45, 65, 90, 0,
+                10, 220, 1, 10, 25, 10, 23, 10, 21, 18, 15, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58,
+                52, 53, 48, 48, 48, 24, 200, 223, 2, 18, 23, 10, 21, 10, 19, 18, 14, 49, 50, 55,
+                46, 48, 46, 48, 46, 49, 58, 56, 48, 48, 48, 24, 192, 62, 34, 141, 1, 10, 0, 18,
+                136, 1, 18, 3, 71, 69, 84, 26, 30, 10, 10, 58, 97, 117, 116, 104, 111, 114, 105,
+                116, 121, 18, 16, 97, 98, 105, 95, 116, 101, 115, 116, 95, 104, 97, 114, 110, 101,
+                115, 115, 26, 14, 10, 7, 58, 109, 101, 116, 104, 111, 100, 18, 3, 71, 69, 84, 26,
+                38, 10, 5, 58, 112, 97, 116, 104, 18, 29, 47, 100, 101, 102, 97, 117, 108, 116, 47,
+                114, 101, 113, 117, 101, 115, 116, 47, 104, 101, 97, 100, 101, 114, 115, 47, 112,
+                97, 116, 104, 34, 10, 47, 97, 100, 109, 105, 110, 47, 116, 111, 121, 42, 17, 99,
+                97, 114, 115, 46, 116, 111, 121, 115, 116, 111, 114, 101, 46, 99, 111, 109, 50, 4,
+                104, 116, 116, 112, 82, 4, 72, 84, 84, 80, 82, 20, 10, 4, 104, 111, 115, 116, 18,
+                12, 97, 117, 116, 104, 99, 111, 110, 102, 105, 103, 45, 65, 90, 0,
             ]),
             Some(5000),
         )
@@ -302,7 +301,10 @@ fn it_denies() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
@@ -353,7 +355,7 @@ fn it_denies() {
             Some("get_property: path: [\"destination\", \"port\"]"),
         )
         .expect_get_property(Some(vec!["destination", "port"]))
-        .returning(Some("8000".as_bytes()))
+        .returning(Some(&8000u64.to_le_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"source\", \"address\"]"),
@@ -365,7 +367,7 @@ fn it_denies() {
             Some("get_property: path: [\"source\", \"port\"]"),
         )
         .expect_get_property(Some(vec!["source", "port"]))
-        .returning(Some("45000".as_bytes()))
+        .returning(Some(&45000u64.to_le_bytes()))
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -379,18 +381,18 @@ fn it_denies() {
             Some("Check"),
             Some(&[0, 0, 0, 0]),
             Some(&[
-                10, 217, 1, 10, 23, 10, 21, 10, 19, 18, 15, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58,
-                52, 53, 48, 48, 48, 24, 0, 18, 22, 10, 20, 10, 18, 18, 14, 49, 50, 55, 46, 48, 46,
-                48, 46, 49, 58, 56, 48, 48, 48, 24, 0, 34, 141, 1, 10, 0, 18, 136, 1, 18, 3, 71,
-                69, 84, 26, 30, 10, 10, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 18, 16, 97,
-                98, 105, 95, 116, 101, 115, 116, 95, 104, 97, 114, 110, 101, 115, 115, 26, 14, 10,
-                7, 58, 109, 101, 116, 104, 111, 100, 18, 3, 71, 69, 84, 26, 38, 10, 5, 58, 112, 97,
-                116, 104, 18, 29, 47, 100, 101, 102, 97, 117, 108, 116, 47, 114, 101, 113, 117,
-                101, 115, 116, 47, 104, 101, 97, 100, 101, 114, 115, 47, 112, 97, 116, 104, 34, 10,
-                47, 97, 100, 109, 105, 110, 47, 116, 111, 121, 42, 17, 99, 97, 114, 115, 46, 116,
-                111, 121, 115, 116, 111, 114, 101, 46, 99, 111, 109, 50, 4, 104, 116, 116, 112, 82,
-                4, 72, 84, 84, 80, 82, 20, 10, 4, 104, 111, 115, 116, 18, 12, 97, 117, 116, 104,
-                99, 111, 110, 102, 105, 103, 45, 65, 90, 0,
+                10, 220, 1, 10, 25, 10, 23, 10, 21, 18, 15, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58,
+                52, 53, 48, 48, 48, 24, 200, 223, 2, 18, 23, 10, 21, 10, 19, 18, 14, 49, 50, 55,
+                46, 48, 46, 48, 46, 49, 58, 56, 48, 48, 48, 24, 192, 62, 34, 141, 1, 10, 0, 18,
+                136, 1, 18, 3, 71, 69, 84, 26, 30, 10, 10, 58, 97, 117, 116, 104, 111, 114, 105,
+                116, 121, 18, 16, 97, 98, 105, 95, 116, 101, 115, 116, 95, 104, 97, 114, 110, 101,
+                115, 115, 26, 14, 10, 7, 58, 109, 101, 116, 104, 111, 100, 18, 3, 71, 69, 84, 26,
+                38, 10, 5, 58, 112, 97, 116, 104, 18, 29, 47, 100, 101, 102, 97, 117, 108, 116, 47,
+                114, 101, 113, 117, 101, 115, 116, 47, 104, 101, 97, 100, 101, 114, 115, 47, 112,
+                97, 116, 104, 34, 10, 47, 97, 100, 109, 105, 110, 47, 116, 111, 121, 42, 17, 99,
+                97, 114, 115, 46, 116, 111, 121, 115, 116, 111, 114, 101, 46, 99, 111, 109, 50, 4,
+                104, 116, 116, 112, 82, 4, 72, 84, 84, 80, 82, 20, 10, 4, 104, 111, 115, 116, 18,
+                12, 97, 117, 116, 104, 99, 111, 110, 102, 105, 103, 45, 65, 90, 0,
             ]),
             Some(5000),
         )
