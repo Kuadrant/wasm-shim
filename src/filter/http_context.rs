@@ -13,6 +13,10 @@ pub struct Filter {
     pub config: Rc<FilterConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
     pub operation_dispatcher: RefCell<OperationDispatcher>,
+    pub rate_limit_ok_metric_id: u32,
+    pub rate_limit_error_metric_id: u32,
+    pub rate_limit_over_limit_metric_id: u32,
+    pub rate_limit_failure_mode_allowed_metric_id: u32,
 }
 
 impl Filter {

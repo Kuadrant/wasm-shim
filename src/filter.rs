@@ -33,6 +33,10 @@ extern "C" fn start() {
         Box::new(FilterRoot {
             context_id,
             config: Default::default(),
+            rate_limit_ok_metric_id: 0,
+            rate_limit_error_metric_id: 0,
+            rate_limit_over_limit_metric_id: 0,
+            rate_limit_failure_mode_allowed_metric_id: 0,
         })
     });
 }

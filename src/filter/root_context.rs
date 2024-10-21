@@ -4,8 +4,9 @@ use crate::operation_dispatcher::OperationDispatcher;
 use crate::service::{GrpcServiceHandler, HeaderResolver};
 use const_format::formatcp;
 use log::{debug, error, info};
+use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
-use proxy_wasm::types::ContextType;
+use proxy_wasm::types::{ContextType, MetricType};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -18,6 +19,10 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 pub struct FilterRoot {
     pub context_id: u32,
     pub config: Rc<FilterConfig>,
+    pub rate_limit_ok_metric_id: u32,
+    pub rate_limit_error_metric_id: u32,
+    pub rate_limit_over_limit_metric_id: u32,
+    pub rate_limit_failure_mode_allowed_metric_id: u32,
 }
 
 impl RootContext for FilterRoot {
@@ -30,6 +35,29 @@ impl RootContext for FilterRoot {
             "#{} {} {}: VM started",
             self.context_id, WASM_SHIM_HEADER, full_version
         );
+
+        self.rate_limit_ok_metric_id =
+            match hostcalls::define_metric(MetricType::Counter, "kuadrant.rate_limit.ok") {
+                Ok(metric_id) => metric_id,
+                Err(e) => panic!("Error: {:?}", e),
+            };
+        self.rate_limit_error_metric_id =
+            match hostcalls::define_metric(MetricType::Counter, "kuadrant.rate_limit.error") {
+                Ok(metric_id) => metric_id,
+                Err(e) => panic!("Error: {:?}", e),
+            };
+        self.rate_limit_over_limit_metric_id =
+            match hostcalls::define_metric(MetricType::Counter, "kuadrant.rate_limit.over_limit") {
+                Ok(metric_id) => metric_id,
+                Err(e) => panic!("Error: {:?}", e),
+            };
+        self.rate_limit_failure_mode_allowed_metric_id = match hostcalls::define_metric(
+            MetricType::Counter,
+            "kuadrant.rate_limit.failure_mode_allowed",
+        ) {
+            Ok(metric_id) => metric_id,
+            Err(e) => panic!("Error: {:?}", e),
+        };
         true
     }
 
@@ -53,6 +81,11 @@ impl RootContext for FilterRoot {
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
             operation_dispatcher: OperationDispatcher::new(service_handlers).into(),
+            rate_limit_ok_metric_id: self.rate_limit_ok_metric_id,
+            rate_limit_error_metric_id: self.rate_limit_error_metric_id,
+            rate_limit_over_limit_metric_id: self.rate_limit_over_limit_metric_id,
+            rate_limit_failure_mode_allowed_metric_id: self
+                .rate_limit_failure_mode_allowed_metric_id,
         }))
     }
 

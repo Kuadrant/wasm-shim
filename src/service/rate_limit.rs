@@ -44,6 +44,11 @@ impl RateLimitService {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             }) => {
+                //match failure_mode {
+                //    FailureMode::Deny => {
+                //    },
+                //    FailureMode::Allow => {},
+                //}
                 GrpcService::handle_error_on_grpc_response(failure_mode);
                 Err(StatusCode::InternalServerError)
             }
