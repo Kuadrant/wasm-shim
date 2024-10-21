@@ -1,8 +1,10 @@
 use crate::configuration::{DataItem, DataType, PatternExpression};
+use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use log::debug;
 use protobuf::RepeatedField;
 use serde::Deserialize;
+use std::cell::OnceCell;
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -12,12 +14,24 @@ pub struct Action {
     #[serde(default)]
     pub conditions: Vec<PatternExpression>,
     #[serde(default)]
+    pub predicates: Vec<String>,
+    #[serde(skip_deserializing)]
+    pub compiled_predicates: OnceCell<Vec<Predicate>>,
+    #[serde(default)]
     pub data: Vec<DataItem>,
 }
 
 impl Action {
     pub fn conditions_apply(&self) -> bool {
-        self.conditions.is_empty() || self.conditions.iter().all(|m| m.applies())
+        let predicates = self
+            .compiled_predicates
+            .get()
+            .expect("predicates must be compiled by now");
+        if predicates.is_empty() {
+            self.conditions.is_empty() || self.conditions.iter().all(PatternExpression::applies)
+        } else {
+            predicates.iter().all(Predicate::test)
+        }
     }
 
     pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {

@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::action_set_index::ActionSetIndex;
-use crate::data::AttributeValue;
 use crate::data::PropertyPath;
+use crate::data::{AttributeValue, Predicate};
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
@@ -446,6 +446,15 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                     return Err(result.err().unwrap());
                 }
             }
+            let mut predicates = Vec::default();
+            for predicate in &action_set.route_rule_conditions.predicates {
+                predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+            }
+            action_set
+                .route_rule_conditions
+                .compiled_predicates
+                .set(predicates)
+                .expect("Predicates must not be compiled yet!");
             for action in &action_set.actions {
                 for condition in &action.conditions {
                     let result = condition.compile();
@@ -453,6 +462,15 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                         return Err(result.err().unwrap());
                     }
                 }
+                let mut predicates = Vec::default();
+                for predicate in &action.predicates {
+                    predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+                }
+                action
+                    .compiled_predicates
+                    .set(predicates)
+                    .expect("Predicates must not be compiled yet!");
+
                 for datum in &action.data {
                     let result = datum.item.compile();
                     if result.is_err() {

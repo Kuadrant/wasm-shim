@@ -248,6 +248,7 @@ fn conditions_apply_fn(action: &Action) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::OnceCell;
     use super::*;
     use crate::configuration::Timeout;
     use crate::envoy::RateLimitRequest;
@@ -314,6 +315,8 @@ mod tests {
                 service: "local".to_string(),
                 scope: "".to_string(),
                 conditions: vec![],
+                predicates: vec![],
+                compiled_predicates: OnceCell::default(),
                 data: vec![],
             },
             service_handler: Rc::new(build_grpc_service_handler()),
