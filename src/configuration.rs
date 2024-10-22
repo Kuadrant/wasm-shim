@@ -5,9 +5,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::attribute::Attribute;
-use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
-use crate::policy::Policy;
-use crate::policy_index::PolicyIndex;
+use crate::configuration::action_set::ActionSet;
+use crate::configuration::action_set_index::ActionSetIndex;
 use crate::property_path::Path;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
@@ -15,10 +14,13 @@ use cel_interpreter::objects::ValueType;
 use cel_interpreter::{Context, Expression, Value};
 use cel_parser::{Atom, RelationOp};
 use log::debug;
-use protobuf::RepeatedField;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
+
+pub mod action;
+pub mod action_set;
+mod action_set_index;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -152,6 +154,25 @@ impl PatternExpression {
                 }
             })
             .map_err(|err| format!("Error evaluating {:?}: {}", self.compiled, err))
+    }
+
+    fn applies(&self) -> bool {
+        let attribute_path = self.path();
+        let attribute_value = match crate::property::get_property(attribute_path).unwrap() {
+            //TODO(didierofrivia): Replace hostcalls by DI
+            None => {
+                debug!(
+                    "pattern_expression_applies:  selector not found: {}, defaulting to ``",
+                    self.selector
+                );
+                b"".to_vec()
+            }
+            Some(attribute_bytes) => attribute_bytes,
+        };
+        self.eval(attribute_value).unwrap_or_else(|e| {
+            debug!("pattern_expression_applies failed: {}", e);
+            false
+        })
     }
 }
 
@@ -397,14 +418,14 @@ pub fn type_of(path: &str) -> Option<ValueType> {
 }
 
 pub struct FilterConfig {
-    pub index: PolicyIndex,
+    pub index: ActionSetIndex,
     pub services: Rc<HashMap<String, Rc<GrpcService>>>,
 }
 
 impl Default for FilterConfig {
     fn default() -> Self {
         Self {
-            index: PolicyIndex::new(),
+            index: ActionSetIndex::new(),
             services: Rc::new(HashMap::new()),
         }
     }
@@ -414,36 +435,37 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
     type Error = String;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        let mut index = PolicyIndex::new();
-
-        for policy in config.policies.iter() {
-            for rule in &policy.rules {
-                for condition in &rule.conditions {
-                    for pe in &condition.all_of {
-                        let result = pe.compile();
-                        if result.is_err() {
-                            return Err(result.err().unwrap());
-                        }
+        let mut index = ActionSetIndex::new();
+        for action_set in config.action_sets.iter() {
+            for pe in &action_set.route_rule_conditions.matches {
+                let result = pe.compile();
+                if result.is_err() {
+                    return Err(result.err().unwrap());
+                }
+            }
+            for action in &action_set.actions {
+                for condition in &action.conditions {
+                    let result = condition.compile();
+                    if result.is_err() {
+                        return Err(result.err().unwrap());
                     }
                 }
-                for action in &rule.actions {
-                    for datum in &action.data {
-                        let result = datum.item.compile();
-                        if result.is_err() {
-                            return Err(result.err().unwrap());
-                        }
+                for datum in &action.data {
+                    let result = datum.item.compile();
+                    if result.is_err() {
+                        return Err(result.err().unwrap());
                     }
                 }
             }
 
-            for hostname in policy.hostnames.iter() {
-                index.insert(hostname, Rc::new(policy.clone()));
+            for hostname in action_set.route_rule_conditions.hostnames.iter() {
+                index.insert(hostname, Rc::new(action_set.clone()));
             }
         }
 
-        // configure grpc services from the extensions in config
+        // configure grpc services from the services in config
         let services = config
-            .extensions
+            .services
             .into_iter()
             .map(|(name, ext)| (name, Rc::new(GrpcService::new(Rc::new(ext)))))
             .collect();
@@ -465,7 +487,7 @@ pub enum FailureMode {
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum ExtensionType {
+pub enum ServiceType {
     Auth,
     #[default]
     RateLimit,
@@ -474,15 +496,15 @@ pub enum ExtensionType {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    pub extensions: HashMap<String, Extension>,
-    pub policies: Vec<Policy>,
+    pub services: HashMap<String, Service>,
+    pub action_sets: Vec<ActionSet>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Extension {
+pub struct Service {
     #[serde(rename = "type")]
-    pub extension_type: ExtensionType,
+    pub service_type: ServiceType,
     pub endpoint: String,
     // Deny/Allow request when faced with an irrecoverable failure.
     pub failure_mode: FailureMode,
@@ -534,93 +556,12 @@ impl<'de> Visitor<'de> for TimeoutVisitor {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Action {
-    pub extension: String,
-    pub scope: String,
-    #[serde(default)]
-    pub data: Vec<DataItem>,
-}
-
-impl Action {
-    pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
-        let mut entries = RepeatedField::new();
-        if let Some(desc) = self.build_single_descriptor() {
-            entries.push(desc);
-        }
-        entries
-    }
-
-    fn build_single_descriptor(&self) -> Option<RateLimitDescriptor> {
-        let mut entries = RepeatedField::default();
-
-        // iterate over data items to allow any data item to skip the entire descriptor
-        for data in self.data.iter() {
-            match &data.item {
-                DataType::Static(static_item) => {
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(static_item.key.to_owned());
-                    descriptor_entry.set_value(static_item.value.to_owned());
-                    entries.push(descriptor_entry);
-                }
-                DataType::Selector(selector_item) => {
-                    let descriptor_key = match &selector_item.key {
-                        None => selector_item.path().to_string(),
-                        Some(key) => key.to_owned(),
-                    };
-
-                    let attribute_path = selector_item.path();
-
-                    let value = match crate::property::get_property(attribute_path.tokens())
-                        .unwrap()
-                    {
-                        //TODO(didierofrivia): Replace hostcalls by DI
-                        None => {
-                            debug!(
-                                "build_single_descriptor: selector not found: {}",
-                                attribute_path
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
-                            Ok(attr_str) => attr_str,
-                            Err(e) => {
-                                debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    attribute_path, e);
-                                return None;
-                            }
-                        },
-                        // Alternative implementation (for rust >= 1.76)
-                        // Attribute::parse(attribute_bytes)
-                        //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                        //           filter.context_id, attribute_path, e))
-                        //   .ok()?,
-                    };
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(descriptor_key);
-                    descriptor_entry.set_value(value);
-                    entries.push(descriptor_entry);
-                }
-            }
-        }
-        let mut res = RateLimitDescriptor::new();
-        res.set_entries(entries);
-        Some(res)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
 
     const CONFIG: &str = r#"{
-        "extensions": {
+        "services": {
             "authorino": {
                 "type": "auth",
                 "endpoint": "authorino-cluster",
@@ -634,51 +575,53 @@ mod test {
                 "timeout": "42ms"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
-            {
-                "conditions": [
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"],
+                "matches": [
                 {
-                   "allOf": [
-                    {
-                        "selector": "request.path",
-                        "operator": "eq",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    }]
-                }],
-                "actions": [
-                {
-                    "extension": "authorino",
-                    "scope": "authconfig-A"
+                    "selector": "request.path",
+                    "operator": "eq",
+                    "value": "/admin/toy"
                 },
                 {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
-                    {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    },
-                    {
-                        "selector": {
-                            "selector": "auth.metadata.username"
-                        }
-                    }]
+                    "selector": "request.method",
+                    "operator": "eq",
+                    "value": "POST"
+                },
+                {
+                    "selector": "request.host",
+                    "operator": "eq",
+                    "value": "cars.toystore.com"
+                }]
+            },
+            "actions": [
+            {
+                "service": "authorino",
+                "scope": "authconfig-A"
+            },
+            {
+                "service": "limitador",
+                "scope": "rlp-ns-A/rlp-name-A",
+                "conditions": [
+                {
+                    "selector": "auth.metadata.username",
+                    "operator": "eq",
+                    "value": "alice"
+                }],
+                "data": [
+                {
+                    "static": {
+                        "key": "rlp-ns-A/rlp-name-A",
+                        "value": "1"
+                    }
+                },
+                {
+                    "selector": {
+                        "selector": "auth.metadata.username"
+                    }
                 }]
             }]
         }]
@@ -693,47 +636,41 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
-        let extensions = &filter_config.extensions;
-        assert_eq!(extensions.len(), 2);
+        let services = &filter_config.services;
+        assert_eq!(services.len(), 2);
 
-        if let Some(auth_extension) = extensions.get("authorino") {
-            assert_eq!(auth_extension.extension_type, ExtensionType::Auth);
-            assert_eq!(auth_extension.endpoint, "authorino-cluster");
-            assert_eq!(auth_extension.failure_mode, FailureMode::Deny);
-            assert_eq!(auth_extension.timeout, Timeout(Duration::from_millis(24)))
+        if let Some(auth_service) = services.get("authorino") {
+            assert_eq!(auth_service.service_type, ServiceType::Auth);
+            assert_eq!(auth_service.endpoint, "authorino-cluster");
+            assert_eq!(auth_service.failure_mode, FailureMode::Deny);
+            assert_eq!(auth_service.timeout, Timeout(Duration::from_millis(24)))
         } else {
             panic!()
         }
 
-        if let Some(rl_extension) = extensions.get("limitador") {
-            assert_eq!(rl_extension.extension_type, ExtensionType::RateLimit);
-            assert_eq!(rl_extension.endpoint, "limitador-cluster");
-            assert_eq!(rl_extension.failure_mode, FailureMode::Allow);
-            assert_eq!(rl_extension.timeout, Timeout(Duration::from_millis(42)))
+        if let Some(rl_service) = services.get("limitador") {
+            assert_eq!(rl_service.service_type, ServiceType::RateLimit);
+            assert_eq!(rl_service.endpoint, "limitador-cluster");
+            assert_eq!(rl_service.failure_mode, FailureMode::Allow);
+            assert_eq!(rl_service.timeout, Timeout(Duration::from_millis(42)))
         } else {
             panic!()
         }
 
-        let rules = &filter_config.policies[0].rules;
-        assert_eq!(rules.len(), 1);
+        let matches = &filter_config.action_sets[0].route_rule_conditions.matches;
+        assert_eq!(matches.len(), 3);
 
-        let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 1);
-
-        let all_of_conditions = &conditions[0].all_of;
-        assert_eq!(all_of_conditions.len(), 3);
-
-        let actions = &rules[0].actions;
+        let actions = &filter_config.action_sets[0].actions;
         assert_eq!(actions.len(), 2);
 
         let auth_action = &actions[0];
-        assert_eq!(auth_action.extension, "authorino");
+        assert_eq!(auth_action.service, "authorino");
         assert_eq!(auth_action.scope, "authconfig-A");
 
         let rl_action = &actions[1];
-        assert_eq!(rl_action.extension, "limitador");
+        assert_eq!(rl_action.service, "limitador");
         assert_eq!(rl_action.scope, "rlp-ns-A/rlp-name-A");
 
         let auth_data_items = &auth_action.data;
@@ -741,6 +678,9 @@ mod test {
 
         let rl_data_items = &rl_action.data;
         assert_eq!(rl_data_items.len(), 2);
+
+        let rl_conditions = &rl_action.conditions;
+        assert_eq!(rl_conditions.len(), 1);
 
         // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
         //assert_eq!(
@@ -772,8 +712,8 @@ mod test {
     #[test]
     fn parse_config_min() {
         let config = r#"{
-            "extensions": {},
-            "policies": []
+            "services": {},
+            "actionSets": []
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(config);
         if let Err(ref e) = res {
@@ -782,37 +722,36 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 0);
+        assert_eq!(filter_config.action_sets.len(), 0);
     }
 
     #[test]
     fn parse_config_data_selector() {
         let config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
+                "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"]
+                },
+                "actions": [
                 {
-                    "actions": [
+                    "service": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "data": [
                     {
-                        "extension": "limitador",
-                        "scope": "rlp-ns-A/rlp-name-A",
-                        "data": [
-                        {
-                            "selector": {
-                                "selector": "my.selector.path",
-                                "key": "mykey",
-                                "default": "my_selector_default_value"
-                            }
-                        }]
+                        "selector": {
+                            "selector": "my.selector.path",
+                            "key": "mykey",
+                            "default": "my_selector_default_value"
+                        }
                     }]
                 }]
             }]
@@ -824,12 +763,9 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
-        let rules = &filter_config.policies[0].rules;
-        assert_eq!(rules.len(), 1);
-
-        let actions = &rules[0].actions;
+        let actions = &filter_config.action_sets[0].actions;
         assert_eq!(actions.len(), 1);
 
         let data_items = &actions[0].data;
@@ -850,54 +786,61 @@ mod test {
     #[test]
     fn parse_config_condition_selector_operators() {
         let config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
+                "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"],
+                    "matches": [
+                    {
+                        "selector": "request.path",
+                        "operator": "eq",
+                        "value": "/admin/toy"
+                    },
+                    {
+                        "selector": "request.method",
+                        "operator": "neq",
+                        "value": "POST"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "startswith",
+                        "value": "cars."
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "endswith",
+                        "value": ".com"
+                    },
+                    {
+                        "selector": "request.host",
+                        "operator": "matches",
+                        "value": "*.com"
+                    }]
+                },
+                "actions": [
                 {
+                    "service": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
                     "conditions": [
                     {
-                        "allOf": [
-                        {
-                            "selector": "request.path",
-                            "operator": "eq",
-                            "value": "/admin/toy"
-                        },
-                        {
-                            "selector": "request.method",
-                            "operator": "neq",
-                            "value": "POST"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "startswith",
-                            "value": "cars."
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "endswith",
-                            "value": ".com"
-                        },
-                        {
-                            "selector": "request.host",
-                            "operator": "matches",
-                            "value": "*.com"
-                        }]
-                    }],
-                    "actions": [
+                        "selector": "auth.metadata.username",
+                        "operator": "eq",
+                        "value": "alice"
+                    },
                     {
-                        "extension": "limitador",
-                        "scope": "rlp-ns-A/rlp-name-A",
-                        "data": [ { "selector": { "selector": "my.selector.path" } }]
-                    }]
+                        "selector": "request.path",
+                        "operator": "endswith",
+                        "value": "/car"
+                    }],
+                    "data": [ { "selector": { "selector": "my.selector.path" } }]
                 }]
             }]
         }"#;
@@ -908,18 +851,12 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
-        let rules = &filter_config.policies[0].rules;
-        assert_eq!(rules.len(), 1);
+        let matches = &filter_config.action_sets[0].route_rule_conditions.matches;
+        assert_eq!(matches.len(), 5);
 
-        let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 1);
-
-        let all_of_conditions = &conditions[0].all_of;
-        assert_eq!(all_of_conditions.len(), 5);
-
-        let expected_conditions = [
+        let expected_matches = [
             // selector, value, operator
             ("request.path", "/admin/toy", WhenConditionOperator::Equal),
             ("request.method", "POST", WhenConditionOperator::NotEqual),
@@ -928,45 +865,67 @@ mod test {
             ("request.host", "*.com", WhenConditionOperator::Matches),
         ];
 
-        for i in 0..expected_conditions.len() {
-            assert_eq!(all_of_conditions[i].selector, expected_conditions[i].0);
-            assert_eq!(all_of_conditions[i].value, expected_conditions[i].1);
-            assert_eq!(all_of_conditions[i].operator, expected_conditions[i].2);
+        for (m, (expected_selector, expected_value, expected_operator)) in
+            matches.iter().zip(expected_matches.iter())
+        {
+            assert_eq!(m.selector, *expected_selector);
+            assert_eq!(m.value, *expected_value);
+            assert_eq!(m.operator, *expected_operator);
+        }
+
+        let conditions = &filter_config.action_sets[0].actions[0].conditions;
+        assert_eq!(conditions.len(), 2);
+
+        let expected_conditions = [
+            // selector, value, operator
+            (
+                "auth.metadata.username",
+                "alice",
+                WhenConditionOperator::Equal,
+            ),
+            ("request.path", "/car", WhenConditionOperator::EndsWith),
+        ];
+
+        for (condition, (expected_selector, expected_value, expected_operator)) in
+            conditions.iter().zip(expected_conditions.iter())
+        {
+            assert_eq!(condition.selector, *expected_selector);
+            assert_eq!(condition.value, *expected_value);
+            assert_eq!(condition.operator, *expected_operator);
         }
     }
 
     #[test]
     fn parse_config_conditions_optional() {
         let config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
+                "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"]
+                },
+                "actions": [
                 {
-                    "actions": [
+                    "service": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "data": [
                     {
-                        "extension": "limitador",
-                        "scope": "rlp-ns-A/rlp-name-A",
-                        "data": [
-                        {
-                            "static": {
-                                "key": "rlp-ns-A/rlp-name-A",
-                                "value": "1"
-                            }
-                        },
-                        {
-                            "selector": {
-                                "selector": "auth.metadata.username"
-                            }
-                        }]
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    },
+                    {
+                        "selector": {
+                            "selector": "auth.metadata.username"
+                        }
                     }]
                 }]
             }]
@@ -978,52 +937,48 @@ mod test {
         assert!(res.is_ok());
 
         let filter_config = res.unwrap();
-        assert_eq!(filter_config.policies.len(), 1);
+        assert_eq!(filter_config.action_sets.len(), 1);
 
-        let extensions = &filter_config.extensions;
+        let services = &filter_config.services;
         assert_eq!(
-            extensions.get("limitador").unwrap().timeout,
+            services.get("limitador").unwrap().timeout,
             Timeout(Duration::from_millis(20))
         );
 
-        let rules = &filter_config.policies[0].rules;
-        assert_eq!(rules.len(), 1);
-
-        let conditions = &rules[0].conditions;
-        assert_eq!(conditions.len(), 0);
+        let matches = &filter_config.action_sets[0].route_rule_conditions.matches;
+        assert_eq!(matches.len(), 0);
     }
 
     #[test]
     fn parse_config_invalid_data() {
         // data item fields are mutually exclusive
         let bad_config = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
             {
-                "actions": [
+                "service": "limitador",
+                "scope": "rlp-ns-A/rlp-name-A",
+                "data": [
                 {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
-                    {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        },
-                        "selector": {
-                            "selector": "auth.metadata.username"
-                        }
-                    }]
+                    "static": {
+                        "key": "rlp-ns-A/rlp-name-A",
+                        "value": "1"
+                    },
+                    "selector": {
+                        "selector": "auth.metadata.username"
+                    }
                 }]
             }]
         }]
@@ -1033,31 +988,29 @@ mod test {
 
         // data item unknown fields are forbidden
         let bad_config = r#"{
-        "extensions": {
+        "services": {
             "limitador": {
                 "type": "ratelimit",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny"
             }
         },
-        "policies": [
+        "actionSets": [
         {
             "name": "rlp-ns-A/rlp-name-A",
-            "service": "limitador-cluster",
-            "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
             {
-                "actions": [
+                "service": "limitador",
+                "scope": "rlp-ns-A/rlp-name-A",
+                "data": [
                 {
-                    "extension": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
-                    {
-                        "unknown": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }]
+                    "unknown": {
+                        "key": "rlp-ns-A/rlp-name-A",
+                        "value": "1"
+                    }
                 }]
             }]
         }]
@@ -1067,34 +1020,30 @@ mod test {
 
         // condition selector operator unknown
         let bad_config = r#"{
-            "extensions": {
+            "services": {
                 "limitador": {
                     "type": "ratelimit",
                     "endpoint": "limitador-cluster",
                     "failureMode": "deny"
                 }
             },
-            "policies": [
+            "actionSets": [
             {
                 "name": "rlp-ns-A/rlp-name-A",
-                "hostnames": ["*.toystore.com", "example.com"],
-                "rules": [
-                {
-                    "conditions": [
+                "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"],
+                    "matches": [
                     {
-                       "allOf": [
-                        {
-                            "selector": "request.path",
-                            "operator": "unknown",
-                            "value": "/admin/toy"
-                        }]
-                    }],
-                    "actions": [
-                    {
-                        "extension": "limitador",
-                        "scope": "rlp-ns-A/rlp-name-A",
-                        "data": [ { "selector": { "selector": "my.selector.path" } }]
+                        "selector": "request.path",
+                        "operator": "unknown",
+                        "value": "/admin/toy"
                     }]
+                },
+                "actions": [
+                {
+                    "service": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "data": [ { "selector": { "selector": "my.selector.path" } }]
                 }]
             }]
         }"#;
@@ -1114,15 +1063,15 @@ mod test {
         let filter_config = result.expect("That didn't work");
         let rlp_option = filter_config
             .index
-            .get_longest_match_policies("example.com");
+            .get_longest_match_action_sets("example.com");
         assert!(rlp_option.is_some());
 
         let rlp_option = filter_config
             .index
-            .get_longest_match_policies("test.toystore.com");
+            .get_longest_match_action_sets("test.toystore.com");
         assert!(rlp_option.is_some());
 
-        let rlp_option = filter_config.index.get_longest_match_policies("unknown");
+        let rlp_option = filter_config.index.get_longest_match_action_sets("unknown");
         assert!(rlp_option.is_none());
     }
 

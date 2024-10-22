@@ -5,47 +5,43 @@ use serial_test::serial;
 pub(crate) mod util;
 
 const CONFIG: &str = r#"{
-        "extensions": {
-            "authorino": {
-                "type": "auth",
-                "endpoint": "authorino-cluster",
-                "failureMode": "deny",
-                "timeout": "5s"
-            }
-        },
-        "policies": [
-        {
-            "name": "some-name",
+    "services": {
+        "authorino": {
+            "type": "auth",
+            "endpoint": "authorino-cluster",
+            "failureMode": "deny",
+            "timeout": "5s"
+        }
+    },
+    "actionSets": [
+    {
+        "name": "some-name",
+        "routeRuleConditions": {
             "hostnames": ["*.toystore.com", "example.com"],
-            "rules": [
+            "matches": [
             {
-                "conditions": [
-                {
-                    "allOf": [
-                    {
-                        "selector": "request.url_path",
-                        "operator": "startswith",
-                        "value": "/admin/toy"
-                    },
-                    {
-                        "selector": "request.host",
-                        "operator": "eq",
-                        "value": "cars.toystore.com"
-                    },
-                    {
-                        "selector": "request.method",
-                        "operator": "eq",
-                        "value": "POST"
-                    }]
-                }],
-                "actions": [
-                {
-                    "extension": "authorino",
-                    "scope": "authconfig-A"
-                }]
+                "selector": "request.url_path",
+                "operator": "startswith",
+                "value": "/admin/toy"
+            },
+            {
+                "selector": "request.host",
+                "operator": "eq",
+                "value": "cars.toystore.com"
+            },
+            {
+                "selector": "request.method",
+                "operator": "eq",
+                "value": "POST"
             }]
+        },
+        "actions": [
+        {
+            "service": "authorino",
+            "scope": "authconfig-A"
         }]
-    }"#;
+    }]
+}"#;
 
 #[test]
 #[serial]
@@ -110,7 +106,10 @@ fn it_auths() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
@@ -302,7 +301,10 @@ fn it_denies() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some("POST".as_bytes()))
-        .expect_log(Some(LogLevel::Debug), Some("#2 policy selected some-name"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
