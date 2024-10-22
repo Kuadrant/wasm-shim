@@ -4,11 +4,15 @@ use chrono::{DateTime, FixedOffset};
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
 use proxy_wasm::hostcalls;
+use regex::Regex;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
 pub trait AttributeValue {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String>
+    where
+        Self: Sized;
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String>
     where
         Self: Sized;
 }
@@ -21,6 +25,10 @@ impl AttributeValue for String {
                 err
             )
         })
+    }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        Self::parse(raw_attribute)
     }
 }
 
@@ -38,6 +46,10 @@ impl AttributeValue for i64 {
                 .expect("This has to be 8 bytes long!"),
         ))
     }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        Self::parse(raw_attribute)
+    }
 }
 
 impl AttributeValue for u64 {
@@ -53,6 +65,10 @@ impl AttributeValue for u64 {
                 .try_into()
                 .expect("This has to be 8 bytes long!"),
         ))
+    }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        Self::parse(raw_attribute)
     }
 }
 
@@ -70,11 +86,19 @@ impl AttributeValue for f64 {
                 .expect("This has to be 8 bytes long!"),
         ))
     }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        Self::parse(raw_attribute)
+    }
 }
 
 impl AttributeValue for Vec<u8> {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         Ok(raw_attribute)
+    }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        Self::parse(raw_attribute)
     }
 }
 
@@ -87,6 +111,36 @@ impl AttributeValue for bool {
             ));
         }
         Ok(raw_attribute[0] & 1 == 1)
+    }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        let json_string_result = String::from_utf8(raw_attribute).map_err(|err| {
+            format!(
+                "parse: failed to parse selector Json String value, error: {}",
+                err
+            )
+        });
+
+        match json_string_result {
+            Ok(json_string) => {
+                let decoded_string = json_string.trim().to_lowercase();
+                // Check for boolean patterns
+                if Regex::new(r"^(true|false)$")
+                    .unwrap()
+                    .is_match(&decoded_string)
+                {
+                    Ok(decoded_string == <&str as Into<String>>::into("true"))
+                } else if Regex::new(r"^(\s*(true|false)\s*)$")
+                    .unwrap()
+                    .is_match(&decoded_string)
+                {
+                    Ok(decoded_string.trim() == <&str as Into<String>>::into("true"))
+                } else {
+                    Err(format!("Invalid boolean value: {}", decoded_string))
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -105,6 +159,10 @@ impl AttributeValue for DateTime<FixedOffset> {
                 .expect("This has to be 8 bytes long!"),
         );
         Ok(DateTime::from_timestamp_nanos(nanos).into())
+    }
+
+    fn parse_json(raw_attribute: Vec<u8>) -> Result<Self, String> {
+        Self::parse(raw_attribute)
     }
 }
 

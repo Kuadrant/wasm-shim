@@ -135,7 +135,9 @@ impl PatternExpression {
             ValueType::UInt => Value::UInt(AttributeValue::parse(raw_attribute)?),
             ValueType::Float => Value::Float(AttributeValue::parse(raw_attribute)?),
             ValueType::Bytes => Value::Bytes(Arc::new(AttributeValue::parse(raw_attribute)?)),
-            ValueType::Bool => Value::Bool(AttributeValue::parse(raw_attribute)?),
+            ValueType::Bool => Value::Bool(
+                AttributeValue::parse(raw_attribute).unwrap_or_else(AttributeValue::parse_json)?,
+            ),
             ValueType::Timestamp => Value::Timestamp(AttributeValue::parse(raw_attribute)?),
             // todo: Impl support for parsing these two types… Tho List/Map of what?
             // ValueType::List => {}
