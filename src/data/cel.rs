@@ -155,21 +155,24 @@ pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
 }
 
 fn json_to_cel(json: &str) -> Value {
-    let json_value: JsonValue = serde_json::from_str(json).expect("json value must parse!");
+    let json_value: Result<JsonValue, _> = serde_json::from_str(json);
     match json_value {
-        JsonValue::Null => Value::Null,
-        JsonValue::Bool(b) => b.into(),
-        JsonValue::Number(n) => {
-            if n.is_u64() {
-                n.as_u64().unwrap().into()
-            } else if n.is_i64() {
-                n.as_i64().unwrap().into()
-            } else {
-                n.as_f64().unwrap().into()
+        Ok(json) => match json {
+            JsonValue::Null => Value::Null,
+            JsonValue::Bool(b) => b.into(),
+            JsonValue::Number(n) => {
+                if n.is_u64() {
+                    n.as_u64().unwrap().into()
+                } else if n.is_i64() {
+                    n.as_i64().unwrap().into()
+                } else {
+                    n.as_f64().unwrap().into()
+                }
             }
-        }
-        JsonValue::String(str) => str.into(),
-        _ => todo!("Need support for more Json!"),
+            JsonValue::String(str) => str.into(),
+            _ => todo!("Need support for more Json!"),
+        },
+        _ => json.into(),
     }
 }
 
@@ -464,6 +467,11 @@ mod tests {
         super::super::property::test::TEST_PROPERTY_VALUE.set(Some("-42".bytes().collect()));
         let value = Expression::new("auth.identity.age").unwrap().eval();
         assert_eq!(value, (-42).into());
+        // let's fall back to strings, as that's what we read and set in store_metadata
+        super::super::property::test::TEST_PROPERTY_VALUE
+            .set(Some("some random crap".bytes().collect()));
+        let value = Expression::new("auth.identity.age").unwrap().eval();
+        assert_eq!(value, "some random crap".into());
     }
 
     #[test]
