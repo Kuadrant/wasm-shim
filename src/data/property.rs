@@ -1,3 +1,4 @@
+use crate::data::attribute::KUADRANT_NAMESPACE;
 use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
@@ -24,6 +25,12 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
+fn wasm_prop(tokens: &[&str]) -> Path {
+    let mut flat_attr = format!("wasm\\.{KUADRANT_NAMESPACE}\\.");
+    flat_attr.push_str(tokens.join("\\.").as_str());
+    flat_attr.as_str().into()
+}
+
 #[cfg(test)]
 fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
@@ -37,8 +44,10 @@ fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
 }
 
 pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
-    match path.tokens()[..] {
+    match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
+        // todo, unsure whether to drop the "auth" part here...
+        ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
         // for auth stuff => resolve_host_props() => json string literal as Bytes
         _ => host_get_property(path),
     }
@@ -107,7 +116,7 @@ impl Path {
 
 #[cfg(test)]
 pub mod test {
-    use crate::data::property::Path;
+    use super::*;
     use std::cell::Cell;
 
     thread_local!(
@@ -145,5 +154,12 @@ pub mod test {
     fn path_tokenizes_with_escaping_starts_with_escape() {
         let path: Path = r"\one".into();
         assert_eq!(path.tokens(), vec!["one"]);
+    }
+
+    #[test]
+    fn flat_wasm_prop() {
+        let path = wasm_prop(&["auth", "identity", "anonymous"]);
+        assert_eq!(path.tokens().len(), 1);
+        assert_eq!(path.tokens()[0], "wasm.kuadrant.auth.identity.anonymous");
     }
 }

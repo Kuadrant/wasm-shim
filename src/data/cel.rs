@@ -4,6 +4,7 @@ use cel_interpreter::objects::{Map, ValueType};
 use cel_interpreter::{Context, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::OnceLock;
@@ -24,14 +25,11 @@ impl Expression {
         let attributes = props
             .into_iter()
             .map(|tokens| {
-                known_attribute_for(&Path::new(tokens))
-                    // resolve to known root, and then inspect proper location
-                    // path = ["auth", "identity", "anonymous", ...]
-                    // UnknownAttribute { known_root: Path, Path }
-                    //
-                    // e.g. known part: ["auth", "identity"] => map it proper location
-                    // ...anonymous
-                    .expect("Unknown attribute")
+                let path = Path::new(tokens);
+                known_attribute_for(&path).unwrap_or(Attribute {
+                    path,
+                    cel_type: None,
+                })
             })
             .collect();
 
@@ -85,7 +83,7 @@ impl Predicate {
 
 pub struct Attribute {
     path: Path,
-    cel_type: ValueType,
+    cel_type: Option<ValueType>,
 }
 
 impl Debug for Attribute {
@@ -98,43 +96,49 @@ impl Clone for Attribute {
     fn clone(&self) -> Self {
         Attribute {
             path: self.path.clone(),
-            cel_type: copy(&self.cel_type),
+            cel_type: self.cel_type.as_ref().map(copy),
         }
     }
 }
 
 impl Attribute {
     pub fn get(&self) -> Value {
-        match self.cel_type {
-            ValueType::String => get_attribute::<String>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(|v| Value::String(v.into()))
-                .unwrap_or(Value::Null),
-            ValueType::Int => get_attribute::<i64>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(Value::Int)
-                .unwrap_or(Value::Null),
-            ValueType::UInt => get_attribute::<u64>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(Value::UInt)
-                .unwrap_or(Value::Null),
-            ValueType::Float => get_attribute::<f64>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(Value::Float)
-                .unwrap_or(Value::Null),
-            ValueType::Bool => get_attribute::<bool>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(Value::Bool)
-                .unwrap_or(Value::Null),
-            ValueType::Bytes => get_attribute::<Vec<u8>>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(|v| Value::Bytes(v.into()))
-                .unwrap_or(Value::Null),
-            ValueType::Timestamp => get_attribute::<DateTime<FixedOffset>>(&self.path)
-                .expect("Failed getting to known attribute")
-                .map(Value::Timestamp)
-                .unwrap_or(Value::Null),
-            _ => todo!("Need support for `{}`s!", self.cel_type),
+        match &self.cel_type {
+            Some(t) => match t {
+                ValueType::String => get_attribute::<String>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(|v| Value::String(v.into()))
+                    .unwrap_or(Value::Null),
+                ValueType::Int => get_attribute::<i64>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(Value::Int)
+                    .unwrap_or(Value::Null),
+                ValueType::UInt => get_attribute::<u64>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(Value::UInt)
+                    .unwrap_or(Value::Null),
+                ValueType::Float => get_attribute::<f64>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(Value::Float)
+                    .unwrap_or(Value::Null),
+                ValueType::Bool => get_attribute::<bool>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(Value::Bool)
+                    .unwrap_or(Value::Null),
+                ValueType::Bytes => get_attribute::<Vec<u8>>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(|v| Value::Bytes(v.into()))
+                    .unwrap_or(Value::Null),
+                ValueType::Timestamp => get_attribute::<DateTime<FixedOffset>>(&self.path)
+                    .expect("Failed getting to known attribute")
+                    .map(Value::Timestamp)
+                    .unwrap_or(Value::Null),
+                _ => todo!("Need support for `{t}`s!"),
+            },
+            None => match get_attribute::<String>(&self.path).expect("Path must resolve!") {
+                None => Value::Null,
+                Some(json) => json_to_cel(&json),
+            },
         }
     }
 }
@@ -146,8 +150,27 @@ pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
         .get(path)
         .map(|t| Attribute {
             path: path.clone(),
-            cel_type: copy(t),
+            cel_type: Some(copy(t)),
         })
+}
+
+fn json_to_cel(json: &str) -> Value {
+    let json_value: JsonValue = serde_json::from_str(json).expect("json value must parse!");
+    match json_value {
+        JsonValue::Null => Value::Null,
+        JsonValue::Bool(b) => b.into(),
+        JsonValue::Number(n) => {
+            if n.is_u64() {
+                n.as_u64().unwrap().into()
+            } else if n.is_i64() {
+                n.as_i64().unwrap().into()
+            } else {
+                n.as_f64().unwrap().into()
+            }
+        }
+        JsonValue::String(str) => str.into(),
+        _ => todo!("Need support for more Json!"),
+    }
 }
 
 fn copy(value_type: &ValueType) -> ValueType {
@@ -234,8 +257,6 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
         ("filter_state".into(), ValueType::Map),
         ("connection.mtls".into(), ValueType::Bool),
         ("request.raw_body".into(), ValueType::Bytes),
-        ("auth.identity".into(), ValueType::Bytes),
-        ("auth.identity.anonymous".into(), ValueType::Bytes),
     ])
 }
 
@@ -416,7 +437,7 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::cel::{known_attribute_for, Predicate};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use cel_interpreter::objects::ValueType;
 
     #[test]
@@ -424,6 +445,25 @@ mod tests {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
         super::super::property::test::TEST_PROPERTY_VALUE.set(Some(65432_i64.to_le_bytes().into()));
         assert!(predicate.test());
+    }
+
+    #[test]
+    fn expressions_to_json_resolve() {
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("true".bytes().collect()));
+        let value = Expression::new("auth.identity.anonymous").unwrap().eval();
+        assert_eq!(value, true.into());
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("42".bytes().collect()));
+        let value = Expression::new("auth.identity.age").unwrap().eval();
+        assert_eq!(value, 42.into());
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("42.3".bytes().collect()));
+        let value = Expression::new("auth.identity.age").unwrap().eval();
+        assert_eq!(value, 42.3.into());
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("\"John\"".bytes().collect()));
+        let value = Expression::new("auth.identity.name").unwrap().eval();
+        assert_eq!(value, "John".into());
+        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("-42".bytes().collect()));
+        let value = Expression::new("auth.identity.age").unwrap().eval();
+        assert_eq!(value, (-42).into());
     }
 
     #[test]
@@ -444,7 +484,7 @@ mod tests {
         let attr = known_attribute_for(&path).expect("Must be a hit!");
         assert_eq!(attr.path, path);
         match attr.cel_type {
-            ValueType::String => {}
+            Some(ValueType::String) => {}
             _ => panic!("Not supposed to get here!"),
         }
     }
