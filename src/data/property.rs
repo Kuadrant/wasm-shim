@@ -1,3 +1,4 @@
+use crate::data::attribute::KUADRANT_NAMESPACE;
 use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
@@ -24,6 +25,13 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     }
 }
 
+fn host_get_prefixed_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+    let mut prefixed_tokens = vec!["wasm", KUADRANT_NAMESPACE];
+    prefixed_tokens.extend(path.tokens());
+    let prefixed_path = Path::new(prefixed_tokens);
+    host_get_property(&prefixed_path)
+}
+
 #[cfg(test)]
 fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
@@ -37,9 +45,9 @@ fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
 }
 
 pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
-    match path.tokens()[..] {
+    match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
-        // for auth stuff => resolve_host_props() => json string literal as Bytes
+        ["auth", ..] => host_get_prefixed_property(path),
         _ => host_get_property(path),
     }
 }
