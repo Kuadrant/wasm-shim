@@ -278,21 +278,23 @@ data:
                                     },
                                     {
                                       "name": "rlp-ns-D/rlp-name-D",
-                                      "hostnames": [
-                                        "*.d.rlp.com"
-                                      ],
-                                      "rules": [
+                                      "routeRuleConditions": {
+                                        "hostnames": [
+                                          "*.d.rlp.com"
+                                        ],
+                                        "matches": [
+                                          {
+                                            "selector": "source.remote_address",
+                                            "operator": "neq",
+                                            "value": "50.0.0.1"
+                                          }
+                                        ]
+                                      },
+                                      "actions": [
                                         {
-                                          "conditions": [
-                                            {
-                                              "allOf": [
-                                                {
-                                                  "selector": "source.remote_address",
-                                                  "operator": "neq",
-                                                  "value": "50.0.0.1"
-                                                }
-                                              ]
-                                            }
+                                          "service": "limitador",
+                                          "scope": "rlp-ns-D/rlp-name-D,
+                                          "data": [
                                           ],
                                           "actions": [
                                             {

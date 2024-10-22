@@ -35,3 +35,9 @@ spec:
     conditions: []
     variables:
       - source.remote_address
+  - namespace: multi-ns-B/multi-name-B
+    max_value: 5
+    seconds: 10
+    conditions:
+    - "user_id == 'alice'"
+    variables: []
