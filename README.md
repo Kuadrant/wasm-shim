@@ -198,6 +198,12 @@ curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
 curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
 ```
 
+Check limitador logs for received descriptor entries.
+
+```sh
+kubectl logs -f deployment/limitador-sample -n kuadrant-system
+```
+
 The expected descriptor entries:
 
 ```

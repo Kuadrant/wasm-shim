@@ -4,6 +4,7 @@ kind: Limitador
 metadata:
   name: sample
 spec:
+  verbosity: 3
   listener:
     http:
       port: 8080

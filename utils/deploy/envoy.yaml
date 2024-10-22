@@ -293,7 +293,7 @@ data:
                                       "actions": [
                                         {
                                           "service": "limitador",
-                                          "scope": "rlp-ns-D/rlp-name-D,
+                                          "scope": "rlp-ns-D/rlp-name-D",
                                           "data": [
                                           ],
                                           "actions": [
