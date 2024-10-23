@@ -2,6 +2,7 @@
 
 .PHONY: kind kind-create-cluster kind-delete-cluster
 
+NAMESPACE ?= kuadrant-system
 KIND = $(PROJECT_PATH)/bin/kind
 KIND_VERSION = v0.23.0
 $(KIND):
@@ -24,66 +25,48 @@ kind-create-cluster: kind ## Create the "wasm-auth-local" kind cluster.
 kind-delete-cluster: ## Delete the "wasm-auth-local" kind cluster.
 	- KIND_EXPERIMENTAL_PROVIDER=$(CONTAINER_ENGINE) $(KIND) delete cluster --name $(KIND_CLUSTER_NAME)
 
+KUSTOMIZE = $(PROJECT_PATH)/bin/kustomize
+$(KUSTOMIZE):
+	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v4@v4.5.5)
+
+.PHONY: kustomize
+kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 
 ##@ Authorino
 
-.PHONY: install-authorino-operator certs deploy-authorino
+.PHONY: namespace
+namespace: ## Creates a namespace $(NAMESPACE)
+	kubectl create namespace $(NAMESPACE)
 
-AUTHORINO_IMAGE ?= quay.io/kuadrant/authorino:latest
-AUTHORINO_OPERATOR_NAMESPACE ?= authorino-operator
-install-authorino-operator: ## Installs Authorino Operator and dependencies into the Kubernetes cluster configured in ~/.kube/config
-	curl -sL https://raw.githubusercontent.com/Kuadrant/authorino-operator/main/utils/install.sh | bash -s -- --git-ref main
-	kubectl patch deployment/authorino-webhooks -n $(AUTHORINO_OPERATOR_NAMESPACE) -p '{"spec":{"template":{"spec":{"containers":[{"name":"webhooks","image":"$(AUTHORINO_IMAGE)","imagePullPolicy":"IfNotPresent"}]}}}}'
-	kubectl -n $(AUTHORINO_OPERATOR_NAMESPACE) wait --timeout=300s --for=condition=Available deployments --all
+.PHONY: install-authorino-operator
+install-authorino-operator: $(KUSTOMIZE) ## Installs Authorino Operator and dependencies into the Kubernetes cluster configured in ~/.kube/config
+	$(KUSTOMIZE) build $(PROJECT_PATH)/utils/kustomize/authorino-operator | kubectl apply -f -
+	kubectl -n "$(NAMESPACE)" wait --timeout=300s --for=condition=Available deployments --all
 
-TLS_ENABLED ?= true
-AUTHORINO_INSTANCE ?= authorino
-NAMESPACE ?= default
-certs: sed ## Requests TLS certificates for the Authorino instance if TLS is enabled, cert-manager.io is installed, and the secret is not already present
-ifeq (true,$(TLS_ENABLED))
-ifeq (,$(shell kubectl -n $(NAMESPACE) get secret/authorino-oidc-server-cert 2>/dev/null))
-	curl -sl https://raw.githubusercontent.com/kuadrant/authorino/main/deploy/certs.yaml | $(SED) "s/\$$(AUTHORINO_INSTANCE)/$(AUTHORINO_INSTANCE)/g;s/\$$(NAMESPACE)/$(NAMESPACE)/g" | kubectl -n $(NAMESPACE) apply -f -
-else
-	echo "tls cert secret found."
-endif
-else
-	echo "tls disabled."
-endif
-
-deploy-authorino: certs sed ## Deploys an instance of Authorino into the Kubernetes cluster configured in ~/.kube/config
-	@{ \
-	set -e ;\
-	TEMP_FILE=/tmp/authorino-deploy-$$(openssl rand -hex 4).yaml ;\
-	curl -sl https://raw.githubusercontent.com/kuadrant/authorino/main/deploy/authorino.yaml > $$TEMP_FILE ;\
-	$(SED) -i "s/\$$(AUTHORINO_INSTANCE)/$(AUTHORINO_INSTANCE)/g;s/\$$(TLS_ENABLED)/$(TLS_ENABLED)/g" $$TEMP_FILE ;\
-	kubectl -n $(NAMESPACE) apply -f $$TEMP_FILE ;\
-	kubectl patch -n $(NAMESPACE) authorino/$(AUTHORINO_INSTANCE) --type='merge' -p '{"spec":{"image": "$(AUTHORINO_IMAGE)"}}' ;\
-	rm -rf $$TEMP_FILE ;\
-	}
-
+.PHONY: deploy-authorino
+deploy-authorino: $(KUSTOMIZE) ## Deploys an instance of Authorino into the Kubernetes cluster configured in ~/.kube/config
+	$(KUSTOMIZE) build $(PROJECT_PATH)/utils/kustomize/authorino | kubectl apply -f -
+	kubectl -n "$(NAMESPACE)" wait --timeout=300s --for=condition=Available deployments --all
 
 ##@ Limitador
 
-deploy-limitador:
-	kubectl create configmap limits --from-file=$(PROJECT_PATH)/utils/deploy/limits.yaml
-	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/limitador.yaml
+.PHONY: install-limitador-operator
+install-limitador-operator: $(KUSTOMIZE) ## Installs Limitador Operator and dependencies into the Kubernetes cluster configured in ~/.kube/config
+	$(KUSTOMIZE) build $(PROJECT_PATH)/utils/kustomize/limitador-operator | kubectl apply -f -
+	kubectl -n "$(NAMESPACE)" wait --timeout=300s --for=condition=Available deployments --all
 
+.PHONY: deploy-limitador
+deploy-limitador:
+	$(KUSTOMIZE) build $(PROJECT_PATH)/utils/kustomize/limitador | kubectl apply -f -
 
 ##@ User Apps
 
 .PHONY: user-apps
 
-
-ifeq (true,$(TLS_ENABLED))
-ENVOY_OVERLAY = tls
-else
-ENVOY_OVERLAY = notls
-endif
 user-apps: ## Deploys talker API and envoy
 	kubectl -n $(NAMESPACE) apply -f https://raw.githubusercontent.com/kuadrant/authorino-examples/main/talker-api/talker-api-deploy.yaml
-	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/envoy-$(ENVOY_OVERLAY).yaml
+	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/envoy.yaml
 	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/authconfig.yaml
-
 
 ##@ Util
 
@@ -100,7 +83,9 @@ local-setup: local-env-setup
 local-env-setup: $(WASM_RELEASE_BIN)
 	$(MAKE) kind-delete-cluster
 	$(MAKE) kind-create-cluster
+	$(MAKE) namespace
 	$(MAKE) install-authorino-operator
+	$(MAKE) install-limitador-operator
 	$(MAKE) deploy-authorino
 	$(MAKE) deploy-limitador
 	$(MAKE) user-apps

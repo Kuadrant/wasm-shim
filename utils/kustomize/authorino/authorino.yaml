@@ -1,0 +1,20 @@
+---
+apiVersion: operator.authorino.kuadrant.io/v1beta1
+kind: Authorino
+metadata:
+  name: sample
+spec:
+  clusterWide: true
+  authConfigLabelSelectors: ""
+  secretLabelSelectors: authorino.kuadrant.io/managed-by=authorino
+  logLevel: debug
+  logMode: development
+  oidcServer:
+    tls:
+      enabled: false
+  listener:
+    ports:
+      grpc: 50051  # set '0' to disable the gRPC interface of the External Authorization server
+      http: 5001  # set '0' to disable the HTTP interface of the External Authorization server
+    tls:
+      enabled: false
