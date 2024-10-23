@@ -337,7 +337,7 @@ data:
                                           "data": [
                                             {
                                               "selector": {
-                                                "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
+                                                "selector": "auth.identity.userid",
                                                 "key": "user_id"
                                               }
                                             }
