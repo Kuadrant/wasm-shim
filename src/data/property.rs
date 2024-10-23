@@ -46,7 +46,6 @@ fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
 pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
-        // todo, unsure whether to drop the "auth" part here...
         ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
         // for auth stuff => resolve_host_props() => json string literal as Bytes
         _ => host_get_property(path),
