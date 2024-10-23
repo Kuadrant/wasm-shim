@@ -159,7 +159,10 @@ pub mod test {
     #[test]
     fn flat_wasm_prop() {
         let path = wasm_prop(&["auth", "identity", "anonymous"]);
-        assert_eq!(path.tokens().len(), 1);
-        assert_eq!(path.tokens()[0], "wasm.kuadrant.auth.identity.anonymous");
+        assert_eq!(path.tokens().len(), 2);
+        assert_eq!(
+            *path.tokens(),
+            ["filter_state", "wasm.kuadrant.auth.identity.anonymous"]
+        );
     }
 }

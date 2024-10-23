@@ -4,6 +4,7 @@ use chrono::{DateTime, FixedOffset};
 use log::{debug, error};
 use protobuf::well_known_types::Struct;
 use proxy_wasm::hostcalls;
+use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
@@ -179,11 +180,23 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
             format!("{prefix}\\.{key}")
         };
 
-        if value.has_string_value() {
-            result.push((current_prefix, value.get_string_value().to_string()));
-        } else if value.has_struct_value() {
+        let json: Option<Value> = if value.has_string_value() {
+            Some(value.get_string_value().into())
+        } else if value.has_bool_value() {
+            Some(value.get_bool_value().into())
+        } else if value.has_null_value() {
+            Some(Value::Null)
+        } else if value.has_number_value() {
+            Some(value.get_number_value().into())
+        } else {
+            None
+        };
+
+        if value.has_struct_value() {
             let nested_struct = value.get_struct_value();
             result.extend(process_metadata(nested_struct, current_prefix));
+        } else if let Some(v) = json {
+            result.push((current_prefix, serde_json::to_string(&v).unwrap()));
         }
     }
     result
@@ -235,7 +248,7 @@ mod tests {
         assert_eq!(output.len(), 1);
         assert_eq!(
             output,
-            vec![("identity\\.userid".to_string(), "bob".to_string())]
+            vec![("identity\\.userid".to_string(), "\"bob\"".to_string())]
         );
     }
 
@@ -250,8 +263,9 @@ mod tests {
         )]);
         let output = process_metadata(&metadata, String::new());
         assert_eq!(output.len(), 2);
-        assert!(output.contains(&("identity\\.userid".to_string(), "bob".to_string())));
-        assert!(output.contains(&("identity\\.type".to_string(), "test".to_string())));
+        println!("{output:#?}");
+        assert!(output.contains(&("identity\\.userid".to_string(), "\"bob\"".to_string())));
+        assert!(output.contains(&("identity\\.type".to_string(), "\"test\"".to_string())));
     }
 
     #[test]
@@ -270,8 +284,9 @@ mod tests {
             ),
         ]);
         let output = process_metadata(&metadata, String::new());
+        println!("{output:#?}");
         assert_eq!(output.len(), 2);
-        assert!(output.contains(&("identity\\.userid".to_string(), "bob".to_string())));
-        assert!(output.contains(&("other_data".to_string(), "other_value".to_string())));
+        assert!(output.contains(&("identity\\.userid".to_string(), "\"bob\"".to_string())));
+        assert!(output.contains(&("other_data".to_string(), "\"other_value\"".to_string())));
     }
 }
