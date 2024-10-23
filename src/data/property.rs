@@ -26,7 +26,7 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
 }
 
 fn wasm_prop(tokens: &[&str]) -> Path {
-    let mut flat_attr = format!("wasm\\.{KUADRANT_NAMESPACE}\\.");
+    let mut flat_attr = format!("filter_state.wasm\\.{KUADRANT_NAMESPACE}\\.");
     flat_attr.push_str(tokens.join("\\.").as_str());
     flat_attr.as_str().into()
 }
