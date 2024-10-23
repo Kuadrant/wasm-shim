@@ -1,5 +1,4 @@
 mod attribute;
-#[allow(dead_code)]
 mod cel;
 mod property;
 
