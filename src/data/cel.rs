@@ -1,5 +1,5 @@
 use crate::data::get_attribute;
-use crate::data::property::Path;
+use crate::data::property::{host_get_map, Path};
 use cel_interpreter::objects::{Map, ValueType};
 use cel_interpreter::{Context, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
@@ -134,6 +134,10 @@ impl Attribute {
                 ValueType::Timestamp => get_attribute::<DateTime<FixedOffset>>(&self.path)
                     .expect("Failed getting to known attribute")
                     .map(Value::Timestamp)
+                    .unwrap_or(Value::Null),
+                ValueType::Map => host_get_map(&self.path)
+                    .map(cel_interpreter::objects::Map::from)
+                    .map(Value::Map)
                     .unwrap_or(Value::Null),
                 _ => todo!("Need support for `{t}`s!"),
             },

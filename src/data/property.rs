@@ -2,6 +2,7 @@ use crate::data::attribute::KUADRANT_NAMESPACE;
 use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
@@ -35,6 +36,33 @@ fn wasm_prop(tokens: &[&str]) -> Path {
 fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
     Ok(test::TEST_PROPERTY_VALUE.take())
+}
+
+#[cfg(test)]
+pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
+    match *path.tokens() {
+        ["request", "headers"] => Ok(HashMap::default()),
+        _ => Err(format!("Unknown map requested {:?}", path)),
+    }
+}
+
+#[cfg(not(test))]
+pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
+    match *path.tokens() {
+        ["request", "headers"] => {
+            debug!(
+                "get_map: {:?}",
+                proxy_wasm::types::MapType::HttpRequestHeaders
+            );
+            let map =
+                proxy_wasm::hostcalls::get_map(proxy_wasm::types::MapType::HttpRequestHeaders)
+                    .unwrap()
+                    .into_iter()
+                    .collect();
+            Ok(map)
+        }
+        _ => Err(format!("Unknown map requested {:?}", path)),
+    }
 }
 
 #[cfg(not(test))]
