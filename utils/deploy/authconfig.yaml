@@ -21,8 +21,16 @@ spec:
         "identity":
           json:
             properties:
+              "anonymous":
+                value: false
               "userid":
                 selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/user-id
+              "user_group":
+                value: "the authentic"
+              "answer":
+                value: 42
+              "missing":
+                value: null
 ---
 apiVersion: v1
 kind: Secret
