@@ -22,7 +22,7 @@ impl Expression {
         let mut props = Vec::with_capacity(5);
         properties(&expression, &mut props, &mut Vec::default());
 
-        let attributes = props
+        let mut attributes: Vec<Attribute> = props
             .into_iter()
             .map(|tokens| {
                 let path = Path::new(tokens);
@@ -32,6 +32,8 @@ impl Expression {
                 })
             })
             .collect();
+
+        attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
         Ok(Self {
             attributes,
@@ -342,7 +344,9 @@ pub mod data {
                             .or_insert_with(|| Token::Node(HashMap::default()))
                         {
                             Token::Node(node) => node,
-                            Token::Value(_) => unreachable!(), // that's a bit of a lie!
+                            // a value was installed, on this path...
+                            // so that value should resolve from there on
+                            Token::Value(_) => break,
                         };
                     } else {
                         node.insert(token.to_string(), Token::Value(attr.clone()));
@@ -448,6 +452,16 @@ mod tests {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
         super::super::property::test::TEST_PROPERTY_VALUE.set(Some(65432_i64.to_le_bytes().into()));
         assert!(predicate.test());
+    }
+
+    #[test]
+    fn expressions_sort_properties() {
+        let value = Expression::new(
+            "auth.identity.anonymous && auth.identity != null && auth.identity.foo > 3",
+        )
+        .unwrap();
+        assert_eq!(value.attributes.len(), 3);
+        assert_eq!(value.attributes[0].path, "auth.identity".into());
     }
 
     #[test]
