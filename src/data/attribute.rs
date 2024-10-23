@@ -154,10 +154,12 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
         } else if value.has_number_value() {
             Some(value.get_number_value().into())
         } else {
-            warn!(
-                "Don't know how to store Struct field `{}` of kind {:?}",
-                key, value.kind
-            );
+            if !value.has_struct_value() {
+                warn!(
+                    "Don't know how to store Struct field `{}` of kind {:?}",
+                    key, value.kind
+                );
+            }
             None
         };
 
