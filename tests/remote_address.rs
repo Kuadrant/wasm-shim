@@ -49,9 +49,9 @@ fn it_limits_based_on_source_address() {
                         "scope": "RLS-domain",
                         "data": [
                             {
-                                "selector": {
-                                    "selector": "source.remote_address",
-                                    "value": "1"
+                                "expression": {
+                                    "key": "source.remote_address",
+                                    "value": "source.remote_address"
                                 }
                             }
                         ]

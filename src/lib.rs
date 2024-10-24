@@ -1,12 +1,10 @@
-mod attribute;
 mod configuration;
+mod data;
 #[allow(renamed_and_removed_lints)]
 mod envoy;
 mod filter;
 mod glob;
 mod operation_dispatcher;
-mod property;
-mod property_path;
 mod service;
 
 #[cfg(test)]

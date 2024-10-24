@@ -1,9 +1,11 @@
-use crate::attribute::Attribute;
 use crate::configuration::{DataItem, DataType, PatternExpression};
+use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
+use cel_interpreter::Value;
 use log::debug;
 use protobuf::RepeatedField;
 use serde::Deserialize;
+use std::cell::OnceCell;
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -13,12 +15,24 @@ pub struct Action {
     #[serde(default)]
     pub conditions: Vec<PatternExpression>,
     #[serde(default)]
+    pub predicates: Vec<String>,
+    #[serde(skip_deserializing)]
+    pub compiled_predicates: OnceCell<Vec<Predicate>>,
+    #[serde(default)]
     pub data: Vec<DataItem>,
 }
 
 impl Action {
     pub fn conditions_apply(&self) -> bool {
-        self.conditions.is_empty() || self.conditions.iter().all(|m| m.applies())
+        let predicates = self
+            .compiled_predicates
+            .get()
+            .expect("predicates must be compiled by now");
+        if predicates.is_empty() {
+            self.conditions.is_empty() || self.conditions.iter().all(PatternExpression::applies)
+        } else {
+            predicates.iter().all(Predicate::test)
+        }
     }
 
     pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
@@ -34,28 +48,42 @@ impl Action {
 
         // iterate over data items to allow any data item to skip the entire descriptor
         for data in self.data.iter() {
-            match &data.item {
+            let (key, value) = match &data.item {
                 DataType::Static(static_item) => {
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(static_item.key.to_owned());
-                    descriptor_entry.set_value(static_item.value.to_owned());
-                    entries.push(descriptor_entry);
+                    (static_item.key.to_owned(), static_item.value.to_owned())
                 }
+                DataType::Expression(cel) => (
+                    cel.key.clone(),
+                    match cel
+                        .compiled
+                        .get()
+                        .expect("Expression must be compiled by now")
+                        .eval()
+                    {
+                        Value::Int(n) => format!("{n}"),
+                        Value::UInt(n) => format!("{n}"),
+                        Value::Float(n) => format!("{n}"),
+                        // todo this probably should be a proper string literal!
+                        Value::String(s) => (*s).clone(),
+                        Value::Bool(b) => format!("{b}"),
+                        Value::Null => "null".to_owned(),
+                        _ => panic!("Only scalar values can be sent as data"),
+                    },
+                ),
                 DataType::Selector(selector_item) => {
                     let descriptor_key = match &selector_item.key {
                         None => selector_item.path().to_string(),
                         Some(key) => key.to_owned(),
                     };
 
-                    let attribute_path = selector_item.path();
-                    let value = match crate::property::get_property(attribute_path.tokens())
-                        .unwrap()
+                    let value = match crate::data::get_attribute::<String>(selector_item.path())
+                        .expect("Error!")
                     {
                         //TODO(didierofrivia): Replace hostcalls by DI
                         None => {
                             debug!(
                                 "build_single_descriptor: selector not found: {}",
-                                attribute_path
+                                selector_item.path()
                             );
                             match &selector_item.default {
                                 None => return None, // skipping the entire descriptor
@@ -64,26 +92,20 @@ impl Action {
                         }
                         // TODO(eastizle): not all fields are strings
                         // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attribute_bytes) => match Attribute::parse(attribute_bytes) {
-                            Ok(attr_str) => attr_str,
-                            Err(e) => {
-                                debug!("build_single_descriptor: failed to parse selector value: {}, error: {}",
-                                    attribute_path, e);
-                                return None;
-                            }
-                        },
+                        Some(attr_str) => attr_str,
                         // Alternative implementation (for rust >= 1.76)
                         // Attribute::parse(attribute_bytes)
                         //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
                         //           filter.context_id, attribute_path, e))
                         //   .ok()?,
                     };
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(descriptor_key);
-                    descriptor_entry.set_value(value);
-                    entries.push(descriptor_entry);
+                    (descriptor_key, value)
                 }
-            }
+            };
+            let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+            descriptor_entry.set_key(key);
+            descriptor_entry.set_value(value);
+            entries.push(descriptor_entry);
         }
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);

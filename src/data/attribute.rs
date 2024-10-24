@@ -1,18 +1,19 @@
-use crate::property_path::Path;
+use crate::data::PropertyPath;
 use chrono::{DateTime, FixedOffset};
-use log::{debug, error};
+use log::{debug, error, warn};
 use protobuf::well_known_types::Struct;
 use proxy_wasm::hostcalls;
+use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
-pub trait Attribute {
+pub trait AttributeValue {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String>
     where
         Self: Sized;
 }
 
-impl Attribute for String {
+impl AttributeValue for String {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         String::from_utf8(raw_attribute).map_err(|err| {
             format!(
@@ -23,7 +24,7 @@ impl Attribute for String {
     }
 }
 
-impl Attribute for i64 {
+impl AttributeValue for i64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -39,7 +40,7 @@ impl Attribute for i64 {
     }
 }
 
-impl Attribute for u64 {
+impl AttributeValue for u64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -55,7 +56,7 @@ impl Attribute for u64 {
     }
 }
 
-impl Attribute for f64 {
+impl AttributeValue for f64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -71,13 +72,13 @@ impl Attribute for f64 {
     }
 }
 
-impl Attribute for Vec<u8> {
+impl AttributeValue for Vec<u8> {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         Ok(raw_attribute)
     }
 }
 
-impl Attribute for bool {
+impl AttributeValue for bool {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 1 {
             return Err(format!(
@@ -89,7 +90,7 @@ impl Attribute for bool {
     }
 }
 
-impl Attribute for DateTime<FixedOffset> {
+impl AttributeValue for DateTime<FixedOffset> {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
         if raw_attribute.len() != 8 {
             return Err(format!(
@@ -107,19 +108,19 @@ impl Attribute for DateTime<FixedOffset> {
     }
 }
 
-pub fn get_attribute<T>(attr: &str) -> Result<T, String>
+pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, String>
 where
-    T: Attribute,
+    T: AttributeValue,
 {
-    match crate::property::get_property(Path::from(attr).tokens()) {
-        Ok(Some(attribute_bytes)) => T::parse(attribute_bytes),
-        Ok(None) => Err(format!("get_attribute: not found or null: {attr}")),
+    match crate::data::property::get_property(path) {
+        Ok(Some(attribute_bytes)) => Ok(Some(T::parse(attribute_bytes)?)),
+        Ok(None) => Ok(None),
         Err(e) => Err(format!("get_attribute: error: {e:?}")),
     }
 }
 
 pub fn set_attribute(attr: &str, value: &[u8]) {
-    match hostcalls::set_property(Path::from(attr).tokens(), Some(value)) {
+    match hostcalls::set_property(PropertyPath::from(attr).tokens(), Some(value)) {
         Ok(_) => (),
         Err(_) => error!("set_attribute: failed to set property {attr}"),
     };
@@ -128,7 +129,7 @@ pub fn set_attribute(attr: &str, value: &[u8]) {
 pub fn store_metadata(metastruct: &Struct) {
     let metadata = process_metadata(metastruct, String::new());
     for (key, value) in metadata {
-        let attr = format!("{KUADRANT_NAMESPACE}\\.{key}");
+        let attr = format!("{KUADRANT_NAMESPACE}\\.auth\\.{key}");
         debug!("set_attribute: {attr} = {value}");
         set_attribute(attr.as_str(), value.into_bytes().as_slice());
     }
@@ -143,11 +144,29 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
             format!("{prefix}\\.{key}")
         };
 
-        if value.has_string_value() {
-            result.push((current_prefix, value.get_string_value().to_string()));
-        } else if value.has_struct_value() {
+        let json: Option<Value> = if value.has_string_value() {
+            Some(value.get_string_value().into())
+        } else if value.has_bool_value() {
+            Some(value.get_bool_value().into())
+        } else if value.has_null_value() {
+            Some(Value::Null)
+        } else if value.has_number_value() {
+            Some(value.get_number_value().into())
+        } else {
+            if !value.has_struct_value() {
+                warn!(
+                    "Don't know how to store Struct field `{}` of kind {:?}",
+                    key, value.kind
+                );
+            }
+            None
+        };
+
+        if value.has_struct_value() {
             let nested_struct = value.get_struct_value();
             result.extend(process_metadata(nested_struct, current_prefix));
+        } else if let Some(v) = json {
+            result.push((current_prefix, serde_json::to_string(&v).unwrap()));
         }
     }
     result
@@ -155,7 +174,7 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::process_metadata;
+    use crate::data::attribute::process_metadata;
     use protobuf::well_known_types::{Struct, Value, Value_oneof_kind};
     use std::collections::HashMap;
 
@@ -199,7 +218,7 @@ mod tests {
         assert_eq!(output.len(), 1);
         assert_eq!(
             output,
-            vec![("identity\\.userid".to_string(), "bob".to_string())]
+            vec![("identity\\.userid".to_string(), "\"bob\"".to_string())]
         );
     }
 
@@ -214,8 +233,9 @@ mod tests {
         )]);
         let output = process_metadata(&metadata, String::new());
         assert_eq!(output.len(), 2);
-        assert!(output.contains(&("identity\\.userid".to_string(), "bob".to_string())));
-        assert!(output.contains(&("identity\\.type".to_string(), "test".to_string())));
+        println!("{output:#?}");
+        assert!(output.contains(&("identity\\.userid".to_string(), "\"bob\"".to_string())));
+        assert!(output.contains(&("identity\\.type".to_string(), "\"test\"".to_string())));
     }
 
     #[test]
@@ -234,8 +254,9 @@ mod tests {
             ),
         ]);
         let output = process_metadata(&metadata, String::new());
+        println!("{output:#?}");
         assert_eq!(output.len(), 2);
-        assert!(output.contains(&("identity\\.userid".to_string(), "bob".to_string())));
-        assert!(output.contains(&("other_data".to_string(), "other_value".to_string())));
+        assert!(output.contains(&("identity\\.userid".to_string(), "\"bob\"".to_string())));
+        assert!(output.contains(&("other_data".to_string(), "\"other_value\"".to_string())));
     }
 }

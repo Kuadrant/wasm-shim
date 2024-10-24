@@ -4,10 +4,11 @@ use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::attribute::Attribute;
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::action_set_index::ActionSetIndex;
-use crate::property_path::Path;
+use crate::data;
+use crate::data::PropertyPath;
+use crate::data::{AttributeValue, Predicate};
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::objects::ValueType;
@@ -21,6 +22,23 @@ use std::time::Duration;
 pub mod action;
 pub mod action_set;
 mod action_set_index;
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ExpressionItem {
+    pub key: String,
+    pub value: String,
+    #[serde(skip_deserializing)]
+    pub compiled: OnceCell<data::Expression>,
+}
+
+impl ExpressionItem {
+    pub fn compile(&self) -> Result<(), String> {
+        self.compiled
+            .set(data::Expression::new(&self.value).map_err(|e| e.to_string())?)
+            .expect("Expression must not be compiled yet!");
+        Ok(())
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -38,7 +56,7 @@ pub struct SelectorItem {
     pub default: Option<String>,
 
     #[serde(skip_deserializing)]
-    path: OnceCell<Path>,
+    path: OnceCell<PropertyPath>,
 }
 
 impl SelectorItem {
@@ -48,7 +66,7 @@ impl SelectorItem {
             .map_err(|p| format!("Err on {p:?}"))
     }
 
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> &PropertyPath {
         self.path
             .get()
             .expect("SelectorItem wasn't previously compiled!")
@@ -67,6 +85,7 @@ pub struct StaticItem {
 pub enum DataType {
     Static(StaticItem),
     Selector(SelectorItem),
+    Expression(ExpressionItem),
 }
 
 impl DataType {
@@ -74,6 +93,7 @@ impl DataType {
         match self {
             DataType::Static(_) => Ok(()),
             DataType::Selector(selector) => selector.compile(),
+            DataType::Expression(exp) => exp.compile(),
         }
     }
 }
@@ -107,7 +127,7 @@ pub struct PatternExpression {
     pub value: String,
 
     #[serde(skip_deserializing)]
-    path: OnceCell<Path>,
+    path: OnceCell<PropertyPath>,
     #[serde(skip_deserializing)]
     compiled: OnceCell<CelExpression>,
 }
@@ -121,23 +141,22 @@ impl PatternExpression {
             .set(self.try_into()?)
             .map_err(|_| "Ooops".to_string())
     }
-    pub fn path(&self) -> Vec<&str> {
+    pub fn path(&self) -> &PropertyPath {
         self.path
             .get()
             .expect("PatternExpression wasn't previously compiled!")
-            .tokens()
     }
 
     pub fn eval(&self, raw_attribute: Vec<u8>) -> Result<bool, String> {
         let cel_type = &self.compiled.get().unwrap().cel_type;
         let value = match cel_type {
-            ValueType::String => Value::String(Arc::new(Attribute::parse(raw_attribute)?)),
-            ValueType::Int => Value::Int(Attribute::parse(raw_attribute)?),
-            ValueType::UInt => Value::UInt(Attribute::parse(raw_attribute)?),
-            ValueType::Float => Value::Float(Attribute::parse(raw_attribute)?),
-            ValueType::Bytes => Value::Bytes(Arc::new(Attribute::parse(raw_attribute)?)),
-            ValueType::Bool => Value::Bool(Attribute::parse(raw_attribute)?),
-            ValueType::Timestamp => Value::Timestamp(Attribute::parse(raw_attribute)?),
+            ValueType::String => Value::String(Arc::new(AttributeValue::parse(raw_attribute)?)),
+            ValueType::Int => Value::Int(AttributeValue::parse(raw_attribute)?),
+            ValueType::UInt => Value::UInt(AttributeValue::parse(raw_attribute)?),
+            ValueType::Float => Value::Float(AttributeValue::parse(raw_attribute)?),
+            ValueType::Bytes => Value::Bytes(Arc::new(AttributeValue::parse(raw_attribute)?)),
+            ValueType::Bool => Value::Bool(AttributeValue::parse(raw_attribute)?),
+            ValueType::Timestamp => Value::Timestamp(AttributeValue::parse(raw_attribute)?),
             // todo: Impl support for parsing these two types… Tho List/Map of what?
             // ValueType::List => {}
             // ValueType::Map => {}
@@ -157,8 +176,7 @@ impl PatternExpression {
     }
 
     fn applies(&self) -> bool {
-        let attribute_path = self.path();
-        let attribute_value = match crate::property::get_property(attribute_path).unwrap() {
+        let attribute_value = match crate::data::get_property(self.path()).unwrap() {
             //TODO(didierofrivia): Replace hostcalls by DI
             None => {
                 debug!(
@@ -169,6 +187,11 @@ impl PatternExpression {
             }
             Some(attribute_bytes) => attribute_bytes,
         };
+
+        // if someone would have the P_E be:
+        // selector: auth.identity.anonymous
+        // operator: eq
+        // value: \""true"\"
         self.eval(attribute_value).unwrap_or_else(|e| {
             debug!("pattern_expression_applies failed: {}", e);
             false
@@ -443,6 +466,15 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                     return Err(result.err().unwrap());
                 }
             }
+            let mut predicates = Vec::default();
+            for predicate in &action_set.route_rule_conditions.predicates {
+                predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+            }
+            action_set
+                .route_rule_conditions
+                .compiled_predicates
+                .set(predicates)
+                .expect("Predicates must not be compiled yet!");
             for action in &action_set.actions {
                 for condition in &action.conditions {
                     let result = condition.compile();
@@ -450,6 +482,15 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                         return Err(result.err().unwrap());
                     }
                 }
+                let mut predicates = Vec::default();
+                for predicate in &action.predicates {
+                    predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+                }
+                action
+                    .compiled_predicates
+                    .set(predicates)
+                    .expect("Predicates must not be compiled yet!");
+
                 for datum in &action.data {
                     let result = datum.item.compile();
                     if result.is_err() {
@@ -619,8 +660,9 @@ mod test {
                     }
                 },
                 {
-                    "selector": {
-                        "selector": "auth.metadata.username"
+                    "expression": {
+                        "key": "username",
+                        "value": "auth.metadata.username"
                     }
                 }]
             }]
@@ -700,10 +742,9 @@ mod test {
             panic!();
         }
 
-        if let DataType::Selector(selector_item) = &rl_data_items[1].item {
-            assert_eq!(selector_item.selector, "auth.metadata.username");
-            assert!(selector_item.key.is_none());
-            assert!(selector_item.default.is_none());
+        if let DataType::Expression(exp) = &rl_data_items[1].item {
+            assert_eq!(exp.key, "username");
+            assert_eq!(exp.value, "auth.metadata.username");
         } else {
             panic!();
         }

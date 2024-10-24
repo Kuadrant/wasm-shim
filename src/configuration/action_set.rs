@@ -1,12 +1,18 @@
 use crate::configuration::action::Action;
 use crate::configuration::PatternExpression;
+use crate::data::Predicate;
 use serde::Deserialize;
+use std::cell::OnceCell;
 
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct RouteRuleConditions {
     pub hostnames: Vec<String>,
     #[serde(default)]
     pub matches: Vec<PatternExpression>,
+    #[serde(default)]
+    pub predicates: Vec<String>,
+    #[serde(skip_deserializing)]
+    pub compiled_predicates: OnceCell<Vec<Predicate>>,
 }
 
 #[derive(Default, Deserialize, Debug, Clone)]
@@ -32,11 +38,20 @@ impl ActionSet {
     }
 
     pub fn conditions_apply(&self) -> bool {
-        self.route_rule_conditions.matches.is_empty()
-            || self
-                .route_rule_conditions
-                .matches
-                .iter()
-                .all(|m| m.applies())
+        let predicates = self
+            .route_rule_conditions
+            .compiled_predicates
+            .get()
+            .expect("predicates must be compiled by now");
+        if predicates.is_empty() {
+            self.route_rule_conditions.matches.is_empty()
+                || self
+                    .route_rule_conditions
+                    .matches
+                    .iter()
+                    .all(|m| m.applies())
+        } else {
+            predicates.iter().all(Predicate::test)
+        }
     }
 }
