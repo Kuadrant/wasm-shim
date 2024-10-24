@@ -24,6 +24,50 @@ actionSets:
   - name: rlp-ns-A/rlp-name-A
     routeRuleConditions:
       hostnames: [ "*.toystore.com" ]
+      predicates:
+      - request.url_path.startsWith("/get")
+      - request.host == "test.toystore.com"
+      - request.method == "GET"
+    actions:
+    - service: ratelimit-service
+      scope: rlp-ns-A/rlp-name-A
+      conditions: []
+      data:
+      - expression:
+          key: my_header
+          value: request.headers["My-Custom-Header"]
+```
+
+## Features
+
+### CEL Predicates and Expression
+
+`routeRuleConditions`'s `predicate`s are expressed in [Common Expression Language (CEL)](https://cel.dev). `Predicate`s 
+evaluating to a `bool` value, while `Expression`, used for passing data to a service, evaluate to some `Value`. 
+
+These expression can operate on the data made available to them through the Well Known Attributes, see below
+
+#### Conditions, Selectors and Operators (deprecated!)
+
+<details>
+
+While still supported, these will eventually disappear. For now though, you still can express them as such:
+
+```yaml
+services:
+  auth-service:
+    type: auth
+    endpoint: auth-cluster
+    failureMode: deny
+    timeout: 10ms
+  ratelimit-service:
+    type: ratelimit
+    endpoint: ratelimit-cluster
+    failureMode: deny
+actionSets:
+  - name: rlp-ns-A/rlp-name-A
+    routeRuleConditions:
+      hostnames: [ "*.toystore.com" ]
       matches:
       - selector: request.url_path
         operator: startswith
@@ -46,10 +90,6 @@ actionSets:
           value: "1"
 ```
 
-## Features
-
-#### Condition operators implemented
-
 ```Rust
 #[derive(Deserialize, PartialEq, Debug, Clone)]
 pub enum WhenConditionOperator {
@@ -65,15 +105,6 @@ pub enum WhenConditionOperator {
     MatchesOperator,
 }
 ```
-
-The `matches` operator is a a simple globbing pattern implementation based on regular expressions.
-The only characters taken into account are:
-
-* `?`: 0 or 1 characters
-* `*`: 0 or more characters
-* `+`: 1 or more characters
-
-#### Selectors
 
 Selector of an attribute from the contextual properties provided by kuadrant.
 See [Well Known Attributes](#Well-Known-Attributes) for more info about available attributes.
@@ -109,12 +140,16 @@ Some path segments include dot `.` char in them. For instance envoy filter
 names: `envoy.filters.http.header_to_metadata`.
 In that particular cases, the dot chat (separator), needs to be escaped.
 
+</details>
+
+
 ### Well Known Attributes
 
-| Attribute | Description |
-| ---  | --- |
-| [Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes) |  Contextual properties provided by Envoy during request and connection processing |
-| `source.remote_address` | This attribute evaluates to the `trusted client address` (IP address without port) as it is being defined by [Envoy Doc](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for)  |
+| Attribute                                                                                               | Description                                                                                                                                                                                                                    |
+|---------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes) | Contextual properties provided by Envoy during request and connection processing                                                                                                                                               |
+| `source.remote_address`                                                                                 | This attribute evaluates to the `trusted client address` (IP address without port) as it is being defined by [Envoy Doc](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for) |
+| `auth.*`                                                                                                | Data made available by the authentication service to the `ActionSet`'s pipeline                                                                                                                                                |
 
 ## Building
 
