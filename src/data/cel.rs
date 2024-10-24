@@ -201,7 +201,7 @@ fn copy(value_type: &ValueType) -> ValueType {
 
 fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     HashMap::from([
-        ("request.time".into(), ValueType::String),
+        ("request.time".into(), ValueType::Timestamp),
         ("request.id".into(), ValueType::String),
         ("request.protocol".into(), ValueType::String),
         ("request.scheme".into(), ValueType::String),
