@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::action_set_index::ActionSetIndex;
+use crate::data;
 use crate::data::PropertyPath;
 use crate::data::{AttributeValue, Predicate};
 use crate::service::GrpcService;
@@ -21,6 +22,23 @@ use std::time::Duration;
 pub mod action;
 pub mod action_set;
 mod action_set_index;
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ExpressionItem {
+    pub key: String,
+    pub value: String,
+    #[serde(skip_deserializing)]
+    pub compiled: OnceCell<data::Expression>,
+}
+
+impl ExpressionItem {
+    pub fn compile(&self) -> Result<(), String> {
+        self.compiled
+            .set(data::Expression::new(&self.value).map_err(|e| e.to_string())?)
+            .expect("Expression must not be compiled yet!");
+        Ok(())
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SelectorItem {
@@ -67,6 +85,7 @@ pub struct StaticItem {
 pub enum DataType {
     Static(StaticItem),
     Selector(SelectorItem),
+    Expression(ExpressionItem),
 }
 
 impl DataType {
@@ -74,6 +93,7 @@ impl DataType {
         match self {
             DataType::Static(_) => Ok(()),
             DataType::Selector(selector) => selector.compile(),
+            DataType::Expression(exp) => exp.compile(),
         }
     }
 }
@@ -640,8 +660,9 @@ mod test {
                     }
                 },
                 {
-                    "selector": {
-                        "selector": "auth.metadata.username"
+                    "expression": {
+                        "key": "username",
+                        "value": "auth.metadata.username"
                     }
                 }]
             }]
@@ -721,10 +742,9 @@ mod test {
             panic!();
         }
 
-        if let DataType::Selector(selector_item) = &rl_data_items[1].item {
-            assert_eq!(selector_item.selector, "auth.metadata.username");
-            assert!(selector_item.key.is_none());
-            assert!(selector_item.default.is_none());
+        if let DataType::Expression(exp) = &rl_data_items[1].item {
+            assert_eq!(exp.key, "username");
+            assert_eq!(exp.value, "auth.metadata.username");
         } else {
             panic!();
         }

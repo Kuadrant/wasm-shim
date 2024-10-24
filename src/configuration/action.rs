@@ -1,6 +1,7 @@
 use crate::configuration::{DataItem, DataType, PatternExpression};
 use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
+use cel_interpreter::Value;
 use log::debug;
 use protobuf::RepeatedField;
 use serde::Deserialize;
@@ -47,13 +48,28 @@ impl Action {
 
         // iterate over data items to allow any data item to skip the entire descriptor
         for data in self.data.iter() {
-            match &data.item {
+            let (key, value) = match &data.item {
                 DataType::Static(static_item) => {
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(static_item.key.to_owned());
-                    descriptor_entry.set_value(static_item.value.to_owned());
-                    entries.push(descriptor_entry);
+                    (static_item.key.to_owned(), static_item.value.to_owned())
                 }
+                DataType::Expression(cel) => (
+                    cel.key.clone(),
+                    match cel
+                        .compiled
+                        .get()
+                        .expect("Expression must be compiled by now")
+                        .eval()
+                    {
+                        Value::Int(n) => format!("{n}"),
+                        Value::UInt(n) => format!("{n}"),
+                        Value::Float(n) => format!("{n}"),
+                        // todo this probably should be a proper string literal!
+                        Value::String(s) => (*s).clone(),
+                        Value::Bool(b) => format!("{b}"),
+                        Value::Null => "null".to_owned(),
+                        _ => panic!("Only scalar values can be sent as data"),
+                    },
+                ),
                 DataType::Selector(selector_item) => {
                     let descriptor_key = match &selector_item.key {
                         None => selector_item.path().to_string(),
@@ -83,12 +99,13 @@ impl Action {
                         //           filter.context_id, attribute_path, e))
                         //   .ok()?,
                     };
-                    let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-                    descriptor_entry.set_key(descriptor_key);
-                    descriptor_entry.set_value(value);
-                    entries.push(descriptor_entry);
+                    (descriptor_key, value)
                 }
-            }
+            };
+            let mut descriptor_entry = RateLimitDescriptor_Entry::new();
+            descriptor_entry.set_key(key);
+            descriptor_entry.set_value(value);
+            entries.push(descriptor_entry);
         }
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
