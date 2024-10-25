@@ -156,12 +156,8 @@ data:
                                         "hostnames": [
                                           "*.a.auth.com"
                                         ],
-                                        "matches": [
-                                          {
-                                            "selector": "request.path",
-                                            "operator": "eq",
-                                            "value": "/get"
-                                          }
+                                        "predicates": [
+                                          "request.path == '/get'"
                                         ]
                                       },
                                       "actions": [
@@ -198,12 +194,8 @@ data:
                                         "hostnames": [
                                           "*.b.rlp.com"
                                         ],
-                                        "matches": [
-                                          {
-                                            "selector": "request.url_path",
-                                            "operator": "startswith",
-                                            "value": "/unknown-path"
-                                          }
+                                        "predicates": [
+                                          "request.url_path.startsWith('/unknown-path')"
                                         ]
                                       },
                                       "actions": [
@@ -212,7 +204,7 @@ data:
                                           "scope": "rlp-ns-B/rlp-name-B",
                                           "data": [
                                             {
-                                              "static": {
+                                              "expression": {
                                                 "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
                                                 "value": "1"
                                               }
@@ -227,22 +219,10 @@ data:
                                         "hostnames": [
                                           "*.c.rlp.com"
                                         ],
-                                        "matches": [
-                                          {
-                                            "selector": "request.url_path",
-                                            "operator": "startswith",
-                                            "value": "/get"
-                                          },
-                                          {
-                                            "selector": "request.host",
-                                            "operator": "eq",
-                                            "value": "test.c.rlp.com"
-                                          },
-                                          {
-                                            "selector": "request.method",
-                                            "operator": "eq",
-                                            "value": "GET"
-                                          }
+                                        "predicates": [
+                                          "request.url_path.startsWith('/get')",
+                                          "request.host == 'test.c.rlp.com'",
+                                          "request.method == 'GET'"
                                         ]
                                       },
                                       "actions": [
@@ -251,7 +231,7 @@ data:
                                           "scope": "rlp-ns-C/rlp-name-C",
                                           "data": [
                                             {
-                                              "static": {
+                                              "expression": {
                                                 "key": "limit_to_be_activated",
                                                 "value": "1"
                                               }
@@ -282,12 +262,8 @@ data:
                                         "hostnames": [
                                           "*.d.rlp.com"
                                         ],
-                                        "matches": [
-                                          {
-                                            "selector": "source.remote_address",
-                                            "operator": "neq",
-                                            "value": "50.0.0.1"
-                                          }
+                                        "predicates": [
+                                          "source.remote_address != '50.0.0.1'"
                                         ]
                                       },
                                       "actions": [
@@ -318,12 +294,8 @@ data:
                                         "hostnames": [
                                           "*.a.multi.com"
                                         ],
-                                        "matches": [
-                                          {
-                                            "selector": "request.path",
-                                            "operator": "eq",
-                                            "value": "/get"
-                                          }
+                                        "predicates": [
+                                          "request.path == '/get'"
                                         ]
                                       },
                                       "actions": [
@@ -336,9 +308,9 @@ data:
                                           "scope": "multi-ns-A/multi-name-A",
                                           "data": [
                                             {
-                                              "selector": {
-                                                "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
-                                                "key": "user_id"
+                                              "expression": {
+                                                "key": "user_id",
+                                                "value": "auth.identity.userid"
                                               }
                                             }
                                           ]
@@ -351,12 +323,8 @@ data:
                                         "hostnames": [
                                           "*.b.multi.com"
                                         ],
-                                        "matches": [
-                                          {
-                                            "selector": "request.path",
-                                            "operator": "eq",
-                                            "value": "/get"
-                                          }
+                                        "predicates": [
+                                          "request.path == '/get'"
                                         ]
                                       },
                                       "actions": [
@@ -367,16 +335,12 @@ data:
                                         {
                                           "service": "limitador",
                                           "scope": "multi-ns-B/multi-name-B",
-                                          "conditions": [
-                                            {
-                                              "selector": "filter_state.wasm\\.kuadrant\\.identity\\.userid",
-                                              "operator": "eq",
-                                              "value": "alice"
-                                            }
+                                          "predicates": [
+                                            "auth.identity.userid == 'alice'"
                                           ],
                                           "data": [
                                             {
-                                              "static": {
+                                              "expression": {
                                                 "key": "user_id",
                                                 "value": "alice"
                                               }

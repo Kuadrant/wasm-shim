@@ -18,12 +18,8 @@ The Wasm configuration defines a set of rules for `*.example.com`.
         "hostnames": [
           "*.example.com"
         ],
-        "matches": [
-            {
-                "selector": "source.remote_address",
-                "operator": "neq",
-                "value": "50.0.0.1"
-            }
+        "predicates": [
+            "source.remote_address != 50.0.0.1"
         ]
     },
     "actions": [
@@ -32,8 +28,9 @@ The Wasm configuration defines a set of rules for `*.example.com`.
             "scope": "ratelimit-source",
             "data": [
                 {
-                    "selector": {
-                        "selector": "source.remote_address"
+                    "expression": {
+                        "key": "source.remote_address",
+                        "value": "source.remote_address"
                     }
                 }
             ]
