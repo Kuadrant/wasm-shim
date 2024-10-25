@@ -29,7 +29,7 @@ impl Filter {
         }
     }
 
-    #[allow(clippy::manual_inspect)]
+    #[allow(unknown_lints, clippy::manual_inspect)]
     fn process_action_sets(&self, action_sets: &[Rc<ActionSet>]) -> Action {
         if let Some(action_set) = action_sets
             .iter()

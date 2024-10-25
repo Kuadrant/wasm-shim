@@ -252,6 +252,7 @@ mod tests {
     use crate::configuration::Timeout;
     use crate::envoy::RateLimitRequest;
     use protobuf::RepeatedField;
+    use std::cell::OnceCell;
     use std::time::Duration;
 
     fn default_grpc_call_fn_stub(
@@ -314,6 +315,8 @@ mod tests {
                 service: "local".to_string(),
                 scope: "".to_string(),
                 conditions: vec![],
+                predicates: vec![],
+                compiled_predicates: OnceCell::default(),
                 data: vec![],
             },
             service_handler: Rc::new(build_grpc_service_handler()),
