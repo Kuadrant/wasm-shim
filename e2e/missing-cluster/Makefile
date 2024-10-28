@@ -12,6 +12,7 @@ test:
 	@{ \
 	set -e ;\
 	STATUSCODE=$(shell curl --silent --output /dev/null --write-out "%{http_code}" --max-time 5 --resolve test.example.com:18000:127.0.0.1 http://test.example.com:18000) && \
+		echo "received status code $${STATUSCODE}" && \
 		test $${STATUSCODE} -ne 200 ;\
 	}
 
