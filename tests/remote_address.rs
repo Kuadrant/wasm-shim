@@ -35,12 +35,8 @@ fn it_limits_based_on_source_address() {
                 "name": "some-name",
                 "routeRuleConditions": {
                     "hostnames": ["*.example.com"],
-                    "matches": [
-                        {
-                            "selector": "source.remote_address",
-                            "operator": "neq",
-                            "value": "50.0.0.1"
-                        }
+                    "predicates" : [
+                        "source.remote_address != '50.0.0.1'"
                     ]
                 },
                 "actions": [
