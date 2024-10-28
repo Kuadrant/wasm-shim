@@ -4,7 +4,7 @@ use crate::operation_dispatcher::OperationDispatcher;
 use crate::service::GrpcService;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::Action;
+use proxy_wasm::types::{Action, Status};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -49,8 +49,8 @@ impl Filter {
             );
             return Action::Continue;
         }
-
-        if let Some(operation) = self.operation_dispatcher.borrow_mut().next() {
+        let res = self.operation_dispatcher.borrow_mut().next();
+        if let Ok(operation) = res {
             match operation.get_result() {
                 Ok(call_id) => {
                     debug!("#{} initiated gRPC call (id# {})", self.context_id, call_id);
@@ -65,7 +65,16 @@ impl Filter {
                 }
             }
         } else {
-            Action::Continue
+            match res {
+                Err((Status::Empty, _)) => Action::Continue,
+                Err((_, failure_mode)) => {
+                    if failure_mode == FailureMode::Deny {
+                        self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                    }
+                    Action::Continue
+                }
+                _ => Action::Continue,
+            }
         }
     }
 }
@@ -114,8 +123,8 @@ impl Context for Filter {
 
         if let Some(operation) = some_op {
             if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
-                self.operation_dispatcher.borrow_mut().next();
-                if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
+                let _ = self.operation_dispatcher.borrow_mut().next();
+                if let Ok(_op) = self.operation_dispatcher.borrow_mut().next() {
                 } else {
                     self.resume_http_request()
                 }

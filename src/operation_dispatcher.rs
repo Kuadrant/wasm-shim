@@ -147,7 +147,7 @@ impl OperationDispatcher {
         self.operations.extend(operations);
     }
 
-    pub fn next(&mut self) -> Option<Rc<Operation>> {
+    pub fn next(&mut self) -> Result<Rc<Operation>, (Status, FailureMode)> {
         if let Some((i, operation)) = self.operations.iter_mut().enumerate().next() {
             match operation.get_state() {
                 State::Pending => {
@@ -162,14 +162,14 @@ impl OperationDispatcher {
                                         // We index only if it was just transitioned to Waiting after triggering
                                         self.waiting_operations.insert(token_id, operation.clone());
                                         // TODO(didierofrivia): Decide on indexing the failed operations.
-                                        Some(operation.clone())
+                                        Ok(operation.clone())
                                     }
                                     State::Done => self.next(),
                                 }
                             }
                             Err(status) => {
                                 error!("{status:?}");
-                                None
+                                Err((status, operation.get_failure_mode().clone()))
                             }
                         }
                     } else {
@@ -180,7 +180,7 @@ impl OperationDispatcher {
                 }
                 State::Waiting => {
                     operation.next_state();
-                    Some(operation.clone())
+                    Ok(operation.clone())
                 }
                 State::Done => {
                     if let Ok(token_id) = operation.get_result() {
@@ -191,7 +191,7 @@ impl OperationDispatcher {
                 }
             }
         } else {
-            None
+            Err((Status::Empty, FailureMode::default())) // No more operations
         }
     }
 
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert!(op.is_none());
+        assert!(op.is_err());
         assert!(operation_dispatcher.get_current_operation_state().is_none());
         assert_eq!(operation_dispatcher.waiting_operations.len(), 0);
     }
