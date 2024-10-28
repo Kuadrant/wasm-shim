@@ -1,0 +1,7 @@
+---
+- namespace: ratelimit-source
+  max_value: 30
+  seconds: 60
+  conditions:
+  - "limit_to_be_activated == '1'"
+  variables: []
