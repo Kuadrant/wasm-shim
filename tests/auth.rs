@@ -211,6 +211,7 @@ fn it_auths() {
 
     // TODO: response containing dynamic metadata
     // set_property is panicking with proxy-wasm-test-framework
+    // because the `expect_set_property` is not yet implemented neither on original repo nor our fork
     // let grpc_response: [u8; 41] = [
     //     10, 0, 34, 35, 10, 33, 10, 8, 105, 100, 101, 110, 116, 105, 116, 121, 18, 21, 42, 19, 10,
     //     17, 10, 6, 117, 115, 101, 114, 105, 100, 18, 7, 26, 5, 97, 108, 105, 99, 101, 26, 0,
