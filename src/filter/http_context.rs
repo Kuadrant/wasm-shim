@@ -128,19 +128,24 @@ impl Context for Filter {
             self.context_id
         );
 
-        let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
+        let op_res = self
+            .operation_dispatcher
+            .borrow()
+            .get_waiting_operation(token_id);
 
-        if let Some(operation) = some_op {
-            if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
-                let _ = self.operation_dispatcher.borrow_mut().next();
-                if let Ok(_op) = self.operation_dispatcher.borrow_mut().next() {
-                } else {
-                    self.resume_http_request()
+        match op_res {
+            Ok(operation) => {
+                if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
+                    if let Ok(_op) = self.operation_dispatcher.borrow_mut().next() {
+                    } else {
+                        self.resume_http_request()
+                    }
                 }
             }
-        } else {
-            warn!("No Operation found with token_id: {token_id}");
-            GrpcService::handle_error_on_grpc_response(FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
+            Err(e) => {
+                warn!("No Operation found with token_id: {token_id}");
+                GrpcService::handle_error_on_grpc_response(e.failure_mode);
+            }
         }
     }
 }

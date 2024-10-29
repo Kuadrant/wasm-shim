@@ -160,8 +160,18 @@ impl OperationDispatcher {
         }
     }
 
-    pub fn get_operation(&self, token_id: u32) -> Option<Rc<Operation>> {
-        self.waiting_operations.get(&token_id).cloned()
+    pub fn get_waiting_operation(&self, token_id: u32) -> Result<Rc<Operation>, OperationError> {
+        let op = self.waiting_operations.get(&token_id);
+        match op {
+            Some(op) => {
+                op.next_state();
+                Ok(op.clone())
+            }
+            None => Err(OperationError::new(
+                Status::NotFound,
+                FailureMode::default(),
+            )),
+        }
     }
 
     pub fn build_operations(&mut self, actions: &[Action]) -> Result<(), OperationError> {
