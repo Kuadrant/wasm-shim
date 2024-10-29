@@ -18,7 +18,7 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct GrpcService {
     service: Rc<Service>,
     name: &'static str,
@@ -81,7 +81,7 @@ impl GrpcService {
         }
     }
 
-    pub fn handle_error_on_grpc_response(failure_mode: &FailureMode) {
+    pub fn handle_error_on_grpc_response(failure_mode: FailureMode) {
         match failure_mode {
             FailureMode::Deny => {
                 hostcalls::send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
@@ -105,7 +105,7 @@ pub type GetMapValuesBytesFn = fn(map_type: MapType, key: &str) -> Result<Option
 
 pub type GrpcMessageBuildFn =
     fn(service_type: &ServiceType, action: &Action) -> Option<GrpcMessageRequest>;
-
+#[derive(Debug)]
 pub struct GrpcServiceHandler {
     grpc_service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
@@ -148,7 +148,7 @@ impl GrpcServiceHandler {
         Rc::clone(&self.grpc_service.service)
     }
 }
-
+#[derive(Debug)]
 pub struct HeaderResolver {
     headers: OnceCell<Vec<(&'static str, Bytes)>>,
 }

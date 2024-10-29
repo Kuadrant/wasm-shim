@@ -1,6 +1,6 @@
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::{FailureMode, FilterConfig};
-use crate::operation_dispatcher::OperationDispatcher;
+use crate::operation_dispatcher::{OperationDispatcher, OperationError};
 use crate::service::GrpcService;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
@@ -65,12 +65,16 @@ impl Filter {
                 }
             }
         } else {
-            match res {
-                Err((Status::Empty, _)) => Action::Continue,
-                Err((_, failure_mode)) => {
-                    if failure_mode == FailureMode::Deny {
-                        self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
-                    }
+            match res.unwrap_err() {
+                OperationError {
+                    status: Status::Empty,
+                    ..
+                } => Action::Continue,
+                OperationError {
+                    failure_mode: FailureMode::Deny,
+                    ..
+                } => {
+                    self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"));
                     Action::Continue
                 }
                 _ => Action::Continue,
@@ -131,7 +135,7 @@ impl Context for Filter {
             }
         } else {
             warn!("No Operation found with token_id: {token_id}");
-            GrpcService::handle_error_on_grpc_response(&FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
+            GrpcService::handle_error_on_grpc_response(FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
         }
     }
 }

@@ -7,6 +7,7 @@ use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -31,10 +32,10 @@ impl State {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Operation {
     state: RefCell<State>,
-    result: RefCell<Result<u32, Status>>,
+    result: RefCell<Result<u32, OperationError>>,
     service: Rc<Service>,
     action: Action,
     service_handler: Rc<GrpcServiceHandler>,
@@ -63,7 +64,7 @@ impl Operation {
         }
     }
 
-    fn trigger(&self) -> Result<u32, Status> {
+    fn trigger(&self) -> Result<u32, OperationError> {
         if let Some(message) = (self.grpc_message_build_fn)(self.get_service_type(), &self.action) {
             let res = self.service_handler.send(
                 self.get_map_values_bytes_fn,
@@ -71,9 +72,14 @@ impl Operation {
                 message,
                 self.service.timeout.0,
             );
-            self.set_result(res);
+            match res {
+                Ok(token_id) => self.set_result(Ok(token_id)),
+                Err(status) => {
+                    self.set_result(Err(OperationError::new(status, self.get_failure_mode())))
+                }
+            }
             self.next_state();
-            res
+            self.get_result()
         } else {
             self.done();
             self.get_result()
@@ -92,11 +98,11 @@ impl Operation {
         *self.state.borrow()
     }
 
-    pub fn get_result(&self) -> Result<u32, Status> {
+    pub fn get_result(&self) -> Result<u32, OperationError> {
         *self.result.borrow()
     }
 
-    fn set_result(&self, result: Result<u32, Status>) {
+    fn set_result(&self, result: Result<u32, OperationError>) {
         *self.result.borrow_mut() = result;
     }
 
@@ -104,8 +110,35 @@ impl Operation {
         &self.service.service_type
     }
 
-    pub fn get_failure_mode(&self) -> &FailureMode {
-        &self.service.failure_mode
+    pub fn get_failure_mode(&self) -> FailureMode {
+        self.service.failure_mode
+    }
+}
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct OperationError {
+    pub status: Status,
+    pub failure_mode: FailureMode,
+}
+
+impl OperationError {
+    fn new(status: Status, failure_mode: FailureMode) -> Self {
+        Self {
+            status,
+            failure_mode,
+        }
+    }
+}
+
+impl fmt::Display for OperationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.status {
+            Status::Empty => {
+                write!(f, "No more operations to perform ")
+            }
+            _ => {
+                write!(f, "Error triggering the operation. {:?}", self.status)
+            }
+        }
     }
 }
 
@@ -147,7 +180,7 @@ impl OperationDispatcher {
         self.operations.extend(operations);
     }
 
-    pub fn next(&mut self) -> Result<Rc<Operation>, (Status, FailureMode)> {
+    pub fn next(&mut self) -> Result<Rc<Operation>, OperationError> {
         if let Some((i, operation)) = self.operations.iter_mut().enumerate().next() {
             match operation.get_state() {
                 State::Pending => {
@@ -167,9 +200,9 @@ impl OperationDispatcher {
                                     State::Done => self.next(),
                                 }
                             }
-                            Err(status) => {
-                                error!("{status:?}");
-                                Err((status, operation.get_failure_mode().clone()))
+                            Err(err) => {
+                                error!("{err:?}");
+                                Err(err)
                             }
                         }
                     } else {
@@ -191,7 +224,7 @@ impl OperationDispatcher {
                 }
             }
         } else {
-            Err((Status::Empty, FailureMode::default())) // No more operations
+            Err(OperationError::new(Status::Empty, FailureMode::default())) // No more operations
         }
     }
 
@@ -333,7 +366,7 @@ mod tests {
 
         assert_eq!(operation.get_state(), State::Pending);
         assert_eq!(*operation.get_service_type(), ServiceType::RateLimit);
-        assert_eq!(*operation.get_failure_mode(), FailureMode::Deny);
+        assert_eq!(operation.get_failure_mode(), FailureMode::Deny);
         assert_eq!(operation.get_result(), Ok(0));
     }
 

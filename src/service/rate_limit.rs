@@ -37,7 +37,7 @@ impl RateLimitService {
 
     pub fn process_ratelimit_grpc_response(
         rl_resp: GrpcMessageResponse,
-        failure_mode: &FailureMode,
+        failure_mode: FailureMode,
     ) -> Result<(), StatusCode> {
         match rl_resp {
             GrpcMessageResponse::RateLimit(RateLimitResponse {
