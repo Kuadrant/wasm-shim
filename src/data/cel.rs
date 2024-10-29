@@ -1,15 +1,17 @@
 use crate::data::get_attribute;
 use crate::data::property::{host_get_map, Path};
 use cel_interpreter::extractors::This;
-use cel_interpreter::objects::{Map, ValueType};
+use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+use urlencoding::decode;
 
 #[derive(Clone, Debug)]
 pub struct Expression {
@@ -45,6 +47,7 @@ impl Expression {
 
     pub fn eval(&self) -> Value {
         let mut ctx = create_context();
+        ctx.add_function("urlDecode", url_decode);
         let Map { map } = self.build_data_map();
 
         ctx.add_function("getHostProperty", get_host_property);
@@ -65,6 +68,33 @@ impl Expression {
     fn build_data_map(&self) -> Map {
         data::AttributeMap::new(self.attributes.clone()).into()
     }
+}
+
+fn url_decode(This(s): This<Arc<String>>) -> ResolveResult {
+    let mut map: HashMap<Key, Value> = HashMap::default();
+    for part in s.split('&') {
+        let mut kv = part.split('=');
+        if let (Some(key), Some(value)) = (kv.next(), kv.next().or(Some(""))) {
+            let new_v: Value = decode(value).unwrap().into_owned().into();
+            match map.entry(decode(key).unwrap().into_owned().into()) {
+                Entry::Occupied(mut e) => {
+                    if let Value::List(ref mut list) = e.get_mut() {
+                        Arc::get_mut(list)
+                            .expect("This isn't ever shared!")
+                            .push(new_v);
+                    } else {
+                        let v = e.get().clone();
+                        let list = Value::List([v, new_v].to_vec().into());
+                        e.insert(list);
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(decode(value).unwrap().into_owned().into());
+                }
+            }
+        }
+    }
+    Ok(map.into())
 }
 
 #[cfg(test)]
@@ -576,6 +606,36 @@ mod tests {
         )));
         let value = Expression::new("auth.identity.age").unwrap().eval();
         assert_eq!(value, "some random crap".into());
+    }
+
+    #[test]
+    fn decodes_query_string() {
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
+                .bytes()
+                .collect(),
+        )));
+        let predicate = Predicate::new(
+            "urlDecode(request.query)['param1'] == '👾 ' && \
+            urlDecode(request.query)['param2'] == 'Exterminate!' && \
+            urlDecode(request.query)['👾'][0] == '123' && \
+            urlDecode(request.query)['👾'][1] == '456' && \
+            urlDecode(request.query)['👾'][2] == '' \
+                        ",
+        )
+        .expect("This is valid!");
+        assert!(predicate.test());
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "%F0%9F%91%BE".bytes().collect(),
+        )));
+        let predicate = Predicate::new(
+            "urlDecode(request.query) == {'👾': ''}",
+        )
+        .expect("This is valid!");
+        assert!(predicate.test());
     }
 
     #[test]
