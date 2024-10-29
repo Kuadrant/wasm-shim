@@ -39,9 +39,13 @@ impl Filter {
                 "#{} action_set selected {}",
                 self.context_id, action_set.name
             );
-            self.operation_dispatcher
+            if let Err(op_err) = self
+                .operation_dispatcher
                 .borrow_mut()
-                .build_operations(&action_set.actions);
+                .build_operations(&action_set.actions)
+            {
+                self.send_http_response(500, vec![], Some(format!("{op_err}").as_ref()));
+            }
         } else {
             debug!(
                 "#{} process_action_sets: no action_set with conditions applies",
@@ -65,7 +69,8 @@ impl Filter {
                 }
             }
         } else {
-            match res.unwrap_err() {
+            let op_err = res.unwrap_err();
+            match op_err {
                 OperationError {
                     status: Status::Empty,
                     ..
@@ -74,7 +79,7 @@ impl Filter {
                     failure_mode: FailureMode::Deny,
                     ..
                 } => {
-                    self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"));
+                    self.send_http_response(500, vec![], Some(format!("{op_err}").as_ref()));
                     Action::Continue
                 }
                 _ => Action::Continue,

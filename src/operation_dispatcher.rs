@@ -133,7 +133,10 @@ impl fmt::Display for OperationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.status {
             Status::Empty => {
-                write!(f, "No more operations to perform ")
+                write!(f, "No more operations to perform.")
+            }
+            Status::ParseFailure => {
+                write!(f, "Error parsing configuration.")
             }
             _ => {
                 write!(f, "Error triggering the operation. {:?}", self.status)
@@ -161,19 +164,25 @@ impl OperationDispatcher {
         self.waiting_operations.get(&token_id).cloned()
     }
 
-    pub fn build_operations(&mut self, actions: &[Action]) {
+    pub fn build_operations(&mut self, actions: &[Action]) -> Result<(), OperationError> {
         let mut operations: Vec<Rc<Operation>> = vec![];
         for action in actions.iter() {
-            // TODO(didierofrivia): Error handling
             if let Some(service) = self.service_handlers.get(&action.service) {
                 operations.push(Rc::new(Operation::new(
                     service.get_service(),
                     action.clone(),
                     Rc::clone(service),
                 )))
+            } else {
+                error!("Unknown service: {}", action.service);
+                return Err(OperationError::new(
+                    Status::ParseFailure,
+                    Default::default(),
+                ));
             }
         }
         self.push_operations(operations);
+        Ok(())
     }
 
     pub fn push_operations(&mut self, operations: Vec<Rc<Operation>>) {
