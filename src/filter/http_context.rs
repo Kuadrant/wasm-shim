@@ -4,7 +4,7 @@ use crate::operation_dispatcher::{OperationDispatcher, OperationError};
 use crate::service::GrpcService;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::{Action, Status};
+use proxy_wasm::types::Action;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -53,37 +53,32 @@ impl Filter {
             );
             return Action::Continue;
         }
-        let res = self.operation_dispatcher.borrow_mut().next();
-        if let Ok(operation) = res {
-            match operation.get_result() {
+
+        match self.operation_dispatcher.borrow_mut().next() {
+            Ok(Some(op)) => match op.get_result() {
                 Ok(call_id) => {
                     debug!("#{} initiated gRPC call (id# {})", self.context_id, call_id);
                     Action::Pause
                 }
                 Err(e) => {
                     warn!("gRPC call failed! {e:?}");
-                    if let FailureMode::Deny = operation.get_failure_mode() {
+                    if let FailureMode::Deny = op.get_failure_mode() {
                         self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
                     }
                     Action::Continue
                 }
+            },
+            Ok(None) => {
+                Action::Continue // No operations left to perform
             }
-        } else {
-            let op_err = res.unwrap_err();
-            match op_err {
-                OperationError {
-                    status: Status::Empty,
-                    ..
-                } => Action::Continue,
-                OperationError {
-                    failure_mode: FailureMode::Deny,
-                    ..
-                } => {
-                    self.send_http_response(500, vec![], Some(format!("{op_err}").as_ref()));
-                    Action::Continue
-                }
-                _ => Action::Continue,
+            Err(OperationError {
+                failure_mode: FailureMode::Deny,
+                ..
+            }) => {
+                self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"));
+                Action::Continue
             }
+            _ => Action::Continue,
         }
     }
 }
@@ -136,7 +131,7 @@ impl Context for Filter {
         match op_res {
             Ok(operation) => {
                 if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
-                    if let Ok(_op) = self.operation_dispatcher.borrow_mut().next() {
+                    if let Ok(Some(_op)) = self.operation_dispatcher.borrow_mut().next() {
                     } else {
                         self.resume_http_request()
                     }

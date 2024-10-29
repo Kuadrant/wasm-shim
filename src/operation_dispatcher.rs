@@ -132,9 +132,6 @@ impl OperationError {
 impl fmt::Display for OperationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.status {
-            Status::Empty => {
-                write!(f, "No more operations to perform.")
-            }
             Status::ParseFailure => {
                 write!(f, "Error parsing configuration.")
             }
@@ -199,7 +196,7 @@ impl OperationDispatcher {
         self.operations.extend(operations);
     }
 
-    pub fn next(&mut self) -> Result<Rc<Operation>, OperationError> {
+    pub fn next(&mut self) -> Result<Option<Rc<Operation>>, OperationError> {
         if let Some((i, operation)) = self.operations.iter_mut().enumerate().next() {
             match operation.get_state() {
                 State::Pending => {
@@ -214,7 +211,7 @@ impl OperationDispatcher {
                                         // We index only if it was just transitioned to Waiting after triggering
                                         self.waiting_operations.insert(token_id, operation.clone());
                                         // TODO(didierofrivia): Decide on indexing the failed operations.
-                                        Ok(operation.clone())
+                                        Ok(Some(operation.clone()))
                                     }
                                     State::Done => self.next(),
                                 }
@@ -232,7 +229,7 @@ impl OperationDispatcher {
                 }
                 State::Waiting => {
                     operation.next_state();
-                    Ok(operation.clone())
+                    Ok(Some(operation.clone()))
                 }
                 State::Done => {
                     if let Ok(token_id) = operation.get_result() {
@@ -243,7 +240,7 @@ impl OperationDispatcher {
                 }
             }
         } else {
-            Err(OperationError::new(Status::Empty, FailureMode::default())) // No more operations
+            Ok(None)
         }
     }
 
@@ -467,31 +464,34 @@ mod tests {
         assert_eq!(operation_dispatcher.waiting_operations.len(), 0);
 
         let mut op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(66));
+        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(66));
         assert_eq!(
-            *op.clone().unwrap().get_service_type(),
+            *op.clone().unwrap().unwrap().get_service_type(),
             ServiceType::RateLimit
         );
-        assert_eq!(op.unwrap().get_state(), State::Waiting);
+        assert_eq!(op.unwrap().unwrap().get_state(), State::Waiting);
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(66));
-        assert_eq!(op.unwrap().get_state(), State::Done);
+        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(66));
+        assert_eq!(op.unwrap().unwrap().get_state(), State::Done);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(77));
-        assert_eq!(*op.clone().unwrap().get_service_type(), ServiceType::Auth);
-        assert_eq!(op.unwrap().get_state(), State::Waiting);
+        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(77));
+        assert_eq!(
+            *op.clone().unwrap().unwrap().get_service_type(),
+            ServiceType::Auth
+        );
+        assert_eq!(op.unwrap().unwrap().get_state(), State::Waiting);
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().get_result(), Ok(77));
-        assert_eq!(op.unwrap().get_state(), State::Done);
+        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(77));
+        assert_eq!(op.unwrap().unwrap().get_state(), State::Done);
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert!(op.is_err());
+        assert!(op.unwrap().is_none());
         assert!(operation_dispatcher.get_current_operation_state().is_none());
         assert_eq!(operation_dispatcher.waiting_operations.len(), 0);
     }
