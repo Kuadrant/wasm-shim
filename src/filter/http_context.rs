@@ -131,10 +131,15 @@ impl Context for Filter {
         match op_res {
             Ok(operation) => {
                 if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
-                    if let Ok(Some(_op)) = self.operation_dispatcher.borrow_mut().next() {
-                    } else {
-                        self.resume_http_request()
+                    // call the next op
+                    match self.operation_dispatcher.borrow_mut().next() {
+                        Ok(_) => {} // no action needed
+                        Err(op_err) => {
+                            // If desired, we could check the error status.
+                            GrpcService::handle_error_on_grpc_response(op_err.failure_mode);
+                        }
                     }
+                    self.resume_http_request();
                 }
             }
             Err(e) => {
