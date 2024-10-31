@@ -1,5 +1,6 @@
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::{FailureMode, FilterConfig};
+use crate::envoy::StatusCode;
 use crate::operation_dispatcher::OperationDispatcher;
 use crate::service::GrpcService;
 use log::{debug, warn};
@@ -58,9 +59,21 @@ impl Filter {
                 }
                 Err(e) => {
                     warn!("gRPC call failed! {e:?}");
-                    if let FailureMode::Deny = operation.get_failure_mode() {
-                        self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
-                    }
+                    match operation.get_failure_mode() {
+                        FailureMode::Deny => {
+                            operation
+                                .get_service_handler()
+                                .service_metrics
+                                .report_error();
+                            self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                        }
+                        FailureMode::Allow => {
+                            operation
+                                .get_service_handler()
+                                .service_metrics
+                                .report_allowed_on_failure();
+                        }
+                    };
                     Action::Continue
                 }
             }
@@ -113,13 +126,37 @@ impl Context for Filter {
         let some_op = self.operation_dispatcher.borrow().get_operation(token_id);
 
         if let Some(operation) = some_op {
-            if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
-                self.operation_dispatcher.borrow_mut().next();
-                if let Some(_op) = self.operation_dispatcher.borrow_mut().next() {
-                } else {
-                    self.resume_http_request()
+            match GrpcService::process_grpc_response(Rc::clone(&operation), resp_size) {
+                Ok(_) => {
+                    operation.get_service_handler().service_metrics.report_ok();
+                    self.operation_dispatcher.borrow_mut().next();
+                    if self.operation_dispatcher.borrow_mut().next().is_none() {
+                        self.resume_http_request()
+                    }
                 }
-            }
+                Err(
+                    StatusCode::TooManyRequests | StatusCode::Unauthorized | StatusCode::Forbidden,
+                ) => {
+                    operation
+                        .get_service_handler()
+                        .service_metrics
+                        .report_rejected();
+                }
+                Err(_) => match operation.get_failure_mode() {
+                    FailureMode::Deny => {
+                        operation
+                            .get_service_handler()
+                            .service_metrics
+                            .report_error();
+                    }
+                    FailureMode::Allow => {
+                        operation
+                            .get_service_handler()
+                            .service_metrics
+                            .report_allowed_on_failure();
+                    }
+                },
+            };
         } else {
             warn!("No Operation found with token_id: {token_id}");
             GrpcService::handle_error_on_grpc_response(&FailureMode::Deny); // TODO(didierofrivia): Decide on what's the default failure mode
