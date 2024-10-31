@@ -1,8 +1,8 @@
-## Missing cluster integration test
+## Basic integration test
 
-This is a integration test to validate when envoy cluster does not exist.
+This is a integration test to validate when envoy cluster exists but it is not reachable.
 
-The test configures not existing envoy cluster on the fist action `fail-on-first-action.example.com`, 
+The test configures unreachable envoy cluster on the fist action `fail-on-first-action.example.com`,
 as well as on the second action `fail-on-second-action.example.com`. Reason being to validate
 error handling on the `on_grpc_call_response` event.
 
@@ -10,22 +10,22 @@ This test is being added to the CI test suite
 
 ### Description
 
-```json
+```yaml
 "services": {
-  "existing-service": {
+  "limitadorA": {
     "type": "ratelimit",
-    "endpoint": "existing-cluster",
+    "endpoint": "limitador",
     "failureMode": "deny"
-  }
-  "mistyped-service": {
+  },
+  "limitador-unreachable": {
     "type": "ratelimit",
-    "endpoint": "does-not-exist",
+    "endpoint": "unreachable-cluster",
     "failureMode": "deny"
   }
 },
 "actionSets": [
 {
-    "name": "envoy-cluster-not-found-on-first-action",
+    "name": "envoy-cluster-unreachable-on-first-action",
     "routeRuleConditions": {
         "hostnames": [
             "fail-on-first-action.example.com"
@@ -33,12 +33,12 @@ This test is being added to the CI test suite
     },
     "actions": [
         {
-            "service": "mistyped-service",
-            "scope": "b",
+            "service": "limitador-unreachable",
+            "scope": "a",
             "data": [
                 {
                     "expression": {
-                        "key": "limit_to_be_activated",
+                        "key": "a",
                         "value": "1"
                     }
                 }
@@ -47,7 +47,7 @@ This test is being added to the CI test suite
     ]
 },
 {
-    "name": "envoy-cluster-not-found-on-second-action",
+    "name": "envoy-cluster-unreachable-on-second-action",
     "routeRuleConditions": {
         "hostnames": [
             "fail-on-second-action.example.com"
@@ -55,7 +55,7 @@ This test is being added to the CI test suite
     },
     "actions": [
         {
-            "service": "existing-service",
+            "service": "limitadorA",
             "scope": "b",
             "data": [
                 {
@@ -67,7 +67,7 @@ This test is being added to the CI test suite
             ]
         },
         {
-            "service": "mistyped-service",
+            "service": "limitador-unreachable",
             "scope": "b",
             "data": [
                 {
@@ -83,10 +83,15 @@ This test is being added to the CI test suite
 ]
 ```
 
-Check Envoy logs:
+And a new limit configuration
 
-```
-docker compose logs -f envoy
+```yaml
+- namespace: basic
+  max_value: 30
+  seconds: 60
+  conditions:
+  - "a == '1'"
+  variables: []
 ```
 
 The test will run two requests and expect them to fail because `failureMode` is set to `deny`.
