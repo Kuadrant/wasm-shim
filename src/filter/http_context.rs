@@ -133,13 +133,17 @@ impl Context for Filter {
                 if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
                     // call the next op
                     match self.operation_dispatcher.borrow_mut().next() {
-                        Ok(_) => {} // no action needed
+                        Ok(some_op) => {
+                            if some_op.is_none() {
+                                // No more operations left in queue, resuming
+                                self.resume_http_request();
+                            }
+                        }
                         Err(op_err) => {
                             // If desired, we could check the error status.
                             GrpcService::handle_error_on_grpc_response(op_err.failure_mode);
                         }
                     }
-                    self.resume_http_request();
                 }
             }
             Err(e) => {

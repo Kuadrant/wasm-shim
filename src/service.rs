@@ -85,7 +85,7 @@ impl GrpcService {
         match failure_mode {
             FailureMode::Deny => {
                 hostcalls::send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
-                    .unwrap()
+                    .unwrap();
             }
             FailureMode::Allow => hostcalls::resume_http_request().unwrap(),
         }
