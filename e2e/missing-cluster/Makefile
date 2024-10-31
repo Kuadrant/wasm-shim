@@ -11,7 +11,13 @@ run:
 test:
 	@{ \
 	set -e ;\
-	STATUSCODE=$(shell curl --silent --output /dev/null --write-out "%{http_code}" --max-time 5 --resolve test.example.com:18000:127.0.0.1 http://test.example.com:18000) && \
+	STATUSCODE=$(shell curl --silent --output /dev/null --write-out "%{http_code}" --max-time 5 --resolve fail-on-first-action.example.com:18000:127.0.0.1 http://fail-on-first-action.example.com:18000) && \
+		echo "received status code $${STATUSCODE}" && \
+		test $${STATUSCODE} -ne 200 ;\
+	}
+	@{ \
+	set -e ;\
+	STATUSCODE=$(shell curl --silent --output /dev/null --write-out "%{http_code}" --max-time 5 --resolve fail-on-second-action.example.com:18000:127.0.0.1 http://fail-on-second-action.example.com:18000) && \
 		echo "received status code $${STATUSCODE}" && \
 		test $${STATUSCODE} -ne 200 ;\
 	}

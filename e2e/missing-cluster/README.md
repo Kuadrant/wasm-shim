@@ -2,17 +2,21 @@
 
 This is a integration test to validate when envoy cluster does not exist.
 
-Specifically, when happens on the second action.
+The test configures not existing envoy cluster on the fist action `fail-on-first-action.example.com`, 
+as well as on the second action `fail-on-second-action.example.com`. Reason being to validate
+error handling on the `on_grpc_call_response` event.
 
 This test is being added to the CI test suite
 
 ### Description
 
-The Wasm configuration defines a set of rules for `*.example.com` and the rate limiting endpoint does
-not exist from the defined set of envoy clusters.
-
 ```json
 "services": {
+  "existing-service": {
+    "type": "ratelimit",
+    "endpoint": "existing-cluster",
+    "failureMode": "deny"
+  }
   "mistyped-service": {
     "type": "ratelimit",
     "endpoint": "does-not-exist",
@@ -21,7 +25,47 @@ not exist from the defined set of envoy clusters.
 },
 "actionSets": [
 {
+    "name": "envoy-cluster-not-found-on-first-action",
+    "routeRuleConditions": {
+        "hostnames": [
+            "fail-on-first-action.example.com"
+        ]
+    },
     "actions": [
+        {
+            "service": "mistyped-service",
+            "scope": "b",
+            "data": [
+                {
+                    "expression": {
+                        "key": "limit_to_be_activated",
+                        "value": "1"
+                    }
+                }
+            ]
+        }
+    ]
+},
+{
+    "name": "envoy-cluster-not-found-on-second-action",
+    "routeRuleConditions": {
+        "hostnames": [
+            "fail-on-second-action.example.com"
+        ]
+    },
+    "actions": [
+        {
+            "service": "existing-service",
+            "scope": "b",
+            "data": [
+                {
+                    "expression": {
+                        "key": "limit_to_be_activated",
+                        "value": "1"
+                    }
+                }
+            ]
+        },
         {
             "service": "mistyped-service",
             "scope": "b",

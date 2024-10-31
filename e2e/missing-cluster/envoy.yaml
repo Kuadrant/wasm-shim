@@ -57,13 +57,47 @@ static_resources:
                           },
                           "actionSets": [
                             {
-                              "name": "envoy-cluster-not-found-actionset",
+                              "name": "envoy-cluster-not-found-on-first-action",
                               "routeRuleConditions": {
                                 "hostnames": [
-                                  "*.example.com"
+                                  "fail-on-first-action.example.com"
                                 ]
                               },
                               "actions": [
+                                {
+                                  "service": "mistyped-service",
+                                  "scope": "a",
+                                  "data": [
+                                    {
+                                      "expression": {
+                                        "key": "limit_to_be_activated",
+                                        "value": "1"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "name": "envoy-cluster-not-found-on-second-action",
+                              "routeRuleConditions": {
+                                "hostnames": [
+                                  "fail-on-second-action.example.com"
+                                ]
+                              },
+                              "actions": [
+                                {
+                                  "service": "limitador",
+                                  "scope": "a",
+                                  "data": [
+                                    {
+                                      "expression": {
+                                        "key": "limit_to_be_activated",
+                                        "value": "1"
+                                      }
+                                    }
+                                  ]
+                                },
                                 {
                                   "service": "mistyped-service",
                                   "scope": "a",
