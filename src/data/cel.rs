@@ -45,17 +45,15 @@ impl Expression {
         })
     }
 
-    pub fn eval(&self) -> Value {
+    pub fn eval_extended(&self, extended: bool) -> Value {
         let mut ctx = create_context();
-        ctx.add_function("urlDecode", url_decode);
+        if extended {
+            ctx.add_function("decodeQueryString", url_decode);
+        }
         let Map { map } = self.build_data_map();
 
         ctx.add_function("getHostProperty", get_host_property);
 
-        // if expression was "auth.identity.anonymous",
-        // {
-        //   "auth": { "identity": { "anonymous": true } }
-        // }
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
                 binding,
@@ -63,6 +61,10 @@ impl Expression {
             );
         }
         Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
+    }
+
+    pub fn eval(&self) -> Value {
+        self.eval_extended(false)
     }
 
     fn build_data_map(&self) -> Map {
@@ -163,7 +165,11 @@ impl Predicate {
     }
 
     pub fn test(&self) -> bool {
-        match self.expression.eval() {
+        self.test_extended(false)
+    }
+
+    pub fn test_extended(&self, extended: bool) -> bool {
+        match self.expression.eval_extended(extended) {
             Value::Bool(result) => result,
             _ => false,
         }
@@ -617,25 +623,25 @@ mod tests {
                 .collect(),
         )));
         let predicate = Predicate::new(
-            "urlDecode(request.query)['param1'] == '👾 ' && \
-            urlDecode(request.query)['param2'] == 'Exterminate!' && \
-            urlDecode(request.query)['👾'][0] == '123' && \
-            urlDecode(request.query)['👾'][1] == '456' && \
-            urlDecode(request.query)['👾'][2] == '' \
+            "decodeQueryString(request.query)['param1'] == '👾 ' && \
+            decodeQueryString(request.query)['param2'] == 'Exterminate!' && \
+            decodeQueryString(request.query)['👾'][0] == '123' && \
+            decodeQueryString(request.query)['👾'][1] == '456' && \
+            decodeQueryString(request.query)['👾'][2] == '' \
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test());
+        assert!(predicate.test_extended(true));
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             "request.query".into(),
             "%F0%9F%91%BE".bytes().collect(),
         )));
         let predicate = Predicate::new(
-            "urlDecode(request.query) == {'👾': ''}",
+            "decodeQueryString(request.query) == {'👾': ''}",
         )
         .expect("This is valid!");
-        assert!(predicate.test());
+        assert!(predicate.test_extended(true));
     }
 
     #[test]
