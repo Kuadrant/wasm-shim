@@ -35,7 +35,13 @@ fn wasm_prop(tokens: &[&str]) -> Path {
 #[cfg(test)]
 fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
-    Ok(test::TEST_PROPERTY_VALUE.take())
+    match test::TEST_PROPERTY_VALUE.take() {
+        None => Err(Status::NotFound),
+        Some((expected_path, data)) => {
+            assert_eq!(&expected_path, path);
+            Ok(Some(data))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -146,7 +152,7 @@ pub mod test {
     use std::cell::Cell;
 
     thread_local!(
-        pub static TEST_PROPERTY_VALUE: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
+        pub static TEST_PROPERTY_VALUE: Cell<Option<(Path, Vec<u8>)>> = const { Cell::new(None) };
     );
 
     #[test]
