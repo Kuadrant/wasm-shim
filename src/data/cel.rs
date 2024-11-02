@@ -58,7 +58,7 @@ impl Expression {
     pub fn eval(&self) -> Value {
         let mut ctx = create_context();
         if self.extended {
-            ctx.add_function("decodeQueryString", url_decode);
+            Self::add_extended_capabilities(&mut ctx)
         }
         let Map { map } = self.build_data_map();
 
@@ -73,12 +73,20 @@ impl Expression {
         Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
     }
 
+    /// Add support for `decodeQueryString`, see [`decode_query_string`]
+    fn add_extended_capabilities(ctx: &mut Context) {
+        ctx.add_function("decodeQueryString", decode_query_string);
+    }
+
     fn build_data_map(&self) -> Map {
         data::AttributeMap::new(self.attributes.clone()).into()
     }
 }
 
-fn url_decode(This(s): This<Arc<String>>) -> ResolveResult {
+/// Decodes the query string and returns a Map where the key is the parameter's name and
+/// the value is either a [`Value::String`] or a [`Value::List`] if the parameter's name is repeated
+/// see [`tests::decodes_query_string`]
+fn decode_query_string(This(s): This<Arc<String>>) -> ResolveResult {
     let mut map: HashMap<Key, Value> = HashMap::default();
     for part in s.split('&') {
         let mut kv = part.split('=');
@@ -170,6 +178,9 @@ impl Predicate {
         })
     }
 
+    /// Unlike with [`Predicate::new`], a `Predicate::route_rule` is backed by an
+    /// `Expression` that has extended capabilities enabled.
+    /// See [`Expression::add_extended_capabilities`]
     pub fn route_rule(predicate: &str) -> Result<Self, ParseError> {
         Ok(Self {
             expression: Expression::new_extended(predicate)?,
