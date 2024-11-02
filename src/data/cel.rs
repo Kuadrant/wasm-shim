@@ -17,10 +17,11 @@ use urlencoding::decode;
 pub struct Expression {
     attributes: Vec<Attribute>,
     expression: CelExpression,
+    extended: bool,
 }
 
 impl Expression {
-    pub fn new(expression: &str) -> Result<Self, ParseError> {
+    pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseError> {
         let expression = parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
@@ -42,12 +43,21 @@ impl Expression {
         Ok(Self {
             attributes,
             expression,
+            extended,
         })
     }
 
-    pub fn eval_extended(&self, extended: bool) -> Value {
+    pub fn new(expression: &str) -> Result<Self, ParseError> {
+        Self::new_expression(expression, false)
+    }
+
+    pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
+        Self::new_expression(expression, true)
+    }
+
+    pub fn eval(&self) -> Value {
         let mut ctx = create_context();
-        if extended {
+        if self.extended {
             ctx.add_function("decodeQueryString", url_decode);
         }
         let Map { map } = self.build_data_map();
@@ -61,10 +71,6 @@ impl Expression {
             );
         }
         Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
-    }
-
-    pub fn eval(&self) -> Value {
-        self.eval_extended(false)
     }
 
     fn build_data_map(&self) -> Map {
@@ -164,12 +170,14 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self) -> bool {
-        self.test_extended(false)
+    pub fn route_rule(predicate: &str) -> Result<Self, ParseError> {
+        Ok(Self {
+            expression: Expression::new_extended(predicate)?,
+        })
     }
 
-    pub fn test_extended(&self, extended: bool) -> bool {
-        match self.expression.eval_extended(extended) {
+    pub fn test(&self) -> bool {
+        match self.expression.eval() {
             Value::Bool(result) => result,
             _ => false,
         }
@@ -622,7 +630,7 @@ mod tests {
                 .bytes()
                 .collect(),
         )));
-        let predicate = Predicate::new(
+        let predicate = Predicate::route_rule(
             "decodeQueryString(request.query)['param1'] == '👾 ' && \
             decodeQueryString(request.query)['param2'] == 'Exterminate!' && \
             decodeQueryString(request.query)['👾'][0] == '123' && \
@@ -631,17 +639,17 @@ mod tests {
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test_extended(true));
+        assert!(predicate.test());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             "request.query".into(),
             "%F0%9F%91%BE".bytes().collect(),
         )));
-        let predicate = Predicate::new(
+        let predicate = Predicate::route_rule(
             "decodeQueryString(request.query) == {'👾': ''}",
         )
         .expect("This is valid!");
-        assert!(predicate.test_extended(true));
+        assert!(predicate.test());
     }
 
     #[test]

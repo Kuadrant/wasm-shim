@@ -468,7 +468,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
             }
             let mut predicates = Vec::default();
             for predicate in &action_set.route_rule_conditions.predicates {
-                predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+                predicates.push(Predicate::route_rule(predicate).map_err(|e| e.to_string())?);
             }
             action_set
                 .route_rule_conditions
