@@ -449,12 +449,14 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::data::property;
     use cel_interpreter::objects::ValueType;
 
     #[test]
     fn predicates() {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some(65432_i64.to_le_bytes().into()));
+        property::test::TEST_PROPERTY_VALUE
+            .set(Some(("source.port".into(), 65432_i64.to_le_bytes().into())));
         assert!(predicate.test());
     }
 
@@ -470,36 +472,65 @@ mod tests {
 
     #[test]
     fn expressions_to_json_resolve() {
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("true".bytes().collect()));
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.auth.identity.anonymous",
+            ]),
+            "true".bytes().collect(),
+        )));
         let value = Expression::new("auth.identity.anonymous").unwrap().eval();
         assert_eq!(value, true.into());
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("42".bytes().collect()));
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            "42".bytes().collect(),
+        )));
         let value = Expression::new("auth.identity.age").unwrap().eval();
         assert_eq!(value, 42.into());
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("42.3".bytes().collect()));
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            "42.3".bytes().collect(),
+        )));
         let value = Expression::new("auth.identity.age").unwrap().eval();
         assert_eq!(value, 42.3.into());
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("\"John\"".bytes().collect()));
-        let value = Expression::new("auth.identity.name").unwrap().eval();
-        assert_eq!(value, "John".into());
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("-42".bytes().collect()));
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            "\"John\"".bytes().collect(),
+        )));
         let value = Expression::new("auth.identity.age").unwrap().eval();
+        assert_eq!(value, "John".into());
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
+            "-42".bytes().collect(),
+        )));
+        let value = Expression::new("auth.identity.name").unwrap().eval();
         assert_eq!(value, (-42).into());
+
         // let's fall back to strings, as that's what we read and set in store_metadata
-        super::super::property::test::TEST_PROPERTY_VALUE
-            .set(Some("some random crap".bytes().collect()));
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            "some random crap".bytes().collect(),
+        )));
         let value = Expression::new("auth.identity.age").unwrap().eval();
         assert_eq!(value, "some random crap".into());
     }
 
     #[test]
     fn attribute_resolve() {
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some(80_i64.to_le_bytes().into()));
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "destination.port".into(),
+            80_i64.to_le_bytes().into(),
+        )));
         let value = known_attribute_for(&"destination.port".into())
             .unwrap()
             .get();
         assert_eq!(value, 80.into());
-        super::super::property::test::TEST_PROPERTY_VALUE.set(Some("GET".bytes().collect()));
+        property::test::TEST_PROPERTY_VALUE
+            .set(Some(("request.method".into(), "GET".bytes().collect())));
         let value = known_attribute_for(&"request.method".into()).unwrap().get();
         assert_eq!(value, "GET".into());
     }
