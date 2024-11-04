@@ -73,12 +73,19 @@ impl Filter {
             }
             Err(OperationError {
                 failure_mode: FailureMode::Deny,
-                ..
+                status,
             }) => {
+                warn!("OperationError Status: {status:?}");
                 self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"));
                 Action::Continue
             }
-            _ => Action::Continue,
+            Err(OperationError {
+                failure_mode: FailureMode::Allow,
+                status,
+            }) => {
+                warn!("OperationError Status: {status:?}");
+                Action::Continue
+            }
         }
     }
 }
