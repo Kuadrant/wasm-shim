@@ -257,7 +257,7 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
             ValueType::String,
         ),
         ("ratelimit.domain".into(), ValueType::String),
-        ("connection.id".into(), ValueType::Int),
+        ("connection.id".into(), ValueType::UInt),
         ("ratelimit.hits_addend".into(), ValueType::Int),
         ("request.headers".into(), ValueType::Map),
         ("request.context_extensions".into(), ValueType::Map),
