@@ -80,7 +80,7 @@ pub fn last_index_of(
             }
             match this[base..].rfind(&*arg) {
                 None => Ok((-1).into()),
-                Some(idx) => Ok(Value::UInt((idx) as u64)),
+                Some(idx) => Ok(Value::UInt(idx as u64)),
             }
         }
         _ => Err(ExecutionError::FunctionError {
@@ -127,8 +127,6 @@ pub fn trim(This(this): This<Arc<String>>) -> ResolveResult {
     Ok(this.trim().into())
 }
 
-//	<string>.replace(<string>, <string>) -> <string>
-//	<string>.replace(<string>, <string>, <int>) -> <string>
 pub fn replace(This(this): This<Arc<String>>, Arguments(args): Arguments) -> ResolveResult {
     match args.len() {
         count @ 2..=3 => {
@@ -234,8 +232,8 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
                     ),
                 })?,
             };
-            if count == 2 {
-                let end = match &args[1] {
+            let mut end = if count == 2 {
+                match &args[1] {
                     Value::Int(i) => *i as usize,
                     Value::UInt(u) => *u as usize,
                     _ => Err(ExecutionError::FunctionError {
@@ -245,17 +243,30 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
                             args[0]
                         ),
                     })?,
-                };
-                if end < start {
-                    Err(ExecutionError::FunctionError {
-                        function: "String.substring".to_string(),
-                        message: format!("Can't have end be before the start: `{end} < {start}"),
-                    })?
                 }
-                Ok(this.split_at(start).1[..(end - start)].to_owned().into())
             } else {
-                Ok(this.split_at(start).1.to_owned().into())
+                this.chars().count()
+            };
+            if end < start {
+                Err(ExecutionError::FunctionError {
+                    function: "String.substring".to_string(),
+                    message: format!("Can't have end be before the start: `{end} < {start}"),
+                })?
             }
+            end -= start;
+            Ok(this
+                .chars()
+                .skip(start)
+                .take_while(|_| {
+                    if let Some(v) = end.checked_sub(1) {
+                        end = v;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .collect::<String>()
+                .into())
         }
         _ => Err(ExecutionError::FunctionError {
             function: "String.substring".to_owned(),
@@ -263,9 +274,6 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
         }),
     }
 }
-
-//	<string>.substring(<int>) -> <string>
-//	<string>.substring(<int>, <int>) -> <string>
 
 #[cfg(test)]
 mod tests {
@@ -360,5 +368,7 @@ mod tests {
         assert_eq!(e.eval(), "cat".into());
         let e = Expression::new("'tacocat'.substring(0, 4)").expect("This must be valid CEL");
         assert_eq!(e.eval(), "taco".into());
+        let e = Expression::new("'ta©o©αT'.substring(2, 6)").expect("This must be valid CEL");
+        assert_eq!(e.eval(), "©o©α".into());
     }
 }
