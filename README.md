@@ -19,7 +19,7 @@ services:
   ratelimit-service:
     type: ratelimit
     endpoint: ratelimit-cluster
-    failureMode: deny
+    failureMode: allow
 actionSets:
   - name: rlp-ns-A/rlp-name-A
     routeRuleConditions:
@@ -29,9 +29,12 @@ actionSets:
       - request.host == "test.toystore.com"
       - request.method == "GET"
     actions:
+    - service: auth-service
+      scope: auth-scope-a
     - service: ratelimit-service
-      scope: rlp-ns-A/rlp-name-A
-      conditions: []
+      scope: ratelimit-scope-a
+      predicates:
+      - auth.identity.anonymous == "true"
       data:
       - expression:
           key: my_header
@@ -42,8 +45,8 @@ actionSets:
 
 ### CEL Predicates and Expression
 
-`routeRuleConditions`'s `predicate`s are expressed in [Common Expression Language (CEL)](https://cel.dev). `Predicate`s 
-evaluating to a `bool` value, while `Expression`, used for passing data to a service, evaluate to some `Value`. 
+`routeRuleConditions`'s `predicate`s are expressed in [Common Expression Language (CEL)](https://cel.dev). `Predicate`s
+evaluating to a `bool` value, while `Expression`, used for passing data to a service, evaluate to some `Value`.
 
 These expression can operate on the data made available to them through the Well Known Attributes, see below
 
