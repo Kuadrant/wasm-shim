@@ -33,7 +33,7 @@ fn wasm_prop(tokens: &[&str]) -> Path {
 }
 
 #[cfg(test)]
-fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
     match test::TEST_PROPERTY_VALUE.take() {
         None => Err(Status::NotFound),
@@ -72,7 +72,7 @@ pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
 }
 
 #[cfg(not(test))]
-fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     debug!("get_property: {:?}", path);
     proxy_wasm::hostcalls::get_property(path.tokens())
 }

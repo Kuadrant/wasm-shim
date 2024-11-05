@@ -1,9 +1,11 @@
 use crate::data::get_attribute;
 use crate::data::property::{host_get_map, Path};
+use cel_interpreter::extractors::This;
 use cel_interpreter::objects::{Map, ValueType};
-use cel_interpreter::{Context, Value};
+use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
+use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -45,6 +47,8 @@ impl Expression {
         let mut ctx = Context::default();
         let Map { map } = self.build_data_map();
 
+        ctx.add_function("getHostProperty", get_host_property);
+
         // if expression was "auth.identity.anonymous",
         // {
         //   "auth": { "identity": { "anonymous": true } }
@@ -60,6 +64,42 @@ impl Expression {
 
     fn build_data_map(&self) -> Map {
         data::AttributeMap::new(self.attributes.clone()).into()
+    }
+}
+
+#[cfg(test)]
+pub fn inner_host_get_property(path: Vec<&str>) -> Result<Option<Bytes>, Status> {
+    super::property::host_get_property(&Path::new(path))
+}
+
+#[cfg(not(test))]
+pub fn inner_host_get_property(path: Vec<&str>) -> Result<Option<Bytes>, Status> {
+    proxy_wasm::hostcalls::get_property(path)
+}
+
+fn get_host_property(This(this): This<Value>) -> ResolveResult {
+    match this {
+        Value::List(ref items) => {
+            let mut tokens = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                match item {
+                    Value::String(token) => tokens.push(token.as_str()),
+                    _ => return Err(this.error_expected_type(ValueType::String)),
+                }
+            }
+
+            match inner_host_get_property(tokens) {
+                Ok(data) => match data {
+                    None => Ok(Value::Null),
+                    Some(bytes) => Ok(Value::Bytes(bytes.into())),
+                },
+                Err(err) => Err(ExecutionError::FunctionError {
+                    function: "hostcalls::get_property".to_string(),
+                    message: format!("Status: {:?}", err),
+                }),
+            }
+        }
+        _ => Err(this.error_expected_type(ValueType::List)),
     }
 }
 
@@ -451,6 +491,8 @@ mod tests {
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::data::property;
     use cel_interpreter::objects::ValueType;
+    use cel_interpreter::Value;
+    use std::sync::Arc;
 
     #[test]
     fn predicates() {
@@ -544,5 +586,17 @@ mod tests {
             Some(ValueType::String) => {}
             _ => panic!("Not supposed to get here!"),
         }
+    }
+
+    #[test]
+    fn expression_access_host() {
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["foo", "bar.baz"]),
+            b"\xCA\xFE".to_vec(),
+        )));
+        let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
+            .unwrap()
+            .eval();
+        assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
     }
 }
