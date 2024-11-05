@@ -1,6 +1,6 @@
 use crate::data::get_attribute;
 use crate::data::property::{host_get_map, Path};
-use cel_interpreter::extractors::This;
+use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
@@ -85,8 +85,17 @@ impl Expression {
 
 /// Decodes the query string and returns a Map where the key is the parameter's name and
 /// the value is either a [`Value::String`] or a [`Value::List`] if the parameter's name is repeated
+/// and the second arg is set not set to `false`.
 /// see [`tests::decodes_query_string`]
-fn decode_query_string(This(s): This<Arc<String>>) -> ResolveResult {
+fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -> ResolveResult {
+    let allow_repeats = if args.len() == 2 {
+        match &args[1] {
+            Value::Bool(b) => *b,
+            _ => true,
+        }
+    } else {
+        true
+    };
     let mut map: HashMap<Key, Value> = HashMap::default();
     for part in s.split('&') {
         let mut kv = part.split('=');
@@ -94,14 +103,16 @@ fn decode_query_string(This(s): This<Arc<String>>) -> ResolveResult {
             let new_v: Value = decode(value).unwrap().into_owned().into();
             match map.entry(decode(key).unwrap().into_owned().into()) {
                 Entry::Occupied(mut e) => {
-                    if let Value::List(ref mut list) = e.get_mut() {
-                        Arc::get_mut(list)
-                            .expect("This isn't ever shared!")
-                            .push(new_v);
-                    } else {
-                        let v = e.get().clone();
-                        let list = Value::List([v, new_v].to_vec().into());
-                        e.insert(list);
+                    if allow_repeats {
+                        if let Value::List(ref mut list) = e.get_mut() {
+                            Arc::get_mut(list)
+                                .expect("This isn't ever shared!")
+                                .push(new_v);
+                        } else {
+                            let v = e.get().clone();
+                            let list = Value::List([v, new_v].to_vec().into());
+                            e.insert(list);
+                        }
                     }
                 }
                 Entry::Vacant(e) => {
@@ -647,6 +658,20 @@ mod tests {
             decodeQueryString(request.query)['👾'][0] == '123' && \
             decodeQueryString(request.query)['👾'][1] == '456' && \
             decodeQueryString(request.query)['👾'][2] == '' \
+                        ",
+        )
+        .expect("This is valid!");
+        assert!(predicate.test());
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
+                .bytes()
+                .collect(),
+        )));
+        let predicate = Predicate::route_rule(
+            "decodeQueryString(request.query, false)['param2'] == 'Exterminate!' && \
+            decodeQueryString(request.query, false)['👾'] == '123' \
                         ",
         )
         .expect("This is valid!");
