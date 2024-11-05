@@ -656,10 +656,8 @@ mod tests {
             "request.query".into(),
             "%F0%9F%91%BE".bytes().collect(),
         )));
-        let predicate = Predicate::route_rule(
-            "decodeQueryString(request.query) == {'👾': ''}",
-        )
-        .expect("This is valid!");
+        let predicate = Predicate::route_rule("decodeQueryString(request.query) == {'👾': ''}")
+            .expect("This is valid!");
         assert!(predicate.test());
     }
 
