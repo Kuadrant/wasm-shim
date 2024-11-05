@@ -232,7 +232,7 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
                     ),
                 })?,
             };
-            let mut end = if count == 2 {
+            let end = if count == 2 {
                 match &args[1] {
                     Value::Int(i) => *i as usize,
                     Value::UInt(u) => *u as usize,
@@ -253,18 +253,10 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
                     message: format!("Can't have end be before the start: `{end} < {start}"),
                 })?
             }
-            end -= start;
             Ok(this
                 .chars()
                 .skip(start)
-                .take_while(|_| {
-                    if let Some(v) = end.checked_sub(1) {
-                        end = v;
-                        true
-                    } else {
-                        false
-                    }
-                })
+                .take(end - start)
                 .collect::<String>()
                 .into())
         }
