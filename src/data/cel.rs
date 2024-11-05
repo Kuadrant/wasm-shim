@@ -44,7 +44,7 @@ impl Expression {
     }
 
     pub fn eval(&self) -> Value {
-        let mut ctx = Context::default();
+        let mut ctx = create_context();
         let Map { map } = self.build_data_map();
 
         ctx.add_function("getHostProperty", get_host_property);
@@ -102,6 +102,23 @@ fn get_host_property(This(this): This<Value>) -> ResolveResult {
         _ => Err(this.error_expected_type(ValueType::List)),
     }
 }
+
+fn create_context<'a>() -> Context<'a> {
+    let mut ctx = Context::default();
+    ctx.add_function("charAt", strings::char_at);
+    ctx.add_function("indexOf", strings::index_of);
+    ctx.add_function("join", strings::join);
+    ctx.add_function("lastIndexOf", strings::last_index_of);
+    ctx.add_function("lowerAscii", strings::lower_ascii);
+    ctx.add_function("upperAscii", strings::upper_ascii);
+    ctx.add_function("trim", strings::trim);
+    ctx.add_function("replace", strings::replace);
+    ctx.add_function("split", strings::split);
+    ctx.add_function("substring", strings::substring);
+    ctx
+}
+
+mod strings;
 
 #[derive(Clone, Debug)]
 pub struct Predicate {
