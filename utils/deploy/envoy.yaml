@@ -24,7 +24,7 @@ data:
                   - endpoint:
                       address:
                         socket_address:
-                          address: sample-authorino-authorization
+                          address: authorino-authorino-authorization
                           port_value: 50051
         - name: limitador
           connect_timeout: 1s
@@ -42,7 +42,7 @@ data:
                   - endpoint:
                       address:
                         socket_address:
-                          address: limitador-sample
+                          address: limitador-limitador
                           port_value: 8081
         - name: talker-api
           connect_timeout: 0.25s

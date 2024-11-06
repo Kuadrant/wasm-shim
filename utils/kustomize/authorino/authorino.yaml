@@ -2,7 +2,7 @@
 apiVersion: operator.authorino.kuadrant.io/v1beta1
 kind: Authorino
 metadata:
-  name: sample
+  name: authorino
 spec:
   clusterWide: true
   authConfigLabelSelectors: ""
