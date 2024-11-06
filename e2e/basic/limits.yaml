@@ -1,0 +1,7 @@
+---
+- namespace: basic
+  max_value: 30
+  seconds: 60
+  conditions:
+  - "a == '1'"
+  variables: []
