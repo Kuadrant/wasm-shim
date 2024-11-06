@@ -91,10 +91,10 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
     let allow_repeats = if args.len() == 2 {
         match &args[1] {
             Value::Bool(b) => *b,
-            _ => true,
+            _ => false,
         }
     } else {
-        true
+        false
     };
     let mut map: HashMap<Key, Value> = HashMap::default();
     for part in s.split('&') {
@@ -653,11 +653,11 @@ mod tests {
                 .collect(),
         )));
         let predicate = Predicate::route_rule(
-            "decodeQueryString(request.query)['param1'] == '👾 ' && \
-            decodeQueryString(request.query)['param2'] == 'Exterminate!' && \
-            decodeQueryString(request.query)['👾'][0] == '123' && \
-            decodeQueryString(request.query)['👾'][1] == '456' && \
-            decodeQueryString(request.query)['👾'][2] == '' \
+            "decodeQueryString(request.query, true)['param1'] == '👾 ' && \
+            decodeQueryString(request.query, true)['param2'] == 'Exterminate!' && \
+            decodeQueryString(request.query, true)['👾'][0] == '123' && \
+            decodeQueryString(request.query, true)['👾'][1] == '456' && \
+            decodeQueryString(request.query, true)['👾'][2] == '' \
                         ",
         )
         .expect("This is valid!");
