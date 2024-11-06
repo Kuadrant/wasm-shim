@@ -518,7 +518,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Deserialize, Debug, Copy, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum FailureMode {
     #[default]

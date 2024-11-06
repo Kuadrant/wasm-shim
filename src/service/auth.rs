@@ -124,7 +124,7 @@ impl AuthService {
 
     pub fn process_auth_grpc_response(
         auth_resp: GrpcMessageResponse,
-        failure_mode: &FailureMode,
+        failure_mode: FailureMode,
     ) -> Result<(), StatusCode> {
         if let GrpcMessageResponse::Auth(check_response) = auth_resp {
             // store dynamic metadata in filter state
