@@ -73,9 +73,9 @@ impl Expression {
         Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
     }
 
-    /// Add support for `decodeQueryString`, see [`decode_query_string`]
+    /// Add support for `queryMap`, see [`decode_query_string`]
     fn add_extended_capabilities(ctx: &mut Context) {
-        ctx.add_function("decodeQueryString", decode_query_string);
+        ctx.add_function("queryMap", decode_query_string);
     }
 
     fn build_data_map(&self) -> Map {
@@ -653,11 +653,11 @@ mod tests {
                 .collect(),
         )));
         let predicate = Predicate::route_rule(
-            "decodeQueryString(request.query, true)['param1'] == '👾 ' && \
-            decodeQueryString(request.query, true)['param2'] == 'Exterminate!' && \
-            decodeQueryString(request.query, true)['👾'][0] == '123' && \
-            decodeQueryString(request.query, true)['👾'][1] == '456' && \
-            decodeQueryString(request.query, true)['👾'][2] == '' \
+            "queryMap(request.query, true)['param1'] == '👾 ' && \
+            queryMap(request.query, true)['param2'] == 'Exterminate!' && \
+            queryMap(request.query, true)['👾'][0] == '123' && \
+            queryMap(request.query, true)['👾'][1] == '456' && \
+            queryMap(request.query, true)['👾'][2] == '' \
                         ",
         )
         .expect("This is valid!");
@@ -670,8 +670,8 @@ mod tests {
                 .collect(),
         )));
         let predicate = Predicate::route_rule(
-            "decodeQueryString(request.query, false)['param2'] == 'Exterminate!' && \
-            decodeQueryString(request.query, false)['👾'] == '123' \
+            "queryMap(request.query, false)['param2'] == 'Exterminate!' && \
+            queryMap(request.query, false)['👾'] == '123' \
                         ",
         )
         .expect("This is valid!");
@@ -681,8 +681,8 @@ mod tests {
             "request.query".into(),
             "%F0%9F%91%BE".bytes().collect(),
         )));
-        let predicate = Predicate::route_rule("decodeQueryString(request.query) == {'👾': ''}")
-            .expect("This is valid!");
+        let predicate =
+            Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
         assert!(predicate.test());
     }
 
