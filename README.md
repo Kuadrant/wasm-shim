@@ -50,6 +50,92 @@ evaluating to a `bool` value, while `Expression`, used for passing data to a ser
 
 These expression can operate on the data made available to them through the Well Known Attributes, see below
 
+#### CEL String Extended Functions
+
+In addition to the existing
+[string functions from the CEL spec](https://github.com/google/cel-spec/blob/master/doc/langdef.md#string-functions),
+this module supports some extended functions:
+
+* [charAt](doc/string-extensions.md#charat)
+* [indexOf](doc/string-extensions.md#indexof)
+* [join](doc/string-extensions.md#join)
+* [lastIndexOf](doc/string-extensions.md#lastindexof)
+* [lowerAscii](doc/string-extensions.md#lowerascii)
+* [upperAscii](doc/string-extensions.md#upperAscii)
+* [trim](doc/string-extensions.md#trim)
+* [replace](doc/string-extensions.md#replace)
+* [split](doc/string-extensions.md#split)
+* [substring](doc/string-extensions.md#substring)
+
+#### CEL Support Extension For `request.query` decoding
+
+This module provides custom CEL function `queryMap` to decode `request.query` params.
+It decodes the query string and returns a Map where the key is the parameter's name and
+the value is either a `Value::String` or a `Value::List` if the parameter's name is repeated
+and the second arg is set not set to `false`.
+
+> **Note: It is exposed as an "extension" that's only enabled on `routeRuleConditions`.
+
+* Example allowing repeats:
+
+When query string is
+
+```
+param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE
+```
+
+The following predicate is **true**
+
+```cel
+queryMap(request.query, true)['param1'] == '👾 ' && \
+queryMap(request.query, true)['param2'] == 'Exterminate!' && \
+queryMap(request.query, true)['👾'][0] == '123' && \
+queryMap(request.query, true)['👾'][1] == '456' && \
+queryMap(request.query, true)['👾'][2] == ''
+```
+
+* Example **not** allowing repeats:
+
+When query string is
+
+```
+param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE
+```
+
+The following predicate is **true**
+
+```cel
+queryMap(request.query, false)['param2'] == 'Exterminate!' && \
+queryMap(request.query, false)['👾'] == '123'
+```
+
+#### CEL custom function `getHostProperty`
+
+This module, as a Wasm module for proxies, can access host properties.
+See [Well Known Attributes](#Well-Known-Attributes) for more info about available properties.
+Those properties are exposed as CEL expressions on *Predicates* and *Expressions* out of the box.
+For example the `request.url_path` property as follows:
+
+```yaml
+predicates:
+- request.url_path.startsWith("/get")
+```
+
+This `getHostProperty` provides low level access to host properties.
+
+```
+getHostProperty(<list<string>>) -> bytes or error
+```
+
+Examples:
+
+```
+get_host_property(['request','path'])  // returns b'/some/path'
+```
+
+> Note: `string(bytes) -> string` converts a byte sequence to a utf-8 string
+
+
 #### Conditions, Selectors and Operators (deprecated!)
 
 <details>
