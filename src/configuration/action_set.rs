@@ -1,6 +1,7 @@
 use crate::configuration::action::Action;
 use crate::configuration::PatternExpression;
 use crate::data::Predicate;
+use log::error;
 use serde::Deserialize;
 use std::cell::OnceCell;
 
@@ -51,7 +52,19 @@ impl ActionSet {
                     .iter()
                     .all(|m| m.applies())
         } else {
-            predicates.iter().all(Predicate::test)
+            predicates
+                .iter()
+                .enumerate()
+                .all(|(pos, predicate)| match predicate.test() {
+                    Ok(b) => b,
+                    Err(err) => {
+                        error!(
+                            "Failed to evaluate {}: {}",
+                            self.route_rule_conditions.predicates[pos], err
+                        );
+                        panic!("Err out of this!")
+                    }
+                })
         }
     }
 }
