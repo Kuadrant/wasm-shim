@@ -7,7 +7,7 @@ use crate::envoy::{
 };
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use crate::service::GrpcService;
-use chrono::{DateTime, FixedOffset, Timelike};
+use chrono::{DateTime, FixedOffset};
 use log::{debug, warn};
 use protobuf::well_known_types::Timestamp;
 use protobuf::Message;
@@ -100,8 +100,8 @@ impl AuthService {
                 .expect("Error!")
                 .map_or(Timestamp::new(), |date_time: DateTime<FixedOffset>| {
                     Timestamp {
-                        nanos: date_time.nanosecond() as i32,
-                        seconds: date_time.second() as i64,
+                        nanos: date_time.timestamp_subsec_nanos() as i32,
+                        seconds: date_time.timestamp(),
                         unknown_fields: Default::default(),
                         cached_size: Default::default(),
                     }

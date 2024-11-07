@@ -2,7 +2,7 @@
 apiVersion: limitador.kuadrant.io/v1alpha1
 kind: Limitador
 metadata:
-  name: sample
+  name: limitador
 spec:
   verbosity: 3
   listener:
