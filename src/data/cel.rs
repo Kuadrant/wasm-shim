@@ -55,7 +55,7 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
-    pub fn eval(&self) -> Value {
+    pub fn eval(&self) -> Result<Value, String> {
         let mut ctx = create_context();
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
@@ -70,7 +70,7 @@ impl Expression {
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
             );
         }
-        Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
+        Value::resolve(&self.expression, &ctx).map_err(|err| format!("{err:?}"))
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]
@@ -198,10 +198,13 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self) -> bool {
+    pub fn test(&self) -> Result<bool, String> {
         match self.expression.eval() {
-            Value::Bool(result) => result,
-            _ => false,
+            Ok(value) => match value {
+                Value::Bool(result) => Ok(result),
+                _ => Err(format!("Expected boolean value, got {value:?}")),
+            },
+            Err(err) => Err(err),
         }
     }
 }
@@ -582,7 +585,7 @@ mod tests {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
         property::test::TEST_PROPERTY_VALUE
             .set(Some(("source.port".into(), 65432_i64.to_le_bytes().into())));
-        assert!(predicate.test());
+        assert!(predicate.test().expect("This must evaluate properly!"));
     }
 
     #[test]
@@ -604,35 +607,50 @@ mod tests {
             ]),
             "true".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.anonymous").unwrap().eval();
+        let value = Expression::new("auth.identity.anonymous")
+            .unwrap()
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, true.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age").unwrap().eval();
+        let value = Expression::new("auth.identity.age")
+            .unwrap()
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, 42.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42.3".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age").unwrap().eval();
+        let value = Expression::new("auth.identity.age")
+            .unwrap()
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, 42.3.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "\"John\"".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age").unwrap().eval();
+        let value = Expression::new("auth.identity.age")
+            .unwrap()
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, "John".into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
             "-42".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.name").unwrap().eval();
+        let value = Expression::new("auth.identity.name")
+            .unwrap()
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, (-42).into());
 
         // let's fall back to strings, as that's what we read and set in store_metadata
@@ -640,7 +658,10 @@ mod tests {
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "some random crap".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age").unwrap().eval();
+        let value = Expression::new("auth.identity.age")
+            .unwrap()
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, "some random crap".into());
     }
 
@@ -661,7 +682,7 @@ mod tests {
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test());
+        assert!(predicate.test().expect("This must evaluate properly!"));
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             "request.query".into(),
@@ -675,7 +696,7 @@ mod tests {
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test());
+        assert!(predicate.test().expect("This must evaluate properly!"));
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             "request.query".into(),
@@ -683,7 +704,7 @@ mod tests {
         )));
         let predicate =
             Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
-        assert!(predicate.test());
+        assert!(predicate.test().expect("This must evaluate properly!"));
     }
 
     #[test]
@@ -721,7 +742,8 @@ mod tests {
         )));
         let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
             .unwrap()
-            .eval();
+            .eval()
+            .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
     }
 }

@@ -2,7 +2,7 @@ use crate::configuration::{DataItem, DataType, PatternExpression};
 use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use cel_interpreter::Value;
-use log::debug;
+use log::{debug, error};
 use protobuf::RepeatedField;
 use serde::Deserialize;
 use std::cell::OnceCell;
@@ -31,7 +31,16 @@ impl Action {
         if predicates.is_empty() {
             self.conditions.is_empty() || self.conditions.iter().all(PatternExpression::applies)
         } else {
-            predicates.iter().all(Predicate::test)
+            predicates
+                .iter()
+                .enumerate()
+                .all(|(pos, predicate)| match predicate.test() {
+                    Ok(b) => b,
+                    Err(err) => {
+                        error!("Failed to evaluate {}: {}", self.predicates[pos], err);
+                        panic!("Err out of this!")
+                    }
+                })
         }
     }
 
@@ -60,14 +69,20 @@ impl Action {
                         .expect("Expression must be compiled by now")
                         .eval()
                     {
-                        Value::Int(n) => format!("{n}"),
-                        Value::UInt(n) => format!("{n}"),
-                        Value::Float(n) => format!("{n}"),
-                        // todo this probably should be a proper string literal!
-                        Value::String(s) => (*s).clone(),
-                        Value::Bool(b) => format!("{b}"),
-                        Value::Null => "null".to_owned(),
-                        _ => panic!("Only scalar values can be sent as data"),
+                        Ok(value) => match value {
+                            Value::Int(n) => format!("{n}"),
+                            Value::UInt(n) => format!("{n}"),
+                            Value::Float(n) => format!("{n}"),
+                            // todo this probably should be a proper string literal!
+                            Value::String(s) => (*s).clone(),
+                            Value::Bool(b) => format!("{b}"),
+                            Value::Null => "null".to_owned(),
+                            _ => panic!("Only scalar values can be sent as data"),
+                        },
+                        Err(err) => {
+                            error!("Failed to evaluate {}: {}", cel.value, err);
+                            panic!("Err out of this!")
+                        }
                     },
                 ),
                 DataType::Selector(selector_item) => {
