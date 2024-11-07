@@ -34,7 +34,7 @@ actionSets:
     - service: ratelimit-service
       scope: ratelimit-scope-a
       predicates:
-      - auth.identity.anonymous == "true"
+      - auth.identity.anonymous == true
       data:
       - expression:
           key: my_header

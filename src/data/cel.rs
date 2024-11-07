@@ -1,24 +1,27 @@
 use crate::data::get_attribute;
 use crate::data::property::{host_get_map, Path};
-use cel_interpreter::extractors::This;
-use cel_interpreter::objects::{Map, ValueType};
+use cel_interpreter::extractors::{Arguments, This};
+use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+use urlencoding::decode;
 
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
     expression: CelExpression,
+    extended: bool,
 }
 
 impl Expression {
-    pub fn new(expression: &str) -> Result<Self, ParseError> {
+    pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseError> {
         let expression = parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
@@ -40,19 +43,27 @@ impl Expression {
         Ok(Self {
             attributes,
             expression,
+            extended,
         })
+    }
+
+    pub fn new(expression: &str) -> Result<Self, ParseError> {
+        Self::new_expression(expression, false)
+    }
+
+    pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
+        Self::new_expression(expression, true)
     }
 
     pub fn eval(&self) -> Value {
         let mut ctx = create_context();
+        if self.extended {
+            Self::add_extended_capabilities(&mut ctx)
+        }
         let Map { map } = self.build_data_map();
 
         ctx.add_function("getHostProperty", get_host_property);
 
-        // if expression was "auth.identity.anonymous",
-        // {
-        //   "auth": { "identity": { "anonymous": true } }
-        // }
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
                 binding,
@@ -62,9 +73,55 @@ impl Expression {
         Value::resolve(&self.expression, &ctx).expect("Cel expression couldn't be evaluated")
     }
 
+    /// Add support for `queryMap`, see [`decode_query_string`]
+    fn add_extended_capabilities(ctx: &mut Context) {
+        ctx.add_function("queryMap", decode_query_string);
+    }
+
     fn build_data_map(&self) -> Map {
         data::AttributeMap::new(self.attributes.clone()).into()
     }
+}
+
+/// Decodes the query string and returns a Map where the key is the parameter's name and
+/// the value is either a [`Value::String`] or a [`Value::List`] if the parameter's name is repeated
+/// and the second arg is set not set to `false`.
+/// see [`tests::decodes_query_string`]
+fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -> ResolveResult {
+    let allow_repeats = if args.len() == 2 {
+        match &args[1] {
+            Value::Bool(b) => *b,
+            _ => false,
+        }
+    } else {
+        false
+    };
+    let mut map: HashMap<Key, Value> = HashMap::default();
+    for part in s.split('&') {
+        let mut kv = part.split('=');
+        if let (Some(key), Some(value)) = (kv.next(), kv.next().or(Some(""))) {
+            let new_v: Value = decode(value).unwrap().into_owned().into();
+            match map.entry(decode(key).unwrap().into_owned().into()) {
+                Entry::Occupied(mut e) => {
+                    if allow_repeats {
+                        if let Value::List(ref mut list) = e.get_mut() {
+                            Arc::get_mut(list)
+                                .expect("This isn't ever shared!")
+                                .push(new_v);
+                        } else {
+                            let v = e.get().clone();
+                            let list = Value::List([v, new_v].to_vec().into());
+                            e.insert(list);
+                        }
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(decode(value).unwrap().into_owned().into());
+                }
+            }
+        }
+    }
+    Ok(map.into())
 }
 
 #[cfg(test)]
@@ -129,6 +186,15 @@ impl Predicate {
     pub fn new(predicate: &str) -> Result<Self, ParseError> {
         Ok(Self {
             expression: Expression::new(predicate)?,
+        })
+    }
+
+    /// Unlike with [`Predicate::new`], a `Predicate::route_rule` is backed by an
+    /// `Expression` that has extended capabilities enabled.
+    /// See [`Expression::add_extended_capabilities`]
+    pub fn route_rule(predicate: &str) -> Result<Self, ParseError> {
+        Ok(Self {
+            expression: Expression::new_extended(predicate)?,
         })
     }
 
@@ -576,6 +642,48 @@ mod tests {
         )));
         let value = Expression::new("auth.identity.age").unwrap().eval();
         assert_eq!(value, "some random crap".into());
+    }
+
+    #[test]
+    fn decodes_query_string() {
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
+                .bytes()
+                .collect(),
+        )));
+        let predicate = Predicate::route_rule(
+            "queryMap(request.query, true)['param1'] == '👾 ' && \
+            queryMap(request.query, true)['param2'] == 'Exterminate!' && \
+            queryMap(request.query, true)['👾'][0] == '123' && \
+            queryMap(request.query, true)['👾'][1] == '456' && \
+            queryMap(request.query, true)['👾'][2] == '' \
+                        ",
+        )
+        .expect("This is valid!");
+        assert!(predicate.test());
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
+                .bytes()
+                .collect(),
+        )));
+        let predicate = Predicate::route_rule(
+            "queryMap(request.query, false)['param2'] == 'Exterminate!' && \
+            queryMap(request.query, false)['👾'] == '123' \
+                        ",
+        )
+        .expect("This is valid!");
+        assert!(predicate.test());
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "%F0%9F%91%BE".bytes().collect(),
+        )));
+        let predicate =
+            Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
+        assert!(predicate.test());
     }
 
     #[test]
