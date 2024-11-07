@@ -1,9 +1,9 @@
-use crate::util::wasm_module;
+use crate::util::common::wasm_module;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
 
-pub(crate) mod util;
+mod util;
 
 const CONFIG: &str = r#"{
     "services": {
