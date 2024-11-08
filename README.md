@@ -80,6 +80,12 @@ Build the WASM module in release mode
 make build BUILD=release
 ```
 
+Build the WASM module with features
+
+```
+make build FEATURES=debug-host-behaviour
+```
+
 ## Testing
 
 ```

@@ -5,6 +5,7 @@ use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
+#[cfg(feature = "debug-host-behaviour")]
 use log::debug;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
@@ -445,7 +446,7 @@ fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mu
     }
 }
 
-#[allow(dead_code)]
+#[cfg(feature = "debug-host-behaviour")]
 pub fn debug_all_well_known_attributes() {
     let attributes = new_well_known_attribute_map();
     attributes.iter().for_each(|(key, value_type)| {

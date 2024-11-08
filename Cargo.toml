@@ -18,6 +18,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["with-serde"]
 with-serde = ["protobuf/with-serde"]
+debug-host-behaviour = []
 
 [dependencies]
 proxy-wasm = "0.2.1"
