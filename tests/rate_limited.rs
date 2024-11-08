@@ -96,22 +96,11 @@ fn it_limits() {
             "name": "some-name",
             "routeRuleConditions": {
                 "hostnames": ["*.toystore.com", "example.com"],
-                "matches": [
-                {
-                    "selector": "request.url_path",
-                    "operator": "startswith",
-                    "value": "/admin/toy"
-                },
-                {
-                    "selector": "request.host",
-                    "operator": "eq",
-                    "value": "cars.toystore.com"
-                },
-                {
-                    "selector": "request.method",
-                    "operator": "eq",
-                    "value": "POST"
-                }]
+                "predicates" : [
+                    "request.url_path.startsWith('/admin/toy')",
+                    "request.host == 'cars.toystore.com'",
+                    "request.method == 'POST'"
+                ]
             },
             "actions": [
             {
@@ -641,12 +630,9 @@ fn it_does_not_rate_limits_when_condition_does_not_match() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "conditions": [
-                {
-                    "selector": "request.url_path",
-                    "operator": "startswith",
-                    "value": "/admin/toy"
-                }]
+                "predicates" : [
+                    "request.url_path.startsWith('/admin/toy')"
+                ]
             }]
         }]
     }"#;
