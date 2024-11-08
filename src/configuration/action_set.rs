@@ -57,3 +57,24 @@ impl ActionSet {
                 })
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::configuration::action_set::ActionSet;
+
+    fn build_action_set(name: &str) -> ActionSet {
+        ActionSet::new(name.to_owned(), Default::default(), Vec::new())
+    }
+
+    #[test]
+    fn empty_route_rule_conditions_do_apply() {
+        let action_set_1 = build_action_set("as_1");
+        action_set_1
+            .route_rule_conditions
+            .compiled_predicates
+            .set(Vec::default())
+            .expect("Predicates must not be compiled yet!");
+
+        assert!(action_set_1.conditions_apply())
+    }
+}

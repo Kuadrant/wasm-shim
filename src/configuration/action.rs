@@ -26,16 +26,17 @@ impl Action {
             .compiled_predicates
             .get()
             .expect("predicates must be compiled by now");
-        predicates
-            .iter()
-            .enumerate()
-            .all(|(pos, predicate)| match predicate.test() {
-                Ok(b) => b,
-                Err(err) => {
-                    error!("Failed to evaluate {}: {}", self.predicates[pos], err);
-                    panic!("Err out of this!")
-                }
-            })
+        predicates.is_empty()
+            || predicates
+                .iter()
+                .enumerate()
+                .all(|(pos, predicate)| match predicate.test() {
+                    Ok(b) => b,
+                    Err(err) => {
+                        error!("Failed to evaluate {}: {}", self.predicates[pos], err);
+                        panic!("Err out of this!")
+                    }
+                })
     }
 
     pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
@@ -119,5 +120,29 @@ impl Action {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::configuration::action::Action;
+    use std::cell::OnceCell;
+
+    #[test]
+    fn empty_predicates_do_apply() {
+        let compiled_predicates = OnceCell::new();
+        compiled_predicates
+            .set(Vec::default())
+            .expect("predicates must not be compiled yet!");
+
+        let action = Action {
+            service: String::from("svc1"),
+            scope: String::from("sc1"),
+            predicates: vec![],
+            compiled_predicates,
+            data: vec![],
+        };
+
+        assert!(action.conditions_apply())
     }
 }
