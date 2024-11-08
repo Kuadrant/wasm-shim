@@ -77,7 +77,7 @@ pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> 
     proxy_wasm::hostcalls::get_property(path.tokens())
 }
 
-pub fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
+pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
         ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
