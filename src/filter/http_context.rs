@@ -7,6 +7,7 @@ use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
 use std::cell::RefCell;
 use std::rc::Rc;
+// use crate::data;
 
 pub struct Filter {
     pub context_id: u32,
@@ -93,6 +94,9 @@ impl Filter {
 impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
+
+        // uncomment to debug log all well known attributes
+        // data::debug_all_well_known_attributes();
 
         match self
             .config
