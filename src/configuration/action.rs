@@ -2,7 +2,7 @@ use crate::configuration::{DataItem, DataType};
 use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use cel_interpreter::Value;
-use log::{debug, error};
+use log::error;
 use protobuf::RepeatedField;
 use serde::Deserialize;
 use std::cell::OnceCell;
@@ -80,37 +80,6 @@ impl Action {
                         }
                     },
                 ),
-                DataType::Selector(selector_item) => {
-                    let descriptor_key = match &selector_item.key {
-                        None => selector_item.path().to_string(),
-                        Some(key) => key.to_owned(),
-                    };
-
-                    let value = match crate::data::get_attribute::<String>(selector_item.path())
-                        .expect("Error!")
-                    {
-                        //TODO(didierofrivia): Replace hostcalls by DI
-                        None => {
-                            debug!(
-                                "build_single_descriptor: selector not found: {}",
-                                selector_item.path()
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attr_str) => attr_str,
-                        // Alternative implementation (for rust >= 1.76)
-                        // Attribute::parse(attribute_bytes)
-                        //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                        //           filter.context_id, attribute_path, e))
-                        //   .ok()?,
-                    };
-                    (descriptor_key, value)
-                }
             };
             let mut descriptor_entry = RateLimitDescriptor_Entry::new();
             descriptor_entry.set_key(key);

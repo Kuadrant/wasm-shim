@@ -8,7 +8,6 @@ use crate::configuration::action_set::ActionSet;
 use crate::configuration::action_set_index::ActionSetIndex;
 use crate::data;
 use crate::data::Predicate;
-use crate::data::PropertyPath;
 use crate::service::GrpcService;
 use cel_interpreter::functions::duration;
 use cel_interpreter::Value;
@@ -38,39 +37,6 @@ impl ExpressionItem {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct SelectorItem {
-    // Selector of an attribute from the contextual properties provided by kuadrant
-    // during request and connection processing
-    pub selector: String,
-
-    // If not set it defaults to `selector` field value as the descriptor key.
-    #[serde(default)]
-    pub key: Option<String>,
-
-    // An optional value to use if the selector is not found in the context.
-    // If not set and the selector is not found in the context, then no data is generated.
-    #[serde(default)]
-    pub default: Option<String>,
-
-    #[serde(skip_deserializing)]
-    path: OnceCell<PropertyPath>,
-}
-
-impl SelectorItem {
-    pub fn compile(&self) -> Result<(), String> {
-        self.path
-            .set(self.selector.as_str().into())
-            .map_err(|p| format!("Err on {p:?}"))
-    }
-
-    pub fn path(&self) -> &PropertyPath {
-        self.path
-            .get()
-            .expect("SelectorItem wasn't previously compiled!")
-    }
-}
-
-#[derive(Deserialize, Debug, Clone)]
 pub struct StaticItem {
     pub value: String,
     pub key: String,
@@ -81,7 +47,6 @@ pub struct StaticItem {
 #[serde(rename_all = "lowercase")]
 pub enum DataType {
     Static(StaticItem),
-    Selector(SelectorItem),
     Expression(ExpressionItem),
 }
 
@@ -89,7 +54,6 @@ impl DataType {
     pub fn compile(&self) -> Result<(), String> {
         match self {
             DataType::Static(_) => Ok(()),
-            DataType::Selector(selector) => selector.compile(),
             DataType::Expression(exp) => exp.compile(),
         }
     }
@@ -405,118 +369,7 @@ mod test {
     }
 
     #[test]
-    fn parse_config_data_selector() {
-        let config = r#"{
-            "services": {
-                "limitador": {
-                    "type": "ratelimit",
-                    "endpoint": "limitador-cluster",
-                    "failureMode": "deny"
-                }
-            },
-            "actionSets": [
-            {
-                "name": "rlp-ns-A/rlp-name-A",
-                "routeRuleConditions": {
-                    "hostnames": ["*.toystore.com", "example.com"]
-                },
-                "actions": [
-                {
-                    "service": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
-                    {
-                        "selector": {
-                            "selector": "my.selector.path",
-                            "key": "mykey",
-                            "default": "my_selector_default_value"
-                        }
-                    }]
-                }]
-            }]
-        }"#;
-        let res = serde_json::from_str::<PluginConfiguration>(config);
-        if let Err(ref e) = res {
-            eprintln!("{e}");
-        }
-        assert!(res.is_ok());
-
-        let filter_config = res.unwrap();
-        assert_eq!(filter_config.action_sets.len(), 1);
-
-        let actions = &filter_config.action_sets[0].actions;
-        assert_eq!(actions.len(), 1);
-
-        let data_items = &actions[0].data;
-        assert_eq!(data_items.len(), 1);
-
-        if let DataType::Selector(selector_item) = &data_items[0].item {
-            assert_eq!(selector_item.selector, "my.selector.path");
-            assert_eq!(selector_item.key.as_ref().unwrap(), "mykey");
-            assert_eq!(
-                selector_item.default.as_ref().unwrap(),
-                "my_selector_default_value"
-            );
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn parse_config_condition_selector_operators() {
-        let config = r#"{
-            "services": {
-                "limitador": {
-                    "type": "ratelimit",
-                    "endpoint": "limitador-cluster",
-                    "failureMode": "deny"
-                }
-            },
-            "actionSets": [
-            {
-                "name": "rlp-ns-A/rlp-name-A",
-                "routeRuleConditions": {
-                    "hostnames": ["*.toystore.com", "example.com"],
-                    "predicates": [
-                        "request.path == '/admin/toy'",
-                        "request.method != 'POST'",
-                        "request.host.startsWith('cars.')",
-                        "request.host.endsWith('.com')",
-                        "request.host.matches('*.com')"
-                    ]
-                },
-                "actions": [
-                {
-                    "service": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "predicates": [
-                        "auth.metadata.username == 'alice'",
-                        "request.path.endsWith('/car')"
-                    ],
-                    "data": [ { "selector": { "selector": "my.selector.path" } }]
-                }]
-            }]
-        }"#;
-        let res = serde_json::from_str::<PluginConfiguration>(config);
-        if let Err(ref e) = res {
-            eprintln!("{e}");
-        }
-        assert!(res.is_ok());
-
-        let filter_config = res.unwrap();
-        assert_eq!(filter_config.action_sets.len(), 1);
-
-        let predicates = &filter_config.action_sets[0]
-            .route_rule_conditions
-            .predicates;
-        assert_eq!(predicates.len(), 5);
-
-        let predicates = &filter_config.action_sets[0].actions[0].predicates;
-        assert_eq!(predicates.len(), 2);
-    }
-
-    #[test]
-    fn parse_config_conditions_optional() {
+    fn parse_config_predicates_optional() {
         let config = r#"{
             "services": {
                 "limitador": {
@@ -543,8 +396,9 @@ mod test {
                         }
                     },
                     {
-                        "selector": {
-                            "selector": "auth.metadata.username"
+                        "expression": {
+                            "key": "username",
+                            "value": "auth.metadata.username"
                         }
                     }]
                 }]
@@ -569,6 +423,12 @@ mod test {
             .route_rule_conditions
             .predicates;
         assert_eq!(predicates.len(), 0);
+
+        let actions = &filter_config.action_sets[0].actions;
+        assert_eq!(actions.len(), 1);
+
+        let action_predicates = &actions[0].predicates;
+        assert_eq!(action_predicates.len(), 0);
     }
 
     #[test]
@@ -598,8 +458,9 @@ mod test {
                         "key": "rlp-ns-A/rlp-name-A",
                         "value": "1"
                     },
-                    "selector": {
-                        "selector": "auth.metadata.username"
+                    "expression": {
+                        "key": "username",
+                        "value": "auth.metadata.username"
                     }
                 }]
             }]
