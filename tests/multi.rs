@@ -503,22 +503,11 @@ fn authenticated_one_ratelimit_action_matches() {
             "name": "some-name",
             "routeRuleConditions": {
                 "hostnames": ["*.toystore.com", "example.com"],
-                "matches": [
-                {
-                    "selector": "request.url_path",
-                    "operator": "startswith",
-                    "value": "/admin/toy"
-                },
-                {
-                    "selector": "request.host",
-                    "operator": "eq",
-                    "value": "cars.toystore.com"
-                },
-                {
-                    "selector": "request.method",
-                    "operator": "eq",
-                    "value": "POST"
-                }]
+                "predicates" : [
+                    "request.url_path.startsWith('/admin/toy')",
+                    "request.host == 'cars.toystore.com'",
+                    "request.method == 'POST'"
+                ]
             },
             "actions": [
             {
@@ -528,12 +517,9 @@ fn authenticated_one_ratelimit_action_matches() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "conditions": [
-                {
-                    "selector": "source.address",
-                    "operator": "eq",
-                    "value": "127.0.0.1:80"
-                }],
+                "predicates" : [
+                    "source.address == '127.0.0.1:80'"
+                ],
                 "data": [
                 {
                     "static": {
@@ -545,12 +531,9 @@ fn authenticated_one_ratelimit_action_matches() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "conditions": [
-                {
-                    "selector": "source.address",
-                    "operator": "neq",
-                    "value": "127.0.0.1:80"
-                }],
+                "predicates" : [
+                    "source.address != '127.0.0.1:80'"
+                ],
                 "data": [
                 {
                     "static": {

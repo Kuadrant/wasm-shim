@@ -1,4 +1,4 @@
-use crate::configuration::{DataItem, DataType, PatternExpression};
+use crate::configuration::{DataItem, DataType};
 use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use cel_interpreter::Value;
@@ -13,8 +13,6 @@ pub struct Action {
     pub service: String,
     pub scope: String,
     #[serde(default)]
-    pub conditions: Vec<PatternExpression>,
-    #[serde(default)]
     pub predicates: Vec<String>,
     #[serde(skip_deserializing)]
     pub compiled_predicates: OnceCell<Vec<Predicate>>,
@@ -28,20 +26,16 @@ impl Action {
             .compiled_predicates
             .get()
             .expect("predicates must be compiled by now");
-        if predicates.is_empty() {
-            self.conditions.is_empty() || self.conditions.iter().all(PatternExpression::applies)
-        } else {
-            predicates
-                .iter()
-                .enumerate()
-                .all(|(pos, predicate)| match predicate.test() {
-                    Ok(b) => b,
-                    Err(err) => {
-                        error!("Failed to evaluate {}: {}", self.predicates[pos], err);
-                        panic!("Err out of this!")
-                    }
-                })
-        }
+        predicates
+            .iter()
+            .enumerate()
+            .all(|(pos, predicate)| match predicate.test() {
+                Ok(b) => b,
+                Err(err) => {
+                    error!("Failed to evaluate {}: {}", self.predicates[pos], err);
+                    panic!("Err out of this!")
+                }
+            })
     }
 
     pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
