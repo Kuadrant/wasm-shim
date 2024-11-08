@@ -1,8 +1,8 @@
-use crate::configuration::{DataItem, DataType, PatternExpression};
+use crate::configuration::{DataItem, DataType};
 use crate::data::Predicate;
 use crate::envoy::{RateLimitDescriptor, RateLimitDescriptor_Entry};
 use cel_interpreter::Value;
-use log::{debug, error};
+use log::error;
 use protobuf::RepeatedField;
 use serde::Deserialize;
 use std::cell::OnceCell;
@@ -12,8 +12,6 @@ use std::cell::OnceCell;
 pub struct Action {
     pub service: String,
     pub scope: String,
-    #[serde(default)]
-    pub conditions: Vec<PatternExpression>,
     #[serde(default)]
     pub predicates: Vec<String>,
     #[serde(skip_deserializing)]
@@ -28,10 +26,8 @@ impl Action {
             .compiled_predicates
             .get()
             .expect("predicates must be compiled by now");
-        if predicates.is_empty() {
-            self.conditions.is_empty() || self.conditions.iter().all(PatternExpression::applies)
-        } else {
-            predicates
+        predicates.is_empty()
+            || predicates
                 .iter()
                 .enumerate()
                 .all(|(pos, predicate)| match predicate.test() {
@@ -41,7 +37,6 @@ impl Action {
                         panic!("Err out of this!")
                     }
                 })
-        }
     }
 
     pub fn build_descriptors(&self) -> RepeatedField<RateLimitDescriptor> {
@@ -85,37 +80,6 @@ impl Action {
                         }
                     },
                 ),
-                DataType::Selector(selector_item) => {
-                    let descriptor_key = match &selector_item.key {
-                        None => selector_item.path().to_string(),
-                        Some(key) => key.to_owned(),
-                    };
-
-                    let value = match crate::data::get_attribute::<String>(selector_item.path())
-                        .expect("Error!")
-                    {
-                        //TODO(didierofrivia): Replace hostcalls by DI
-                        None => {
-                            debug!(
-                                "build_single_descriptor: selector not found: {}",
-                                selector_item.path()
-                            );
-                            match &selector_item.default {
-                                None => return None, // skipping the entire descriptor
-                                Some(default_value) => default_value.clone(),
-                            }
-                        }
-                        // TODO(eastizle): not all fields are strings
-                        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes
-                        Some(attr_str) => attr_str,
-                        // Alternative implementation (for rust >= 1.76)
-                        // Attribute::parse(attribute_bytes)
-                        //   .inspect_err(|e| debug!("#{} build_single_descriptor: failed to parse selector value: {}, error: {}",
-                        //           filter.context_id, attribute_path, e))
-                        //   .ok()?,
-                    };
-                    (descriptor_key, value)
-                }
             };
             let mut descriptor_entry = RateLimitDescriptor_Entry::new();
             descriptor_entry.set_key(key);
@@ -125,5 +89,29 @@ impl Action {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Some(res)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::configuration::action::Action;
+    use std::cell::OnceCell;
+
+    #[test]
+    fn empty_predicates_do_apply() {
+        let compiled_predicates = OnceCell::new();
+        compiled_predicates
+            .set(Vec::default())
+            .expect("predicates must not be compiled yet!");
+
+        let action = Action {
+            service: String::from("svc1"),
+            scope: String::from("sc1"),
+            predicates: vec![],
+            compiled_predicates,
+            data: vec![],
+        };
+
+        assert!(action.conditions_apply())
     }
 }

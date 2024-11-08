@@ -363,7 +363,6 @@ mod tests {
             action: Action {
                 service: "local".to_string(),
                 scope: "".to_string(),
-                conditions: vec![],
                 predicates: vec![],
                 compiled_predicates: OnceCell::default(),
                 data: vec![],
