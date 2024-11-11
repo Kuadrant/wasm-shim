@@ -1,6 +1,6 @@
 [package]
 name = "wasm-shim"
-version = "0.7.0-dev"
+version = "0.7.0"
 edition = "2021"
 authors = ["Alex Snaps <asnaps@redhat.com>", "Eguzki Astiz Lezaun <eguzki@redhat.com>", "Rahul Anand <rahulanand16nov@gmail.com>"]
 description = "Wasm module connecting envoy and authorino/limitador"
