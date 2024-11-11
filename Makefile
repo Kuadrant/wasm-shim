@@ -4,6 +4,9 @@ MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 PROJECT_PATH := $(patsubst %/,%,$(dir $(MKFILE_PATH)))
 
 BUILD ?= debug
+ifneq ($(FEATURES),)
+	FEATURE_CMD=--features $(FEATURES)
+endif
 
 WASM_RELEASE_BIN = $(PROJECT_PATH)/target/wasm32-unknown-unknown/$(BUILD)/wasm_shim.wasm
 WASM_RELEASE_PATH = $(dir $(WASM_RELEASE_BIN))
@@ -24,9 +27,9 @@ $(PROTOC_BIN):
 build: $(PROTOC_BIN)
 	@echo "Building the wasm filter"
     ifeq ($(BUILD), release)
-		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown --release
+		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown --release $(FEATURE_CMD)
     else
-		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown
+		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown $(FEATURE_CMD)
     endif
 
 # Remove old ones and fetch the latest third-party protobufs

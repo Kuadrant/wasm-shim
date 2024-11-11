@@ -1,9 +1,10 @@
-use crate::util::wasm_module;
+use crate::util::common::wasm_module;
+use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
 
-pub(crate) mod util;
+pub mod util;
 
 #[test]
 #[serial]
@@ -150,19 +151,19 @@ fn it_limits() {
             Some("get_property: path: [\"request\", \"url_path\"]"),
         )
         .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some("/admin/toy".as_bytes()))
+        .returning(Some(data::request::path::ADMIN_TOY))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"request\", \"host\"]"),
         )
         .expect_get_property(Some(vec!["request", "host"]))
-        .returning(Some("cars.toystore.com".as_bytes()))
+        .returning(Some(data::request::HOST))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"request\", \"method\"]"),
         )
         .expect_get_property(Some(vec!["request", "method"]))
-        .returning(Some("POST".as_bytes()))
+        .returning(Some(data::request::method::POST))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
@@ -296,19 +297,19 @@ fn it_passes_additional_headers() {
             Some("get_property: path: [\"request\", \"url_path\"]"),
         )
         .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some("/admin/toy".as_bytes()))
+        .returning(Some(data::request::path::ADMIN_TOY))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"request\", \"host\"]"),
         )
         .expect_get_property(Some(vec!["request", "host"]))
-        .returning(Some("cars.toystore.com".as_bytes()))
+        .returning(Some(data::request::HOST))
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"request\", \"method\"]"),
         )
         .expect_get_property(Some(vec!["request", "method"]))
-        .returning(Some("POST".as_bytes()))
+        .returning(Some(data::request::method::POST))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
@@ -573,7 +574,7 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
             Some("get_property: path: [\"request\", \"url_path\"]"),
         )
         .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some("/admin".as_bytes()))
+        .returning(Some(data::request::path::ADMIN))
         .expect_log(
             Some(LogLevel::Debug),
             Some("actions conditions do not apply, skipping"),

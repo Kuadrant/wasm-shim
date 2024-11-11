@@ -9,7 +9,7 @@ use crate::configuration::action_set_index::ActionSetIndex;
 use crate::data;
 use crate::data::Predicate;
 use crate::service::GrpcService;
-use cel_interpreter::functions::duration;
+use cel_interpreter::functions::time::duration;
 use cel_interpreter::Value;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};

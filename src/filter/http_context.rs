@@ -1,5 +1,7 @@
 use crate::configuration::action_set::ActionSet;
 use crate::configuration::{FailureMode, FilterConfig};
+#[cfg(feature = "debug-host-behaviour")]
+use crate::data;
 use crate::operation_dispatcher::{OperationDispatcher, OperationError};
 use crate::service::GrpcService;
 use log::{debug, warn};
@@ -93,6 +95,9 @@ impl Filter {
 impl HttpContext for Filter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
+
+        #[cfg(feature = "debug-host-behaviour")]
+        data::debug_all_well_known_attributes();
 
         match self
             .config

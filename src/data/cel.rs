@@ -5,6 +5,8 @@ use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
+#[cfg(feature = "debug-host-behaviour")]
+use log::debug;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
 use std::collections::hash_map::Entry;
@@ -442,6 +444,22 @@ fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mu
             }
         }
     }
+}
+
+#[cfg(feature = "debug-host-behaviour")]
+pub fn debug_all_well_known_attributes() {
+    let attributes = new_well_known_attribute_map();
+    attributes.iter().for_each(|(key, value_type)| {
+        match proxy_wasm::hostcalls::get_property(key.tokens()) {
+            Ok(opt_bytes) => match opt_bytes {
+                None => debug!("{:#?}({}): None", key, value_type),
+                Some(bytes) => debug!("{:#?}({}): {:?}", key, value_type, bytes),
+            },
+            Err(err) => {
+                debug!("{:#?}({}): (err) {:?}", key, value_type, err)
+            }
+        }
+    })
 }
 
 pub mod data {

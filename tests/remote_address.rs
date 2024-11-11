@@ -1,9 +1,10 @@
-use crate::util::wasm_module;
+use crate::util::common::wasm_module;
+use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
 
-pub(crate) mod util;
+pub mod util;
 
 #[test]
 #[serial]
@@ -89,7 +90,7 @@ fn it_limits_based_on_source_address() {
             Some("get_property: path: [\"source\", \"address\"]"),
         )
         .expect_get_property(Some(vec!["source", "address"]))
-        .returning(Some("40.0.0.1:0".as_bytes()))
+        .returning(Some(data::source::ADDRESS))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
@@ -100,7 +101,7 @@ fn it_limits_based_on_source_address() {
             Some("get_property: path: [\"source\", \"address\"]"),
         )
         .expect_get_property(Some(vec!["source", "address"]))
-        .returning(Some("40.0.0.1:0".as_bytes()))
+        .returning(Some(data::source::ADDRESS))
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -114,9 +115,9 @@ fn it_limits_based_on_source_address() {
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
             Some(&[
-                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 35, 10, 33, 10, 21, 115,
+                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 36, 10, 34, 10, 21, 115,
                 111, 117, 114, 99, 101, 46, 114, 101, 109, 111, 116, 101, 95, 97, 100, 100, 114,
-                101, 115, 115, 18, 8, 52, 48, 46, 48, 46, 48, 46, 49, 24, 1,
+                101, 115, 115, 18, 9, 49, 50, 55, 46, 48, 46, 48, 46, 49, 24, 1,
             ]),
             Some(5000),
         )
