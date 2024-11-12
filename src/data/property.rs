@@ -56,15 +56,12 @@ pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
 pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
     match *path.tokens() {
         ["request", "headers"] => {
-            debug!(
-                "get_map: {:?}",
-                proxy_wasm::types::MapType::HttpRequestHeaders
-            );
             let map =
                 proxy_wasm::hostcalls::get_map(proxy_wasm::types::MapType::HttpRequestHeaders)
-                    .unwrap()
+                    .expect("Failed to get_map request.headers")
                     .into_iter()
                     .collect();
+            debug!("get_map: {map:#?}");
             Ok(map)
         }
         _ => Err(format!("Unknown map requested {:?}", path)),
