@@ -38,7 +38,7 @@ actionSets:
       data:
       - expression:
           key: my_header
-          value: request.headers["My-Custom-Header"]
+          value: request.headers["my-custom-header"]
 ```
 
 ## Features
@@ -143,7 +143,7 @@ curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
 * `rlp-c`: Descriptor entries from multiple data items should be generated. Hence, rate limiting service should be called.
 
 ```sh
-curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "My-Custom-Header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "my-custom-header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
 ```
 
 Check limitador logs for received descriptor entries.
@@ -163,7 +163,7 @@ Entry { key: "source.address", value: "50.0.0.1:0" }
 ```
 
 ```
-Entry { key: "request.headers.My-Custom-Header-01", value: "my-custom-header-value-01" }
+Entry { key: "request.headers.my-custom-header-01", value: "my-custom-header-value-01" }
 ```
 
 ```

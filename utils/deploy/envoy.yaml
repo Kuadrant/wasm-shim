@@ -245,8 +245,8 @@ data:
                                             },
                                             {
                                               "expression": {
-                                                "key": "request.headers['My-Custom-Header-01']",
-                                                "value": "request.headers['My-Custom-Header-01']"
+                                                "key": "request.headers['my-custom-header-01']",
+                                                "value": "request.headers['my-custom-header-01']"
                                               }
                                             },
                                             {
