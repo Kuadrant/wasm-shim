@@ -133,28 +133,26 @@ impl AuthService {
             match check_response.http_response {
                 Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                     debug!("process_auth_grpc_response: received OkHttpResponse");
-                    ok_response
-                        .get_headers_to_remove()
-                        .iter()
-                        .for_each(|header| {
-                            hostcalls::set_map_value(
-                                MapType::HttpResponseHeaders,
-                                header.as_str(),
-                                None,
-                            )
-                            .unwrap()
-                        });
-                    ok_response
-                        .get_response_headers_to_add()
-                        .iter()
-                        .for_each(|header| {
-                            hostcalls::add_map_value(
-                                MapType::HttpResponseHeaders,
-                                header.get_header().get_key(),
-                                header.get_header().get_value(),
-                            )
-                            .unwrap()
-                        });
+                    if !ok_response.get_response_headers_to_add().is_empty() {
+                        panic!("process_auth_grpc_response: response contained response_headers_to_add which is unsupported!")
+                    }
+                    if !ok_response.get_headers_to_remove().is_empty() {
+                        panic!("process_auth_grpc_response: response contained headers_to_remove which is unsupported!")
+                    }
+                    if !ok_response.get_query_parameters_to_set().is_empty() {
+                        panic!("process_auth_grpc_response: response contained query_parameters_to_set which is unsupported!")
+                    }
+                    if !ok_response.get_query_parameters_to_remove().is_empty() {
+                        panic!("process_auth_grpc_response: response contained query_parameters_to_remove which is unsupported!")
+                    }
+                    ok_response.get_headers().iter().for_each(|header| {
+                        hostcalls::add_map_value(
+                            MapType::HttpRequestHeaders,
+                            header.get_header().get_key(),
+                            header.get_header().get_value(),
+                        )
+                        .unwrap()
+                    });
                     Ok(())
                 }
                 Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {

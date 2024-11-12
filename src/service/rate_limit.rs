@@ -65,6 +65,7 @@ impl RateLimitService {
                 response_headers_to_add: additional_headers,
                 ..
             }) => {
+                // TODO: This should not be sent to the upstream!
                 additional_headers.iter().for_each(|header| {
                     hostcalls::add_map_value(
                         MapType::HttpResponseHeaders,
