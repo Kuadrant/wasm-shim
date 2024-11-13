@@ -3,11 +3,11 @@ use crate::envoy::{
     RateLimitDescriptor, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code, StatusCode,
 };
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
-use crate::service::GrpcService;
+use crate::service::{GrpcResult, GrpcService};
 use log::warn;
 use protobuf::{Message, RepeatedField};
 use proxy_wasm::hostcalls;
-use proxy_wasm::types::{Bytes, MapType};
+use proxy_wasm::types::Bytes;
 
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -38,7 +38,7 @@ impl RateLimitService {
     pub fn process_ratelimit_grpc_response(
         rl_resp: GrpcMessageResponse,
         failure_mode: FailureMode,
-    ) -> Result<(), StatusCode> {
+    ) -> Result<GrpcResult, StatusCode> {
         match rl_resp {
             GrpcMessageResponse::RateLimit(RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
@@ -65,16 +65,13 @@ impl RateLimitService {
                 response_headers_to_add: additional_headers,
                 ..
             }) => {
-                // TODO: This should not be sent to the upstream!
-                additional_headers.iter().for_each(|header| {
-                    hostcalls::add_map_value(
-                        MapType::HttpResponseHeaders,
-                        header.get_key(),
-                        header.get_value(),
-                    )
-                    .unwrap()
-                });
-                Ok(())
+                let result = GrpcResult::new(
+                    additional_headers
+                        .iter()
+                        .map(|header| (header.get_key().to_owned(), header.get_value().to_owned()))
+                        .collect(),
+                );
+                Ok(result)
             }
             _ => {
                 warn!("not a valid GrpcMessageResponse::RateLimit(RateLimitResponse)!");

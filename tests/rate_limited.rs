@@ -353,6 +353,12 @@ fn it_passes_additional_headers() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_add_header_map_value(
             Some(MapType::HttpResponseHeaders),
             Some("test"),
@@ -363,12 +369,6 @@ fn it_passes_additional_headers() {
             Some("other"),
             Some("header value"),
         )
-        .execute_and_expect(ReturnType::None)
-        .unwrap();
-
-    module
-        .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }

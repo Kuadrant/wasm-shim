@@ -54,7 +54,7 @@ impl GrpcService {
     pub fn process_grpc_response(
         operation: Rc<Operation>,
         resp_size: usize,
-    ) -> Result<(), StatusCode> {
+    ) -> Result<GrpcResult, StatusCode> {
         let failure_mode = operation.get_failure_mode();
         if let Some(res_body_bytes) =
             hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap()
@@ -89,6 +89,20 @@ impl GrpcService {
             }
             FailureMode::Allow => hostcalls::resume_http_request().unwrap(),
         }
+    }
+}
+
+pub struct GrpcResult {
+    pub response_headers: Vec<(String, String)>,
+}
+impl GrpcResult {
+    pub fn default() -> Self {
+        Self {
+            response_headers: Vec::new(),
+        }
+    }
+    pub fn new(response_headers: Vec<(String, String)>) -> Self {
+        Self { response_headers }
     }
 }
 

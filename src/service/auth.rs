@@ -6,7 +6,7 @@ use crate::envoy::{
     SocketAddress, StatusCode,
 };
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
-use crate::service::GrpcService;
+use crate::service::{GrpcResult, GrpcService};
 use chrono::{DateTime, FixedOffset};
 use log::{debug, warn};
 use protobuf::well_known_types::Timestamp;
@@ -125,7 +125,7 @@ impl AuthService {
     pub fn process_auth_grpc_response(
         auth_resp: GrpcMessageResponse,
         failure_mode: FailureMode,
-    ) -> Result<(), StatusCode> {
+    ) -> Result<GrpcResult, StatusCode> {
         if let GrpcMessageResponse::Auth(check_response) = auth_resp {
             // store dynamic metadata in filter state
             store_metadata(check_response.get_dynamic_metadata());
@@ -153,7 +153,7 @@ impl AuthService {
                         )
                         .unwrap()
                     });
-                    Ok(())
+                    Ok(GrpcResult::default())
                 }
                 Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
                     debug!("process_auth_grpc_response: received DeniedHttpResponse");
