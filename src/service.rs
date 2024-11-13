@@ -54,8 +54,7 @@ impl GrpcService {
     pub fn process_grpc_response(
         operation: Rc<Operation>,
         resp_size: usize,
-        response_headers_to_add: &mut Vec<(String, String)>,
-    ) -> Result<(), StatusCode> {
+    ) -> Result<GrpcResult, StatusCode> {
         let failure_mode = operation.get_failure_mode();
         if let Some(res_body_bytes) =
             hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap()
@@ -63,11 +62,9 @@ impl GrpcService {
             match GrpcMessageResponse::new(operation.get_service_type(), &res_body_bytes) {
                 Ok(res) => match operation.get_service_type() {
                     ServiceType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
-                    ServiceType::RateLimit => RateLimitService::process_ratelimit_grpc_response(
-                        res,
-                        failure_mode,
-                        response_headers_to_add,
-                    ),
+                    ServiceType::RateLimit => {
+                        RateLimitService::process_ratelimit_grpc_response(res, failure_mode)
+                    }
                 },
                 Err(e) => {
                     warn!(
@@ -92,6 +89,20 @@ impl GrpcService {
             }
             FailureMode::Allow => hostcalls::resume_http_request().unwrap(),
         }
+    }
+}
+
+pub struct GrpcResult {
+    pub response_headers: Vec<(String, String)>,
+}
+impl GrpcResult {
+    pub fn default() -> Self {
+        Self {
+            response_headers: Vec::new(),
+        }
+    }
+    pub fn new(response_headers: Vec<(String, String)>) -> Self {
+        Self { response_headers }
     }
 }
 
