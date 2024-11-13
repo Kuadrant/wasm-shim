@@ -142,7 +142,13 @@ impl Context for Filter {
 
         match op_res {
             Ok(operation) => {
-                if GrpcService::process_grpc_response(operation, resp_size).is_ok() {
+                if GrpcService::process_grpc_response(
+                    operation,
+                    resp_size,
+                    &mut self.response_headers_to_add,
+                )
+                .is_ok()
+                {
                     // call the next op
                     match self.operation_dispatcher.borrow_mut().next() {
                         Ok(some_op) => {
