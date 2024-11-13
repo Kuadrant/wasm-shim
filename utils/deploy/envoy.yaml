@@ -180,8 +180,9 @@ data:
                                           "scope": "rlp-ns-A/rlp-name-A",
                                           "data": [
                                             {
-                                              "selector": {
-                                                "selector": "unknown.path"
+                                              "expression": {
+                                                "key": "unknown.path",
+                                                "value": "unknown.path"
                                               }
                                             }
                                           ]
@@ -237,19 +238,21 @@ data:
                                               }
                                             },
                                             {
-                                              "selector": {
-                                                "selector": "source.address"
+                                              "expression": {
+                                                "key": "source.address",
+                                                "value": "source.address"
                                               }
                                             },
                                             {
-                                              "selector": {
-                                                "selector": "request.headers.My-Custom-Header-01"
+                                              "expression": {
+                                                "key": "request.headers['my-custom-header-01']",
+                                                "value": "request.headers['my-custom-header-01']"
                                               }
                                             },
                                             {
-                                              "selector": {
-                                                "selector": "metadata.filter_metadata.envoy\\.filters\\.http\\.header_to_metadata.user_id",
-                                                "key": "user_id"
+                                              "expression": {
+                                                "key": "user_id",
+                                                "value": "string(getHostProperty(['metadata', 'filter_metadata', 'envoy.filters.http.header_to_metadata', 'user_id']))"
                                               }
                                             }
                                           ]
@@ -278,8 +281,9 @@ data:
                                               "scope": "rlp-ns-D/rlp-name-D",
                                               "data": [
                                                 {
-                                                  "selector": {
-                                                    "selector": "source.remote_address"
+                                                  "expression": {
+                                                    "key": "source.remote_address",
+                                                    "value": "source.remote_address"
                                                   }
                                                 }
                                               ]
