@@ -277,7 +277,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.unwrap();
+        let filter_config = res.expect("result is ok");
         assert_eq!(filter_config.action_sets.len(), 1);
 
         let services = &filter_config.services;
@@ -364,7 +364,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.unwrap();
+        let filter_config = res.expect("result is ok");
         assert_eq!(filter_config.action_sets.len(), 0);
     }
 
@@ -410,12 +410,15 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.unwrap();
+        let filter_config = res.expect("result is ok");
         assert_eq!(filter_config.action_sets.len(), 1);
 
         let services = &filter_config.services;
         assert_eq!(
-            services.get("limitador").unwrap().timeout,
+            services
+                .get("limitador")
+                .expect("limitador service to be set")
+                .timeout,
             Timeout(Duration::from_millis(20))
         );
 
@@ -510,7 +513,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let result = FilterConfig::try_from(res.unwrap());
+        let result = FilterConfig::try_from(res.expect("result is ok"));
         let filter_config = result.expect("That didn't work");
         let rlp_option = filter_config
             .index

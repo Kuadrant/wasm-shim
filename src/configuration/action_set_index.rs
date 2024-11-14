@@ -68,7 +68,7 @@ mod tests {
 
         let val = index.get_longest_match_action_sets("example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap()[0].name, "rlp1");
+        assert_eq!(val.expect("value must be some")[0].name, "rlp1");
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod tests {
         let val = index.get_longest_match_action_sets("test.example.com");
 
         assert!(val.is_some());
-        assert_eq!(val.unwrap()[0].name, "rlp1");
+        assert_eq!(val.expect("value must be some")[0].name, "rlp1");
     }
 
     #[test]
@@ -103,11 +103,11 @@ mod tests {
 
         let val = index.get_longest_match_action_sets("test.example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap()[0].name, "rlp2");
+        assert_eq!(val.expect("value must be some")[0].name, "rlp2");
 
         let val = index.get_longest_match_action_sets("example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap()[0].name, "rlp1");
+        assert_eq!(val.expect("value must be some")[0].name, "rlp1");
     }
 
     #[test]
@@ -118,6 +118,6 @@ mod tests {
 
         let val = index.get_longest_match_action_sets("test.example.com");
         assert!(val.is_some());
-        assert_eq!(val.unwrap()[0].name, "rlp1");
+        assert_eq!(val.expect("value must be some")[0].name, "rlp1");
     }
 }

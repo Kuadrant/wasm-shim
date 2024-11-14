@@ -106,8 +106,22 @@ mod tests {
 
         assert_eq!(msg.hits_addend, 1);
         assert_eq!(msg.domain, "rlp1".to_string());
-        assert_eq!(msg.descriptors.first().unwrap().entries[0].key, "key1");
-        assert_eq!(msg.descriptors.first().unwrap().entries[0].value, "value1");
+        assert_eq!(
+            msg.descriptors
+                .first()
+                .expect("must have a descriptor")
+                .entries[0]
+                .key,
+            "key1"
+        );
+        assert_eq!(
+            msg.descriptors
+                .first()
+                .expect("must have a descriptor")
+                .entries[0]
+                .value,
+            "value1"
+        );
         assert_eq!(msg.unknown_fields, UnknownFields::default());
         assert_eq!(msg.cached_size, CachedSize::default());
     }
