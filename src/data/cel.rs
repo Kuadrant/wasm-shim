@@ -726,6 +726,25 @@ mod tests {
     }
 
     #[test]
+    fn kuadrant_generated_predicates() {
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.query".into(),
+            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
+                .bytes()
+                .collect(),
+        )));
+        let predicate = Predicate::route_rule(
+            "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
+        )
+        .expect("This is valid!");
+        assert_eq!(predicate.test(), Ok(true));
+
+        let predicate =
+            Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
+        assert_eq!(predicate.test(), Ok(true));
+    }
+
+    #[test]
     fn attribute_resolve() {
         property::test::TEST_PROPERTY_VALUE.set(Some((
             "destination.port".into(),

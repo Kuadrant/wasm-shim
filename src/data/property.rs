@@ -47,7 +47,10 @@ pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> 
 #[cfg(test)]
 pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
     match *path.tokens() {
-        ["request", "headers"] => Ok(HashMap::default()),
+        ["request", "headers"] => Ok(HashMap::from([(
+            "X-Auth".to_string(),
+            "kuadrant".to_string(),
+        )])),
         _ => Err(format!("Unknown map requested {:?}", path)),
     }
 }
