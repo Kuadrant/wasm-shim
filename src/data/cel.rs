@@ -7,8 +7,10 @@ use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
+use log::warn;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -87,7 +89,7 @@ impl Expression {
 
 /// Decodes the query string and returns a Map where the key is the parameter's name and
 /// the value is either a [`Value::String`] or a [`Value::List`] if the parameter's name is repeated
-/// and the second arg is set not set to `false`.
+/// and the second arg is not set to `false`.
 /// see [`tests::decodes_query_string`]
 fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -> ResolveResult {
     let allow_repeats = if args.len() == 2 {
@@ -102,8 +104,22 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
     for part in s.split('&') {
         let mut kv = part.split('=');
         if let (Some(key), Some(value)) = (kv.next(), kv.next().or(Some(""))) {
-            let new_v: Value = decode(value).unwrap().into_owned().into();
-            match map.entry(decode(key).unwrap().into_owned().into()) {
+            let new_v: Value = decode(value)
+                .unwrap_or_else(|e| {
+                    warn!("failed to decode query value, using default: {e:?}");
+                    Cow::from(value)
+                })
+                .into_owned()
+                .into();
+            match map.entry(
+                decode(key)
+                    .unwrap_or_else(|e| {
+                        warn!("failed to decode query key, using default: {e:?}");
+                        Cow::from(key)
+                    })
+                    .into_owned()
+                    .into(),
+            ) {
                 Entry::Occupied(mut e) => {
                     if allow_repeats {
                         if let Value::List(ref mut list) = e.get_mut() {
@@ -118,7 +134,15 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
                     }
                 }
                 Entry::Vacant(e) => {
-                    e.insert(decode(value).unwrap().into_owned().into());
+                    e.insert(
+                        decode(value)
+                            .unwrap_or_else(|e| {
+                                warn!("failed to decode query value, using default: {e:?}");
+                                Cow::from(value)
+                            })
+                            .into_owned()
+                            .into(),
+                    );
                 }
             }
         }
@@ -296,11 +320,11 @@ fn json_to_cel(json: &str) -> Value {
             JsonValue::Bool(b) => b.into(),
             JsonValue::Number(n) => {
                 if n.is_u64() {
-                    n.as_u64().unwrap().into()
+                    n.as_u64().expect("Unreachable: number must be u64").into()
                 } else if n.is_i64() {
-                    n.as_i64().unwrap().into()
+                    n.as_i64().expect("Unreachable: number must be i64").into()
                 } else {
-                    n.as_f64().unwrap().into()
+                    n.as_f64().expect("Unreachable: number must be f64").into()
                 }
             }
             JsonValue::String(str) => str.into(),

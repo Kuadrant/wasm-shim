@@ -106,10 +106,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                     .expect("Predicates must not be compiled yet!");
 
                 for datum in &action.data {
-                    let result = datum.item.compile();
-                    if result.is_err() {
-                        return Err(result.err().unwrap());
-                    }
+                    datum.item.compile()?;
                 }
             }
 
@@ -204,7 +201,10 @@ impl<'de> Visitor<'de> for TimeoutVisitor {
         E: Error,
     {
         match duration(Arc::new(string)) {
-            Ok(Value::Duration(duration)) => Ok(Timeout(duration.to_std().unwrap())),
+            Ok(Value::Duration(duration)) => duration
+                .to_std()
+                .map(Timeout)
+                .map_err(|e| E::custom(e.to_string())),
             Err(e) => Err(E::custom(e)),
             _ => Err(E::custom("Unsupported Duration Value")),
         }

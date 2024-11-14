@@ -57,7 +57,7 @@ impl RateLimitService {
                     response_headers.push((header.get_key(), header.get_value()));
                 }
                 hostcalls::send_http_response(429, response_headers, Some(b"Too Many Requests\n"))
-                    .unwrap();
+                    .expect("failed to send_http_response 429 while OVER_LIMIT");
                 Err(StatusCode::TooManyRequests)
             }
             GrpcMessageResponse::RateLimit(RateLimitResponse {

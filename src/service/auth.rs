@@ -64,7 +64,7 @@ impl AuthService {
         let mut request = AttributeContext_Request::default();
         let mut http = AttributeContext_HttpRequest::default();
         let headers: HashMap<String, String> = hostcalls::get_map(MapType::HttpRequestHeaders)
-            .unwrap()
+            .expect("failed to retrieve HttpRequestHeaders from host")
             .into_iter()
             .collect();
 
@@ -151,7 +151,7 @@ impl AuthService {
                             header.get_header().get_key(),
                             header.get_header().get_value(),
                         )
-                        .unwrap()
+                        .expect("failed to add_map_value to HttpRequestHeaders")
                     });
                     Ok(GrpcResult::default())
                 }
@@ -170,7 +170,7 @@ impl AuthService {
                         response_headers,
                         Some(denied_response.get_body().as_ref()),
                     )
-                    .unwrap();
+                    .expect("failed to send_http_response");
                     Err(status_code)
                 }
                 None => {

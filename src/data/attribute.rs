@@ -166,7 +166,10 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
             let nested_struct = value.get_struct_value();
             result.extend(process_metadata(nested_struct, current_prefix));
         } else if let Some(v) = json {
-            result.push((current_prefix, serde_json::to_string(&v).unwrap()));
+            match serde_json::to_string(&v) {
+                Ok(ser) => result.push((current_prefix, ser)),
+                Err(e) => error!("failed to serialize json Value: {e:?}"),
+            }
         }
     }
     result

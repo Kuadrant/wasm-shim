@@ -13,6 +13,7 @@ use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
 use log::warn;
 use protobuf::Message;
 use proxy_wasm::hostcalls;
+use proxy_wasm::types::Status::SerializationFailure;
 use proxy_wasm::types::{BufferType, Bytes, MapType, Status};
 use std::cell::OnceCell;
 use std::rc::Rc;
@@ -56,8 +57,8 @@ impl GrpcService {
         resp_size: usize,
     ) -> Result<GrpcResult, StatusCode> {
         let failure_mode = operation.get_failure_mode();
-        if let Some(res_body_bytes) =
-            hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size).unwrap()
+        if let Ok(Some(res_body_bytes)) =
+            hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size)
         {
             match GrpcMessageResponse::new(operation.get_service_type(), &res_body_bytes) {
                 Ok(res) => match operation.get_service_type() {
@@ -75,7 +76,7 @@ impl GrpcService {
                 }
             }
         } else {
-            warn!("grpc response body is empty!");
+            warn!("failed to get grpc buffer or return data is null!");
             GrpcService::handle_error_on_grpc_response(failure_mode);
             Err(StatusCode::InternalServerError)
         }
@@ -85,9 +86,11 @@ impl GrpcService {
         match failure_mode {
             FailureMode::Deny => {
                 hostcalls::send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
-                    .unwrap();
+                    .expect("failed to send_http_response 500");
             }
-            FailureMode::Allow => hostcalls::resume_http_request().unwrap(),
+            FailureMode::Allow => {
+                hostcalls::resume_http_request().expect("failed to resume_http_request")
+            }
         }
     }
 }
@@ -140,7 +143,10 @@ impl GrpcServiceHandler {
         message: GrpcMessageRequest,
         timeout: Duration,
     ) -> Result<u32, Status> {
-        let msg = Message::write_to_bytes(&message).unwrap();
+        let msg = Message::write_to_bytes(&message).map_err(|e| {
+            warn!("Failed to write protobuf message to bytes: {e:?}");
+            SerializationFailure
+        })?;
         let metadata = self
             .header_resolver
             .get(get_map_values_bytes_fn)
