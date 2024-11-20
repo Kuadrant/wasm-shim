@@ -106,6 +106,7 @@ impl ConditionalData {
 pub struct RateLimitAction {
     grpc_service: Rc<GrpcService>,
     scope: String,
+    service_name: String,
     conditional_data_sets: Vec<ConditionalData>,
 }
 
@@ -114,6 +115,7 @@ impl RateLimitAction {
         Ok(Self {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
             scope: action.scope.clone(),
+            service_name: action.service.clone(),
             conditional_data_sets: vec![ConditionalData::new(action)?],
         })
     }
@@ -148,6 +150,16 @@ impl RateLimitAction {
     pub fn get_failure_mode(&self) -> FailureMode {
         self.grpc_service.get_failure_mode()
     }
+
+    #[must_use]
+    pub fn merge(&mut self, other: RateLimitAction) -> Option<RateLimitAction> {
+        if self.scope == other.scope && self.service_name == other.service_name {
+            self.conditional_data_sets
+                .extend(other.conditional_data_sets);
+            return None;
+        }
+        Some(other)
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +191,15 @@ mod test {
     #[test]
     fn empty_predicates_do_apply() {
         let action = build_action(Vec::default(), Vec::default());
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        assert!(rl_action.conditions_apply());
+    }
+
+    #[test]
+    fn even_with_falsy_predicates_conditions_apply() {
+        let action = build_action(vec!["false".into()], Vec::default());
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -245,5 +266,55 @@ mod test {
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
         assert_eq!(rl_action.build_descriptor(), RateLimitDescriptor::default());
+    }
+
+    #[test]
+    fn merged_actions_generate_descriptor_entries_for_truthy_predicates() {
+        let service = build_service();
+
+        let data_1 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "'value_1'".into(),
+            }),
+        }];
+        let predicates_1 = vec!["true".into()];
+        let action_1 = build_action(predicates_1, data_1);
+        let mut rl_action_1 = RateLimitAction::new(&action_1, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let data_2 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_2".into(),
+                value: "'value_2'".into(),
+            }),
+        }];
+        let predicates_2 = vec!["false".into()];
+        let action_2 = build_action(predicates_2, data_2);
+        let rl_action_2 = RateLimitAction::new(&action_2, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let data_3 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_3".into(),
+                value: "'value_3'".into(),
+            }),
+        }];
+        let predicates_3 = vec!["true".into()];
+        let action_3 = build_action(predicates_3, data_3);
+        let rl_action_3 = RateLimitAction::new(&action_3, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        assert!(rl_action_1.merge(rl_action_2).is_none());
+        assert!(rl_action_1.merge(rl_action_3).is_none());
+
+        // it should generate descriptor entries from action 1 and action 3
+
+        let descriptor = rl_action_1.build_descriptor();
+        assert_eq!(descriptor.get_entries().len(), 2);
+        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
+        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+        assert_eq!(descriptor.get_entries()[1].key, String::from("key_3"));
+        assert_eq!(descriptor.get_entries()[1].value, String::from("value_3"));
     }
 }

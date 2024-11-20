@@ -79,4 +79,33 @@ mod test {
         let auth_action = build_auth_action_with_predicates(Vec::default());
         assert!(auth_action.conditions_apply());
     }
+
+    #[test]
+    fn when_all_predicates_are_truthy_action_apply() {
+        let auth_action = build_auth_action_with_predicates(vec!["true".into(), "true".into()]);
+        assert!(auth_action.conditions_apply());
+    }
+
+    #[test]
+    fn when_not_all_predicates_are_truthy_action_does_not_apply() {
+        let auth_action = build_auth_action_with_predicates(vec![
+            "true".into(),
+            "true".into(),
+            "true".into(),
+            "false".into(),
+        ]);
+        assert!(!auth_action.conditions_apply());
+    }
+
+    #[test]
+    #[should_panic]
+    fn when_a_cel_expression_does_not_evaluate_to_bool_panics() {
+        let auth_action = build_auth_action_with_predicates(vec![
+            "true".into(),
+            "true".into(),
+            "true".into(),
+            "1".into(),
+        ]);
+        auth_action.conditions_apply();
+    }
 }

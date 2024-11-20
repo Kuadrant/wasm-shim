@@ -436,3 +436,317 @@ fn it_denies() {
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
+
+#[test]
+#[serial]
+fn it_does_not_fold_auth_actions() {
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let cfg = r#"{
+        "services": {
+            "auth": {
+                "type": "auth",
+                "endpoint": "authorino-cluster",
+                "failureMode": "deny",
+                "timeout": "5s"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.com"]
+            },
+            "actions": [
+            {
+                "service": "auth",
+                "scope": "auth-scope",
+                "predicates" : []
+            },
+            {
+                "service": "auth",
+                "scope": "auth-scope",
+                "predicates" : []
+            }]
+        }]
+    }"#;
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_log(Some(LogLevel::Info), None)
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
+        .returning(Some("example.com"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
+        // retrieving properties for CheckRequest
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"host\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some(data::request::HOST))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"method\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some(data::request::method::GET))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"scheme\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "scheme"]))
+        .returning(Some(data::request::scheme::HTTP))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"path\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "path"]))
+        .returning(Some(data::request::path::ADMIN_TOY))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"protocol\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "protocol"]))
+        .returning(Some(data::request::protocol::HTTP_1_1))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"time\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"address\"]"),
+        )
+        .expect_get_property(Some(vec!["destination", "address"]))
+        .returning(Some(data::destination::ADDRESS))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"port\"]"),
+        )
+        .expect_get_property(Some(vec!["destination", "port"]))
+        .returning(Some(data::destination::port::P_8000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"address\"]"),
+        )
+        .expect_get_property(Some(vec!["source", "address"]))
+        .returning(Some(data::source::ADDRESS))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"port\"]"),
+        )
+        .expect_get_property(Some(vec!["source", "port"]))
+        .returning(Some(data::source::port::P_45000))
+        // retrieving tracing headers
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
+        .returning(None)
+        .expect_grpc_call(
+            Some("authorino-cluster"),
+            Some("envoy.service.auth.v3.Authorization"),
+            Some("Check"),
+            Some(&[0, 0, 0, 0]),
+            Some(&[
+                10, 234, 1, 10, 25, 10, 23, 10, 21, 18, 15, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58,
+                52, 53, 48, 48, 48, 24, 200, 223, 2, 18, 23, 10, 21, 10, 19, 18, 14, 49, 50, 55,
+                46, 48, 46, 48, 46, 49, 58, 56, 48, 48, 48, 24, 192, 62, 34, 157, 1, 10, 12, 8,
+                146, 140, 179, 185, 6, 16, 240, 213, 233, 163, 3, 18, 140, 1, 18, 3, 71, 69, 84,
+                26, 14, 10, 7, 58, 109, 101, 116, 104, 111, 100, 18, 3, 71, 69, 84, 26, 38, 10, 5,
+                58, 112, 97, 116, 104, 18, 29, 47, 100, 101, 102, 97, 117, 108, 116, 47, 114, 101,
+                113, 117, 101, 115, 116, 47, 104, 101, 97, 100, 101, 114, 115, 47, 112, 97, 116,
+                104, 26, 30, 10, 10, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 18, 16, 97,
+                98, 105, 95, 116, 101, 115, 116, 95, 104, 97, 114, 110, 101, 115, 115, 34, 10, 47,
+                97, 100, 109, 105, 110, 47, 116, 111, 121, 42, 17, 99, 97, 114, 115, 46, 116, 111,
+                121, 115, 116, 111, 114, 101, 46, 99, 111, 109, 50, 4, 104, 116, 116, 112, 82, 8,
+                72, 84, 84, 80, 47, 49, 46, 49, 82, 18, 10, 4, 104, 111, 115, 116, 18, 10, 97, 117,
+                116, 104, 45, 115, 99, 111, 112, 101, 90, 0,
+            ]),
+            Some(5000),
+        )
+        .returning(Some(42))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 initiated gRPC call (id# 42)"),
+        )
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    // TODO: response containing dynamic metadata
+    // set_property is panicking with proxy-wasm-test-framework
+    // because the `expect_set_property` is not yet implemented neither on original repo nor our fork
+    // let grpc_response: [u8; 41] = [
+    //     10, 0, 34, 35, 10, 33, 10, 8, 105, 100, 101, 110, 116, 105, 116, 121, 18, 21, 42, 19, 10,
+    //     17, 10, 6, 117, 115, 101, 114, 105, 100, 18, 7, 26, 5, 97, 108, 105, 99, 101, 26, 0,
+    // ];
+    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    module
+        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_auth_grpc_response: received OkHttpResponse"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"host\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some(data::request::HOST))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"method\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some(data::request::method::GET))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"scheme\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "scheme"]))
+        .returning(Some(data::request::scheme::HTTP))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"path\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "path"]))
+        .returning(Some(data::request::path::ADMIN_TOY))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"protocol\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "protocol"]))
+        .returning(Some(data::request::protocol::HTTP_1_1))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"request\", \"time\"]"),
+        )
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"address\"]"),
+        )
+        .expect_get_property(Some(vec!["destination", "address"]))
+        .returning(Some(data::destination::ADDRESS))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"destination\", \"port\"]"),
+        )
+        .expect_get_property(Some(vec!["destination", "port"]))
+        .returning(Some(data::destination::port::P_8000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"address\"]"),
+        )
+        .expect_get_property(Some(vec!["source", "address"]))
+        .returning(Some(data::source::ADDRESS))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("get_property: path: [\"source\", \"port\"]"),
+        )
+        .expect_get_property(Some(vec!["source", "port"]))
+        .returning(Some(data::source::port::P_45000))
+        .expect_grpc_call(
+            Some("authorino-cluster"),
+            Some("envoy.service.auth.v3.Authorization"),
+            Some("Check"),
+            Some(&[0, 0, 0, 0]),
+            Some(&[
+                10, 234, 1, 10, 25, 10, 23, 10, 21, 18, 15, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58,
+                52, 53, 48, 48, 48, 24, 200, 223, 2, 18, 23, 10, 21, 10, 19, 18, 14, 49, 50, 55,
+                46, 48, 46, 48, 46, 49, 58, 56, 48, 48, 48, 24, 192, 62, 34, 157, 1, 10, 12, 8,
+                146, 140, 179, 185, 6, 16, 240, 213, 233, 163, 3, 18, 140, 1, 18, 3, 71, 69, 84,
+                26, 14, 10, 7, 58, 109, 101, 116, 104, 111, 100, 18, 3, 71, 69, 84, 26, 30, 10, 10,
+                58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 18, 16, 97, 98, 105, 95, 116, 101,
+                115, 116, 95, 104, 97, 114, 110, 101, 115, 115, 26, 38, 10, 5, 58, 112, 97, 116,
+                104, 18, 29, 47, 100, 101, 102, 97, 117, 108, 116, 47, 114, 101, 113, 117, 101,
+                115, 116, 47, 104, 101, 97, 100, 101, 114, 115, 47, 112, 97, 116, 104, 34, 10, 47,
+                97, 100, 109, 105, 110, 47, 116, 111, 121, 42, 17, 99, 97, 114, 115, 46, 116, 111,
+                121, 115, 116, 111, 114, 101, 46, 99, 111, 109, 50, 4, 104, 116, 116, 112, 82, 8,
+                72, 84, 84, 80, 47, 49, 46, 49, 82, 18, 10, 4, 104, 111, 115, 116, 18, 10, 97, 117,
+                116, 104, 45, 115, 99, 111, 112, 101, 90, 0,
+            ]),
+            Some(5000),
+        )
+        .returning(Some(42))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    // TODO: response containing dynamic metadata
+    // set_property is panicking with proxy-wasm-test-framework
+    // because the `expect_set_property` is not yet implemented neither on original repo nor our fork
+    // let grpc_response: [u8; 41] = [
+    //     10, 0, 34, 35, 10, 33, 10, 8, 105, 100, 101, 110, 116, 105, 116, 121, 18, 21, 42, 19, 10,
+    //     17, 10, 6, 117, 115, 101, 114, 105, 100, 18, 7, 26, 5, 97, 108, 105, 99, 101, 26, 0,
+    // ];
+    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    module
+        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_auth_grpc_response: received OkHttpResponse"),
+        )
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+}

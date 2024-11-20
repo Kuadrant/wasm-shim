@@ -728,10 +728,6 @@ fn authenticated_one_ratelimit_action_matches() {
         .returning(Some("1.2.3.4:80".as_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("grpc_message_request: empty descriptors"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
             Some("get_property: path: [\"source\", \"address\"]"),
         )
         .expect_get_property(Some(vec!["source", "address"]))
