@@ -2,6 +2,7 @@ use crate::configuration::FailureMode;
 use crate::envoy::StatusCode;
 #[cfg(feature = "debug-host-behaviour")]
 use crate::data;
+use crate::envoy::StatusCode;
 use crate::operation_dispatcher::{OperationDispatcher, OperationError};
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::runtime_config::RuntimeConfig;
@@ -57,8 +58,16 @@ impl Filter {
                 }
                 Err(e) => {
                     warn!("gRPC call failed! {e:?}");
-                    if let FailureMode::Deny = op.get_failure_mode() {
-                        self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                    match op.get_failure_mode() {
+                        FailureMode::Deny => {
+                            op.get_service_handler().service_metrics.report_error();
+                            self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
+                        }
+                        FailureMode::Allow => {
+                            op.get_service_handler()
+                                .service_metrics
+                                .report_allowed_on_failure();
+                        }
                     }
                     Action::Continue
                 }

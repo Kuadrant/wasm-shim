@@ -142,14 +142,14 @@ pub type GrpcMessageBuildFn = fn(action: &RuntimeAction) -> Option<GrpcMessageRe
 pub struct GrpcServiceHandler {
     grpc_service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
-    pub service_metrics: Rc<ServiceMetrics>,
+    pub service_metrics: ServiceMetrics,
 }
 
 impl GrpcServiceHandler {
     pub fn new(
         grpc_service: Rc<GrpcService>,
         header_resolver: Rc<HeaderResolver>,
-        service_metrics: Rc<ServiceMetrics>,
+        service_metrics: ServiceMetrics,
     ) -> Self {
         Self {
             grpc_service,
@@ -241,6 +241,7 @@ impl TracingHeader {
     }
 }
 
+#[derive(Debug)]
 pub struct ServiceMetrics {
     ok_metric_id: u32,
     error_metric_id: u32,

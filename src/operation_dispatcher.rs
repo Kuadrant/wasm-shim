@@ -109,6 +109,10 @@ impl Operation {
     pub fn get_failure_mode(&self) -> FailureMode {
         self.action.get_failure_mode()
     }
+
+    pub fn get_service_handler(&self) -> &GrpcServiceHandler {
+        &self.service_handler
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -136,10 +140,6 @@ impl fmt::Display for OperationError {
                 write!(f, "Error triggering the operation. {:?}", self.status)
             }
         }
-    }
-
-    pub fn get_service_handler(&self) -> &GrpcServiceHandler {
-        &self.service_handler
     }
 }
 
