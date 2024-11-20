@@ -106,10 +106,7 @@ impl TryFrom<PluginConfiguration> for FilterConfig {
                     .expect("Predicates must not be compiled yet!");
 
                 for datum in &action.data {
-                    let result = datum.item.compile();
-                    if result.is_err() {
-                        return Err(result.err().unwrap());
-                    }
+                    datum.item.compile()?;
                 }
             }
 
@@ -204,7 +201,10 @@ impl<'de> Visitor<'de> for TimeoutVisitor {
         E: Error,
     {
         match duration(Arc::new(string)) {
-            Ok(Value::Duration(duration)) => Ok(Timeout(duration.to_std().unwrap())),
+            Ok(Value::Duration(duration)) => duration
+                .to_std()
+                .map(Timeout)
+                .map_err(|e| E::custom(e.to_string())),
             Err(e) => Err(E::custom(e)),
             _ => Err(E::custom("Unsupported Duration Value")),
         }
@@ -277,7 +277,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.unwrap();
+        let filter_config = res.expect("result is ok");
         assert_eq!(filter_config.action_sets.len(), 1);
 
         let services = &filter_config.services;
@@ -364,7 +364,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.unwrap();
+        let filter_config = res.expect("result is ok");
         assert_eq!(filter_config.action_sets.len(), 0);
     }
 
@@ -410,12 +410,15 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.unwrap();
+        let filter_config = res.expect("result is ok");
         assert_eq!(filter_config.action_sets.len(), 1);
 
         let services = &filter_config.services;
         assert_eq!(
-            services.get("limitador").unwrap().timeout,
+            services
+                .get("limitador")
+                .expect("limitador service to be set")
+                .timeout,
             Timeout(Duration::from_millis(20))
         );
 
@@ -510,7 +513,7 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let result = FilterConfig::try_from(res.unwrap());
+        let result = FilterConfig::try_from(res.expect("result is ok"));
         let filter_config = result.expect("That didn't work");
         let rlp_option = filter_config
             .index

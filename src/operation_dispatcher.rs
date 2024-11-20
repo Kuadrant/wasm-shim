@@ -463,34 +463,84 @@ mod tests {
         assert_eq!(operation_dispatcher.waiting_operations.len(), 0);
 
         let mut op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(66));
         assert_eq!(
-            *op.clone().unwrap().unwrap().get_service_type(),
+            op.clone()
+                .expect("ok result")
+                .expect("operation is some")
+                .get_result(),
+            Ok(66)
+        );
+        assert_eq!(
+            *op.clone()
+                .expect("ok result")
+                .expect("operation is some")
+                .get_service_type(),
             ServiceType::RateLimit
         );
-        assert_eq!(op.unwrap().unwrap().get_state(), State::Waiting);
+        assert_eq!(
+            op.expect("ok result")
+                .expect("operation is some")
+                .get_state(),
+            State::Waiting
+        );
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(66));
-        assert_eq!(op.unwrap().unwrap().get_state(), State::Done);
+        assert_eq!(
+            op.clone()
+                .expect("ok result")
+                .expect("operation is some")
+                .get_result(),
+            Ok(66)
+        );
+        assert_eq!(
+            op.expect("ok result")
+                .expect("operation is some")
+                .get_state(),
+            State::Done
+        );
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(77));
         assert_eq!(
-            *op.clone().unwrap().unwrap().get_service_type(),
+            op.clone()
+                .expect("ok result")
+                .expect("operation is some")
+                .get_result(),
+            Ok(77)
+        );
+        assert_eq!(
+            *op.clone()
+                .expect("ok result")
+                .expect("operation is some")
+                .get_service_type(),
             ServiceType::Auth
         );
-        assert_eq!(op.unwrap().unwrap().get_state(), State::Waiting);
+        assert_eq!(
+            op.expect("ok result")
+                .expect("operation is some")
+                .get_state(),
+            State::Waiting
+        );
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert_eq!(op.clone().unwrap().unwrap().get_result(), Ok(77));
-        assert_eq!(op.unwrap().unwrap().get_state(), State::Done);
+        assert_eq!(
+            op.clone()
+                .expect("ok result")
+                .expect("operation is some")
+                .get_result(),
+            Ok(77)
+        );
+        assert_eq!(
+            op.expect("ok result")
+                .expect("operation is some")
+                .get_state(),
+            State::Done
+        );
         assert_eq!(operation_dispatcher.waiting_operations.len(), 1);
 
         op = operation_dispatcher.next();
-        assert!(op.unwrap().is_none());
+        assert!(op.expect("ok result").is_none());
         assert!(operation_dispatcher.get_current_operation_state().is_none());
         assert_eq!(operation_dispatcher.waiting_operations.len(), 0);
     }

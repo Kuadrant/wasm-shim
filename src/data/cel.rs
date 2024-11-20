@@ -7,8 +7,10 @@ use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
+use log::warn;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -87,7 +89,7 @@ impl Expression {
 
 /// Decodes the query string and returns a Map where the key is the parameter's name and
 /// the value is either a [`Value::String`] or a [`Value::List`] if the parameter's name is repeated
-/// and the second arg is set not set to `false`.
+/// and the second arg is not set to `false`.
 /// see [`tests::decodes_query_string`]
 fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -> ResolveResult {
     let allow_repeats = if args.len() == 2 {
@@ -102,8 +104,22 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
     for part in s.split('&') {
         let mut kv = part.split('=');
         if let (Some(key), Some(value)) = (kv.next(), kv.next().or(Some(""))) {
-            let new_v: Value = decode(value).unwrap().into_owned().into();
-            match map.entry(decode(key).unwrap().into_owned().into()) {
+            let new_v: Value = decode(value)
+                .unwrap_or_else(|e| {
+                    warn!("failed to decode query value, using default: {e:?}");
+                    Cow::from(value)
+                })
+                .into_owned()
+                .into();
+            match map.entry(
+                decode(key)
+                    .unwrap_or_else(|e| {
+                        warn!("failed to decode query key, using default: {e:?}");
+                        Cow::from(key)
+                    })
+                    .into_owned()
+                    .into(),
+            ) {
                 Entry::Occupied(mut e) => {
                     if allow_repeats {
                         if let Value::List(ref mut list) = e.get_mut() {
@@ -118,7 +134,15 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
                     }
                 }
                 Entry::Vacant(e) => {
-                    e.insert(decode(value).unwrap().into_owned().into());
+                    e.insert(
+                        decode(value)
+                            .unwrap_or_else(|e| {
+                                warn!("failed to decode query value, using default: {e:?}");
+                                Cow::from(value)
+                            })
+                            .into_owned()
+                            .into(),
+                    );
                 }
             }
         }
@@ -296,11 +320,11 @@ fn json_to_cel(json: &str) -> Value {
             JsonValue::Bool(b) => b.into(),
             JsonValue::Number(n) => {
                 if n.is_u64() {
-                    n.as_u64().unwrap().into()
+                    n.as_u64().expect("Unreachable: number must be u64").into()
                 } else if n.is_i64() {
-                    n.as_i64().unwrap().into()
+                    n.as_i64().expect("Unreachable: number must be i64").into()
                 } else {
-                    n.as_f64().unwrap().into()
+                    n.as_f64().expect("Unreachable: number must be f64").into()
                 }
             }
             JsonValue::String(str) => str.into(),
@@ -533,10 +557,14 @@ pub mod data {
         fn it_works() {
             let map = AttributeMap::new(
                 [
-                    known_attribute_for(&"request.method".into()).unwrap(),
-                    known_attribute_for(&"request.referer".into()).unwrap(),
-                    known_attribute_for(&"source.address".into()).unwrap(),
-                    known_attribute_for(&"destination.port".into()).unwrap(),
+                    known_attribute_for(&"request.method".into())
+                        .expect("request.method known attribute exists"),
+                    known_attribute_for(&"request.referer".into())
+                        .expect("request.referer known attribute exists"),
+                    known_attribute_for(&"source.address".into())
+                        .expect("source.address known attribute exists"),
+                    known_attribute_for(&"destination.port".into())
+                        .expect("destination.port known attribute exists"),
                 ]
                 .into(),
             );
@@ -548,10 +576,10 @@ pub mod data {
             assert!(map.data.contains_key("destination"));
             assert!(map.data.contains_key("request"));
 
-            match map.data.get("source").unwrap() {
+            match map.data.get("source").expect("source is some") {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
-                    match map.get("address").unwrap() {
+                    match map.get("address").expect("address is some") {
                         Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "source.address".into()),
                     }
@@ -559,10 +587,10 @@ pub mod data {
                 Token::Value(_) => panic!("Not supposed to get here!"),
             }
 
-            match map.data.get("destination").unwrap() {
+            match map.data.get("destination").expect("destination is some") {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
-                    match map.get("port").unwrap() {
+                    match map.get("port").expect("port is some") {
                         Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "destination.port".into()),
                     }
@@ -570,16 +598,16 @@ pub mod data {
                 Token::Value(_) => panic!("Not supposed to get here!"),
             }
 
-            match map.data.get("request").unwrap() {
+            match map.data.get("request").expect("request is some") {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 2);
                     assert!(map.get("method").is_some());
-                    match map.get("method").unwrap() {
+                    match map.get("method").expect("method is some") {
                         Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.method".into()),
                     }
                     assert!(map.get("referer").is_some());
-                    match map.get("referer").unwrap() {
+                    match map.get("referer").expect("referer is some") {
                         Token::Node(_) => panic!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.referer".into()),
                     }
@@ -611,7 +639,7 @@ mod tests {
         let value = Expression::new(
             "auth.identity.anonymous && auth.identity != null && auth.identity.foo > 3",
         )
-        .unwrap();
+        .expect("This is valid CEL!");
         assert_eq!(value.attributes.len(), 3);
         assert_eq!(value.attributes[0].path, "auth.identity".into());
     }
@@ -626,7 +654,7 @@ mod tests {
             "true".bytes().collect(),
         )));
         let value = Expression::new("auth.identity.anonymous")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, true.into());
@@ -636,7 +664,7 @@ mod tests {
             "42".bytes().collect(),
         )));
         let value = Expression::new("auth.identity.age")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, 42.into());
@@ -646,7 +674,7 @@ mod tests {
             "42.3".bytes().collect(),
         )));
         let value = Expression::new("auth.identity.age")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, 42.3.into());
@@ -656,7 +684,7 @@ mod tests {
             "\"John\"".bytes().collect(),
         )));
         let value = Expression::new("auth.identity.age")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, "John".into());
@@ -666,7 +694,7 @@ mod tests {
             "-42".bytes().collect(),
         )));
         let value = Expression::new("auth.identity.name")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, (-42).into());
@@ -677,7 +705,7 @@ mod tests {
             "some random crap".bytes().collect(),
         )));
         let value = Expression::new("auth.identity.age")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, "some random crap".into());
@@ -751,12 +779,14 @@ mod tests {
             80_i64.to_le_bytes().into(),
         )));
         let value = known_attribute_for(&"destination.port".into())
-            .unwrap()
+            .expect("destination.port known attribute exists")
             .get();
         assert_eq!(value, 80.into());
         property::test::TEST_PROPERTY_VALUE
             .set(Some(("request.method".into(), "GET".bytes().collect())));
-        let value = known_attribute_for(&"request.method".into()).unwrap().get();
+        let value = known_attribute_for(&"request.method".into())
+            .expect("request.method known attribute exists")
+            .get();
         assert_eq!(value, "GET".into());
     }
 
@@ -778,7 +808,7 @@ mod tests {
             b"\xCA\xFE".to_vec(),
         )));
         let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
-            .unwrap()
+            .expect("This is valid CEL!")
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));

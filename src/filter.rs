@@ -26,7 +26,8 @@ extern "C" fn start() {
 
     proxy_wasm::set_log_level(LogLevel::Trace);
     std::panic::set_hook(Box::new(|panic_info| {
-        proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string()).unwrap();
+        proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string())
+            .expect("failed to log panic_info");
     }));
     proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
         info!("#{} set_root_context", context_id);
