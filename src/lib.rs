@@ -1,3 +1,5 @@
+mod action_set_index;
+mod auth_action;
 mod configuration;
 mod data;
 #[allow(renamed_and_removed_lints)]
@@ -5,6 +7,10 @@ mod envoy;
 mod filter;
 mod glob;
 mod operation_dispatcher;
+mod ratelimit_action;
+mod runtime_action;
+mod runtime_action_set;
+mod runtime_config;
 mod service;
 
 #[cfg(test)]

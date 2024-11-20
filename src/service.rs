@@ -2,10 +2,10 @@ pub(crate) mod auth;
 pub(crate) mod grpc_message;
 pub(crate) mod rate_limit;
 
-use crate::configuration::action::Action;
 use crate::configuration::{FailureMode, Service, ServiceType};
 use crate::envoy::StatusCode;
 use crate::operation_dispatcher::Operation;
+use crate::runtime_action::RuntimeAction;
 use crate::service::auth::{AuthService, AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::grpc_message::{GrpcMessageRequest, GrpcMessageResponse};
 use crate::service::rate_limit::{RateLimitService, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
@@ -42,6 +42,18 @@ impl GrpcService {
         }
     }
 
+    pub fn get_timeout(&self) -> Duration {
+        self.service.timeout.0
+    }
+
+    pub fn get_service_type(&self) -> ServiceType {
+        self.service.service_type.clone()
+    }
+
+    pub fn get_failure_mode(&self) -> FailureMode {
+        self.service.failure_mode
+    }
+
     fn endpoint(&self) -> &str {
         &self.service.endpoint
     }
@@ -60,7 +72,7 @@ impl GrpcService {
         if let Ok(Some(res_body_bytes)) =
             hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size)
         {
-            match GrpcMessageResponse::new(operation.get_service_type(), &res_body_bytes) {
+            match GrpcMessageResponse::new(&operation.get_service_type(), &res_body_bytes) {
                 Ok(res) => match operation.get_service_type() {
                     ServiceType::Auth => AuthService::process_auth_grpc_response(res, failure_mode),
                     ServiceType::RateLimit => {
@@ -120,8 +132,8 @@ pub type GrpcCallFn = fn(
 
 pub type GetMapValuesBytesFn = fn(map_type: MapType, key: &str) -> Result<Option<Bytes>, Status>;
 
-pub type GrpcMessageBuildFn =
-    fn(service_type: &ServiceType, action: &Action) -> Option<GrpcMessageRequest>;
+pub type GrpcMessageBuildFn = fn(action: &RuntimeAction) -> Option<GrpcMessageRequest>;
+
 #[derive(Debug)]
 pub struct GrpcServiceHandler {
     grpc_service: Rc<GrpcService>,
@@ -163,11 +175,8 @@ impl GrpcServiceHandler {
             timeout,
         )
     }
-
-    pub fn get_service(&self) -> Rc<Service> {
-        Rc::clone(&self.grpc_service.service)
-    }
 }
+
 #[derive(Debug)]
 pub struct HeaderResolver {
     headers: OnceCell<Vec<(&'static str, Bytes)>>,

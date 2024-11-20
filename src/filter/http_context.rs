@@ -1,8 +1,9 @@
-use crate::configuration::action_set::ActionSet;
-use crate::configuration::{FailureMode, FilterConfig};
+use crate::configuration::FailureMode;
 #[cfg(feature = "debug-host-behaviour")]
 use crate::data;
 use crate::operation_dispatcher::{OperationDispatcher, OperationError};
+use crate::runtime_action_set::RuntimeActionSet;
+use crate::runtime_config::RuntimeConfig;
 use crate::service::GrpcService;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
@@ -12,7 +13,7 @@ use std::rc::Rc;
 
 pub struct Filter {
     pub context_id: u32,
-    pub config: Rc<FilterConfig>,
+    pub config: Rc<RuntimeConfig>,
     pub response_headers_to_add: Vec<(String, String)>,
     pub operation_dispatcher: RefCell<OperationDispatcher>,
 }
@@ -32,22 +33,13 @@ impl Filter {
     }
 
     #[allow(unknown_lints, clippy::manual_inspect)]
-    fn process_action_sets(&self, action_sets: &[Rc<ActionSet>]) -> Action {
-        if let Some(action_set) = action_sets
-            .iter()
-            .find(|action_set| action_set.conditions_apply())
-        {
-            debug!(
-                "#{} action_set selected {}",
-                self.context_id, action_set.name
-            );
-            if let Err(op_err) = self
-                .operation_dispatcher
+    fn process_action_sets(&self, m_set_list: &[Rc<RuntimeActionSet>]) -> Action {
+        if let Some(m_set) = m_set_list.iter().find(|m_set| m_set.conditions_apply()) {
+            debug!("#{} action_set selected {}", self.context_id, m_set.name);
+            //debug!("#{} runtime action_set {:#?}", self.context_id, m_set);
+            self.operation_dispatcher
                 .borrow_mut()
-                .build_operations(&action_set.actions)
-            {
-                self.send_http_response(500, vec![], Some(format!("{op_err}").as_ref()));
-            }
+                .build_operations(&m_set.runtime_actions)
         } else {
             debug!(
                 "#{} process_action_sets: no action_set with conditions applies",
@@ -111,7 +103,7 @@ impl HttpContext for Filter {
                 );
                 Action::Continue
             }
-            Some(action_sets) => self.process_action_sets(action_sets),
+            Some(m_sets) => self.process_action_sets(m_sets),
         }
     }
 

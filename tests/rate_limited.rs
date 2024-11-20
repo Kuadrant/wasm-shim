@@ -577,7 +577,7 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
         .returning(Some(data::request::path::ADMIN))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("actions conditions do not apply, skipping"),
+            Some("grpc_message_request: empty descriptors"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
