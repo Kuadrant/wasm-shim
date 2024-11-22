@@ -173,10 +173,7 @@ impl OperationDispatcher {
         for action in actions.iter() {
             operations.push(Rc::new(Operation::new(
                 Rc::clone(action),
-                GrpcServiceHandler::new(
-                    Rc::clone(&action.grpc_service()),
-                    Rc::clone(&self.header_resolver),
-                ),
+                GrpcServiceHandler::new(action.grpc_service(), Rc::clone(&self.header_resolver)),
             )));
         }
         self.push_operations(operations);
