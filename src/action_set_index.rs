@@ -1,9 +1,9 @@
-use crate::configuration::action_set::ActionSet;
+use crate::runtime_action_set::RuntimeActionSet;
 use radix_trie::Trie;
 use std::rc::Rc;
 
-pub struct ActionSetIndex {
-    raw_tree: Trie<String, Vec<Rc<ActionSet>>>,
+pub(crate) struct ActionSetIndex {
+    raw_tree: Trie<String, Vec<Rc<RuntimeActionSet>>>,
 }
 
 impl ActionSetIndex {
@@ -13,7 +13,7 @@ impl ActionSetIndex {
         }
     }
 
-    pub fn insert(&mut self, subdomain: &str, action_set: Rc<ActionSet>) {
+    pub fn insert(&mut self, subdomain: &str, action_set: Rc<RuntimeActionSet>) {
         let rev = Self::reverse_subdomain(subdomain);
         self.raw_tree.map_with_default(
             rev,
@@ -24,7 +24,10 @@ impl ActionSetIndex {
         );
     }
 
-    pub fn get_longest_match_action_sets(&self, subdomain: &str) -> Option<&Vec<Rc<ActionSet>>> {
+    pub fn get_longest_match_action_sets(
+        &self,
+        subdomain: &str,
+    ) -> Option<&Vec<Rc<RuntimeActionSet>>> {
         let rev = Self::reverse_subdomain(subdomain);
         self.raw_tree.get_ancestor_value(&rev)
     }
@@ -43,12 +46,16 @@ impl ActionSetIndex {
 
 #[cfg(test)]
 mod tests {
-    use crate::configuration::action_set::ActionSet;
-    use crate::configuration::action_set_index::ActionSetIndex;
+    use crate::action_set_index::ActionSetIndex;
+    use crate::runtime_action_set::RuntimeActionSet;
     use std::rc::Rc;
 
-    fn build_ratelimit_action_set(name: &str) -> ActionSet {
-        ActionSet::new(name.to_owned(), Default::default(), Vec::new())
+    fn build_ratelimit_action_set(name: &str) -> RuntimeActionSet {
+        RuntimeActionSet {
+            name: name.to_owned(),
+            route_rule_predicates: Default::default(),
+            runtime_actions: Vec::new(),
+        }
     }
 
     #[test]

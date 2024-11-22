@@ -1,6 +1,6 @@
-use crate::configuration::action::Action;
 use crate::configuration::ServiceType;
 use crate::envoy::{CheckRequest, CheckResponse, RateLimitRequest, RateLimitResponse};
+use crate::runtime_action::RuntimeAction;
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
 use log::debug;
@@ -124,22 +124,25 @@ impl Message for GrpcMessageRequest {
 
 impl GrpcMessageRequest {
     // Using domain as ce_host for the time being, we might pass a DataType in the future.
-    pub fn new(service_type: &ServiceType, action: &Action) -> Option<Self> {
-        match service_type {
-            ServiceType::RateLimit => {
-                let descriptors = action.build_descriptors();
-                if descriptors.is_empty() {
+    pub fn new(action: &RuntimeAction) -> Option<Self> {
+        match action {
+            RuntimeAction::RateLimit(rl_action) => {
+                let descriptor = rl_action.build_descriptor();
+                if descriptor.entries.is_empty() {
                     debug!("grpc_message_request: empty descriptors");
                     None
                 } else {
                     Some(GrpcMessageRequest::RateLimit(
-                        RateLimitService::request_message(action.scope.clone(), descriptors),
+                        RateLimitService::request_message(
+                            String::from(rl_action.scope()),
+                            vec![descriptor].into(),
+                        ),
                     ))
                 }
             }
-            ServiceType::Auth => Some(GrpcMessageRequest::Auth(AuthService::request_message(
-                action.scope.clone(),
-            ))),
+            RuntimeAction::Auth(auth_action) => Some(GrpcMessageRequest::Auth(
+                AuthService::request_message(String::from(auth_action.scope())),
+            )),
         }
     }
 }

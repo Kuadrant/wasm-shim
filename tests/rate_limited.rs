@@ -577,9 +577,158 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
         .returning(Some(data::request::path::ADMIN))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("actions conditions do not apply, skipping"),
+            Some("grpc_message_request: empty descriptors"),
         )
         .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+}
+
+#[test]
+#[serial]
+fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "allow",
+                "timeout": "5s"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.example.com"]
+            },
+            "actions": [
+            {
+                "service": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "expression": {
+                            "key": "key_1",
+                            "value": "'value_1'"
+                        }
+                    }
+                ]
+            },
+            {
+                "service": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "expression": {
+                            "key": "key_2",
+                            "value": "'value_2'"
+                        }
+                    }
+                ]
+            },
+            {
+                "service": "limitador",
+                "scope": "RLS-domain",
+                "data": [
+                    {
+                        "expression": {
+                            "key": "key_3",
+                            "value": "'value_3'"
+                        }
+                    }
+                ]
+            }
+            ]
+        }]
+    }"#;
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_log(Some(LogLevel::Info), None)
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
+        .returning(Some("cars.example.com"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
+        // retrieving tracing headers
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
+        .returning(None)
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("envoy.service.ratelimit.v3.RateLimitService"),
+            Some("ShouldRateLimit"),
+            Some(&[0, 0, 0, 0]),
+            Some(&[
+                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 54, 10, 16, 10, 5, 107,
+                101, 121, 95, 49, 18, 7, 118, 97, 108, 117, 101, 95, 49, 10, 16, 10, 5, 107, 101,
+                121, 95, 50, 18, 7, 118, 97, 108, 117, 101, 95, 50, 10, 16, 10, 5, 107, 101, 121,
+                95, 51, 18, 7, 118, 97, 108, 117, 101, 95, 51, 24, 1,
+            ]),
+            Some(5000),
+        )
+        .returning(Some(42))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 initiated gRPC call (id# 42)"),
+        )
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let grpc_response: [u8; 2] = [8, 1];
+    module
+        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module

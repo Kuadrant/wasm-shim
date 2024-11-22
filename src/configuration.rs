@@ -1,39 +1,58 @@
-use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::configuration::action_set::ActionSet;
-use crate::configuration::action_set_index::ActionSetIndex;
-use crate::data;
-use crate::data::Predicate;
-use crate::service::GrpcService;
 use cel_interpreter::functions::time::duration;
 use cel_interpreter::Value;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
-pub mod action;
-pub mod action_set;
-mod action_set_index;
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Action {
+    pub service: String,
+    pub scope: String,
+    #[serde(default)]
+    pub predicates: Vec<String>,
+    #[serde(default)]
+    pub data: Vec<DataItem>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct RouteRuleConditions {
+    pub hostnames: Vec<String>,
+    #[serde(default)]
+    pub predicates: Vec<String>,
+}
+
+#[derive(Default, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionSet {
+    pub name: String,
+    pub route_rule_conditions: RouteRuleConditions,
+    pub actions: Vec<Action>,
+}
+
+impl ActionSet {
+    #[cfg(test)]
+    pub fn new(
+        name: String,
+        route_rule_conditions: RouteRuleConditions,
+        actions: Vec<Action>,
+    ) -> Self {
+        ActionSet {
+            name,
+            route_rule_conditions,
+            actions,
+        }
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ExpressionItem {
     pub key: String,
     pub value: String,
-    #[serde(skip_deserializing)]
-    pub compiled: OnceCell<data::Expression>,
-}
-
-impl ExpressionItem {
-    pub fn compile(&self) -> Result<(), String> {
-        self.compiled
-            .set(data::Expression::new(&self.value).map_err(|e| e.to_string())?)
-            .expect("Expression must not be compiled yet!");
-        Ok(())
-    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -50,83 +69,11 @@ pub enum DataType {
     Expression(ExpressionItem),
 }
 
-impl DataType {
-    pub fn compile(&self) -> Result<(), String> {
-        match self {
-            DataType::Static(_) => Ok(()),
-            DataType::Expression(exp) => exp.compile(),
-        }
-    }
-}
-
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DataItem {
     #[serde(flatten)]
     pub item: DataType,
-}
-
-pub struct FilterConfig {
-    pub index: ActionSetIndex,
-    pub services: Rc<HashMap<String, Rc<GrpcService>>>,
-}
-
-impl Default for FilterConfig {
-    fn default() -> Self {
-        Self {
-            index: ActionSetIndex::new(),
-            services: Rc::new(HashMap::new()),
-        }
-    }
-}
-
-impl TryFrom<PluginConfiguration> for FilterConfig {
-    type Error = String;
-
-    fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        let mut index = ActionSetIndex::new();
-        for action_set in config.action_sets.iter() {
-            let mut predicates = Vec::default();
-            for predicate in &action_set.route_rule_conditions.predicates {
-                predicates.push(Predicate::route_rule(predicate).map_err(|e| e.to_string())?);
-            }
-            action_set
-                .route_rule_conditions
-                .compiled_predicates
-                .set(predicates)
-                .expect("Predicates must not be compiled yet!");
-            for action in &action_set.actions {
-                let mut predicates = Vec::default();
-                for predicate in &action.predicates {
-                    predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
-                }
-                action
-                    .compiled_predicates
-                    .set(predicates)
-                    .expect("Predicates must not be compiled yet!");
-
-                for datum in &action.data {
-                    datum.item.compile()?;
-                }
-            }
-
-            for hostname in action_set.route_rule_conditions.hostnames.iter() {
-                index.insert(hostname, Rc::new(action_set.clone()));
-            }
-        }
-
-        // configure grpc services from the services in config
-        let services = config
-            .services
-            .into_iter()
-            .map(|(name, ext)| (name, Rc::new(GrpcService::new(Rc::new(ext)))))
-            .collect();
-
-        Ok(Self {
-            index,
-            services: Rc::new(services),
-        })
-    }
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, Default, PartialEq)]
@@ -277,10 +224,10 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.expect("result is ok");
-        assert_eq!(filter_config.action_sets.len(), 1);
+        let plugin_config = res.expect("result is ok");
+        assert_eq!(plugin_config.action_sets.len(), 1);
 
-        let services = &filter_config.services;
+        let services = &plugin_config.services;
         assert_eq!(services.len(), 2);
 
         if let Some(auth_service) = services.get("authorino") {
@@ -301,12 +248,12 @@ mod test {
             panic!()
         }
 
-        let predicates = &filter_config.action_sets[0]
+        let predicates = &plugin_config.action_sets[0]
             .route_rule_conditions
             .predicates;
         assert_eq!(predicates.len(), 3);
 
-        let actions = &filter_config.action_sets[0].actions;
+        let actions = &plugin_config.action_sets[0].actions;
         assert_eq!(actions.len(), 2);
 
         let auth_action = &actions[0];
@@ -325,17 +272,6 @@ mod test {
 
         let rl_predicates = &rl_action.predicates;
         assert_eq!(rl_predicates.len(), 1);
-
-        // TODO(eastizle): DataItem does not implement PartialEq, add it only for testing?
-        //assert_eq!(
-        //    data_items[0],
-        //    DataItem {
-        //        item: DataType::Static(StaticItem {
-        //            key: String::from("rlp-ns-A/rlp-name-A"),
-        //            value: String::from("1")
-        //        })
-        //    }
-        //);
 
         if let DataType::Static(static_item) = &rl_data_items[0].item {
             assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
@@ -364,8 +300,8 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.expect("result is ok");
-        assert_eq!(filter_config.action_sets.len(), 0);
+        let plugin_config = res.expect("result is ok");
+        assert_eq!(plugin_config.action_sets.len(), 0);
     }
 
     #[test]
@@ -410,10 +346,10 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let filter_config = res.expect("result is ok");
-        assert_eq!(filter_config.action_sets.len(), 1);
+        let plugin_config = res.expect("result is ok");
+        assert_eq!(plugin_config.action_sets.len(), 1);
 
-        let services = &filter_config.services;
+        let services = &plugin_config.services;
         assert_eq!(
             services
                 .get("limitador")
@@ -422,12 +358,12 @@ mod test {
             Timeout(Duration::from_millis(20))
         );
 
-        let predicates = &filter_config.action_sets[0]
+        let predicates = &plugin_config.action_sets[0]
             .route_rule_conditions
             .predicates;
         assert_eq!(predicates.len(), 0);
 
-        let actions = &filter_config.action_sets[0].actions;
+        let actions = &plugin_config.action_sets[0].actions;
         assert_eq!(actions.len(), 1);
 
         let action_predicates = &actions[0].predicates;
@@ -503,29 +439,5 @@ mod test {
         }"#;
         let res = serde_json::from_str::<PluginConfiguration>(bad_config);
         assert!(res.is_err());
-    }
-
-    #[test]
-    fn filter_config_from_configuration() {
-        let res = serde_json::from_str::<PluginConfiguration>(CONFIG);
-        if let Err(ref e) = res {
-            eprintln!("{e}");
-        }
-        assert!(res.is_ok());
-
-        let result = FilterConfig::try_from(res.expect("result is ok"));
-        let filter_config = result.expect("That didn't work");
-        let rlp_option = filter_config
-            .index
-            .get_longest_match_action_sets("example.com");
-        assert!(rlp_option.is_some());
-
-        let rlp_option = filter_config
-            .index
-            .get_longest_match_action_sets("test.toystore.com");
-        assert!(rlp_option.is_some());
-
-        let rlp_option = filter_config.index.get_longest_match_action_sets("unknown");
-        assert!(rlp_option.is_none());
     }
 }

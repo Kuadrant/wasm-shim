@@ -1,7 +1,9 @@
-use crate::configuration::action::Action;
-use crate::configuration::{FailureMode, Service, ServiceType};
+use crate::configuration::{FailureMode, ServiceType};
+use crate::runtime_action::RuntimeAction;
 use crate::service::grpc_message::GrpcMessageRequest;
-use crate::service::{GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler};
+use crate::service::{
+    GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler, HeaderResolver,
+};
 use log::{debug, error};
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::{Bytes, MapType, Status};
@@ -32,13 +34,12 @@ impl State {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Operation {
     state: RefCell<State>,
     result: RefCell<Result<u32, OperationError>>,
-    service: Rc<Service>,
-    action: Action,
-    service_handler: Rc<GrpcServiceHandler>,
+    action: Rc<RuntimeAction>,
+    service_handler: GrpcServiceHandler,
     grpc_call_fn: GrpcCallFn,
     get_map_values_bytes_fn: GetMapValuesBytesFn,
     grpc_message_build_fn: GrpcMessageBuildFn,
@@ -46,15 +47,10 @@ pub(crate) struct Operation {
 }
 
 impl Operation {
-    pub fn new(
-        service: Rc<Service>,
-        action: Action,
-        service_handler: Rc<GrpcServiceHandler>,
-    ) -> Self {
+    pub fn new(action: Rc<RuntimeAction>, service_handler: GrpcServiceHandler) -> Self {
         Self {
             state: RefCell::new(State::Pending),
             result: RefCell::new(Ok(0)), // Heuristics: zero represents that it's not been triggered, following `hostcalls` example
-            service,
             action,
             service_handler,
             grpc_call_fn,
@@ -65,12 +61,12 @@ impl Operation {
     }
 
     fn trigger(&self) -> Result<u32, OperationError> {
-        if let Some(message) = (self.grpc_message_build_fn)(self.get_service_type(), &self.action) {
+        if let Some(message) = (self.grpc_message_build_fn)(&self.action) {
             let res = self.service_handler.send(
                 self.get_map_values_bytes_fn,
                 self.grpc_call_fn,
                 message,
-                self.service.timeout.0,
+                self.action.get_timeout(),
             );
             match res {
                 Ok(token_id) => self.set_result(Ok(token_id)),
@@ -106,14 +102,15 @@ impl Operation {
         *self.result.borrow_mut() = result;
     }
 
-    pub fn get_service_type(&self) -> &ServiceType {
-        &self.service.service_type
+    pub fn get_service_type(&self) -> ServiceType {
+        self.action.get_service_type()
     }
 
     pub fn get_failure_mode(&self) -> FailureMode {
-        self.service.failure_mode
+        self.action.get_failure_mode()
     }
 }
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct OperationError {
     pub status: Status,
@@ -145,15 +142,15 @@ impl fmt::Display for OperationError {
 pub struct OperationDispatcher {
     operations: Vec<Rc<Operation>>,
     waiting_operations: HashMap<u32, Rc<Operation>>,
-    service_handlers: HashMap<String, Rc<GrpcServiceHandler>>,
+    header_resolver: Rc<HeaderResolver>,
 }
 
 impl OperationDispatcher {
-    pub fn new(service_handlers: HashMap<String, Rc<GrpcServiceHandler>>) -> Self {
+    pub fn new(header_resolver: Rc<HeaderResolver>) -> Self {
         Self {
-            service_handlers,
             operations: vec![],
             waiting_operations: HashMap::new(),
+            header_resolver: Rc::clone(&header_resolver),
         }
     }
 
@@ -171,25 +168,15 @@ impl OperationDispatcher {
         }
     }
 
-    pub fn build_operations(&mut self, actions: &[Action]) -> Result<(), OperationError> {
+    pub fn build_operations(&mut self, actions: &[Rc<RuntimeAction>]) {
         let mut operations: Vec<Rc<Operation>> = vec![];
         for action in actions.iter() {
-            if let Some(service) = self.service_handlers.get(&action.service) {
-                operations.push(Rc::new(Operation::new(
-                    service.get_service(),
-                    action.clone(),
-                    Rc::clone(service),
-                )))
-            } else {
-                error!("Unknown service: {}", action.service);
-                return Err(OperationError::new(
-                    Status::ParseFailure,
-                    Default::default(),
-                ));
-            }
+            operations.push(Rc::new(Operation::new(
+                Rc::clone(action),
+                GrpcServiceHandler::new(action.grpc_service(), Rc::clone(&self.header_resolver)),
+            )));
         }
         self.push_operations(operations);
-        Ok(())
     }
 
     pub fn push_operations(&mut self, operations: Vec<Rc<Operation>>) {
@@ -249,9 +236,10 @@ impl OperationDispatcher {
         OperationDispatcher {
             operations: vec![],
             waiting_operations: HashMap::default(),
-            service_handlers: HashMap::default(),
+            header_resolver: Rc::new(HeaderResolver::default()),
         }
     }
+
     #[cfg(test)]
     pub fn get_current_operation_state(&self) -> Option<State> {
         self.operations
@@ -282,26 +270,25 @@ fn get_map_values_bytes_fn(map_type: MapType, key: &str) -> Result<Option<Bytes>
     hostcalls::get_map_value_bytes(map_type, key)
 }
 
-fn grpc_message_build_fn(
-    extension_type: &ServiceType,
-    action: &Action,
-) -> Option<GrpcMessageRequest> {
-    GrpcMessageRequest::new(extension_type, action)
+fn grpc_message_build_fn(action: &RuntimeAction) -> Option<GrpcMessageRequest> {
+    GrpcMessageRequest::new(action)
 }
 
-type ConditionsApplyFn = fn(action: &Action) -> bool;
+type ConditionsApplyFn = fn(action: &RuntimeAction) -> bool;
 
-fn conditions_apply_fn(action: &Action) -> bool {
+fn conditions_apply_fn(action: &RuntimeAction) -> bool {
     action.conditions_apply()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::Timeout;
+    use crate::auth_action::AuthAction;
+    use crate::configuration::{Action, Service, Timeout};
     use crate::envoy::RateLimitRequest;
+    use crate::ratelimit_action::RateLimitAction;
     use protobuf::RepeatedField;
-    use std::cell::OnceCell;
+    use std::rc::Rc;
     use std::time::Duration;
 
     fn default_grpc_call_fn_stub(
@@ -322,18 +309,15 @@ mod tests {
         Ok(Some(Vec::new()))
     }
 
-    fn grpc_message_build_fn_stub(
-        _extension_type: &ServiceType,
-        _action: &Action,
-    ) -> Option<GrpcMessageRequest> {
+    fn grpc_message_build_fn_stub(_action: &RuntimeAction) -> Option<GrpcMessageRequest> {
         Some(GrpcMessageRequest::RateLimit(build_message()))
     }
 
     fn build_grpc_service_handler() -> GrpcServiceHandler {
-        GrpcServiceHandler::new(Rc::new(Default::default()), Rc::new(Default::default()))
+        GrpcServiceHandler::new(Rc::new(Default::default()), Default::default())
     }
 
-    fn conditions_apply_fn_stub(_action: &Action) -> bool {
+    fn conditions_apply_fn_stub(_action: &RuntimeAction) -> bool {
         true
     }
 
@@ -347,27 +331,48 @@ mod tests {
         }
     }
 
-    fn build_operation(
-        grpc_call_fn_stub: GrpcCallFn,
-        extension_type: ServiceType,
-    ) -> Rc<Operation> {
+    fn build_auth_grpc_action() -> RuntimeAction {
+        let service = Service {
+            service_type: ServiceType::Auth,
+            endpoint: "local".to_string(),
+            failure_mode: FailureMode::Deny,
+            timeout: Timeout(Duration::from_millis(42)),
+        };
+        let action = Action {
+            service: "local".to_string(),
+            scope: "".to_string(),
+            predicates: vec![],
+            data: vec![],
+        };
+        RuntimeAction::Auth(
+            AuthAction::new(&action, &service).expect("empty predicates should compile!"),
+        )
+    }
+
+    fn build_rate_limit_grpc_action() -> RuntimeAction {
+        let service = Service {
+            service_type: ServiceType::RateLimit,
+            endpoint: "local".to_string(),
+            failure_mode: FailureMode::Deny,
+            timeout: Timeout(Duration::from_millis(42)),
+        };
+        let action = Action {
+            service: "local".to_string(),
+            scope: "".to_string(),
+            predicates: vec![],
+            data: vec![],
+        };
+        RuntimeAction::RateLimit(
+            RateLimitAction::new(&action, &service).expect("empty predicates should compile!"),
+        )
+    }
+
+    fn build_operation(grpc_call_fn_stub: GrpcCallFn, action: RuntimeAction) -> Rc<Operation> {
         Rc::new(Operation {
             state: RefCell::from(State::Pending),
             result: RefCell::new(Ok(0)),
-            service: Rc::new(Service {
-                service_type: extension_type,
-                endpoint: "local".to_string(),
-                failure_mode: FailureMode::Deny,
-                timeout: Timeout(Duration::from_millis(42)),
-            }),
-            action: Action {
-                service: "local".to_string(),
-                scope: "".to_string(),
-                predicates: vec![],
-                compiled_predicates: OnceCell::default(),
-                data: vec![],
-            },
-            service_handler: Rc::new(build_grpc_service_handler()),
+            action: Rc::new(action),
+            service_handler: build_grpc_service_handler(),
             grpc_call_fn: grpc_call_fn_stub,
             get_map_values_bytes_fn: get_map_values_bytes_fn_stub,
             grpc_message_build_fn: grpc_message_build_fn_stub,
@@ -377,17 +382,17 @@ mod tests {
 
     #[test]
     fn operation_getters() {
-        let operation = build_operation(default_grpc_call_fn_stub, ServiceType::RateLimit);
+        let operation = build_operation(default_grpc_call_fn_stub, build_rate_limit_grpc_action());
 
         assert_eq!(operation.get_state(), State::Pending);
-        assert_eq!(*operation.get_service_type(), ServiceType::RateLimit);
+        assert_eq!(operation.get_service_type(), ServiceType::RateLimit);
         assert_eq!(operation.get_failure_mode(), FailureMode::Deny);
         assert_eq!(operation.get_result(), Ok(0));
     }
 
     #[test]
     fn operation_transition() {
-        let operation = build_operation(default_grpc_call_fn_stub, ServiceType::RateLimit);
+        let operation = build_operation(default_grpc_call_fn_stub, build_rate_limit_grpc_action());
         assert_eq!(operation.get_result(), Ok(0));
         assert_eq!(operation.get_state(), State::Pending);
         let mut res = operation.trigger();
@@ -404,10 +409,8 @@ mod tests {
         let mut operation_dispatcher = OperationDispatcher::default();
 
         assert_eq!(operation_dispatcher.operations.len(), 0);
-        operation_dispatcher.push_operations(vec![build_operation(
-            default_grpc_call_fn_stub,
-            ServiceType::RateLimit,
-        )]);
+        let operation = build_operation(default_grpc_call_fn_stub, build_rate_limit_grpc_action());
+        operation_dispatcher.push_operations(vec![operation]);
 
         assert_eq!(operation_dispatcher.operations.len(), 1);
     }
@@ -415,10 +418,8 @@ mod tests {
     #[test]
     fn operation_dispatcher_get_current_action_state() {
         let mut operation_dispatcher = OperationDispatcher::default();
-        operation_dispatcher.push_operations(vec![build_operation(
-            default_grpc_call_fn_stub,
-            ServiceType::RateLimit,
-        )]);
+        let operation = build_operation(default_grpc_call_fn_stub, build_rate_limit_grpc_action());
+        operation_dispatcher.push_operations(vec![operation]);
         assert_eq!(
             operation_dispatcher.get_current_operation_state(),
             Some(State::Pending)
@@ -452,8 +453,8 @@ mod tests {
         }
 
         operation_dispatcher.push_operations(vec![
-            build_operation(grpc_call_fn_stub_66, ServiceType::RateLimit),
-            build_operation(grpc_call_fn_stub_77, ServiceType::Auth),
+            build_operation(grpc_call_fn_stub_66, build_rate_limit_grpc_action()),
+            build_operation(grpc_call_fn_stub_77, build_auth_grpc_action()),
         ]);
 
         assert_eq!(
@@ -471,7 +472,7 @@ mod tests {
             Ok(66)
         );
         assert_eq!(
-            *op.clone()
+            op.clone()
                 .expect("ok result")
                 .expect("operation is some")
                 .get_service_type(),
@@ -509,7 +510,7 @@ mod tests {
             Ok(77)
         );
         assert_eq!(
-            *op.clone()
+            op.clone()
                 .expect("ok result")
                 .expect("operation is some")
                 .get_service_type(),
