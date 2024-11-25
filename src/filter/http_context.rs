@@ -1,5 +1,4 @@
 use crate::configuration::FailureMode;
-use crate::envoy::StatusCode;
 #[cfg(feature = "debug-host-behaviour")]
 use crate::data;
 use crate::envoy::StatusCode;
@@ -60,13 +59,11 @@ impl Filter {
                     warn!("gRPC call failed! {e:?}");
                     match op.get_failure_mode() {
                         FailureMode::Deny => {
-                            op.get_service_handler().service_metrics.report_error();
+                            op.get_service_metrics().report_error();
                             self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
                         }
                         FailureMode::Allow => {
-                            op.get_service_handler()
-                                .service_metrics
-                                .report_allowed_on_failure();
+                            op.get_service_metrics().report_allowed_on_failure();
                         }
                     }
                     Action::Continue
@@ -79,6 +76,7 @@ impl Filter {
                 failure_mode: FailureMode::Deny,
                 status,
             }) => {
+                // TODO(eguzki): report metrics?
                 warn!("OperationError Status: {status:?}");
                 self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"));
                 Action::Continue
@@ -87,6 +85,7 @@ impl Filter {
                 failure_mode: FailureMode::Allow,
                 status,
             }) => {
+                // TODO(eguzki): report metrics?
                 warn!("OperationError Status: {status:?}");
                 Action::Continue
             }
@@ -144,22 +143,40 @@ impl Context for Filter {
 
         match op_res {
             Ok(operation) => {
-                if let Ok(result) = GrpcService::process_grpc_response(operation, resp_size) {
-                    // add the response headers
-                    self.response_headers_to_add.extend(result.response_headers);
-                    // call the next op
-                    match self.operation_dispatcher.borrow_mut().next() {
-                        Ok(some_op) => {
-                            if some_op.is_none() {
-                                // No more operations left in queue, resuming
-                                self.resume_http_request();
+                match GrpcService::process_grpc_response(Rc::clone(&operation), resp_size) {
+                    Ok(result) => {
+                        operation.get_service_metrics().report_ok();
+                        // add the response headers
+                        self.response_headers_to_add.extend(result.response_headers);
+                        // call the next op
+                        match self.operation_dispatcher.borrow_mut().next() {
+                            Ok(some_op) => {
+                                if some_op.is_none() {
+                                    // No more operations left in queue, resuming
+                                    self.resume_http_request();
+                                }
+                            }
+                            Err(op_err) => {
+                                // If desired, we could check the error status.
+                                GrpcService::handle_error_on_grpc_response(op_err.failure_mode);
                             }
                         }
-                        Err(op_err) => {
-                            // If desired, we could check the error status.
-                            GrpcService::handle_error_on_grpc_response(op_err.failure_mode);
-                        }
                     }
+                    Err(
+                        StatusCode::TooManyRequests
+                        | StatusCode::Unauthorized
+                        | StatusCode::Forbidden,
+                    ) => {
+                        operation.get_service_metrics().report_rejected();
+                    }
+                    Err(_) => match operation.get_failure_mode() {
+                        FailureMode::Deny => {
+                            operation.get_service_metrics().report_error();
+                        }
+                        FailureMode::Allow => {
+                            operation.get_service_metrics().report_allowed_on_failure();
+                        }
+                    },
                 }
             }
             Err(e) => {

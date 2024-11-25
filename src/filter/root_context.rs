@@ -1,7 +1,8 @@
-use crate::configuration::{FilterConfig, PluginConfiguration, ServiceType};
+use crate::configuration::PluginConfiguration;
 use crate::filter::http_context::Filter;
 use crate::operation_dispatcher::OperationDispatcher;
-use crate::service::{GrpcServiceHandler, HeaderResolver, ServiceMetrics};
+use crate::runtime_config::RuntimeConfig;
+use crate::service::{HeaderResolver, ServiceMetrics};
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::hostcalls;
@@ -18,14 +19,8 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 pub struct FilterRoot {
     pub context_id: u32,
     pub config: Rc<RuntimeConfig>,
-    pub rate_limit_ok_metric_id: u32,
-    pub rate_limit_error_metric_id: u32,
-    pub rate_limit_over_limit_metric_id: u32,
-    pub rate_limit_failure_mode_allowed_metric_id: u32,
-    pub auth_ok_metric_id: u32,
-    pub auth_error_metric_id: u32,
-    pub auth_denied_metric_id: u32,
-    pub auth_failure_mode_allowed_metric_id: u32,
+    pub auth_service_metrics: Rc<ServiceMetrics>,
+    pub rl_service_metrics: Rc<ServiceMetrics>,
 }
 
 impl RootContext for FilterRoot {
@@ -39,50 +34,66 @@ impl RootContext for FilterRoot {
             self.context_id, WASM_SHIM_HEADER, full_version
         );
 
-        self.rate_limit_ok_metric_id =
+        let rate_limit_ok_metric_id =
             match hostcalls::define_metric(MetricType::Counter, "kuadrant.rate_limit.ok") {
                 Ok(metric_id) => metric_id,
                 Err(e) => panic!("Error: {:?}", e),
             };
-        self.rate_limit_error_metric_id =
+        let rate_limit_error_metric_id =
             match hostcalls::define_metric(MetricType::Counter, "kuadrant.rate_limit.error") {
                 Ok(metric_id) => metric_id,
                 Err(e) => panic!("Error: {:?}", e),
             };
-        self.rate_limit_over_limit_metric_id =
+        let rate_limit_over_limit_metric_id =
             match hostcalls::define_metric(MetricType::Counter, "kuadrant.rate_limit.over_limit") {
                 Ok(metric_id) => metric_id,
                 Err(e) => panic!("Error: {:?}", e),
             };
-        self.rate_limit_failure_mode_allowed_metric_id = match hostcalls::define_metric(
+        let rate_limit_failure_mode_allowed_metric_id = match hostcalls::define_metric(
             MetricType::Counter,
             "kuadrant.rate_limit.failure_mode_allowed",
         ) {
             Ok(metric_id) => metric_id,
             Err(e) => panic!("Error: {:?}", e),
         };
-        self.auth_ok_metric_id =
+
+        self.rl_service_metrics = Rc::new(ServiceMetrics::new(
+            rate_limit_ok_metric_id,
+            rate_limit_error_metric_id,
+            rate_limit_over_limit_metric_id,
+            rate_limit_failure_mode_allowed_metric_id,
+        ));
+
+        let auth_ok_metric_id =
             match hostcalls::define_metric(MetricType::Counter, "kuadrant.auth.ok") {
                 Ok(metric_id) => metric_id,
                 Err(e) => panic!("Error: {:?}", e),
             };
-        self.auth_error_metric_id =
+        let auth_error_metric_id =
             match hostcalls::define_metric(MetricType::Counter, "kuadrant.auth.error") {
                 Ok(metric_id) => metric_id,
                 Err(e) => panic!("Error: {:?}", e),
             };
-        self.auth_denied_metric_id =
+        let auth_denied_metric_id =
             match hostcalls::define_metric(MetricType::Counter, "kuadrant.auth.denied") {
                 Ok(metric_id) => metric_id,
                 Err(e) => panic!("Error: {:?}", e),
             };
-        self.auth_failure_mode_allowed_metric_id = match hostcalls::define_metric(
+        let auth_failure_mode_allowed_metric_id = match hostcalls::define_metric(
             MetricType::Counter,
             "kuadrant.auth.failure_mode_allowed",
         ) {
             Ok(metric_id) => metric_id,
             Err(e) => panic!("Error: {:?}", e),
         };
+
+        self.auth_service_metrics = Rc::new(ServiceMetrics::new(
+            auth_ok_metric_id,
+            auth_error_metric_id,
+            auth_denied_metric_id,
+            auth_failure_mode_allowed_metric_id,
+        ));
+
         true
     }
 
@@ -93,7 +104,12 @@ impl RootContext for FilterRoot {
             context_id,
             config: Rc::clone(&self.config),
             response_headers_to_add: Vec::default(),
-            operation_dispatcher: OperationDispatcher::new(header_resolver).into(),
+            operation_dispatcher: OperationDispatcher::new(
+                header_resolver,
+                &self.auth_service_metrics,
+                &self.rl_service_metrics,
+            )
+            .into(),
         }))
     }
 
@@ -130,22 +146,3 @@ impl RootContext for FilterRoot {
 }
 
 impl Context for FilterRoot {}
-
-impl FilterRoot {
-    fn service_metrics(&self, service_type: &ServiceType) -> ServiceMetrics {
-        match service_type {
-            ServiceType::Auth => ServiceMetrics::new(
-                self.auth_ok_metric_id,
-                self.auth_error_metric_id,
-                self.auth_denied_metric_id,
-                self.auth_failure_mode_allowed_metric_id,
-            ),
-            ServiceType::RateLimit => ServiceMetrics::new(
-                self.rate_limit_ok_metric_id,
-                self.rate_limit_error_metric_id,
-                self.rate_limit_over_limit_metric_id,
-                self.rate_limit_failure_mode_allowed_metric_id,
-            ),
-        }
-    }
-}

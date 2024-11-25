@@ -3,6 +3,7 @@ use crate::runtime_action::RuntimeAction;
 use crate::service::grpc_message::GrpcMessageRequest;
 use crate::service::{
     GetMapValuesBytesFn, GrpcCallFn, GrpcMessageBuildFn, GrpcServiceHandler, HeaderResolver,
+    ServiceMetrics,
 };
 use log::{debug, error};
 use proxy_wasm::hostcalls;
@@ -40,6 +41,7 @@ pub(crate) struct Operation {
     result: RefCell<Result<u32, OperationError>>,
     action: Rc<RuntimeAction>,
     service_handler: GrpcServiceHandler,
+    service_metrics: Rc<ServiceMetrics>,
     grpc_call_fn: GrpcCallFn,
     get_map_values_bytes_fn: GetMapValuesBytesFn,
     grpc_message_build_fn: GrpcMessageBuildFn,
@@ -47,12 +49,17 @@ pub(crate) struct Operation {
 }
 
 impl Operation {
-    pub fn new(action: Rc<RuntimeAction>, service_handler: GrpcServiceHandler) -> Self {
+    pub fn new(
+        action: Rc<RuntimeAction>,
+        service_handler: GrpcServiceHandler,
+        service_metrics: &Rc<ServiceMetrics>,
+    ) -> Self {
         Self {
             state: RefCell::new(State::Pending),
             result: RefCell::new(Ok(0)), // Heuristics: zero represents that it's not been triggered, following `hostcalls` example
             action,
             service_handler,
+            service_metrics: Rc::clone(service_metrics),
             grpc_call_fn,
             get_map_values_bytes_fn,
             grpc_message_build_fn,
@@ -110,8 +117,8 @@ impl Operation {
         self.action.get_failure_mode()
     }
 
-    pub fn get_service_handler(&self) -> &GrpcServiceHandler {
-        &self.service_handler
+    pub fn get_service_metrics(&self) -> &ServiceMetrics {
+        &self.service_metrics
     }
 }
 
@@ -147,14 +154,22 @@ pub struct OperationDispatcher {
     operations: Vec<Rc<Operation>>,
     waiting_operations: HashMap<u32, Rc<Operation>>,
     header_resolver: Rc<HeaderResolver>,
+    auth_service_metrics: Rc<ServiceMetrics>,
+    rl_service_metrics: Rc<ServiceMetrics>,
 }
 
 impl OperationDispatcher {
-    pub fn new(header_resolver: Rc<HeaderResolver>) -> Self {
+    pub fn new(
+        header_resolver: Rc<HeaderResolver>,
+        auth_service_metrics: &Rc<ServiceMetrics>,
+        rl_service_metrics: &Rc<ServiceMetrics>,
+    ) -> Self {
         Self {
             operations: vec![],
             waiting_operations: HashMap::new(),
             header_resolver: Rc::clone(&header_resolver),
+            auth_service_metrics: Rc::clone(auth_service_metrics),
+            rl_service_metrics: Rc::clone(rl_service_metrics),
         }
     }
 
@@ -178,6 +193,7 @@ impl OperationDispatcher {
             operations.push(Rc::new(Operation::new(
                 Rc::clone(action),
                 GrpcServiceHandler::new(action.grpc_service(), Rc::clone(&self.header_resolver)),
+                self.service_metrics_from_action(&action),
             )));
         }
         self.push_operations(operations);
@@ -232,6 +248,13 @@ impl OperationDispatcher {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    fn service_metrics_from_action(&self, action: &RuntimeAction) -> &Rc<ServiceMetrics> {
+        match action {
+            RuntimeAction::Auth(_) => &self.auth_service_metrics,
+            RuntimeAction::RateLimit(_) => &self.rl_service_metrics,
         }
     }
 

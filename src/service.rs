@@ -46,10 +46,6 @@ impl GrpcService {
         self.service.timeout.0
     }
 
-    pub fn get_service_type(&self) -> ServiceType {
-        self.service.service_type.clone()
-    }
-
     pub fn get_failure_mode(&self) -> FailureMode {
         self.service.failure_mode
     }
@@ -106,8 +102,8 @@ impl GrpcService {
         }
     }
 
-    pub fn get_service_type(&self) -> &ServiceType {
-        &self.service.service_type
+    pub fn get_service_type(&self) -> ServiceType {
+        self.service.service_type.clone()
     }
 }
 
@@ -142,19 +138,13 @@ pub type GrpcMessageBuildFn = fn(action: &RuntimeAction) -> Option<GrpcMessageRe
 pub struct GrpcServiceHandler {
     grpc_service: Rc<GrpcService>,
     header_resolver: Rc<HeaderResolver>,
-    pub service_metrics: ServiceMetrics,
 }
 
 impl GrpcServiceHandler {
-    pub fn new(
-        grpc_service: Rc<GrpcService>,
-        header_resolver: Rc<HeaderResolver>,
-        service_metrics: ServiceMetrics,
-    ) -> Self {
+    pub fn new(grpc_service: Rc<GrpcService>, header_resolver: Rc<HeaderResolver>) -> Self {
         Self {
             grpc_service,
             header_resolver,
-            service_metrics,
         }
     }
 
@@ -241,7 +231,7 @@ impl TracingHeader {
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct ServiceMetrics {
     ok_metric_id: u32,
     error_metric_id: u32,
