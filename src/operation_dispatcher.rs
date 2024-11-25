@@ -78,6 +78,12 @@ impl Operation {
             match res {
                 Ok(token_id) => self.set_result(Ok(token_id)),
                 Err(status) => {
+                    match self.get_failure_mode() {
+                        FailureMode::Deny => self.get_service_metrics().report_error(),
+                        FailureMode::Allow => {
+                            self.get_service_metrics().report_allowed_on_failure()
+                        }
+                    }
                     self.set_result(Err(OperationError::new(status, self.get_failure_mode())))
                 }
             }

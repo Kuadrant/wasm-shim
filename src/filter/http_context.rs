@@ -76,7 +76,6 @@ impl Filter {
                 failure_mode: FailureMode::Deny,
                 status,
             }) => {
-                // TODO(eguzki): report metrics?
                 warn!("OperationError Status: {status:?}");
                 self.send_http_response(500, vec![], Some(b"Internal Server Error.\n"));
                 Action::Continue
@@ -85,7 +84,6 @@ impl Filter {
                 failure_mode: FailureMode::Allow,
                 status,
             }) => {
-                // TODO(eguzki): report metrics?
                 warn!("OperationError Status: {status:?}");
                 Action::Continue
             }
