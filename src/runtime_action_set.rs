@@ -67,6 +67,13 @@ impl RuntimeActionSet {
                 }
             })
     }
+
+    pub fn start_flow<T: proxy_wasm::traits::HttpContext>(
+        &self,
+        _ctx: &T,
+    ) -> crate::filter::proposal_context::no_implicit_dep::Operation {
+        todo!("implement me!")
+    }
 }
 
 #[cfg(test)]
