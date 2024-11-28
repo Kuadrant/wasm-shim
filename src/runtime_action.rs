@@ -5,6 +5,7 @@ use crate::service::GrpcService;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
+use crate::filter::proposal_context::no_implicit_dep::PendingOperation;
 
 #[derive(Debug)]
 pub enum RuntimeAction {
@@ -63,12 +64,97 @@ impl RuntimeAction {
         }
         Some(other)
     }
+
+    pub fn create_message(&self) -> crate::service::GrpcRequest {
+        self.grpc_service().build_request(None)
+    }
+
+    pub fn process(&self) -> Option<PendingOperation> {
+        if !self.conditions_apply() {
+            None
+        } else {
+            // if provided message return what?
+            // if no message we assume we're a sender??????????
+            todo!()
+        }
+    }
 }
+
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::configuration::{Action, FailureMode, ServiceType, Timeout};
+
+    pub enum Operation {
+        SendRequest(RequestSender),
+        ConsumeRequest(RequestConsumer),
+    }
+    type RequestSender = ();
+    // struct RequestSender {}
+    // impl RequestSender {
+    //
+    // }
+
+    type RequestConsumer = ();
+    // struct RequestConsumer {}
+    // impl RequestConsumer {
+    //
+    // }
+
+    #[test]
+    fn start_action_set_flow() {
+        let actions = vec![
+            RuntimeAction::new(&build_action("ratelimit", "scope"), &HashMap::default()).unwrap(),
+            RuntimeAction::new(&build_action("ratelimit", "scope"), &HashMap::default()).unwrap(),
+        ];
+        let mut iter = actions.iter();
+        let a = iter.next().expect("get the first action");
+
+        let op: Result<Option<RequestSender>, ()> = a.create_message(); // action.?
+        let ret: RequestSender = match op {
+            Ok(_) => unreachable!("should have failed"),
+            Err(_) => match iter.next() {
+                Some(b) => b.create_message().expect("Ok").expect("Some"),
+                None => (),
+            },
+        };
+
+        // this is caller code
+
+        // on_http_request:find_action_set:start_flow
+
+        // let (message_handler, req) = ret.create_request();
+        // let token = send_request(req);
+
+        let (message, handler) = ret.create_request() // SendMessageOperation -> ReceiveMessageOperation
+        // how does this function look?
+        // does it take into account current action?
+
+        // on_grpc_response
+
+        let response = message_handler.consume(response);
+
+        /* bs
+        let next = action_set.progress(op);
+        action_set.actions[op.action_index].progress(op);
+
+        struct Operation {
+            current: RuntimeAction,
+            next: Option<Operation>
+        }
+        */
+    }
+
+    /* Overall
+    - We have Operation that transitions between different states passing the ref to ActionSet
+      to subsequent actions as well as an index
+    - The action_set has either a start_flow function, or maybe just process?
+        + this iterates over the actions to find the next one
+    - The runtime_action has the ability to create a message?
+
+    */
+
 
     fn build_rl_service() -> Service {
         Service {

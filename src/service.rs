@@ -63,6 +63,15 @@ impl GrpcService {
     fn method(&self) -> &str {
         self.method
     }
+    pub fn build_request(&self, message: Option<&[u8]>) -> GrpcRequest {
+        GrpcRequest::new(
+            self.endpoint(),
+            self.name(),
+            self.method(),
+            self.get_timeout(),
+            message,
+        )
+    }
 
     pub fn process_grpc_response(
         operation: Rc<Operation>,
@@ -102,6 +111,52 @@ impl GrpcService {
             }
             FailureMode::Allow => {}
         }
+    }
+}
+
+pub struct GrpcRequest<'a> {
+    upstream_name: &'a str,
+    service_name: &'a str,
+    method_name: &'a str,
+    timeout: Duration,
+    message: Option<&'a [u8]>,
+}
+
+impl GrpcRequest {
+    pub fn new(
+        upstream_name: &str,
+        service_name: &str,
+        method_name: &str,
+        timeout: Duration,
+        message: Option<&[u8]>,
+    ) -> Self {
+        Self {
+            upstream_name,
+            service_name,
+            method_name,
+            timeout,
+            message,
+        }
+    }
+
+    pub fn upstream_name(&self) -> &str {
+        &self.upstream_name
+    }
+
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    pub fn method_name(&self) -> &str {
+        &self.method_name
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    pub fn message(&self) -> Option<&[u8]> {
+        self.message
     }
 }
 
@@ -200,6 +255,21 @@ impl HeaderResolver {
                 if let Ok(Some(value)) =
                     get_map_values_bytes_fn(MapType::HttpRequestHeaders, (*header).as_str())
                 {
+                    headers.push(((*header).as_str(), value));
+                }
+            }
+            headers
+        })
+    }
+
+    pub fn get_with_ctx<T: proxy_wasm::traits::HttpContext>(
+        &self,
+        ctx: &T,
+    ) -> &Vec<(&'static str, Bytes)> {
+        self.headers.get_or_init(|| {
+            let mut headers = Vec::new();
+            for header in TracingHeader::all() {
+                if let Ok(Some(value)) = ctx.get_http_request_header((*header).as_str()) {
                     headers.push(((*header).as_str(), value));
                 }
             }

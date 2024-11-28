@@ -67,6 +67,10 @@ impl RuntimeActionSet {
                 }
             })
     }
+
+    pub fn start_flow(&self) -> crate::filter::proposal_context::no_implicit_dep::PendingOperation {
+        todo!("implement me!")
+    }
 }
 
 #[cfg(test)]
