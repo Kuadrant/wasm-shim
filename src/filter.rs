@@ -1,4 +1,5 @@
 pub(crate) mod http_context;
+#[allow(dead_code)]
 pub(crate) mod proposal_context;
 mod root_context;
 
