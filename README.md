@@ -3,7 +3,7 @@
 [![Rust](https://github.com/Kuadrant/wasm-shim/actions/workflows/rust.yaml/badge.svg)](https://github.com/Kuadrant/wasm-shim/actions/workflows/rust.yaml)
 [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B162%2Fgit%2Bgithub.com%2FKuadrant%2Fwasm-shim.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B162%2Fgit%2Bgithub.com%2FKuadrant%2Fwasm-shim?ref=badge_shield&issueType=license)
 
-A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador & Authorino.
+A Proxy-Wasm module written in Rust, acting as a shim between Envoy and both Rate-limiting and External Auth services.
 
 ## Sample configuration
 
