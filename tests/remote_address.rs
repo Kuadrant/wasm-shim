@@ -121,7 +121,7 @@ fn it_limits_based_on_source_address() {
             ]),
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),

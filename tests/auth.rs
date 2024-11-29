@@ -179,7 +179,7 @@ fn it_auths() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -362,7 +362,7 @@ fn it_denies() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -563,7 +563,7 @@ fn it_does_not_fold_auth_actions() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -661,7 +661,7 @@ fn it_does_not_fold_auth_actions() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
