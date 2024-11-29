@@ -16,7 +16,7 @@ test:
 	# only one counter
 	NUM_COUNTERS=$$(jq --exit-status 'length' $(TMP)/counters.json) && test $${NUM_COUNTERS} -eq 1
 	# that counter must belong to 40.0.0.1
-	VARIABLE_COUNTER=$$(jq -r --exit-status '.[].set_variables."source.remote_address"' $(TMP)/counters.json) && [ "$${VARIABLE_COUNTER}" == "40.0.0.1" ]
+	VARIABLE_COUNTER=$$(jq -r --exit-status --arg b "descriptors[0]['source.remote_address']" '.[]["set_variables"][$b]' $(TMP)/counters.json) && [ "$${VARIABLE_COUNTER}" == "40.0.0.1" ]
 
 clean:
 	$(DOCKER) compose down --volumes --remove-orphans

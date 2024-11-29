@@ -4,4 +4,4 @@
   seconds: 60
   conditions: []
   variables:
-    - source.remote_address
+  - "descriptors[0]['source.remote_address']"

@@ -47,7 +47,7 @@ And a new limit configuration
   seconds: 30
   conditions: []
   variables:
-    - source.remote_address
+  - "descriptors[0]['source.remote_address']"
 ```
 
 That configuration enables source based rate limiting on `*.example.com` subdomains,
