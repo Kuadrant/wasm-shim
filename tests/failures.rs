@@ -392,7 +392,7 @@ fn it_fails_on_first_action_grpc_response() {
             Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 14"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&vec![]))
+        .returning(Some(&[]))
         .expect_send_local_response(
             Some(500),
             Some("Internal Server Error.\n"),
@@ -565,7 +565,7 @@ fn it_fails_on_second_action_grpc_response() {
             ).as_str()),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&vec![]))
+        .returning(Some(&[]))
         .expect_send_local_response(
             Some(500),
             Some("Internal Server Error.\n"),
