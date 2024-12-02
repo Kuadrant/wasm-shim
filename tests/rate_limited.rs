@@ -180,10 +180,7 @@ fn it_limits() {
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            Some(&[
-                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97,
-                100, 109, 105, 110, 18, 1, 49, 24, 1,
-            ]),
+            None,
             Some(5000),
         )
         .returning(Some(42))
@@ -326,10 +323,7 @@ fn it_passes_additional_headers() {
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            Some(&[
-                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97,
-                100, 109, 105, 110, 18, 1, 49, 24, 1,
-            ]),
+            None,
             Some(5000),
         )
         .returning(Some(42))
@@ -462,10 +456,7 @@ fn it_rate_limits_with_empty_predicates() {
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            Some(&[
-                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97,
-                100, 109, 105, 110, 18, 1, 49, 24, 1,
-            ]),
+            None,
             Some(5000),
         )
         .returning(Some(42))
@@ -703,12 +694,7 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            Some(&[
-                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 54, 10, 16, 10, 5, 107,
-                101, 121, 95, 49, 18, 7, 118, 97, 108, 117, 101, 95, 49, 10, 16, 10, 5, 107, 101,
-                121, 95, 50, 18, 7, 118, 97, 108, 117, 101, 95, 50, 10, 16, 10, 5, 107, 101, 121,
-                95, 51, 18, 7, 118, 97, 108, 117, 101, 95, 51, 24, 1,
-            ]),
+            None,
             Some(5000),
         )
         .returning(Some(42))

@@ -129,7 +129,7 @@ impl<'de> Deserialize<'de> for Timeout {
 }
 
 struct TimeoutVisitor;
-impl<'de> Visitor<'de> for TimeoutVisitor {
+impl Visitor<'_> for TimeoutVisitor {
     type Value = Timeout;
 
     fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
