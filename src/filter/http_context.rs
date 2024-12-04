@@ -82,6 +82,21 @@ impl Filter {
             }
         }
     }
+
+    fn process_next_op(&self) {
+        match self.operation_dispatcher.borrow_mut().next() {
+            Ok(some_op) => {
+                if some_op.is_none() {
+                    // No more operations left in queue, resuming
+                    self.resume_http_request();
+                }
+            }
+            Err(op_err) => {
+                // If desired, we could check the error status.
+                GrpcService::handle_error_on_grpc_response(op_err.failure_mode);
+            }
+        }
+    }
 }
 
 impl HttpContext for Filter {
@@ -134,20 +149,20 @@ impl Context for Filter {
 
         match op_res {
             Ok(operation) => {
-                if let Ok(result) = GrpcService::process_grpc_response(operation, resp_size) {
-                    // add the response headers
-                    self.response_headers_to_add.extend(result.response_headers);
-                    // call the next op
-                    match self.operation_dispatcher.borrow_mut().next() {
-                        Ok(some_op) => {
-                            if some_op.is_none() {
-                                // No more operations left in queue, resuming
-                                self.resume_http_request();
+                match GrpcService::process_grpc_response(Rc::clone(&operation), resp_size) {
+                    Ok(result) => {
+                        // add the response headers
+                        self.response_headers_to_add.extend(result.response_headers);
+                        // call the next op
+                        self.process_next_op();
+                    }
+                    Err(_) => {
+                        match operation.get_failure_mode() {
+                            FailureMode::Deny => {}
+                            FailureMode::Allow => {
+                                // call the next op
+                                self.process_next_op();
                             }
-                        }
-                        Err(op_err) => {
-                            // If desired, we could check the error status.
-                            GrpcService::handle_error_on_grpc_response(op_err.failure_mode);
                         }
                     }
                 }
