@@ -125,8 +125,9 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         .unwrap();
 
     let status_code = 14;
+    let second_call_token_id = 43;
     module
-        .proxy_on_grpc_close(http_context, 42, status_code)
+        .proxy_on_grpc_close(http_context, first_call_token_id as i32, status_code)
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {first_call_token_id}, status: {status_code}").as_str()),
@@ -138,22 +139,23 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            Some(&[
-                10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
-                101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
-            ]),
+            None,
             Some(5000),
         )
-        .returning(Ok(42))
+        .returning(Ok(second_call_token_id))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];
     module
-        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .call_proxy_on_grpc_receive(
+            http_context,
+            second_call_token_id as i32,
+            grpc_response.len() as i32,
+        )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
+            Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {second_call_token_id}, status: 0").as_str()),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
