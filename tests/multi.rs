@@ -196,7 +196,7 @@ fn it_performs_authenticated_rate_limiting() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -225,7 +225,7 @@ fn it_performs_authenticated_rate_limiting() {
             None,
             Some(5000),
         )
-        .returning(Some(43))
+        .returning(Ok(43))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -393,7 +393,7 @@ fn unauthenticated_does_not_ratelimit() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -653,7 +653,7 @@ fn authenticated_one_ratelimit_action_matches() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -695,7 +695,7 @@ fn authenticated_one_ratelimit_action_matches() {
             None,
             Some(5000),
         )
-        .returning(Some(43))
+        .returning(Ok(43))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

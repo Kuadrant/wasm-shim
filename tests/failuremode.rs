@@ -1,5 +1,4 @@
 use crate::util::common::wasm_module;
-use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
@@ -8,7 +7,7 @@ pub mod util;
 
 #[test]
 #[serial]
-fn it_limits_based_on_source_address() {
+fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -29,33 +28,46 @@ fn it_limits_based_on_source_address() {
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
                 "timeout": "5s"
+            },
+            "limitador-unreachable": {
+                "type": "ratelimit",
+                "endpoint": "unreachable-cluster",
+                "failureMode": "allow",
+                "timeout": "5s"
             }
         },
         "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["example.com"]
+            },
+            "actions": [
             {
-                "name": "some-name",
-                "routeRuleConditions": {
-                    "hostnames": ["*.example.com"],
-                    "predicates" : [
-                        "source.remote_address != '50.0.0.1'"
-                    ]
-                },
-                "actions": [
+                "service": "limitador-unreachable",
+                "scope": "a",
+                "data": [
                     {
-                        "service": "limitador",
-                        "scope": "RLS-domain",
-                        "data": [
-                            {
-                                "expression": {
-                                    "key": "source.remote_address",
-                                    "value": "source.remote_address"
-                                }
-                            }
-                        ]
+                        "expression": {
+                            "key": "l",
+                            "value": "1"
+                        }
                     }
                 ]
-            }
-        ]
+            },
+            {
+                "service": "limitador",
+                "scope": "a",
+                "data": [
+                    {
+                        "expression": {
+                            "key": "l",
+                            "value": "1"
+                        }
+                    }
+                ]
+            }]
+        }]
     }"#;
 
     module
@@ -79,29 +91,16 @@ fn it_limits_based_on_source_address() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
+    let first_call_token_id = 42;
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("test.example.com"))
-        // retrieving properties for conditions
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property: path: [\"source\", \"address\"]"),
-        )
-        .expect_get_property(Some(vec!["source", "address"]))
-        .returning(Some(data::source::ADDRESS))
+        .returning(Some("example.com"))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
-        // retrieving properties for data
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property: path: [\"source\", \"address\"]"),
-        )
-        .expect_get_property(Some(vec!["source", "address"]))
-        .returning(Some(data::source::ADDRESS))
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -110,23 +109,43 @@ fn it_limits_based_on_source_address() {
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
         .returning(None)
         .expect_grpc_call(
-            Some("limitador-cluster"),
+            Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            Some(&[
-                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 36, 10, 34, 10, 21, 115,
-                111, 117, 114, 99, 101, 46, 114, 101, 109, 111, 116, 101, 95, 97, 100, 100, 114,
-                101, 115, 115, 18, 9, 49, 50, 55, 46, 48, 46, 48, 46, 49, 24, 1,
-            ]),
+            None,
             Some(5000),
         )
-        .returning(Ok(42))
+        .returning(Ok(first_call_token_id))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let status_code = 14;
+    module
+        .proxy_on_grpc_close(http_context, 42, status_code)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {first_call_token_id}, status: {status_code}").as_str()),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&[]))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("envoy.service.ratelimit.v3.RateLimitService"),
+            Some("ShouldRateLimit"),
+            Some(&[0, 0, 0, 0]),
+            Some(&[
+                10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
+                101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
+            ]),
+            Some(5000),
+        )
+        .returning(Ok(42))
+        .execute_and_expect(ReturnType::None)
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];

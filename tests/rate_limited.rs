@@ -183,7 +183,7 @@ fn it_limits() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -326,7 +326,7 @@ fn it_passes_additional_headers() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -459,7 +459,7 @@ fn it_rate_limits_with_empty_predicates() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
@@ -697,7 +697,7 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
             None,
             Some(5000),
         )
-        .returning(Some(42))
+        .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 initiated gRPC call (id# 42)"),
