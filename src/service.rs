@@ -100,9 +100,7 @@ impl GrpcService {
                 hostcalls::send_http_response(500, vec![], Some(b"Internal Server Error.\n"))
                     .expect("failed to send_http_response 500");
             }
-            FailureMode::Allow => {
-                hostcalls::resume_http_request().expect("failed to resume_http_request")
-            }
+            FailureMode::Allow => {}
         }
     }
 }
