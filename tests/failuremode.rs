@@ -168,3 +168,135 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
+
+#[test]
+#[serial]
+fn it_stops_on_failure_when_failuremode_is_deny() {
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s"
+            },
+            "limitador-unreachable": {
+                "type": "ratelimit",
+                "endpoint": "unreachable-cluster",
+                "failureMode": "deny",
+                "timeout": "5s"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["example.com"]
+            },
+            "actions": [
+            {
+                "service": "limitador-unreachable",
+                "scope": "a",
+                "data": [
+                    {
+                        "expression": {
+                            "key": "l",
+                            "value": "1"
+                        }
+                    }
+                ]
+            },
+            {
+                "service": "limitador",
+                "scope": "a",
+                "data": [
+                    {
+                        "expression": {
+                            "key": "l",
+                            "value": "1"
+                        }
+                    }
+                ]
+            }]
+        }]
+    }"#;
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_log(Some(LogLevel::Info), None)
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
+        .returning(Some("example.com"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
+        // retrieving tracing headers
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
+        .returning(None)
+        .expect_grpc_call(
+            Some("unreachable-cluster"),
+            Some("envoy.service.ratelimit.v3.RateLimitService"),
+            Some("ShouldRateLimit"),
+            Some(&[0, 0, 0, 0]),
+            None,
+            Some(5000),
+        )
+        .returning(Ok(42))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 initiated gRPC call (id# 42)"),
+        )
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let status_code = 14;
+    module
+        .proxy_on_grpc_close(http_context, 42, status_code)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some(format!("#2 on_grpc_call_response: received gRPC call response: token: 42, status: {status_code}").as_str()),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&[]))
+        .expect_send_local_response(Some(500), None, None, None)
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+}
