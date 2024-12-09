@@ -65,7 +65,7 @@ And a new limit configuration
   max_value: 30
   seconds: 60
   conditions:
-  - "a == '1'"
+  - "descriptors[0]['a'] == '1'"
   variables: []
 ```
 
