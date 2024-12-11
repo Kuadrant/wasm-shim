@@ -63,7 +63,7 @@ impl GrpcService {
     fn method(&self) -> &str {
         self.method
     }
-    pub fn build_request(&self, message: Option<&[u8]>) -> GrpcRequest {
+    pub fn build_request(&self, message: Option<Vec<u8>>) -> GrpcRequest {
         GrpcRequest::new(
             self.endpoint(),
             self.name(),
@@ -128,14 +128,14 @@ impl GrpcRequest {
         service_name: &str,
         method_name: &str,
         timeout: Duration,
-        message: Option<&[u8]>,
+        message: Option<Vec<u8>>,
     ) -> Self {
         Self {
             upstream_name: upstream_name.to_owned(),
             service_name: service_name.to_owned(),
             method_name: method_name.to_owned(),
             timeout,
-            message: message.map(|m| m.to_vec()),
+            message,
         }
     }
 

@@ -25,6 +25,13 @@ impl AuthService {
         AuthService::build_check_req(ce_host)
     }
 
+    pub fn request_message_as_bytes(ce_host: String) -> Option<Vec<u8>> {
+        Self::request_message(ce_host)
+            .write_to_bytes()
+            .map_err(|e| debug!("Failed to write protobuf message to bytes: {e:?}"))
+            .ok()
+    }
+
     pub fn response_message(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
         match Message::parse_from_bytes(res_body_bytes) {
             Ok(res) => Ok(GrpcMessageResponse::Auth(res)),

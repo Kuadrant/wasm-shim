@@ -1,6 +1,6 @@
 use crate::action_set_index::ActionSetIndex;
 use crate::filter::proposal_context::no_implicit_dep::{EndRequestOperation, HeadersOperation};
-use crate::service::HeaderResolver;
+use crate::service::{GrpcRequest, HeaderResolver};
 use log::warn;
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -19,6 +19,7 @@ pub mod no_implicit_dep {
         AwaitGrpcResponse(GrpcMessageReceiverOperation),
         AddHeaders(HeadersOperation),
         Die(EndRequestOperation),
+        Done(),
     }
 
     pub struct GrpcMessageSenderOperation {
@@ -28,21 +29,19 @@ pub mod no_implicit_dep {
 
     impl GrpcMessageSenderOperation {
         // todo(adam-cattermole): unwrap..
-        pub fn progress(self) -> (GrpcRequest, PendingOperation) {
-            let action_set = self
-                .runtime_action_set
-                .runtime_actions
-                .get(self.current_index)
-                .unwrap();
-            let msg = action_set.create_message();
+        pub fn progress(self) -> (Option<GrpcRequest>, PendingOperation) {
+            let (index, msg) = self.runtime_action_set.process(self.current_index);
+            match msg {
+                None => (None, PendingOperation::Done()),
+                Some(msg) => (
+                    Some(msg),
+                    PendingOperation::AwaitGrpcResponse(GrpcMessageReceiverOperation {
+                        runtime_action_set: self.runtime_action_set,
+                        current_index: index,
+                    }),
+                ),
+            }
             // todo(adam-cattermole): should this instead return only a GrpcReceiver? failure?
-            (
-                msg,
-                PendingOperation::AwaitGrpcResponse(GrpcMessageReceiverOperation {
-                    runtime_action_set: self.runtime_action_set,
-                    current_index: self.current_index,
-                }),
-            )
         }
     }
 
@@ -121,9 +120,12 @@ impl Filter {
         match operation {
             no_implicit_dep::PendingOperation::SendGrpcRequest(sender_op) => {
                 let (msg, op) = sender_op.progress();
-                match self.send_grpc_request(msg) {
-                    Ok(_token) => self.handle_operation(op),
-                    Err(_status) => {}
+                match msg {
+                    None => panic!("invalid state!"),
+                    Some(m) => match self.send_grpc_request(m) {
+                        Ok(_token) => self.handle_operation(op),
+                        Err(_status) => {}
+                    },
                 }
             }
             no_implicit_dep::PendingOperation::AwaitGrpcResponse(receiver_op) => {
@@ -133,6 +135,7 @@ impl Filter {
                 self.headers_operations.push(header_op)
             }
             no_implicit_dep::PendingOperation::Die(die_op) => self.die(die_op),
+            no_implicit_dep::PendingOperation::Done() => (),
         }
     }
 

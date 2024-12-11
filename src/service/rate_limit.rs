@@ -4,7 +4,7 @@ use crate::envoy::{
 };
 use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
 use crate::service::{GrpcResult, GrpcService};
-use log::warn;
+use log::{debug, warn};
 use protobuf::{Message, RepeatedField};
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::Bytes;
@@ -26,6 +26,16 @@ impl RateLimitService {
             unknown_fields: Default::default(),
             cached_size: Default::default(),
         }
+    }
+
+    pub fn request_message_as_bytes(
+        domain: String,
+        descriptors: RepeatedField<RateLimitDescriptor>,
+    ) -> Option<Vec<u8>> {
+        Self::request_message(domain, descriptors)
+            .write_to_bytes()
+            .map_err(|e| debug!("Failed to write protobuf message to bytes: {e:?}"))
+            .ok()
     }
 
     pub fn response_message(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {

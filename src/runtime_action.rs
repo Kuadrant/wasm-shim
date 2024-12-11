@@ -2,7 +2,12 @@ use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::filter::proposal_context::no_implicit_dep::PendingOperation;
 use crate::ratelimit_action::RateLimitAction;
+use crate::service::auth::AuthService;
+use crate::service::grpc_message::GrpcMessageRequest;
+use crate::service::rate_limit::RateLimitService;
 use crate::service::GrpcService;
+use log::{debug, warn};
+use protobuf::{Message, ProtobufResult};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
@@ -65,17 +70,31 @@ impl RuntimeAction {
         Some(other)
     }
 
-    pub fn create_message(&self) -> crate::service::GrpcRequest {
-        self.grpc_service().build_request(None)
-    }
-
-    pub fn process(&self) -> Option<PendingOperation> {
+    pub fn process(&self) -> Option<crate::service::GrpcRequest> {
         if !self.conditions_apply() {
             None
         } else {
-            // if provided message return what?
-            // if no message we assume we're a sender??????????
-            todo!()
+            Some(self.grpc_service().build_request(self.build_message()))
+        }
+    }
+
+    pub fn build_message(&self) -> Option<Vec<u8>> {
+        match self {
+            RuntimeAction::RateLimit(rl_action) => {
+                let descriptor = rl_action.build_descriptor();
+                if descriptor.entries.is_empty() {
+                    debug!("grpc_message_request: empty descriptors");
+                    None
+                } else {
+                    RateLimitService::request_message_as_bytes(
+                        String::from(rl_action.scope()),
+                        vec![descriptor].into(),
+                    )
+                }
+            }
+            RuntimeAction::Auth(auth_action) => {
+                AuthService::request_message_as_bytes(String::from(auth_action.scope()))
+            }
         }
     }
 }
