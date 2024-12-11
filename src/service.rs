@@ -114,12 +114,12 @@ impl GrpcService {
     }
 }
 
-pub struct GrpcRequest<'a> {
-    upstream_name: &'a str,
-    service_name: &'a str,
-    method_name: &'a str,
+pub struct GrpcRequest {
+    upstream_name: String,
+    service_name: String,
+    method_name: String,
     timeout: Duration,
-    message: Option<&'a [u8]>,
+    message: Option<Vec<u8>>,
 }
 
 impl GrpcRequest {
@@ -131,11 +131,11 @@ impl GrpcRequest {
         message: Option<&[u8]>,
     ) -> Self {
         Self {
-            upstream_name,
-            service_name,
-            method_name,
+            upstream_name: upstream_name.to_owned(),
+            service_name: service_name.to_owned(),
+            method_name: method_name.to_owned(),
             timeout,
-            message,
+            message: message.map(|m| m.to_vec()),
         }
     }
 
@@ -156,7 +156,7 @@ impl GrpcRequest {
     }
 
     pub fn message(&self) -> Option<&[u8]> {
-        self.message
+        self.message.as_deref()
     }
 }
 
@@ -269,7 +269,7 @@ impl HeaderResolver {
         self.headers.get_or_init(|| {
             let mut headers = Vec::new();
             for header in TracingHeader::all() {
-                if let Ok(Some(value)) = ctx.get_http_request_header((*header).as_str()) {
+                if let Some(value) = ctx.get_http_request_header_bytes((*header).as_str()) {
                     headers.push(((*header).as_str(), value));
                 }
             }
@@ -296,5 +296,47 @@ impl TracingHeader {
             Tracestate => "tracestate",
             Baggage => "baggage",
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use proxy_wasm::traits::Context;
+    use std::collections::HashMap;
+
+    struct MockHost {
+        headers: HashMap<&'static str, Bytes>,
+    }
+
+    impl MockHost {
+        pub fn new(headers: HashMap<&'static str, Bytes>) -> Self {
+            Self { headers }
+        }
+    }
+
+    impl Context for MockHost {}
+
+    impl proxy_wasm::traits::HttpContext for MockHost {
+        fn get_http_request_header_bytes(&self, name: &str) -> Option<Bytes> {
+            self.headers.get(name).map(|b| b.to_owned())
+        }
+    }
+
+    #[test]
+    fn read_headers() {
+        let header_resolver = HeaderResolver::new();
+
+        let headers: Vec<(&str, Bytes)> = vec![("traceparent", b"xyz".to_vec())];
+        let mock_host = MockHost::new(headers.iter().cloned().collect::<HashMap<_, _>>());
+
+        let resolver_headers = header_resolver.get_with_ctx(&mock_host);
+
+        headers.iter().zip(resolver_headers.iter()).for_each(
+            |((header_one, value_one), (header_two, value_two))| {
+                assert_eq!(header_one, header_two);
+                assert_eq!(value_one, value_two);
+            },
+        )
     }
 }

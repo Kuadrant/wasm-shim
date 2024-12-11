@@ -1,11 +1,11 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
+use crate::filter::proposal_context::no_implicit_dep::PendingOperation;
 use crate::ratelimit_action::RateLimitAction;
 use crate::service::GrpcService;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
-use crate::filter::proposal_context::no_implicit_dep::PendingOperation;
 
 #[derive(Debug)]
 pub enum RuntimeAction {
@@ -80,7 +80,6 @@ impl RuntimeAction {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -111,14 +110,14 @@ mod test {
         let mut iter = actions.iter();
         let a = iter.next().expect("get the first action");
 
-        let op: Result<Option<RequestSender>, ()> = a.create_message(); // action.?
-        let ret: RequestSender = match op {
-            Ok(_) => unreachable!("should have failed"),
-            Err(_) => match iter.next() {
-                Some(b) => b.create_message().expect("Ok").expect("Some"),
-                None => (),
-            },
-        };
+        // let op: Result<Option<RequestSender>, ()> = a.create_message(); // action.?
+        // let ret: RequestSender = match op {
+        //     Ok(_) => unreachable!("should have failed"),
+        //     Err(_) => match iter.next() {
+        //         Some(b) => b.create_message().expect("Ok").expect("Some"),
+        //         None => (),
+        //     },
+        // };
 
         // this is caller code
 
@@ -127,13 +126,13 @@ mod test {
         // let (message_handler, req) = ret.create_request();
         // let token = send_request(req);
 
-        let (message, handler) = ret.create_request() // SendMessageOperation -> ReceiveMessageOperation
+        // let (message, handler) = ret.create_request() // SendMessageOperation -> ReceiveMessageOperation
         // how does this function look?
         // does it take into account current action?
 
         // on_grpc_response
 
-        let response = message_handler.consume(response);
+        // let response = message_handler.consume(response);
 
         /* bs
         let next = action_set.progress(op);
@@ -154,7 +153,6 @@ mod test {
     - The runtime_action has the ability to create a message?
 
     */
-
 
     fn build_rl_service() -> Service {
         Service {

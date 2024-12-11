@@ -27,6 +27,7 @@ pub mod no_implicit_dep {
     }
 
     impl GrpcMessageSenderOperation {
+        // todo(adam-cattermole): unwrap..
         pub fn progress(self) -> (GrpcRequest, PendingOperation) {
             let action_set = self
                 .runtime_action_set
