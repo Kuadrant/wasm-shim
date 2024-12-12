@@ -36,12 +36,9 @@ pub use {
         AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
         AttributeContext_Request,
     },
-    base::Metadata,
+    base::{HeaderValue, HeaderValueOption, Metadata},
     external_auth::{CheckRequest, CheckResponse, CheckResponse_oneof_http_response},
     http_status::StatusCode,
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
 };
-
-#[cfg(test)]
-pub use base::HeaderValue;

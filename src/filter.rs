@@ -35,7 +35,7 @@ extern "C" fn start() {
         info!("#{} set_root_context", context_id);
         Box::new(FilterRoot {
             context_id,
-            config: Default::default(),
+            action_set_index: Default::default(),
         })
     });
 }

@@ -1,9 +1,9 @@
+use crate::action_set_index::ActionSetIndex;
 use crate::configuration::FailureMode;
 #[cfg(feature = "debug-host-behaviour")]
 use crate::data;
 use crate::operation_dispatcher::{OperationDispatcher, OperationError};
 use crate::runtime_action_set::RuntimeActionSet;
-use crate::runtime_config::RuntimeConfig;
 use crate::service::GrpcService;
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 pub struct Filter {
     pub context_id: u32,
-    pub config: Rc<RuntimeConfig>,
+    pub index: Rc<ActionSetIndex>,
     pub response_headers_to_add: Vec<(String, String)>,
     pub operation_dispatcher: RefCell<OperationDispatcher>,
 }
@@ -107,7 +107,6 @@ impl HttpContext for Filter {
         data::debug_all_well_known_attributes();
 
         match self
-            .config
             .index
             .get_longest_match_action_sets(self.request_authority().as_str())
         {

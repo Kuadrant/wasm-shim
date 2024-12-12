@@ -4,6 +4,7 @@ kind: Limitador
 metadata:
   name: limitador
 spec:
+  image: quay.io/kuadrant/limitador:v1.6.0
   verbosity: 3
   listener:
     http:

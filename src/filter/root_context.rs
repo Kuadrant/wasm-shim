@@ -1,7 +1,6 @@
+use crate::action_set_index::ActionSetIndex;
 use crate::configuration::PluginConfiguration;
-use crate::filter::http_context::Filter;
-use crate::operation_dispatcher::OperationDispatcher;
-use crate::runtime_config::RuntimeConfig;
+use crate::filter::proposal_context::Filter;
 use crate::service::HeaderResolver;
 use const_format::formatcp;
 use log::{debug, error, info};
@@ -17,7 +16,7 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
 pub struct FilterRoot {
     pub context_id: u32,
-    pub config: Rc<RuntimeConfig>,
+    pub action_set_index: Rc<ActionSetIndex>,
 }
 
 impl RootContext for FilterRoot {
@@ -36,12 +35,11 @@ impl RootContext for FilterRoot {
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         debug!("#{} create_http_context", context_id);
         let header_resolver = Rc::new(HeaderResolver::new());
-        Some(Box::new(Filter {
+        Some(Box::new(Filter::new(
             context_id,
-            config: Rc::clone(&self.config),
-            response_headers_to_add: Vec::default(),
-            operation_dispatcher: OperationDispatcher::new(header_resolver).into(),
-        }))
+            Rc::clone(&self.action_set_index),
+            header_resolver,
+        )))
     }
 
     fn on_configure(&mut self, _config_size: usize) -> bool {
@@ -53,15 +51,15 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
-                let runtime_config =
-                    match <PluginConfiguration as TryInto<RuntimeConfig>>::try_into(config) {
+                let action_set_index =
+                    match <PluginConfiguration as TryInto<ActionSetIndex>>::try_into(config) {
                         Ok(cfg) => cfg,
                         Err(err) => {
                             error!("failed to compile plugin config: {}", err);
                             return false;
                         }
                     };
-                self.config = Rc::new(runtime_config);
+                self.action_set_index = Rc::new(action_set_index);
             }
             Err(e) => {
                 error!("failed to parse plugin config: {}", e);

@@ -63,14 +63,16 @@ impl GrpcService {
     fn method(&self) -> &str {
         self.method
     }
-    pub fn build_request(&self, message: Option<Vec<u8>>) -> GrpcRequest {
-        GrpcRequest::new(
-            self.endpoint(),
-            self.name(),
-            self.method(),
-            self.get_timeout(),
-            message,
-        )
+    pub fn build_request(&self, message: Option<Vec<u8>>) -> Option<GrpcRequest> {
+        message.map(|msg| {
+            GrpcRequest::new(
+                self.endpoint(),
+                self.name(),
+                self.method(),
+                self.get_timeout(),
+                Some(msg),
+            )
+        })
     }
 
     pub fn process_grpc_response(
