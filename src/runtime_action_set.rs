@@ -58,15 +58,7 @@ impl RuntimeActionSet {
     }
 
     pub fn conditions_apply(&self) -> bool {
-        let predicates = &self.route_rule_predicates;
-        predicates.is_empty()
-            || predicates.iter().all(|predicate| match predicate.test() {
-                Ok(b) => b,
-                Err(err) => {
-                    error!("Failed to evaluate {:?}: {}", predicate, err);
-                    panic!("Err out of this!")
-                }
-            })
+        self.route_rule_predicates.apply()
     }
 
     pub fn start_flow(&self) -> crate::filter::proposal_context::no_implicit_dep::PendingOperation {

@@ -7,7 +7,7 @@ use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
-use log::warn;
+use log::{error, warn};
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
@@ -232,6 +232,23 @@ impl Predicate {
             },
             Err(err) => Err(err),
         }
+    }
+}
+
+pub trait PredicateVec {
+    fn apply(&self) -> bool;
+}
+
+impl PredicateVec for Vec<Predicate> {
+    fn apply(&self) -> bool {
+        self.is_empty()
+            || self.iter().all(|predicate| match predicate.test() {
+                Ok(b) => b,
+                Err(err) => {
+                    error!("Failed to evaluate {:?}: {}", predicate, err);
+                    panic!("Err out of this!")
+                }
+            })
     }
 }
 

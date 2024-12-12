@@ -34,15 +34,7 @@ impl AuthAction {
     }
 
     pub fn conditions_apply(&self) -> bool {
-        let predicates = &self.predicates;
-        predicates.is_empty()
-            || predicates.iter().all(|predicate| match predicate.test() {
-                Ok(b) => b,
-                Err(err) => {
-                    error!("Failed to evaluate {:?}: {}", predicate, err);
-                    panic!("Err out of this!")
-                }
-            })
+        self.predicates.apply()
     }
 
     pub fn get_failure_mode(&self) -> FailureMode {
