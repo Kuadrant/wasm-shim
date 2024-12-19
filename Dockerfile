@@ -2,7 +2,7 @@
 # Build Stage
 # ------------------------------------------------------------------------------
 
-FROM alpine:3.16 as wasm-shim-build
+FROM mirror.gcr.io/library/alpine:3.16 as wasm-shim-build
 
 ARG GITHUB_SHA
 ENV GITHUB_SHA=${GITHUB_SHA:-unknown}
