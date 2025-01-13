@@ -1,11 +1,11 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::envoy::{CheckResponse, RateLimitResponse};
-use crate::filter::proposal_context::no_implicit_dep::Operation;
+use crate::filter::proposal_context::no_implicit_dep::{HeadersOperation, Operation};
 use crate::ratelimit_action::RateLimitAction;
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
-use crate::service::{GrpcRequest, GrpcService};
+use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService};
 use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ impl RuntimeAction {
     }
 
     pub fn process_response(&self, msg: &[u8]) -> Operation {
-        match self {
+        let result = match self {
             Self::Auth(auth_action) => {
                 // todo(adam-cattermole):unwrap
                 let check_response: CheckResponse = Message::parse_from_bytes(msg).unwrap();
@@ -90,6 +90,14 @@ impl RuntimeAction {
                     Message::parse_from_bytes(msg).unwrap();
                 rl_action.process_response(rate_limit_response)
             }
+        };
+
+        match result {
+            Ok(headers) => match headers {
+                None => Operation::Done(),
+                Some(h) => Operation::AddHeaders(HeadersOperation::new(h)),
+            },
+            Err(grpc_err_response) => Operation::Die(grpc_err_response),
         }
     }
 

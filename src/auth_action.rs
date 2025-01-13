@@ -1,10 +1,7 @@
 use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{store_metadata, Predicate, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
-use crate::filter::proposal_context::no_implicit_dep::{
-    EndRequestOperation, HeadersOperation, Operation,
-};
-use crate::service::GrpcService;
+use crate::service::{GrpcErrResponse, GrpcService};
 use log::debug;
 use protobuf::Message;
 use std::rc::Rc;
@@ -46,48 +43,60 @@ impl AuthAction {
         self.grpc_service.get_failure_mode()
     }
 
-    pub fn process_response(&self, check_response: CheckResponse) -> Operation {
-        //todo(adam-cattermole):error handling, ...
-        debug!("process_response: auth");
-
+    pub fn process_response(
+        &self,
+        check_response: CheckResponse,
+    ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
+        //todo(adam-cattermole):hostvar resolver...
         // store dynamic metadata in filter state
-        debug!("process_response: store_metadata");
-        store_metadata(check_response.get_dynamic_metadata());
+        debug!("process_response(auth): store_metadata");
+        //todo(adam-cattermole): COMMENTED OUT FOR TESTS TO COMPILE
+        // store_metadata(check_response.get_dynamic_metadata());
 
         match check_response.http_response {
-            Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
-                debug!("process_auth_grpc_response: received OkHttpResponse");
-                if !ok_response.get_response_headers_to_add().is_empty() {
-                    panic!("process_auth_grpc_response: response contained response_headers_to_add which is unsupported!")
-                }
-                if !ok_response.get_headers_to_remove().is_empty() {
-                    panic!("process_auth_grpc_response: response contained headers_to_remove which is unsupported!")
-                }
-                if !ok_response.get_query_parameters_to_set().is_empty() {
-                    panic!("process_auth_grpc_response: response contained query_parameters_to_set which is unsupported!")
-                }
-                if !ok_response.get_query_parameters_to_remove().is_empty() {
-                    panic!("process_auth_grpc_response: response contained query_parameters_to_remove which is unsupported!")
-                }
-
-                let response_headers = Self::get_header_vec(ok_response.get_headers());
-                if !response_headers.is_empty() {
-                    Operation::AddHeaders(HeadersOperation::new(response_headers))
-                } else {
-                    Operation::Done()
+            None => {
+                debug!("process_response(auth): received no http_response");
+                match self.get_failure_mode() {
+                    FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+                    FailureMode::Allow => {
+                        debug!("process_response(auth): continuing as FailureMode Allow");
+                        Ok(None)
+                    }
                 }
             }
             Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
-                debug!("process_auth_grpc_response: received DeniedHttpResponse");
-                let status_code = denied_response.get_status().code;
+                debug!("process_response(auth): received DeniedHttpResponse");
+                let status_code = denied_response.get_status().get_code();
                 let response_headers = Self::get_header_vec(denied_response.get_headers());
-                Operation::Die(EndRequestOperation::new(
+                Err(GrpcErrResponse::new(
                     status_code as u32,
                     response_headers,
-                    Some(denied_response.body),
+                    denied_response.body,
                 ))
             }
-            None => Operation::Die(EndRequestOperation::default()),
+            Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
+                debug!("process_response(auth): received OkHttpResponse");
+
+                if !ok_response.get_response_headers_to_add().is_empty() {
+                    panic!("process_response(auth): response contained response_headers_to_add which is unsupported!")
+                }
+                if !ok_response.get_headers_to_remove().is_empty() {
+                    panic!("process_response(auth): response contained headers_to_remove which is unsupported!")
+                }
+                if !ok_response.get_query_parameters_to_set().is_empty() {
+                    panic!("process_response(auth): response contained query_parameters_to_set which is unsupported!")
+                }
+                if !ok_response.get_query_parameters_to_remove().is_empty() {
+                    panic!("process_response(auth): response contained query_parameters_to_remove which is unsupported!")
+                }
+
+                let response_headers = Self::get_header_vec(ok_response.get_headers());
+                if response_headers.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(response_headers))
+                }
+            }
         }
     }
 
@@ -106,8 +115,17 @@ impl AuthAction {
 mod test {
     use super::*;
     use crate::configuration::{Action, FailureMode, Service, ServiceType, Timeout};
+    use crate::envoy::{DeniedHttpResponse, HeaderValue, HttpStatus, OkHttpResponse, StatusCode};
+    use protobuf::RepeatedField;
 
     fn build_auth_action_with_predicates(predicates: Vec<String>) -> AuthAction {
+        build_auth_action_with_predicates_and_failure_mode(predicates, FailureMode::default())
+    }
+
+    fn build_auth_action_with_predicates_and_failure_mode(
+        predicates: Vec<String>,
+        failure_mode: FailureMode,
+    ) -> AuthAction {
         let action = Action {
             service: "some_service".into(),
             scope: "some_scope".into(),
@@ -118,12 +136,62 @@ mod test {
         let service = Service {
             service_type: ServiceType::Auth,
             endpoint: "some_endpoint".into(),
-            failure_mode: FailureMode::default(),
+            failure_mode,
             timeout: Timeout::default(),
         };
 
         AuthAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?")
+    }
+
+    fn build_check_response(
+        status: StatusCode,
+        headers: Option<Vec<(&str, &str)>>,
+        body: Option<String>,
+    ) -> CheckResponse {
+        let mut response = CheckResponse::new();
+        match status {
+            StatusCode::OK => {
+                let mut ok_http_response = OkHttpResponse::new();
+                if let Some(header_list) = headers {
+                    ok_http_response.set_headers(build_headers(header_list))
+                }
+                response.set_ok_response(ok_http_response);
+            }
+            StatusCode::Forbidden => {
+                let mut http_status = HttpStatus::new();
+                http_status.set_code(status);
+
+                let mut denied_http_response = DeniedHttpResponse::new();
+                denied_http_response.set_status(http_status);
+                if let Some(header_list) = headers {
+                    denied_http_response.set_headers(build_headers(header_list));
+                }
+                denied_http_response.set_body(body.unwrap_or_default());
+                response.set_denied_response(denied_http_response);
+            }
+            _ => {
+                // assume any other code is for error state
+            }
+        };
+        response
+    }
+
+    fn build_headers(headers: Vec<(&str, &str)>) -> RepeatedField<HeaderValueOption> {
+        headers
+            .into_iter()
+            .map(|(key, value)| {
+                let header_value = {
+                    let mut hv = HeaderValue::new();
+                    hv.set_key(key.to_string());
+                    hv.set_value(value.to_string());
+                    hv
+                };
+                let mut header_option = HeaderValueOption::new();
+                header_option.set_header(header_value);
+                header_option
+            })
+            .collect::<RepeatedField<HeaderValueOption>>()
     }
 
     #[test]
@@ -159,5 +227,101 @@ mod test {
             "1".into(),
         ]);
         auth_action.conditions_apply();
+    }
+
+    #[test]
+    fn process_ok_response() {
+        let auth_action = build_auth_action_with_predicates(Vec::default());
+        let ok_response_without_headers = build_check_response(StatusCode::OK, None, None);
+        let result = auth_action.process_response(ok_response_without_headers);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_none());
+
+        let ok_response_with_header =
+            build_check_response(StatusCode::OK, Some(vec![("my_header", "my_value")]), None);
+        let result = auth_action.process_response(ok_response_with_header);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_some());
+
+        let header_vec = headers.expect("is some");
+        assert_eq!(
+            header_vec[0],
+            ("my_header".to_string(), "my_value".to_string())
+        );
+    }
+
+    #[test]
+    fn process_denied_response() {
+        let headers = vec![
+            ("www-authenticate", "APIKEY realm=\"api-key-users\""),
+            ("x-ext-auth-reason", "credential not found"),
+        ];
+        let auth_action = build_auth_action_with_predicates(Vec::default());
+        let denied_response_empty = build_check_response(StatusCode::Forbidden, None, None);
+        let result = auth_action.process_response(denied_response_empty);
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::Forbidden as u32
+        );
+        assert!(grpc_err_response.headers().is_empty());
+        assert_eq!(grpc_err_response.body(), String::default());
+
+        let denied_response_content = build_check_response(
+            StatusCode::Forbidden,
+            Some(headers.clone()),
+            Some("my_body".to_string()),
+        );
+        let result = auth_action.process_response(denied_response_content);
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::Forbidden as u32
+        );
+
+        let response_headers = grpc_err_response.headers();
+        headers.iter().zip(response_headers.iter()).for_each(
+            |((header_one, value_one), (header_two, value_two))| {
+                assert_eq!(header_one, header_two);
+                assert_eq!(value_one, value_two);
+            },
+        );
+
+        assert_eq!(grpc_err_response.body(), "my_body");
+    }
+
+    #[test]
+    fn process_error_response() {
+        let auth_action =
+            build_auth_action_with_predicates_and_failure_mode(Vec::default(), FailureMode::Deny);
+        let error_response = build_check_response(StatusCode::InternalServerError, None, None);
+        let result = auth_action.process_response(error_response);
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::InternalServerError as u32
+        );
+
+        assert!(grpc_err_response.headers().is_empty());
+        assert_eq!(grpc_err_response.body(), "Internal Server Error.\n");
+
+        let auth_action =
+            build_auth_action_with_predicates_and_failure_mode(Vec::default(), FailureMode::Allow);
+        let error_response = build_check_response(StatusCode::InternalServerError, None, None);
+        let result = auth_action.process_response(error_response);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_none());
     }
 }

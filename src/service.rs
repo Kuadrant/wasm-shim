@@ -116,6 +116,7 @@ impl GrpcService {
     }
 }
 
+// GrpcRequest contains the information required to make a Grpc Call
 pub struct GrpcRequest {
     upstream_name: String,
     service_name: String,
@@ -159,6 +160,46 @@ impl GrpcRequest {
 
     pub fn message(&self) -> Option<&[u8]> {
         self.message.as_deref()
+    }
+}
+
+#[derive(Debug)]
+pub struct GrpcErrResponse {
+    status_code: u32,
+    response_headers: Vec<(String, String)>,
+    body: String,
+}
+
+impl GrpcErrResponse {
+    pub fn new(status_code: u32, response_headers: Vec<(String, String)>, body: String) -> Self {
+        Self {
+            status_code,
+            response_headers,
+            body,
+        }
+    }
+
+    pub fn new_internal_server_error() -> Self {
+        Self {
+            status_code: StatusCode::InternalServerError as u32,
+            response_headers: Vec::default(),
+            body: "Internal Server Error.\n".to_string(),
+        }
+    }
+
+    pub fn status_code(&self) -> u32 {
+        self.status_code
+    }
+
+    pub fn headers(&self) -> Vec<(&str, &str)> {
+        self.response_headers
+            .iter()
+            .map(|(header, value)| (header.as_str(), value.as_str()))
+            .collect()
+    }
+
+    pub fn body(&self) -> &str {
+        self.body.as_str()
     }
 }
 
