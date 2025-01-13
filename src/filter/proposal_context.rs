@@ -1,9 +1,10 @@
 use crate::action_set_index::ActionSetIndex;
 use crate::filter::proposal_context::no_implicit_dep::{
-    EndRequestOperation, GrpcMessageSenderOperation, HeadersOperation, Operation,
+    GrpcMessageReceiverOperation, HeadersOperation, Operation,
 };
-use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver};
-use log::{debug, error, warn};
+use crate::runtime_action_set::RuntimeActionSet;
+use crate::service::{GrpcErrResponse, GrpcRequestAction, HeaderResolver};
+use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Status};
 use std::mem;
@@ -11,14 +12,11 @@ use std::rc::Rc;
 
 pub mod no_implicit_dep {
     use crate::runtime_action_set::RuntimeActionSet;
-    use crate::service::{GrpcErrResponse, GrpcRequest};
-    use log::error;
-    use std::cell::OnceCell;
+    use crate::service::{GrpcErrResponse, GrpcRequestAction};
     use std::rc::Rc;
 
     #[allow(dead_code)]
     pub enum Operation {
-        SendGrpcRequest(GrpcMessageSenderOperation),
         AwaitGrpcResponse(GrpcMessageReceiverOperation),
         AddHeaders(HeadersOperation),
         Die(GrpcErrResponse),
@@ -27,12 +25,12 @@ pub mod no_implicit_dep {
         Done(),
     }
 
-    pub struct GrpcMessageSenderOperation {
+    pub struct GrpcMessageReceiverOperation {
         runtime_action_set: Rc<RuntimeActionSet>,
         current_index: usize,
     }
 
-    impl GrpcMessageSenderOperation {
+    impl GrpcMessageReceiverOperation {
         pub fn new(runtime_action_set: Rc<RuntimeActionSet>, current_index: usize) -> Self {
             Self {
                 runtime_action_set,
@@ -40,49 +38,26 @@ pub mod no_implicit_dep {
             }
         }
 
-        //todo(adam-cattermole): should this return a tuple? alternative?
-        pub fn next_grpc_request(self) -> (Option<GrpcRequest>, Operation) {
-            let (index, msg) = self
+        pub fn digest_grpc_response(
+            self,
+            msg: &[u8],
+        ) -> Result<(Option<GrpcRequestAction>, Option<Operation>), Operation> {
+            let result = self
                 .runtime_action_set
-                .find_next_grpc_request(self.current_index);
-            match msg {
-                None => (None, Operation::Done()),
-                Some(_) => (
-                    msg,
-                    Operation::AwaitGrpcResponse(GrpcMessageReceiverOperation {
-                        runtime_action_set: self.runtime_action_set,
-                        current_index: index,
-                    }),
-                ),
+                .process_grpc_response(self.current_index, msg);
+
+            match result {
+                Ok((next_msg, headers)) => {
+                    let header_op =
+                        headers.map(|hs| Operation::AddHeaders(HeadersOperation::new(hs)));
+                    Ok((next_msg, header_op))
+                }
+                Err(grpc_err_resp) => Err(Operation::Die(grpc_err_resp)),
             }
         }
-    }
 
-    pub struct GrpcMessageReceiverOperation {
-        runtime_action_set: Rc<RuntimeActionSet>,
-        current_index: usize,
-    }
-
-    impl GrpcMessageReceiverOperation {
-        pub fn digest_grpc_response(self, msg: &[u8]) -> Operation {
-            let action = self
-                .runtime_action_set
-                .runtime_actions
-                .get(self.current_index)
-                .unwrap();
-
-            let next_op = action.process_response(msg);
-            match next_op {
-                Operation::AddHeaders(mut op) => {
-                    op.set_action_set_index(self.runtime_action_set, self.current_index);
-                    Operation::AddHeaders(op)
-                }
-                Operation::Done() => Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(
-                    self.runtime_action_set,
-                    self.current_index + 1,
-                )),
-                _ => next_op,
-            }
+        pub fn runtime_action_set(&self) -> Rc<RuntimeActionSet> {
+            Rc::clone(&self.runtime_action_set)
         }
 
         pub fn fail(self) -> Operation {
@@ -92,86 +67,15 @@ pub mod no_implicit_dep {
 
     pub struct HeadersOperation {
         headers: Vec<(String, String)>,
-        runtime_action_set: OnceCell<Rc<RuntimeActionSet>>,
-        current_index: usize,
     }
 
     impl HeadersOperation {
         pub fn new(headers: Vec<(String, String)>) -> Self {
-            Self {
-                headers,
-                runtime_action_set: OnceCell::new(),
-                current_index: 0,
-            }
-        }
-
-        pub fn set_action_set_index(
-            &mut self,
-            action_set_index: Rc<RuntimeActionSet>,
-            index: usize,
-        ) {
-            match self.runtime_action_set.set(action_set_index) {
-                Ok(_) => self.current_index = index,
-                Err(_) => error!("Error setting action set index, already set"),
-            }
-        }
-
-        pub fn progress(&self) -> Operation {
-            let next_op = match self.runtime_action_set.get() {
-                None => panic!("Invalid state, called progress without setting runtime action set"),
-                Some(runtime_action_set) => {
-                    Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(
-                        Rc::clone(runtime_action_set),
-                        self.current_index + 1,
-                    ))
-                }
-            };
-            next_op
+            Self { headers }
         }
 
         pub fn headers(self) -> Vec<(String, String)> {
             self.headers
-        }
-    }
-
-    pub struct EndRequestOperation {
-        pub status: u32,
-        pub headers: Vec<(String, String)>,
-        pub body: Option<String>,
-    }
-
-    impl EndRequestOperation {
-        pub fn new(status: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
-            Self {
-                status,
-                headers,
-                body,
-            }
-        }
-
-        pub fn new_with_status(status: u32) -> Self {
-            Self::new(status, Vec::default(), None)
-        }
-
-        // todo(adam-cattermole): perhaps we should be more explicit with a different function?
-        // Default Die is with 500 Internal Server Error.
-        pub fn default() -> Self {
-            Self::new(
-                500,
-                Vec::default(),
-                Some("Internal Server Error.\n".to_string()),
-            )
-        }
-
-        pub fn headers(&self) -> Vec<(&str, &str)> {
-            self.headers
-                .iter()
-                .map(|(header, value)| (header.as_str(), value.as_str()))
-                .collect()
-        }
-
-        pub fn body(&self) -> Option<&[u8]> {
-            self.body.as_deref().map(|s| s.as_bytes())
         }
     }
 }
@@ -189,15 +93,34 @@ impl Context for Filter {
     fn on_grpc_call_response(&mut self, _token_id: u32, status_code: u32, resp_size: usize) {
         let receiver = mem::take(&mut self.grpc_message_receiver_operation)
             .expect("We need an operation pending a gRPC response");
-        let next = if status_code == Status::Ok as u32 {
-            match self.get_grpc_call_response_body(0, resp_size) {
-                Some(response_body) => receiver.digest_grpc_response(&response_body),
-                None => receiver.fail(),
+        let action_set = receiver.runtime_action_set();
+
+        if status_code != Status::Ok as u32 {
+            self.handle_operation(receiver.fail());
+            return;
+        }
+
+        let response_body = match self.get_grpc_call_response_body(0, resp_size) {
+            Some(body) => body,
+            None => {
+                self.handle_operation(receiver.fail());
+                return;
             }
-        } else {
-            receiver.fail()
         };
-        self.handle_operation(next);
+
+        let result = receiver.digest_grpc_response(&response_body);
+        match result {
+            Ok((next_msg, header_op)) => {
+                if let Some(header_op) = header_op {
+                    self.handle_operation(header_op);
+                }
+                let receiver_op = self.handle_next_message(action_set, next_msg);
+                self.handle_operation(receiver_op);
+            }
+            Err(die_op) => {
+                self.handle_operation(die_op);
+            }
+        }
     }
 }
 
@@ -211,11 +134,9 @@ impl HttpContext for Filter {
                 .iter()
                 .find(|action_set| action_set.conditions_apply(/* self */))
             {
-                let op = Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(
-                    Rc::clone(action_set),
-                    0,
-                ));
-                return self.handle_operation(op);
+                let request_action = action_set.start_flow();
+                let next_op = self.handle_next_message(Rc::clone(action_set), request_action);
+                return self.handle_operation(next_op);
             }
         }
         Action::Continue
@@ -235,17 +156,6 @@ impl HttpContext for Filter {
 impl Filter {
     fn handle_operation(&mut self, operation: Operation) -> Action {
         match operation {
-            Operation::SendGrpcRequest(sender_op) => {
-                debug!("handle_operation: SendGrpcRequest");
-                let (msg, op) = sender_op.next_grpc_request();
-                match msg {
-                    None => self.handle_operation(op),
-                    Some(m) => match self.send_grpc_request(m) {
-                        Ok(_token) => self.handle_operation(op),
-                        Err(_status) => panic!("Error sending request"),
-                    },
-                }
-            }
             Operation::AwaitGrpcResponse(receiver_op) => {
                 debug!("handle_operation: AwaitGrpcResponse");
                 self.grpc_message_receiver_operation = Some(receiver_op);
@@ -253,9 +163,8 @@ impl Filter {
             }
             Operation::AddHeaders(header_op) => {
                 debug!("handle_operation: AddHeaders");
-                let next = header_op.progress();
                 self.headers_operations.push(header_op);
-                self.handle_operation(next)
+                Action::Continue
             }
             Operation::Die(die_op) => {
                 debug!("handle_operation: Die");
@@ -267,6 +176,23 @@ impl Filter {
                 self.resume_http_request();
                 Action::Continue
             }
+        }
+    }
+
+    fn handle_next_message(
+        &mut self,
+        action_set: Rc<RuntimeActionSet>,
+        next_msg: Option<GrpcRequestAction>,
+    ) -> Operation {
+        match next_msg {
+            Some(msg) => match self.send_grpc_request(&msg) {
+                Ok(_token) => Operation::AwaitGrpcResponse(GrpcMessageReceiverOperation::new(
+                    action_set,
+                    msg.index(),
+                )),
+                Err(_status) => panic!("Error sending request"),
+            },
+            None => Operation::Done(),
         }
     }
 
@@ -291,7 +217,7 @@ impl Filter {
         }
     }
 
-    fn send_grpc_request(&self, req: GrpcRequest) -> Result<u32, Status> {
+    fn send_grpc_request(&self, req: &GrpcRequestAction) -> Result<u32, Status> {
         let headers = self
             .header_resolver
             .get_with_ctx(self)

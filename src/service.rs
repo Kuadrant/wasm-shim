@@ -116,6 +116,25 @@ impl GrpcService {
     }
 }
 
+pub struct IndexedGrpcRequest {
+    index: usize,
+    request: GrpcRequest,
+}
+
+impl IndexedGrpcRequest {
+    pub(crate) fn new(index: usize, request: GrpcRequest) -> Self {
+        Self { index, request }
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn request(self) -> GrpcRequest {
+        self.request
+    }
+}
+
 // GrpcRequest contains the information required to make a Grpc Call
 pub struct GrpcRequest {
     upstream_name: String,

@@ -8,7 +8,7 @@ use crate::envoy::{
 use crate::service::{GrpcErrResponse, GrpcService};
 use cel_interpreter::Value;
 use log::{debug, error};
-use protobuf::{Message, RepeatedField};
+use protobuf::RepeatedField;
 use std::rc::Rc;
 
 #[derive(Debug)]

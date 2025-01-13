@@ -3,7 +3,6 @@ use crate::data::{store_metadata, Predicate, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
 use crate::service::{GrpcErrResponse, GrpcService};
 use log::debug;
-use protobuf::Message;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -51,7 +50,7 @@ impl AuthAction {
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
         //todo(adam-cattermole): COMMENTED OUT FOR TESTS TO COMPILE
-        // store_metadata(check_response.get_dynamic_metadata());
+        store_metadata(check_response.get_dynamic_metadata());
 
         match check_response.http_response {
             None => {
