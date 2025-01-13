@@ -2,7 +2,7 @@ use crate::action_set_index::ActionSetIndex;
 use crate::filter::proposal_context::no_implicit_dep::{
     EndRequestOperation, GrpcMessageSenderOperation, HeadersOperation, Operation,
 };
-use crate::service::{GrpcRequest, HeaderResolver};
+use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver};
 use log::{debug, error, warn};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Status};
@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 pub mod no_implicit_dep {
     use crate::runtime_action_set::RuntimeActionSet;
-    use crate::service::GrpcRequest;
+    use crate::service::{GrpcErrResponse, GrpcRequest};
     use log::error;
     use std::cell::OnceCell;
     use std::rc::Rc;
@@ -21,7 +21,7 @@ pub mod no_implicit_dep {
         SendGrpcRequest(GrpcMessageSenderOperation),
         AwaitGrpcResponse(GrpcMessageReceiverOperation),
         AddHeaders(HeadersOperation),
-        Die(EndRequestOperation),
+        Die(GrpcErrResponse),
         //todo(adam-cattermole): does Done make sense? in this case no PendingOperation
         // instead just Option<PendingOperation>?
         Done(),
@@ -86,7 +86,7 @@ pub mod no_implicit_dep {
         }
 
         pub fn fail(self) -> Operation {
-            Operation::Die(EndRequestOperation::default())
+            Operation::Die(GrpcErrResponse::new_internal_server_error())
         }
     }
 
@@ -270,8 +270,12 @@ impl Filter {
         }
     }
 
-    fn die(&mut self, die: EndRequestOperation) {
-        self.send_http_response(die.status, die.headers(), die.body());
+    fn die(&mut self, die: GrpcErrResponse) {
+        self.send_http_response(
+            die.status_code(),
+            die.headers(),
+            Some(die.body().as_bytes()),
+        );
     }
 
     fn request_authority(&self) -> String {

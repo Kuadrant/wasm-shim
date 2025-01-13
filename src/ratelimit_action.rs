@@ -5,10 +5,7 @@ use crate::envoy::{
     HeaderValue, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse,
     RateLimitResponse_Code, StatusCode,
 };
-use crate::filter::proposal_context::no_implicit_dep::{
-    EndRequestOperation, HeadersOperation, Operation,
-};
-use crate::service::GrpcService;
+use crate::service::{GrpcErrResponse, GrpcService};
 use cel_interpreter::Value;
 use log::{debug, error};
 use protobuf::{Message, RepeatedField};
@@ -167,26 +164,35 @@ impl RateLimitAction {
         Some(other)
     }
 
-    pub fn process_response(&self, rate_limit_response: RateLimitResponse) -> Operation {
+    pub fn process_response(
+        &self,
+        rate_limit_response: RateLimitResponse,
+    ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
         match rate_limit_response {
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             } => {
-                debug!("process_response_rl: received UNKNOWN response");
-                Operation::Die(EndRequestOperation::default())
+                debug!("process_response(rl): received UNKNOWN response");
+                match self.get_failure_mode() {
+                    FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+                    FailureMode::Allow => {
+                        debug!("process_response(rl): continuing as FailureMode Allow");
+                        Ok(None)
+                    }
+                }
             }
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OVER_LIMIT,
                 response_headers_to_add: rl_headers,
                 ..
             } => {
-                debug!("process_response_rl: received OVER_LIMIT response");
+                debug!("process_response(rl): received OVER_LIMIT response");
                 let response_headers = Self::get_header_vec(rl_headers);
-                Operation::Die(EndRequestOperation::new(
+                Err(GrpcErrResponse::new(
                     StatusCode::TooManyRequests as u32,
                     response_headers,
-                    Some("Too Many Requests\n".to_string()),
+                    "Too Many Requests\n".to_string(),
                 ))
             }
             RateLimitResponse {
@@ -194,12 +200,12 @@ impl RateLimitAction {
                 response_headers_to_add: additional_headers,
                 ..
             } => {
-                debug!("process_response_rl: received OK response");
+                debug!("process_response(rl): received OK response");
                 let response_headers = Self::get_header_vec(additional_headers);
                 if response_headers.is_empty() {
-                    Operation::Done()
+                    Ok(None)
                 } else {
-                    Operation::AddHeaders(HeadersOperation::new(response_headers))
+                    Ok(Some(response_headers))
                 }
             }
         }
@@ -220,12 +226,17 @@ mod test {
         Action, DataItem, DataType, ExpressionItem, FailureMode, Service, ServiceType, StaticItem,
         Timeout,
     };
+    use crate::envoy::HeaderValueOption;
 
     fn build_service() -> Service {
+        build_service_with_failure_mode(FailureMode::default())
+    }
+
+    fn build_service_with_failure_mode(failure_mode: FailureMode) -> Service {
         Service {
             service_type: ServiceType::RateLimit,
             endpoint: "some_endpoint".into(),
-            failure_mode: FailureMode::default(),
+            failure_mode,
             timeout: Timeout::default(),
         }
     }
@@ -237,6 +248,35 @@ mod test {
             predicates,
             data,
         }
+    }
+
+    fn build_ratelimit_response(
+        status: RateLimitResponse_Code,
+        headers: Option<Vec<(&str, &str)>>,
+    ) -> RateLimitResponse {
+        let mut response = RateLimitResponse::new();
+        response.set_overall_code(status);
+        match status {
+            RateLimitResponse_Code::UNKNOWN => {}
+            RateLimitResponse_Code::OVER_LIMIT | RateLimitResponse_Code::OK => {
+                if let Some(header_list) = headers {
+                    response.set_response_headers_to_add(build_headers(header_list))
+                }
+            }
+        }
+        response
+    }
+
+    fn build_headers(headers: Vec<(&str, &str)>) -> RepeatedField<HeaderValue> {
+        headers
+            .into_iter()
+            .map(|(key, value)| {
+                let mut hv = HeaderValue::new();
+                hv.set_key(key.to_string());
+                hv.set_value(value.to_string());
+                hv
+            })
+            .collect::<RepeatedField<HeaderValue>>()
     }
 
     #[test]
@@ -367,5 +407,111 @@ mod test {
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
         assert_eq!(descriptor.get_entries()[1].key, String::from("key_3"));
         assert_eq!(descriptor.get_entries()[1].value, String::from("value_3"));
+    }
+
+    #[test]
+    fn process_ok_response() {
+        let action = build_action(Vec::default(), Vec::default());
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let ok_response_without_headers =
+            build_ratelimit_response(RateLimitResponse_Code::OK, None);
+        let result = rl_action.process_response(ok_response_without_headers);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_none());
+
+        let ok_response_with_header = build_ratelimit_response(
+            RateLimitResponse_Code::OK,
+            Some(vec![("my_header", "my_value")]),
+        );
+        let result = rl_action.process_response(ok_response_with_header);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_some());
+
+        let header_vec = headers.expect("is some");
+        assert_eq!(
+            header_vec[0],
+            ("my_header".to_string(), "my_value".to_string())
+        );
+    }
+
+    #[test]
+    fn process_overlimit_response() {
+        let headers = vec![("x-ratelimit-limit", "10"), ("x-ratelimit-remaining", "0")];
+        let action = build_action(Vec::default(), Vec::default());
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let overlimit_response_empty =
+            build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, None);
+        let result = rl_action.process_response(overlimit_response_empty);
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::TooManyRequests as u32
+        );
+        assert!(grpc_err_response.headers().is_empty());
+        assert_eq!(grpc_err_response.body(), "Too Many Requests\n");
+
+        let denied_response_headers =
+            build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, Some(headers.clone()));
+        let result = rl_action.process_response(denied_response_headers);
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::TooManyRequests as u32
+        );
+
+        let response_headers = grpc_err_response.headers();
+        headers.iter().zip(response_headers.iter()).for_each(
+            |((header_one, value_one), (header_two, value_two))| {
+                assert_eq!(header_one, header_two);
+                assert_eq!(value_one, value_two);
+            },
+        );
+
+        assert_eq!(grpc_err_response.body(), "Too Many Requests\n");
+    }
+
+    #[test]
+    fn process_error_response() {
+        let action = build_action(Vec::default(), Vec::default());
+        let deny_service = build_service_with_failure_mode(FailureMode::Deny);
+        let rl_action = RateLimitAction::new(&action, &deny_service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let error_response = build_ratelimit_response(RateLimitResponse_Code::UNKNOWN, None);
+        let result = rl_action.process_response(error_response.clone());
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::InternalServerError as u32
+        );
+
+        assert!(grpc_err_response.headers().is_empty());
+        assert_eq!(grpc_err_response.body(), "Internal Server Error.\n");
+
+        let allow_service = build_service_with_failure_mode(FailureMode::Allow);
+        let rl_action = RateLimitAction::new(&action, &allow_service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let result = rl_action.process_response(error_response);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_none());
     }
 }
