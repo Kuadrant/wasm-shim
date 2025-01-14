@@ -9,7 +9,6 @@ use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
 
 #[derive(Debug)]
 pub enum RuntimeAction {
@@ -48,14 +47,6 @@ impl RuntimeAction {
             Self::Auth(auth_action) => auth_action.get_failure_mode(),
             Self::RateLimit(rl_action) => rl_action.get_failure_mode(),
         }
-    }
-
-    pub fn get_timeout(&self) -> Duration {
-        self.grpc_service().get_timeout()
-    }
-
-    pub fn get_service_type(&self) -> ServiceType {
-        self.grpc_service().get_service_type()
     }
 
     #[must_use]

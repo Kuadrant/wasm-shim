@@ -1,13 +1,6 @@
-use crate::configuration::FailureMode;
-use crate::envoy::{
-    RateLimitDescriptor, RateLimitRequest, RateLimitResponse, RateLimitResponse_Code, StatusCode,
-};
-use crate::service::grpc_message::{GrpcMessageResponse, GrpcMessageResult};
-use crate::service::{GrpcResult, GrpcService};
-use log::{debug, warn};
+use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
+use log::debug;
 use protobuf::{Message, RepeatedField};
-use proxy_wasm::hostcalls;
-use proxy_wasm::types::Bytes;
 
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
@@ -36,59 +29,6 @@ impl RateLimitService {
             .write_to_bytes()
             .map_err(|e| debug!("Failed to write protobuf message to bytes: {e:?}"))
             .ok()
-    }
-
-    pub fn response_message(res_body_bytes: &Bytes) -> GrpcMessageResult<GrpcMessageResponse> {
-        match Message::parse_from_bytes(res_body_bytes) {
-            Ok(res) => Ok(GrpcMessageResponse::RateLimit(res)),
-            Err(e) => Err(e),
-        }
-    }
-
-    pub fn process_ratelimit_grpc_response(
-        rl_resp: GrpcMessageResponse,
-        failure_mode: FailureMode,
-    ) -> Result<GrpcResult, StatusCode> {
-        match rl_resp {
-            GrpcMessageResponse::RateLimit(RateLimitResponse {
-                overall_code: RateLimitResponse_Code::UNKNOWN,
-                ..
-            }) => {
-                GrpcService::handle_error_on_grpc_response(failure_mode);
-                Err(StatusCode::InternalServerError)
-            }
-            GrpcMessageResponse::RateLimit(RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OVER_LIMIT,
-                response_headers_to_add: rl_headers,
-                ..
-            }) => {
-                let mut response_headers = vec![];
-                for header in &rl_headers {
-                    response_headers.push((header.get_key(), header.get_value()));
-                }
-                hostcalls::send_http_response(429, response_headers, Some(b"Too Many Requests\n"))
-                    .expect("failed to send_http_response 429 while OVER_LIMIT");
-                Err(StatusCode::TooManyRequests)
-            }
-            GrpcMessageResponse::RateLimit(RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OK,
-                response_headers_to_add: additional_headers,
-                ..
-            }) => {
-                let result = GrpcResult::new(
-                    additional_headers
-                        .iter()
-                        .map(|header| (header.get_key().to_owned(), header.get_value().to_owned()))
-                        .collect(),
-                );
-                Ok(result)
-            }
-            _ => {
-                warn!("not a valid GrpcMessageResponse::RateLimit(RateLimitResponse)!");
-                GrpcService::handle_error_on_grpc_response(failure_mode);
-                Err(StatusCode::InternalServerError)
-            }
-        }
     }
 }
 

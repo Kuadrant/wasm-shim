@@ -6,9 +6,6 @@ mod data;
 mod envoy;
 mod filter;
 mod glob;
-
-#[allow(dead_code)]
-mod operation_dispatcher;
 mod ratelimit_action;
 mod runtime_action;
 mod runtime_action_set;
