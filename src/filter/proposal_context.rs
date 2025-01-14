@@ -61,6 +61,9 @@ pub mod no_implicit_dep {
         }
 
         pub fn fail(self) -> Operation {
+            //todo(adam-cattermole): should this take into account failure mode?
+            // these errors occurred at filter layer,
+            // i.e. error response / failed to read buffer / failed serdes
             Operation::Die(GrpcErrResponse::new_internal_server_error())
         }
     }

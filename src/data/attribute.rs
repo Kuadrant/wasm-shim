@@ -2,7 +2,6 @@ use crate::data::PropertyPath;
 use chrono::{DateTime, FixedOffset};
 use log::{debug, error, warn};
 use protobuf::well_known_types::Struct;
-use proxy_wasm::hostcalls;
 use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
@@ -120,7 +119,7 @@ where
 }
 
 pub fn set_attribute(attr: &str, value: &[u8]) {
-    match hostcalls::set_property(PropertyPath::from(attr).tokens(), Some(value)) {
+    match crate::data::property::set_property(PropertyPath::from(attr), Some(value)) {
         Ok(_) => (),
         Err(_) => error!("set_attribute: failed to set property {attr}"),
     };

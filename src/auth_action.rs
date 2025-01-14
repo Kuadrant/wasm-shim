@@ -46,10 +46,9 @@ impl AuthAction {
         &self,
         check_response: CheckResponse,
     ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
-        //todo(adam-cattermole):hostvar resolver...
+        //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
-        //todo(adam-cattermole): COMMENTED OUT FOR TESTS TO COMPILE
         store_metadata(check_response.get_dynamic_metadata());
 
         match check_response.http_response {

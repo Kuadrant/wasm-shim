@@ -226,7 +226,6 @@ mod test {
         Action, DataItem, DataType, ExpressionItem, FailureMode, Service, ServiceType, StaticItem,
         Timeout,
     };
-    use crate::envoy::HeaderValueOption;
 
     fn build_service() -> Service {
         build_service_with_failure_mode(FailureMode::default())
