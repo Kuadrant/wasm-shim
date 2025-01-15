@@ -1,5 +1,5 @@
 pub(crate) mod kuadrant_filter;
-
+pub(crate) mod operations;
 mod root_context;
 
 #[cfg_attr(
