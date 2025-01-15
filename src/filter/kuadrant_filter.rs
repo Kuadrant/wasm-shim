@@ -1,5 +1,5 @@
 use crate::action_set_index::ActionSetIndex;
-use crate::filter::proposal_context::no_implicit_dep::{
+use crate::filter::kuadrant_filter::no_implicit_dep::{
     GrpcMessageReceiverOperation, GrpcMessageSenderOperation, HeadersOperation, Operation,
 };
 use crate::runtime_action_set::RuntimeActionSet;
@@ -11,7 +11,7 @@ use std::mem;
 use std::rc::Rc;
 
 pub mod no_implicit_dep {
-    use crate::filter::proposal_context::no_implicit_dep::Operation::SendGrpcRequest;
+    use crate::filter::kuadrant_filter::no_implicit_dep::Operation::SendGrpcRequest;
     use crate::runtime_action_set::RuntimeActionSet;
     use crate::service::{GrpcErrResponse, GrpcRequest, IndexedGrpcRequest};
     use std::rc::Rc;
@@ -113,7 +113,7 @@ pub mod no_implicit_dep {
     }
 }
 
-pub(crate) struct Filter {
+pub(crate) struct KuadrantFilter {
     context_id: u32,
     index: Rc<ActionSetIndex>,
     header_resolver: Rc<HeaderResolver>,
@@ -122,7 +122,7 @@ pub(crate) struct Filter {
     headers_operations: Vec<HeadersOperation>,
 }
 
-impl Context for Filter {
+impl Context for KuadrantFilter {
     fn on_grpc_call_response(&mut self, _token_id: u32, status_code: u32, resp_size: usize) {
         let receiver = mem::take(&mut self.grpc_message_receiver_operation)
             .expect("We need an operation pending a gRPC response");
@@ -143,7 +143,7 @@ impl Context for Filter {
     }
 }
 
-impl HttpContext for Filter {
+impl HttpContext for KuadrantFilter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         if let Some(action_sets) = self
             .index
@@ -170,7 +170,7 @@ impl HttpContext for Filter {
     }
 }
 
-impl Filter {
+impl KuadrantFilter {
     fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>) -> Action {
         let grpc_request = action_set.find_first_grpc_request();
         let op = match grpc_request {
