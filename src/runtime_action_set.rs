@@ -80,7 +80,7 @@ impl RuntimeActionSet {
         &self,
         index: usize,
         msg: &[u8],
-    ) -> Result<(Option<IndexedGrpcRequest>, Option<Vec<(String, String)>>), GrpcErrResponse> {
+    ) -> Result<(Option<IndexedGrpcRequest>, Vec<(String, String)>), GrpcErrResponse> {
         self.runtime_actions[index]
             .process_response(msg)
             .map(|headers| {

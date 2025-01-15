@@ -45,7 +45,7 @@ impl AuthAction {
     pub fn process_response(
         &self,
         check_response: CheckResponse,
-    ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
+    ) -> Result<Vec<(String, String)>, GrpcErrResponse> {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
@@ -58,7 +58,7 @@ impl AuthAction {
                     FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                     FailureMode::Allow => {
                         debug!("process_response(auth): continuing as FailureMode Allow");
-                        Ok(None)
+                        Ok(Vec::default())
                     }
                 }
             }
@@ -87,13 +87,7 @@ impl AuthAction {
                 if !ok_response.get_query_parameters_to_remove().is_empty() {
                     panic!("process_response(auth): response contained query_parameters_to_remove which is unsupported!")
                 }
-
-                let response_headers = Self::get_header_vec(ok_response.get_headers());
-                if response_headers.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(response_headers))
-                }
+                Ok(Self::get_header_vec(ok_response.get_headers()))
             }
         }
     }
@@ -235,7 +229,7 @@ mod test {
         assert!(result.is_ok());
 
         let headers = result.expect("is ok");
-        assert!(headers.is_none());
+        assert!(headers.is_empty());
 
         let ok_response_with_header =
             build_check_response(StatusCode::OK, Some(vec![("my_header", "my_value")]), None);
@@ -243,11 +237,10 @@ mod test {
         assert!(result.is_ok());
 
         let headers = result.expect("is ok");
-        assert!(headers.is_some());
+        assert!(!headers.is_empty());
 
-        let header_vec = headers.expect("is some");
         assert_eq!(
-            header_vec[0],
+            headers[0],
             ("my_header".to_string(), "my_value".to_string())
         );
     }
@@ -320,6 +313,6 @@ mod test {
         assert!(result.is_ok());
 
         let headers = result.expect("is ok");
-        assert!(headers.is_none());
+        assert!(headers.is_empty());
     }
 }

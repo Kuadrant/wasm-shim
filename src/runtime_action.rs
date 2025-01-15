@@ -67,10 +67,7 @@ impl RuntimeAction {
         }
     }
 
-    pub fn process_response(
-        &self,
-        msg: &[u8],
-    ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
+    pub fn process_response(&self, msg: &[u8]) -> Result<Vec<(String, String)>, GrpcErrResponse> {
         match self {
             Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
                 Ok(check_response) => auth_action.process_response(check_response),
@@ -80,7 +77,7 @@ impl RuntimeAction {
                         FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                         FailureMode::Allow => {
                             debug!("process_response(auth): continuing as FailureMode Allow");
-                            Ok(None)
+                            Ok(Vec::default())
                         }
                     }
                 }
@@ -93,7 +90,7 @@ impl RuntimeAction {
                         FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                         FailureMode::Allow => {
                             debug!("process_response(rl): continuing as FailureMode Allow");
-                            Ok(None)
+                            Ok(Vec::default())
                         }
                     }
                 }

@@ -167,7 +167,7 @@ impl RateLimitAction {
     pub fn process_response(
         &self,
         rate_limit_response: RateLimitResponse,
-    ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
+    ) -> Result<Vec<(String, String)>, GrpcErrResponse> {
         match rate_limit_response {
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
@@ -178,7 +178,7 @@ impl RateLimitAction {
                     FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                     FailureMode::Allow => {
                         debug!("process_response(rl): continuing as FailureMode Allow");
-                        Ok(None)
+                        Ok(Vec::default())
                     }
                 }
             }
@@ -201,12 +201,7 @@ impl RateLimitAction {
                 ..
             } => {
                 debug!("process_response(rl): received OK response");
-                let response_headers = Self::get_header_vec(additional_headers);
-                if response_headers.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(response_headers))
-                }
+                Ok(Self::get_header_vec(additional_headers))
             }
         }
     }
@@ -421,7 +416,7 @@ mod test {
         assert!(result.is_ok());
 
         let headers = result.expect("is ok");
-        assert!(headers.is_none());
+        assert!(headers.is_empty());
 
         let ok_response_with_header = build_ratelimit_response(
             RateLimitResponse_Code::OK,
@@ -431,11 +426,10 @@ mod test {
         assert!(result.is_ok());
 
         let headers = result.expect("is ok");
-        assert!(headers.is_some());
+        assert!(!headers.is_empty());
 
-        let header_vec = headers.expect("is some");
         assert_eq!(
-            header_vec[0],
+            headers[0],
             ("my_header".to_string(), "my_value".to_string())
         );
     }
@@ -511,6 +505,6 @@ mod test {
         assert!(result.is_ok());
 
         let headers = result.expect("is ok");
-        assert!(headers.is_none());
+        assert!(headers.is_empty());
     }
 }

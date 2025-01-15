@@ -73,7 +73,7 @@ pub mod no_implicit_dep {
             match result {
                 Ok((next_msg, headers)) => {
                     let mut operations = Vec::new();
-                    if let Some(headers) = headers {
+                    if !headers.is_empty() {
                         operations.push(Operation::AddHeaders(HeadersOperation::new(headers)))
                     }
                     operations.push(match next_msg {
