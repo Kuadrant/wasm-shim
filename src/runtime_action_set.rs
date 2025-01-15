@@ -60,7 +60,7 @@ impl RuntimeActionSet {
         self.route_rule_predicates.apply()
     }
 
-    pub fn start_flow(&self) -> Option<IndexedGrpcRequest> {
+    pub fn find_first_grpc_request(&self) -> Option<IndexedGrpcRequest> {
         self.find_next_grpc_request(0)
     }
 

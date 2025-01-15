@@ -2,6 +2,7 @@ use crate::action_set_index::ActionSetIndex;
 use crate::filter::proposal_context::no_implicit_dep::{
     GrpcMessageReceiverOperation, GrpcMessageSenderOperation, HeadersOperation, Operation,
 };
+use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver};
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
@@ -152,14 +153,7 @@ impl HttpContext for Filter {
                 .iter()
                 .find(|action_set| action_set.conditions_apply(/* self */))
             {
-                let grpc_request = action_set.start_flow();
-                let op = match grpc_request {
-                    None => Operation::Done(),
-                    Some(indexed_req) => Operation::SendGrpcRequest(
-                        GrpcMessageSenderOperation::new(Rc::clone(action_set), indexed_req),
-                    ),
-                };
-                return self.handle_operation(op);
+                return self.start_flow(Rc::clone(action_set));
             }
         }
         Action::Continue
@@ -177,6 +171,17 @@ impl HttpContext for Filter {
 }
 
 impl Filter {
+    fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>) -> Action {
+        let grpc_request = action_set.find_first_grpc_request();
+        let op = match grpc_request {
+            None => Operation::Done(),
+            Some(indexed_req) => {
+                Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(action_set, indexed_req))
+            }
+        };
+        self.handle_operation(op)
+    }
+
     fn handle_operation(&mut self, operation: Operation) -> Action {
         match operation {
             Operation::SendGrpcRequest(sender_op) => {
