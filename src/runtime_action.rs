@@ -1,6 +1,5 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::envoy::{CheckResponse, RateLimitResponse};
 use crate::ratelimit_action::RateLimitAction;
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
@@ -73,17 +72,32 @@ impl RuntimeAction {
         msg: &[u8],
     ) -> Result<Option<Vec<(String, String)>>, GrpcErrResponse> {
         match self {
-            Self::Auth(auth_action) => {
-                // todo(adam-cattermole): should this expect be here?
-                let check_response: CheckResponse =
-                    Message::parse_from_bytes(msg).expect("invalid state!");
-                auth_action.process_response(check_response)
-            }
-            Self::RateLimit(rl_action) => {
-                let rate_limit_response: RateLimitResponse =
-                    Message::parse_from_bytes(msg).expect("invalid state!");
-                rl_action.process_response(rate_limit_response)
-            }
+            Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
+                Ok(check_response) => auth_action.process_response(check_response),
+                Err(e) => {
+                    debug!("process_response(auth): failed to parse response `{e:?}`");
+                    match self.get_failure_mode() {
+                        FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+                        FailureMode::Allow => {
+                            debug!("process_response(auth): continuing as FailureMode Allow");
+                            Ok(None)
+                        }
+                    }
+                }
+            },
+            Self::RateLimit(rl_action) => match Message::parse_from_bytes(msg) {
+                Ok(rate_limit_response) => rl_action.process_response(rate_limit_response),
+                Err(e) => {
+                    debug!("process_response(rl): failed to parse response `{e:?}`");
+                    match self.get_failure_mode() {
+                        FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+                        FailureMode::Allow => {
+                            debug!("process_response(rl): continuing as FailureMode Allow");
+                            Ok(None)
+                        }
+                    }
+                }
+            },
         }
     }
 
