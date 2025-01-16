@@ -20,7 +20,11 @@ pub(crate) struct KuadrantFilter {
 }
 
 impl Context for KuadrantFilter {
-    fn on_grpc_call_response(&mut self, _token_id: u32, status_code: u32, resp_size: usize) {
+    fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, resp_size: usize) {
+        debug!(
+            "#{} on_grpc_call_response: received gRPC call response: token: {token_id}, status: {status_code}",
+            self.context_id
+        );
         let receiver = mem::take(&mut self.grpc_message_receiver_operation)
             .expect("We need an operation pending a gRPC response");
 
@@ -42,6 +46,11 @@ impl Context for KuadrantFilter {
 
 impl HttpContext for KuadrantFilter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
+        debug!("#{} on_http_request_headers", self.context_id);
+
+        #[cfg(feature = "debug-host-behaviour")]
+        crate::data::debug_all_well_known_attributes();
+
         if let Some(action_sets) = self
             .index
             .get_longest_match_action_sets(self.request_authority().as_ref())
@@ -50,6 +59,10 @@ impl HttpContext for KuadrantFilter {
                 .iter()
                 .find(|action_set| action_set.conditions_apply(/* self */))
             {
+                debug!(
+                    "#{} action_set selected {}",
+                    self.context_id, action_set.name
+                );
                 return self.start_flow(Rc::clone(action_set));
             }
         }
@@ -57,6 +70,7 @@ impl HttpContext for KuadrantFilter {
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+        debug!("#{} on_http_response_headers", self.context_id);
         let headers_operations = mem::take(&mut self.headers_operations);
         for op in headers_operations {
             for (header, value) in &op.headers() {
