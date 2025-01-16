@@ -1,7 +1,7 @@
 use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{store_metadata, Predicate, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
-use crate::service::{GrpcErrResponse, GrpcService};
+use crate::service::{GrpcErrResponse, GrpcService, Headers};
 use log::debug;
 use std::rc::Rc;
 
@@ -45,7 +45,7 @@ impl AuthAction {
     pub fn process_response(
         &self,
         check_response: CheckResponse,
-    ) -> Result<Vec<(String, String)>, GrpcErrResponse> {
+    ) -> Result<Headers, GrpcErrResponse> {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
@@ -92,7 +92,7 @@ impl AuthAction {
         }
     }
 
-    fn get_header_vec(headers: &[HeaderValueOption]) -> Vec<(String, String)> {
+    fn get_header_vec(headers: &[HeaderValueOption]) -> Headers {
         headers
             .iter()
             .map(|header| {

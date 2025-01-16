@@ -3,7 +3,7 @@ use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::ratelimit_action::RateLimitAction;
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
-use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService};
+use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService, Headers};
 use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ impl RuntimeAction {
         }
     }
 
-    pub fn process_response(&self, msg: &[u8]) -> Result<Vec<(String, String)>, GrpcErrResponse> {
+    pub fn process_response(&self, msg: &[u8]) -> Result<Headers, GrpcErrResponse> {
         match self {
             Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
                 Ok(check_response) => auth_action.process_response(check_response),

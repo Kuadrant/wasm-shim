@@ -1,6 +1,6 @@
 use crate::filter::operations::Operation::SendGrpcRequest;
 use crate::runtime_action_set::RuntimeActionSet;
-use crate::service::{GrpcErrResponse, GrpcRequest, IndexedGrpcRequest};
+use crate::service::{GrpcErrResponse, GrpcRequest, Headers, IndexedGrpcRequest};
 use std::rc::Rc;
 
 pub enum Operation {
@@ -86,15 +86,15 @@ impl GrpcMessageReceiverOperation {
 }
 
 pub struct HeadersOperation {
-    headers: Vec<(String, String)>,
+    headers: Headers,
 }
 
 impl HeadersOperation {
-    pub fn new(headers: Vec<(String, String)>) -> Self {
+    pub fn new(headers: Headers) -> Self {
         Self { headers }
     }
 
-    pub fn headers(self) -> Vec<(String, String)> {
+    pub fn headers(self) -> Headers {
         self.headers
     }
 }

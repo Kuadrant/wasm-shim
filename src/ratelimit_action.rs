@@ -5,7 +5,7 @@ use crate::envoy::{
     HeaderValue, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse,
     RateLimitResponse_Code, StatusCode,
 };
-use crate::service::{GrpcErrResponse, GrpcService};
+use crate::service::{GrpcErrResponse, GrpcService, Headers};
 use cel_interpreter::Value;
 use log::{debug, error};
 use protobuf::RepeatedField;
@@ -206,7 +206,7 @@ impl RateLimitAction {
         }
     }
 
-    fn get_header_vec(headers: RepeatedField<HeaderValue>) -> Vec<(String, String)> {
+    fn get_header_vec(headers: RepeatedField<HeaderValue>) -> Headers {
         headers
             .iter()
             .map(|header| (header.key.to_owned(), header.value.to_owned()))

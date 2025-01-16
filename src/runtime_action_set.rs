@@ -1,7 +1,7 @@
 use crate::configuration::{ActionSet, Service};
 use crate::data::{Predicate, PredicateVec};
 use crate::runtime_action::RuntimeAction;
-use crate::service::{GrpcErrResponse, IndexedGrpcRequest};
+use crate::service::{GrpcErrResponse, Headers, IndexedGrpcRequest};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -80,7 +80,7 @@ impl RuntimeActionSet {
         &self,
         index: usize,
         msg: &[u8],
-    ) -> Result<(Option<IndexedGrpcRequest>, Vec<(String, String)>), GrpcErrResponse> {
+    ) -> Result<(Option<IndexedGrpcRequest>, Headers), GrpcErrResponse> {
         self.runtime_actions[index]
             .process_response(msg)
             .map(|headers| {

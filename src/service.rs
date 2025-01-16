@@ -130,15 +130,16 @@ impl GrpcRequest {
     }
 }
 
+pub type Headers = Vec<(String, String)>;
 #[derive(Debug)]
 pub struct GrpcErrResponse {
     status_code: u32,
-    response_headers: Vec<(String, String)>,
+    response_headers: Headers,
     body: String,
 }
 
 impl GrpcErrResponse {
-    pub fn new(status_code: u32, response_headers: Vec<(String, String)>, body: String) -> Self {
+    pub fn new(status_code: u32, response_headers: Headers, body: String) -> Self {
         Self {
             status_code,
             response_headers,
