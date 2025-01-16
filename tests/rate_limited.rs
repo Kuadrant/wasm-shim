@@ -53,10 +53,6 @@ fn it_loads() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
         .returning(Some("cars.toystore.com"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 allowing request to pass because zero descriptors generated"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -168,6 +164,10 @@ fn it_limits() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -186,7 +186,7 @@ fn it_limits() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -200,6 +200,11 @@ fn it_limits() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -311,6 +316,10 @@ fn it_passes_additional_headers() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -329,7 +338,7 @@ fn it_passes_additional_headers() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -347,6 +356,12 @@ fn it_passes_additional_headers() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: AddHeaders"))
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -444,6 +459,10 @@ fn it_rate_limits_with_empty_predicates() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -462,7 +481,7 @@ fn it_rate_limits_with_empty_predicates() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -476,6 +495,11 @@ fn it_rate_limits_with_empty_predicates() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -568,8 +592,9 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
         .returning(Some(data::request::path::ADMIN))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("grpc_message_request: empty descriptors"),
+            Some("build_message(rl): empty descriptors"),
         )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -682,6 +707,10 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -700,7 +729,7 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -714,6 +743,11 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
