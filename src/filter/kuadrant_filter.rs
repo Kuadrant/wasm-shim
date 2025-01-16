@@ -100,10 +100,10 @@ impl KuadrantFilter {
                 let next_op = {
                     let (req, receiver_op) = sender_op.build_receiver_operation();
                     match self.send_grpc_request(req) {
-                        Ok(_token) => receiver_op,
+                        Ok(_token) => Operation::AwaitGrpcResponse(receiver_op),
                         Err(status) => {
                             debug!("handle_operation: failed to send grpc request `{status:?}`");
-                            Operation::Die(GrpcErrResponse::new_internal_server_error())
+                            receiver_op.fail()
                         }
                     }
                 };

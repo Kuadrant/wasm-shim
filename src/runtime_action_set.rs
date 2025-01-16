@@ -64,7 +64,7 @@ impl RuntimeActionSet {
         self.find_next_grpc_request(0)
     }
 
-    fn find_next_grpc_request(&self, start: usize) -> Option<IndexedGrpcRequest> {
+    pub fn find_next_grpc_request(&self, start: usize) -> Option<IndexedGrpcRequest> {
         self.runtime_actions
             .iter()
             .skip(start)

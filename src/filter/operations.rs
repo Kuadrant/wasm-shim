@@ -1,3 +1,4 @@
+use crate::configuration::FailureMode;
 use crate::filter::operations::Operation::SendGrpcRequest;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, Headers, IndexedGrpcRequest};
@@ -28,14 +29,11 @@ impl GrpcMessageSenderOperation {
         }
     }
 
-    pub fn build_receiver_operation(self) -> (GrpcRequest, Operation) {
+    pub fn build_receiver_operation(self) -> (GrpcRequest, GrpcMessageReceiverOperation) {
         let index = self.grpc_request.index();
         (
             self.grpc_request.request(),
-            Operation::AwaitGrpcResponse(GrpcMessageReceiverOperation::new(
-                self.runtime_action_set,
-                index,
-            )),
+            GrpcMessageReceiverOperation::new(self.runtime_action_set, index),
         )
     }
 }
@@ -78,10 +76,19 @@ impl GrpcMessageReceiverOperation {
     }
 
     pub fn fail(self) -> Operation {
-        //todo(adam-cattermole): should this take into account failure mode?
-        // these errors occurred at filter layer,
-        // i.e. error response / failed to read buffer / failed serdes
-        Operation::Die(GrpcErrResponse::new_internal_server_error())
+        match self.runtime_action_set.runtime_actions[self.current_index].get_failure_mode() {
+            FailureMode::Deny => Operation::Die(GrpcErrResponse::new_internal_server_error()),
+            FailureMode::Allow => match self
+                .runtime_action_set
+                .find_next_grpc_request(self.current_index + 1)
+            {
+                None => Operation::Done(),
+                Some(indexed_req) => Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(
+                    self.runtime_action_set,
+                    indexed_req,
+                )),
+            },
+        }
     }
 }
 
