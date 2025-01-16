@@ -1,7 +1,7 @@
 use crate::configuration::{ActionSet, Service};
-use crate::data::Predicate;
+use crate::data::{Predicate, PredicateVec};
 use crate::runtime_action::RuntimeAction;
-use log::error;
+use crate::service::{GrpcErrResponse, Headers, IndexedGrpcRequest};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -57,14 +57,35 @@ impl RuntimeActionSet {
     }
 
     pub fn conditions_apply(&self) -> bool {
-        let predicates = &self.route_rule_predicates;
-        predicates.is_empty()
-            || predicates.iter().all(|predicate| match predicate.test() {
-                Ok(b) => b,
-                Err(err) => {
-                    error!("Failed to evaluate {:?}: {}", predicate, err);
-                    panic!("Err out of this!")
-                }
+        self.route_rule_predicates.apply()
+    }
+
+    pub fn find_first_grpc_request(&self) -> Option<IndexedGrpcRequest> {
+        self.find_next_grpc_request(0)
+    }
+
+    pub fn find_next_grpc_request(&self, start: usize) -> Option<IndexedGrpcRequest> {
+        self.runtime_actions
+            .iter()
+            .skip(start)
+            .enumerate()
+            .find_map(|(i, action)| {
+                action
+                    .process_request()
+                    .map(|request| IndexedGrpcRequest::new(start + i, request))
+            })
+    }
+
+    pub fn process_grpc_response(
+        &self,
+        index: usize,
+        msg: &[u8],
+    ) -> Result<(Option<IndexedGrpcRequest>, Headers), GrpcErrResponse> {
+        self.runtime_actions[index]
+            .process_response(msg)
+            .map(|headers| {
+                let next_msg = self.find_next_grpc_request(index + 1);
+                (next_msg, headers)
             })
     }
 }

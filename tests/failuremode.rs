@@ -101,6 +101,10 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -119,7 +123,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         .returning(Ok(first_call_token_id))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -132,8 +136,10 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {first_call_token_id}, status: {status_code}").as_str()),
         )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&[]))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -143,6 +149,10 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(second_call_token_id))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: AwaitGrpcResponse"),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -159,6 +169,14 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: Done"),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -264,6 +282,10 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -282,7 +304,7 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -294,8 +316,10 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: 42, status: {status_code}").as_str()),
         )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&[]))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: Die"),
+        )
         .expect_send_local_response(Some(500), None, None, None)
         .execute_and_expect(ReturnType::None)
         .unwrap();
