@@ -3,11 +3,11 @@ name: Rust
 
 on:
   push:
-    branches:
-      - 'main'
+    branches: ['main']
   pull_request:
-    branches:
-      - '*'
+    branches: ['*']
+  merge_group:
+    types: [ checks_requested ]
   schedule:
     - cron: '5 4 * * *'
 

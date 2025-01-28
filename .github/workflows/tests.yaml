@@ -3,11 +3,11 @@ name: Tests
 
 on:
   push:
-    branches:
-      - 'main'
+    branches: ['main']
   pull_request:
-    branches:
-      - '*'
+    branches: ['*']
+  merge_group:
+    types: [ checks_requested ]
 
 jobs:
   test:
