@@ -181,6 +181,10 @@ fn it_performs_authenticated_rate_limiting() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -199,7 +203,7 @@ fn it_performs_authenticated_rate_limiting() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -215,7 +219,15 @@ fn it_performs_authenticated_rate_limiting() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_response(auth): store_metadata"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received OkHttpResponse"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -226,6 +238,10 @@ fn it_performs_authenticated_rate_limiting() {
             Some(5000),
         )
         .returning(Ok(43))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: AwaitGrpcResponse"),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -238,6 +254,11 @@ fn it_performs_authenticated_rate_limiting() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -378,6 +399,10 @@ fn unauthenticated_does_not_ratelimit() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -396,7 +421,7 @@ fn unauthenticated_does_not_ratelimit() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -419,8 +444,13 @@ fn unauthenticated_does_not_ratelimit() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received DeniedHttpResponse"),
+            Some("process_response(auth): store_metadata"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received DeniedHttpResponse"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(401),
             None,
@@ -638,6 +668,10 @@ fn authenticated_one_ratelimit_action_matches() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -656,7 +690,7 @@ fn authenticated_one_ratelimit_action_matches() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -672,7 +706,11 @@ fn authenticated_one_ratelimit_action_matches() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_response(auth): store_metadata"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received OkHttpResponse"),
         )
         // conditions checks
         .expect_log(
@@ -687,6 +725,10 @@ fn authenticated_one_ratelimit_action_matches() {
         )
         .expect_get_property(Some(vec!["source", "address"]))
         .returning(Some("1.2.3.4:80".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -696,6 +738,10 @@ fn authenticated_one_ratelimit_action_matches() {
             Some(5000),
         )
         .returning(Ok(43))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: AwaitGrpcResponse"),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -708,6 +754,11 @@ fn authenticated_one_ratelimit_action_matches() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

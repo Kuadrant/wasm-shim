@@ -1,10 +1,13 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::ratelimit_action::RateLimitAction;
-use crate::service::GrpcService;
+use crate::service::auth::AuthService;
+use crate::service::rate_limit::RateLimitService;
+use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService, Headers};
+use log::debug;
+use protobuf::Message;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
 
 #[derive(Debug)]
 pub enum RuntimeAction {
@@ -45,14 +48,6 @@ impl RuntimeAction {
         }
     }
 
-    pub fn get_timeout(&self) -> Duration {
-        self.grpc_service().get_timeout()
-    }
-
-    pub fn get_service_type(&self) -> ServiceType {
-        self.grpc_service().get_service_type()
-    }
-
     #[must_use]
     pub fn merge(&mut self, other: RuntimeAction) -> Option<RuntimeAction> {
         // only makes sense for rate limiting actions
@@ -62,6 +57,65 @@ impl RuntimeAction {
             }
         }
         Some(other)
+    }
+
+    pub fn process_request(&self) -> Option<GrpcRequest> {
+        if !self.conditions_apply() {
+            None
+        } else {
+            self.grpc_service().build_request(self.build_message())
+        }
+    }
+
+    pub fn process_response(&self, msg: &[u8]) -> Result<Headers, GrpcErrResponse> {
+        match self {
+            Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
+                Ok(check_response) => auth_action.process_response(check_response),
+                Err(e) => {
+                    debug!("process_response(auth): failed to parse response `{e:?}`");
+                    match self.get_failure_mode() {
+                        FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+                        FailureMode::Allow => {
+                            debug!("process_response(auth): continuing as FailureMode Allow");
+                            Ok(Vec::default())
+                        }
+                    }
+                }
+            },
+            Self::RateLimit(rl_action) => match Message::parse_from_bytes(msg) {
+                Ok(rate_limit_response) => rl_action.process_response(rate_limit_response),
+                Err(e) => {
+                    debug!("process_response(rl): failed to parse response `{e:?}`");
+                    match self.get_failure_mode() {
+                        FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+                        FailureMode::Allow => {
+                            debug!("process_response(rl): continuing as FailureMode Allow");
+                            Ok(Vec::default())
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    pub fn build_message(&self) -> Option<Vec<u8>> {
+        match self {
+            RuntimeAction::RateLimit(rl_action) => {
+                let descriptor = rl_action.build_descriptor();
+                if descriptor.entries.is_empty() {
+                    debug!("build_message(rl): empty descriptors");
+                    None
+                } else {
+                    RateLimitService::request_message_as_bytes(
+                        String::from(rl_action.scope()),
+                        vec![descriptor].into(),
+                    )
+                }
+            }
+            RuntimeAction::Auth(auth_action) => {
+                AuthService::request_message_as_bytes(String::from(auth_action.scope()))
+            }
+        }
     }
 }
 

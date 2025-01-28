@@ -102,6 +102,10 @@ fn it_limits_based_on_source_address() {
         )
         .expect_get_property(Some(vec!["source", "address"]))
         .returning(Some(data::source::ADDRESS))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -124,7 +128,7 @@ fn it_limits_based_on_source_address() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -138,6 +142,11 @@ fn it_limits_based_on_source_address() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(rl): received OK response"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

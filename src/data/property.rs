@@ -55,6 +55,14 @@ pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
     }
 }
 
+#[cfg(test)]
+pub fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status> {
+    debug!("set_property: {:?}", path);
+    let data = value.map(|bytes| bytes.to_vec()).unwrap_or_default();
+    test::TEST_PROPERTY_VALUE.set(Some((path, data)));
+    Ok(())
+}
+
 #[cfg(not(test))]
 pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
     match *path.tokens() {
@@ -77,12 +85,22 @@ pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> 
     proxy_wasm::hostcalls::get_property(path.tokens())
 }
 
+#[cfg(not(test))]
+pub(super) fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status> {
+    debug!("set_property: {:?}", path);
+    proxy_wasm::hostcalls::set_property(path.tokens(), value)
+}
+
 pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
         ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
         _ => host_get_property(path),
     }
+}
+
+pub(super) fn set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status> {
+    host_set_property(path, value)
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]

@@ -164,6 +164,10 @@ fn it_auths() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -182,7 +186,7 @@ fn it_auths() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -205,8 +209,13 @@ fn it_auths() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_response(auth): store_metadata"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received OkHttpResponse"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -347,6 +356,10 @@ fn it_denies() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -365,7 +378,7 @@ fn it_denies() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -388,8 +401,13 @@ fn it_denies() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received DeniedHttpResponse"),
+            Some("process_response(auth): store_metadata"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received DeniedHttpResponse"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(401),
             None,
@@ -548,6 +566,10 @@ fn it_does_not_fold_auth_actions() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -566,7 +588,7 @@ fn it_does_not_fold_auth_actions() {
         .returning(Ok(42))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 initiated gRPC call (id# 42)"),
+            Some("handle_operation: AwaitGrpcResponse"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
@@ -589,7 +611,11 @@ fn it_does_not_fold_auth_actions() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_response(auth): store_metadata"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received OkHttpResponse"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
@@ -653,6 +679,10 @@ fn it_does_not_fold_auth_actions() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: SendGrpcRequest"),
+        )
         .expect_grpc_call(
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
@@ -662,6 +692,10 @@ fn it_does_not_fold_auth_actions() {
             Some(5000),
         )
         .returning(Ok(42))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("handle_operation: AwaitGrpcResponse"),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -683,8 +717,13 @@ fn it_does_not_fold_auth_actions() {
         .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_auth_grpc_response: received OkHttpResponse"),
+            Some("process_response(auth): store_metadata"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("process_response(auth): received OkHttpResponse"),
+        )
+        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

@@ -3,11 +3,7 @@ use crate::configuration::PluginConfiguration;
 use crate::runtime_action_set::RuntimeActionSet;
 use std::rc::Rc;
 
-pub(crate) struct RuntimeConfig {
-    pub index: ActionSetIndex,
-}
-
-impl TryFrom<PluginConfiguration> for RuntimeConfig {
+impl TryFrom<PluginConfiguration> for ActionSetIndex {
     type Error = String;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
@@ -19,15 +15,13 @@ impl TryFrom<PluginConfiguration> for RuntimeConfig {
             }
         }
 
-        Ok(Self { index })
+        Ok(index)
     }
 }
 
-impl Default for RuntimeConfig {
+impl Default for ActionSetIndex {
     fn default() -> Self {
-        Self {
-            index: ActionSetIndex::new(),
-        }
+        ActionSetIndex::new()
     }
 }
 
@@ -97,21 +91,15 @@ mod test {
         }
         assert!(res.is_ok());
 
-        let result = RuntimeConfig::try_from(res.unwrap());
-        let runtime_config = result.expect("That didn't work");
-        let rlp_option = runtime_config
-            .index
-            .get_longest_match_action_sets("example.com");
+        let result = ActionSetIndex::try_from(res.unwrap());
+        let index = result.expect("That didn't work");
+        let rlp_option = index.get_longest_match_action_sets("example.com");
         assert!(rlp_option.is_some());
 
-        let rlp_option = runtime_config
-            .index
-            .get_longest_match_action_sets("test.toystore.com");
+        let rlp_option = index.get_longest_match_action_sets("test.toystore.com");
         assert!(rlp_option.is_some());
 
-        let rlp_option = runtime_config
-            .index
-            .get_longest_match_action_sets("unknown");
+        let rlp_option = index.get_longest_match_action_sets("unknown");
         assert!(rlp_option.is_none());
     }
 
@@ -151,7 +139,7 @@ mod test {
         }
         assert!(serde_res.is_ok());
 
-        let result = RuntimeConfig::try_from(serde_res.expect("That didn't work"));
+        let result = ActionSetIndex::try_from(serde_res.expect("That didn't work"));
         assert_eq!(result.err(), Some("Unknown service: unknown".into()));
     }
 }
