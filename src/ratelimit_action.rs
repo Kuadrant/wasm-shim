@@ -5,7 +5,7 @@ use crate::envoy::{
     HeaderValue, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse,
     RateLimitResponse_Code, StatusCode,
 };
-use crate::service::{GrpcErrResponse, GrpcService, Headers};
+use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
 use cel_interpreter::Value;
 use log::{debug, error};
 use protobuf::RepeatedField;
@@ -167,7 +167,7 @@ impl RateLimitAction {
     pub fn process_response(
         &self,
         rate_limit_response: RateLimitResponse,
-    ) -> Result<Vec<(String, String)>, GrpcErrResponse> {
+    ) -> Result<HeaderKind, GrpcErrResponse> {
         match rate_limit_response {
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
@@ -178,7 +178,7 @@ impl RateLimitAction {
                     FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                     FailureMode::Allow => {
                         debug!("process_response(rl): continuing as FailureMode Allow");
-                        Ok(Vec::default())
+                        Ok(HeaderKind::Response(Vec::default()))
                     }
                 }
             }
@@ -201,7 +201,9 @@ impl RateLimitAction {
                 ..
             } => {
                 debug!("process_response(rl): received OK response");
-                Ok(Self::get_header_vec(additional_headers))
+                Ok(HeaderKind::Response(Self::get_header_vec(
+                    additional_headers,
+                )))
             }
         }
     }
@@ -425,13 +427,18 @@ mod test {
         let result = rl_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
 
-        let headers = result.expect("is ok");
-        assert!(!headers.is_empty());
-
-        assert_eq!(
-            headers[0],
-            ("my_header".to_string(), "my_value".to_string())
-        );
+        match result.expect("is ok") {
+            HeaderKind::Response(headers) => {
+                assert!(!headers.is_empty());
+                assert_eq!(
+                    headers[0],
+                    ("my_header".to_string(), "my_value".to_string())
+                );
+            }
+            HeaderKind::Request(_headers) => {
+                panic!("ratelimitresponse should not return Request headers")
+            }
+        }
     }
 
     #[test]
