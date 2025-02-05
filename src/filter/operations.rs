@@ -1,13 +1,13 @@
 use crate::configuration::FailureMode;
 use crate::filter::operations::Operation::SendGrpcRequest;
 use crate::runtime_action_set::RuntimeActionSet;
-use crate::service::{GrpcErrResponse, GrpcRequest, Headers, IndexedGrpcRequest};
+use crate::service::{GrpcErrResponse, GrpcRequest, HeaderKind, IndexedGrpcRequest};
 use std::rc::Rc;
 
 pub enum Operation {
     SendGrpcRequest(GrpcMessageSenderOperation),
     AwaitGrpcResponse(GrpcMessageReceiverOperation),
-    AddHeaders(HeadersOperation),
+    AddHeaders(HeaderOperation),
     Die(GrpcErrResponse),
     // Done indicates that we have no more operations and can resume the http request flow
     Done(),
@@ -60,7 +60,7 @@ impl GrpcMessageReceiverOperation {
             Ok((next_msg, headers)) => {
                 let mut operations = Vec::new();
                 if !headers.is_empty() {
-                    operations.push(Operation::AddHeaders(HeadersOperation::new(headers)))
+                    operations.push(Operation::AddHeaders(HeaderOperation::new(headers)))
                 }
                 operations.push(match next_msg {
                     None => Operation::Done(),
@@ -92,16 +92,16 @@ impl GrpcMessageReceiverOperation {
     }
 }
 
-pub struct HeadersOperation {
-    headers: Headers,
+pub struct HeaderOperation {
+    headers: HeaderKind,
 }
 
-impl HeadersOperation {
-    pub fn new(headers: Headers) -> Self {
+impl HeaderOperation {
+    pub fn new(headers: HeaderKind) -> Self {
         Self { headers }
     }
 
-    pub fn headers(self) -> Headers {
+    pub fn into_inner(self) -> HeaderKind {
         self.headers
     }
 }
