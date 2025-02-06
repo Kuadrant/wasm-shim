@@ -132,6 +132,20 @@ impl GrpcRequest {
 
 pub type Headers = Vec<(String, String)>;
 #[derive(Debug)]
+pub enum HeaderKind {
+    Response(Headers),
+    Request(Headers),
+}
+
+impl HeaderKind {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            HeaderKind::Response(headers) | HeaderKind::Request(headers) => headers.is_empty(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct GrpcErrResponse {
     status_code: u32,
     response_headers: Headers,

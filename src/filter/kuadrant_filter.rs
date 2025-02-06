@@ -1,9 +1,9 @@
 use crate::action_set_index::ActionSetIndex;
 use crate::filter::operations::{
-    GrpcMessageReceiverOperation, GrpcMessageSenderOperation, HeadersOperation, Operation,
+    GrpcMessageReceiverOperation, GrpcMessageSenderOperation, Operation,
 };
 use crate::runtime_action_set::RuntimeActionSet;
-use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver};
+use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
 use log::{debug, warn};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Status};
@@ -16,7 +16,8 @@ pub(crate) struct KuadrantFilter {
     header_resolver: Rc<HeaderResolver>,
 
     grpc_message_receiver_operation: Option<GrpcMessageReceiverOperation>,
-    headers_operations: Vec<HeadersOperation>,
+    response_headers_to_add: Option<Headers>,
+    request_headers_to_add: Option<Headers>,
 }
 
 impl Context for KuadrantFilter {
@@ -51,6 +52,9 @@ impl HttpContext for KuadrantFilter {
         #[cfg(feature = "debug-host-behaviour")]
         crate::data::debug_all_well_known_attributes();
 
+        // default action if we find no action_set where conditions apply
+        let mut action = Action::Continue;
+
         if let Some(action_sets) = self
             .index
             .get_longest_match_action_sets(self.request_authority().as_ref())
@@ -63,18 +67,23 @@ impl HttpContext for KuadrantFilter {
                     "#{} action_set selected {}",
                     self.context_id, action_set.name
                 );
-                return self.start_flow(Rc::clone(action_set));
+                action = self.start_flow(Rc::clone(action_set))
             }
         }
-        Action::Continue
+
+        if action == Action::Continue {
+            // the request headers are currently always None, however this is one of two phases
+            // where headers should be added
+            self.add_request_headers()
+        }
+        action
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
-        let headers_operations = mem::take(&mut self.headers_operations);
-        for op in headers_operations {
-            for (header, value) in &op.headers() {
-                self.add_http_response_header(header, value)
+        if let Some(response_headers) = mem::take(&mut self.response_headers_to_add) {
+            for (header, value) in response_headers {
+                self.add_http_response_header(header.as_str(), value.as_str())
             }
         }
         Action::Continue
@@ -116,7 +125,22 @@ impl KuadrantFilter {
             }
             Operation::AddHeaders(header_op) => {
                 debug!("handle_operation: AddHeaders");
-                self.headers_operations.push(header_op);
+                match header_op.into_inner() {
+                    crate::service::HeaderKind::Request(headers) => {
+                        if let Some(existing_headers) = self.request_headers_to_add.as_mut() {
+                            existing_headers.extend(headers);
+                        } else {
+                            warn!("Trying to add request headers after phase has ended!")
+                        }
+                    }
+                    crate::service::HeaderKind::Response(headers) => {
+                        if let Some(existing_headers) = self.response_headers_to_add.as_mut() {
+                            existing_headers.extend(headers);
+                        } else {
+                            warn!("Trying to add response headers after phase has ended!")
+                        }
+                    }
+                }
                 Action::Continue
             }
             Operation::Die(die_op) => {
@@ -126,6 +150,7 @@ impl KuadrantFilter {
             }
             Operation::Done() => {
                 debug!("handle_operation: Done");
+                self.add_request_headers();
                 self.resume_http_request();
                 Action::Continue
             }
@@ -171,6 +196,14 @@ impl KuadrantFilter {
         )
     }
 
+    fn add_request_headers(&mut self) {
+        if let Some(request_headers) = mem::take(&mut self.request_headers_to_add) {
+            for (header, value) in request_headers {
+                self.add_http_request_header(header.as_str(), value.as_str())
+            }
+        }
+    }
+
     pub fn new(
         context_id: u32,
         index: Rc<ActionSetIndex>,
@@ -181,7 +214,8 @@ impl KuadrantFilter {
             index,
             header_resolver,
             grpc_message_receiver_operation: None,
-            headers_operations: Vec::default(),
+            response_headers_to_add: Some(Vec::default()),
+            request_headers_to_add: Some(Vec::default()),
         }
     }
 }

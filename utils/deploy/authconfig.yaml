@@ -31,6 +31,12 @@ spec:
                 value: 42
               "missing":
                 value: null
+      headers:
+        "my-header":
+          json:
+            properties:
+              "my-key":
+                value: true
 ---
 apiVersion: v1
 kind: Secret

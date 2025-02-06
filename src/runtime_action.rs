@@ -3,7 +3,7 @@ use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::ratelimit_action::RateLimitAction;
 use crate::service::auth::AuthService;
 use crate::service::rate_limit::RateLimitService;
-use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService, Headers};
+use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService, HeaderKind};
 use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ impl RuntimeAction {
         }
     }
 
-    pub fn process_response(&self, msg: &[u8]) -> Result<Headers, GrpcErrResponse> {
+    pub fn process_response(&self, msg: &[u8]) -> Result<HeaderKind, GrpcErrResponse> {
         match self {
             Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
                 Ok(check_response) => auth_action.process_response(check_response),
@@ -77,7 +77,7 @@ impl RuntimeAction {
                         FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                         FailureMode::Allow => {
                             debug!("process_response(auth): continuing as FailureMode Allow");
-                            Ok(Vec::default())
+                            Ok(HeaderKind::Request(Vec::default()))
                         }
                     }
                 }
@@ -90,7 +90,7 @@ impl RuntimeAction {
                         FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                         FailureMode::Allow => {
                             debug!("process_response(rl): continuing as FailureMode Allow");
-                            Ok(Vec::default())
+                            Ok(HeaderKind::Response(Vec::default()))
                         }
                     }
                 }

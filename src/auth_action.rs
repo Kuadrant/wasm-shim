@@ -1,7 +1,7 @@
 use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{store_metadata, Predicate, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
-use crate::service::{GrpcErrResponse, GrpcService, Headers};
+use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
 use log::debug;
 use std::rc::Rc;
 
@@ -45,7 +45,7 @@ impl AuthAction {
     pub fn process_response(
         &self,
         check_response: CheckResponse,
-    ) -> Result<Headers, GrpcErrResponse> {
+    ) -> Result<HeaderKind, GrpcErrResponse> {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
@@ -58,7 +58,7 @@ impl AuthAction {
                     FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
                     FailureMode::Allow => {
                         debug!("process_response(auth): continuing as FailureMode Allow");
-                        Ok(Vec::default())
+                        Ok(HeaderKind::Request(Vec::default()))
                     }
                 }
             }
@@ -87,7 +87,9 @@ impl AuthAction {
                 if !ok_response.get_query_parameters_to_remove().is_empty() {
                     panic!("process_response(auth): response contained query_parameters_to_remove which is unsupported!")
                 }
-                Ok(Self::get_header_vec(ok_response.get_headers()))
+                Ok(HeaderKind::Request(Self::get_header_vec(
+                    ok_response.get_headers(),
+                )))
             }
         }
     }
@@ -228,21 +230,30 @@ mod test {
         let result = auth_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
 
-        let headers = result.expect("is ok");
-        assert!(headers.is_empty());
+        match result.expect("is ok") {
+            HeaderKind::Response(_headers) => {
+                panic!("check_response should not return Response headers")
+            }
+            HeaderKind::Request(headers) => assert!(headers.is_empty()),
+        }
 
         let ok_response_with_header =
             build_check_response(StatusCode::OK, Some(vec![("my_header", "my_value")]), None);
         let result = auth_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
 
-        let headers = result.expect("is ok");
-        assert!(!headers.is_empty());
-
-        assert_eq!(
-            headers[0],
-            ("my_header".to_string(), "my_value".to_string())
-        );
+        match result.expect("is ok") {
+            HeaderKind::Response(_headers) => {
+                panic!("check_response should not return Response headers")
+            }
+            HeaderKind::Request(headers) => {
+                assert!(!headers.is_empty());
+                assert_eq!(
+                    headers[0],
+                    ("my_header".to_string(), "my_value".to_string())
+                );
+            }
+        }
     }
 
     #[test]
