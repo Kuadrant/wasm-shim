@@ -1,5 +1,4 @@
 use crate::configuration::FailureMode;
-use crate::filter::operations::Operation::SendGrpcRequest;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderKind, IndexedGrpcRequest};
 use std::rc::Rc;
@@ -64,10 +63,9 @@ impl GrpcMessageReceiverOperation {
                 }
                 operations.push(match next_msg {
                     None => Operation::Done(),
-                    Some(indexed_req) => SendGrpcRequest(GrpcMessageSenderOperation::new(
-                        self.runtime_action_set,
-                        indexed_req,
-                    )),
+                    Some(indexed_req) => Operation::SendGrpcRequest(
+                        GrpcMessageSenderOperation::new(self.runtime_action_set, indexed_req),
+                    ),
                 });
                 operations
             }

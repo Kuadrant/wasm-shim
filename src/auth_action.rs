@@ -2,7 +2,7 @@ use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{store_metadata, Predicate, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
-use log::debug;
+use log::{debug, warn};
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -42,6 +42,16 @@ impl AuthAction {
         self.grpc_service.get_failure_mode()
     }
 
+    pub fn resolve_failure_mode(&self) -> Result<HeaderKind, GrpcErrResponse> {
+        match self.get_failure_mode() {
+            FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+            FailureMode::Allow => {
+                debug!("process_response(auth): continuing as FailureMode Allow");
+                Ok(HeaderKind::Request(Vec::default()))
+            }
+        }
+    }
+
     pub fn process_response(
         &self,
         check_response: CheckResponse,
@@ -54,13 +64,7 @@ impl AuthAction {
         match check_response.http_response {
             None => {
                 debug!("process_response(auth): received no http_response");
-                match self.get_failure_mode() {
-                    FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
-                    FailureMode::Allow => {
-                        debug!("process_response(auth): continuing as FailureMode Allow");
-                        Ok(HeaderKind::Request(Vec::default()))
-                    }
-                }
+                self.resolve_failure_mode()
             }
             Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
                 debug!("process_response(auth): received DeniedHttpResponse");
@@ -76,16 +80,17 @@ impl AuthAction {
                 debug!("process_response(auth): received OkHttpResponse");
 
                 if !ok_response.get_response_headers_to_add().is_empty() {
-                    panic!("process_response(auth): response contained response_headers_to_add which is unsupported!")
-                }
-                if !ok_response.get_headers_to_remove().is_empty() {
-                    panic!("process_response(auth): response contained headers_to_remove which is unsupported!")
-                }
-                if !ok_response.get_query_parameters_to_set().is_empty() {
-                    panic!("process_response(auth): response contained query_parameters_to_set which is unsupported!")
-                }
-                if !ok_response.get_query_parameters_to_remove().is_empty() {
-                    panic!("process_response(auth): response contained query_parameters_to_remove which is unsupported!")
+                    warn!("process_response(auth): Unsupported field 'response_headers_to_add' in OkHttpResponse");
+                    return Err(GrpcErrResponse::new_internal_server_error());
+                } else if !ok_response.get_headers_to_remove().is_empty() {
+                    warn!("process_response(auth): Unsupported field 'headers_to_remove' in OkHttpResponse");
+                    return Err(GrpcErrResponse::new_internal_server_error());
+                } else if !ok_response.get_query_parameters_to_set().is_empty() {
+                    warn!("process_response(auth): Unsupported field 'query_parameters_to_set' in OkHttpResponse");
+                    return Err(GrpcErrResponse::new_internal_server_error());
+                } else if !ok_response.get_query_parameters_to_remove().is_empty() {
+                    warn!("process_response(auth): Unsupported field 'query_parameters_to_remove' in OkHttpResponse");
+                    return Err(GrpcErrResponse::new_internal_server_error());
                 }
                 Ok(HeaderKind::Request(Self::get_header_vec(
                     ok_response.get_headers(),

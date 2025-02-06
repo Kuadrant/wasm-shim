@@ -154,6 +154,16 @@ impl RateLimitAction {
         self.grpc_service.get_failure_mode()
     }
 
+    pub fn resolve_failure_mode(&self) -> Result<HeaderKind, GrpcErrResponse> {
+        match self.get_failure_mode() {
+            FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+            FailureMode::Allow => {
+                debug!("process_response(rl): continuing as FailureMode Allow");
+                Ok(HeaderKind::Response(Vec::default()))
+            }
+        }
+    }
+
     #[must_use]
     pub fn merge(&mut self, other: RateLimitAction) -> Option<RateLimitAction> {
         if self.scope == other.scope && self.service_name == other.service_name {
@@ -174,13 +184,7 @@ impl RateLimitAction {
                 ..
             } => {
                 debug!("process_response(rl): received UNKNOWN response");
-                match self.get_failure_mode() {
-                    FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
-                    FailureMode::Allow => {
-                        debug!("process_response(rl): continuing as FailureMode Allow");
-                        Ok(HeaderKind::Response(Vec::default()))
-                    }
-                }
+                self.resolve_failure_mode()
             }
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OVER_LIMIT,
