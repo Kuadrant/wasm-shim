@@ -48,6 +48,13 @@ impl RuntimeAction {
         }
     }
 
+    pub fn resolve_failure_mode(&self) -> Result<HeaderKind, GrpcErrResponse> {
+        match self {
+            Self::Auth(auth_action) => auth_action.resolve_failure_mode(),
+            Self::RateLimit(rl_action) => rl_action.resolve_failure_mode(),
+        }
+    }
+
     #[must_use]
     pub fn merge(&mut self, other: RuntimeAction) -> Option<RuntimeAction> {
         // only makes sense for rate limiting actions
@@ -73,26 +80,14 @@ impl RuntimeAction {
                 Ok(check_response) => auth_action.process_response(check_response),
                 Err(e) => {
                     debug!("process_response(auth): failed to parse response `{e:?}`");
-                    match self.get_failure_mode() {
-                        FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
-                        FailureMode::Allow => {
-                            debug!("process_response(auth): continuing as FailureMode Allow");
-                            Ok(HeaderKind::Request(Vec::default()))
-                        }
-                    }
+                    self.resolve_failure_mode()
                 }
             },
             Self::RateLimit(rl_action) => match Message::parse_from_bytes(msg) {
                 Ok(rate_limit_response) => rl_action.process_response(rate_limit_response),
                 Err(e) => {
                     debug!("process_response(rl): failed to parse response `{e:?}`");
-                    match self.get_failure_mode() {
-                        FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
-                        FailureMode::Allow => {
-                            debug!("process_response(rl): continuing as FailureMode Allow");
-                            Ok(HeaderKind::Response(Vec::default()))
-                        }
-                    }
+                    self.resolve_failure_mode()
                 }
             },
         }
