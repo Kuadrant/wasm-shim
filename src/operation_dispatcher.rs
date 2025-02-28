@@ -269,6 +269,8 @@ impl OperationDispatcher {
         OperationDispatcher {
             operations: vec![],
             waiting_operations: HashMap::default(),
+            auth_service_metrics: Default::default(),
+            rl_service_metrics: Default::default(),
             header_resolver: Rc::new(HeaderResolver::default()),
         }
     }
@@ -406,6 +408,7 @@ mod tests {
             result: RefCell::new(Ok(0)),
             action: Rc::new(action),
             service_handler: build_grpc_service_handler(),
+            service_metrics: Default::default(),
             grpc_call_fn: grpc_call_fn_stub,
             get_map_values_bytes_fn: get_map_values_bytes_fn_stub,
             grpc_message_build_fn: grpc_message_build_fn_stub,
