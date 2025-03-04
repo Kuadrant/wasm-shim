@@ -5,7 +5,6 @@ mod data;
 #[allow(renamed_and_removed_lints)]
 mod envoy;
 mod filter;
-mod glob;
 mod ratelimit_action;
 mod runtime_action;
 mod runtime_action_set;
