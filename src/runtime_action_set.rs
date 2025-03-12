@@ -57,7 +57,8 @@ impl RuntimeActionSet {
     }
 
     pub fn conditions_apply(&self) -> bool {
-        self.route_rule_predicates.apply()
+        //todo(adam-cattermole): do not expect
+        self.route_rule_predicates.apply().expect("REMOVE")
     }
 
     pub fn find_first_grpc_request(&self) -> Option<IndexedGrpcRequest> {

@@ -12,4 +12,5 @@ pub use cel::Expression;
 pub use cel::Predicate;
 pub use cel::PredicateVec;
 
+pub use attribute::errors::PropertyError;
 pub use property::Path as PropertyPath;

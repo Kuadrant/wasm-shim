@@ -35,7 +35,8 @@ impl AuthAction {
     }
 
     pub fn conditions_apply(&self) -> bool {
-        self.predicates.apply()
+        //todo(adam-cattermole): do not expect
+        self.predicates.apply().expect("REMOVE")
     }
 
     pub fn get_failure_mode(&self) -> FailureMode {
