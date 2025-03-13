@@ -302,6 +302,8 @@ pub struct Predicate {
     expression: Expression,
 }
 
+pub type PredicateResult = Result<bool, EvaluationError>;
+
 impl Predicate {
     pub fn new(predicate: &str) -> Result<Self, ParseError> {
         Ok(Self {
@@ -318,7 +320,7 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self) -> Result<bool, EvaluationError> {
+    pub fn test(&self) -> PredicateResult {
         match self.expression.eval() {
             Ok(value) => match value {
                 Value::Bool(result) => Ok(result),
@@ -336,11 +338,11 @@ impl Predicate {
 }
 
 pub trait PredicateVec {
-    fn apply(&self) -> Result<bool, EvaluationError>;
+    fn apply(&self) -> PredicateResult;
 }
 
 impl PredicateVec for Vec<Predicate> {
-    fn apply(&self) -> Result<bool, EvaluationError> {
+    fn apply(&self) -> PredicateResult {
         if self.is_empty() {
             return Ok(true);
         }

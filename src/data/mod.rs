@@ -10,6 +10,7 @@ pub use cel::debug_all_well_known_attributes;
 
 pub use cel::Expression;
 pub use cel::Predicate;
+pub use cel::PredicateResult;
 pub use cel::PredicateVec;
 
 pub use attribute::errors::PropertyError;

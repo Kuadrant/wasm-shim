@@ -4,7 +4,7 @@ use crate::filter::operations::{
 };
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
-use log::{debug, warn};
+use log::{debug, error, warn};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, Status};
 use std::mem;
@@ -59,15 +59,26 @@ impl HttpContext for KuadrantFilter {
             .index
             .get_longest_match_action_sets(self.request_authority().as_ref())
         {
-            if let Some(action_set) = action_sets
-                .iter()
-                .find(|action_set| action_set.conditions_apply(/* self */))
-            {
-                debug!(
-                    "#{} action_set selected {}",
-                    self.context_id, action_set.name
-                );
-                action = self.start_flow(Rc::clone(action_set))
+            for action_set in action_sets {
+                match action_set.conditions_apply() {
+                    Ok(true) => {
+                        debug!(
+                            "#{} action_set selected {}",
+                            self.context_id, action_set.name
+                        );
+                        action = self.start_flow(Rc::clone(action_set));
+                        break;
+                    }
+                    Ok(false) => continue,
+                    Err(e) => {
+                        error!(
+                            "#{} on_http_request_headers: failed to apply conditions: {:?}",
+                            self.context_id, e
+                        );
+                        self.die(GrpcErrResponse::new_internal_server_error());
+                        break;
+                    }
+                }
             }
         }
 

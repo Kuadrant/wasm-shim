@@ -1,5 +1,5 @@
 use crate::configuration::{ActionSet, Service};
-use crate::data::{Predicate, PredicateVec};
+use crate::data::{Predicate, PredicateResult, PredicateVec};
 use crate::runtime_action::RuntimeAction;
 use crate::service::{GrpcErrResponse, HeaderKind, IndexedGrpcRequest};
 use std::collections::HashMap;
@@ -56,9 +56,8 @@ impl RuntimeActionSet {
         folded_actions
     }
 
-    pub fn conditions_apply(&self) -> bool {
-        //todo(adam-cattermole): do not expect
-        self.route_rule_predicates.apply().expect("REMOVE")
+    pub fn conditions_apply(&self) -> PredicateResult {
+        self.route_rule_predicates.apply()
     }
 
     pub fn find_first_grpc_request(&self) -> Option<IndexedGrpcRequest> {
@@ -105,7 +104,8 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
 
-        assert!(runtime_action_set.conditions_apply())
+        assert!(runtime_action_set.conditions_apply().is_ok());
+        assert!(runtime_action_set.conditions_apply().unwrap());
     }
 
     #[test]
@@ -122,7 +122,8 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
 
-        assert!(runtime_action_set.conditions_apply())
+        assert!(runtime_action_set.conditions_apply().is_ok());
+        assert!(runtime_action_set.conditions_apply().unwrap());
     }
 
     #[test]
@@ -139,12 +140,12 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
 
-        assert!(!runtime_action_set.conditions_apply())
+        assert!(runtime_action_set.conditions_apply().is_ok());
+        assert!(!runtime_action_set.conditions_apply().unwrap());
     }
 
     #[test]
-    #[should_panic]
-    fn when_a_cel_expression_does_not_evaluate_to_bool_panics() {
+    fn when_a_cel_expression_does_not_evaluate_to_bool_returns_error() {
         let action_set = ActionSet::new(
             "some_name".to_owned(),
             RouteRuleConditions {
@@ -156,7 +157,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-        runtime_action_set.conditions_apply();
+        assert!(runtime_action_set.conditions_apply().is_err());
     }
 
     fn build_rl_service() -> Service {
