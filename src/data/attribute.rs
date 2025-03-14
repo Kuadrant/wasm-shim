@@ -170,20 +170,22 @@ where
     }
 }
 
-pub fn set_attribute(attr: &str, value: &[u8]) {
-    match crate::data::property::set_property(PropertyPath::from(attr), Some(value)) {
-        Ok(_) => (),
-        Err(_) => error!("set_attribute: failed to set property {attr}"),
-    };
+pub fn set_attribute(attr: &str, value: &[u8]) -> Result<(), PropertyError> {
+    crate::data::property::set_property(PropertyPath::from(attr), Some(value))
+        .map_err(|e| PropertyError::Get(PropError::new(format!("set_attribute: error: {e:?}"))))
 }
 
-pub fn store_metadata(metastruct: &Struct) {
+pub fn store_metadata(metastruct: &Struct) -> Result<(), PropertyError> {
     let metadata = process_metadata(metastruct, String::new());
     for (key, value) in metadata {
         let attr = format!("{KUADRANT_NAMESPACE}\\.auth\\.{key}");
         debug!("set_attribute: {attr} = {value}");
-        set_attribute(attr.as_str(), value.into_bytes().as_slice());
+        if let Err(e) = set_attribute(attr.as_str(), value.into_bytes().as_slice()) {
+            error!("set_attribute: failed to set property {attr}: {e:?}");
+            return Err(e);
+        }
     }
+    Ok(())
 }
 
 fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
