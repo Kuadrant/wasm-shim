@@ -58,7 +58,9 @@ impl AuthAction {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
-        store_metadata(check_response.get_dynamic_metadata());
+        if store_metadata(check_response.get_dynamic_metadata()).is_err() {
+            return self.resolve_failure_mode();
+        }
 
         match check_response.http_response {
             None => {

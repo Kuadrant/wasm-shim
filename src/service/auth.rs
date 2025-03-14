@@ -61,23 +61,35 @@ impl AuthService {
             }
         };
 
-        // todo(adam-cattermole): should these be treated as error cases
-        http.set_host(get_attribute::<String>(&"request.host".into())?.unwrap_or_default());
-        http.set_method(get_attribute::<String>(&"request.method".into())?.unwrap_or_default());
-        http.set_scheme(get_attribute::<String>(&"request.scheme".into())?.unwrap_or_default());
-        http.set_path(get_attribute::<String>(&"request.path".into())?.unwrap_or_default());
-        http.set_protocol(get_attribute::<String>(&"request.protocol".into())?.unwrap_or_default());
+        http.set_host(get_attribute::<String>(&"request.host".into())?.ok_or(
+            PropertyError::Get(PropError::new("request.host not set".to_string())),
+        )?);
+        http.set_method(get_attribute::<String>(&"request.method".into())?.ok_or(
+            PropertyError::Get(PropError::new("request.method not set".to_string())),
+        )?);
+        http.set_scheme(get_attribute::<String>(&"request.scheme".into())?.ok_or(
+            PropertyError::Get(PropError::new("request.scheme not set".to_string())),
+        )?);
+        http.set_path(get_attribute::<String>(&"request.path".into())?.ok_or(
+            PropertyError::Get(PropError::new("request.path not set".to_string())),
+        )?);
+        http.set_protocol(get_attribute::<String>(&"request.protocol".into())?.ok_or(
+            PropertyError::Get(PropError::new("request.protocol not set".to_string())),
+        )?);
 
         http.set_headers(headers);
-        request.set_time(get_attribute(&"request.time".into())?.map_or(
-            Timestamp::new(),
-            |date_time: DateTime<FixedOffset>| Timestamp {
-                nanos: date_time.timestamp_subsec_nanos() as i32,
-                seconds: date_time.timestamp(),
-                unknown_fields: Default::default(),
-                cached_size: Default::default(),
-            },
-        ));
+        request.set_time(
+            get_attribute(&"request.time".into())?
+                .map(|date_time: DateTime<FixedOffset>| Timestamp {
+                    nanos: date_time.timestamp_subsec_nanos() as i32,
+                    seconds: date_time.timestamp(),
+                    unknown_fields: Default::default(),
+                    cached_size: Default::default(),
+                })
+                .ok_or(PropertyError::Get(PropError::new(
+                    "request.time not set".to_string(),
+                )))?,
+        );
         request.set_http(http);
         Ok(request)
     }
