@@ -13,6 +13,8 @@ pub struct RuntimeActionSet {
     pub runtime_actions: Vec<Rc<RuntimeAction>>,
 }
 
+pub type IndexedRequestResult = Result<Option<IndexedGrpcRequest>, GrpcErrResponse>;
+
 impl RuntimeActionSet {
     pub fn new(
         action_set: &ActionSet,
@@ -60,28 +62,28 @@ impl RuntimeActionSet {
         self.route_rule_predicates.apply()
     }
 
-    pub fn find_first_grpc_request(&self) -> Option<IndexedGrpcRequest> {
+    pub fn find_first_grpc_request(&self) -> IndexedRequestResult {
         self.find_next_grpc_request(0)
     }
 
-    pub fn find_next_grpc_request(&self, start: usize) -> Option<IndexedGrpcRequest> {
-        self.runtime_actions
-            .iter()
-            .skip(start)
-            .enumerate()
-            .find_map(|(i, action)| {
-                action
-                    .process_request()
-                    .expect("REMOVE_EXPECT")
-                    .map(|request| IndexedGrpcRequest::new(start + i, request))
-            })
+    pub fn find_next_grpc_request(&self, start: usize) -> IndexedRequestResult {
+        for (index, action) in self.runtime_actions.iter().skip(start).enumerate() {
+            match action.process_request() {
+                Ok(Some(request)) => {
+                    return Ok(Some(IndexedGrpcRequest::new(start + index, request)))
+                }
+                Ok(None) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
     }
 
     pub fn process_grpc_response(
         &self,
         index: usize,
         msg: &[u8],
-    ) -> Result<(Option<IndexedGrpcRequest>, HeaderKind), GrpcErrResponse> {
+    ) -> Result<(IndexedRequestResult, HeaderKind), GrpcErrResponse> {
         self.runtime_actions[index]
             .process_response(msg)
             .map(|headers| {

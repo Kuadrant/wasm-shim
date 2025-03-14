@@ -129,10 +129,11 @@ impl KuadrantFilter {
     fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>) -> Action {
         let grpc_request = action_set.find_first_grpc_request();
         let op = match grpc_request {
-            None => Operation::Done(),
-            Some(indexed_req) => {
+            Ok(None) => Operation::Done(),
+            Ok(Some(indexed_req)) => {
                 Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(action_set, indexed_req))
             }
+            Err(grpc_err_response) => Operation::Die(grpc_err_response),
         };
         self.handle_operation(op)
     }
