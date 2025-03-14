@@ -5,8 +5,9 @@ use crate::filter::operations::{
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
 use log::{debug, error, warn};
+use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::{Action, Status};
+use proxy_wasm::types::{Action, BufferType, MapType, Status};
 use std::mem;
 use std::rc::Rc;
 
@@ -26,22 +27,40 @@ impl Context for KuadrantFilter {
             "#{} on_grpc_call_response: received gRPC call response: token: {token_id}, status: {status_code}",
             self.context_id
         );
-        let receiver = mem::take(&mut self.grpc_message_receiver_operation)
-            .expect("We need an operation pending a gRPC response");
 
-        let mut ops = Vec::new();
+        match mem::take(&mut self.grpc_message_receiver_operation) {
+            Some(receiver) => {
+                let mut ops = Vec::new();
 
-        if status_code != Status::Ok as u32 {
-            ops.push(receiver.fail());
-        } else if let Some(response_body) = self.get_grpc_call_response_body(0, resp_size) {
-            ops.extend(receiver.digest_grpc_response(&response_body));
-        } else {
-            ops.push(receiver.fail());
+                if status_code != Status::Ok as u32 {
+                    ops.push(receiver.fail());
+                } else if let Some(response_body) =
+                    hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size)
+                        .unwrap_or_else(|e| {
+                            error!(
+                                "on_grpc_call_response failed to read gRPC receive buffer: `{:?}`",
+                                e
+                            );
+                            None
+                        })
+                {
+                    ops.extend(receiver.digest_grpc_response(&response_body));
+                } else {
+                    ops.push(receiver.fail());
+                }
+
+                ops.into_iter().for_each(|op| {
+                    self.handle_operation(op);
+                })
+            }
+            None => {
+                error!(
+                    "#{} on_grpc_call_response: received gRPC response but no pending receiver",
+                    self.context_id
+                );
+                self.die(GrpcErrResponse::new_internal_server_error())
+            }
         }
-
-        ops.into_iter().for_each(|op| {
-            self.handle_operation(op);
-        })
     }
 }
 
@@ -55,10 +74,15 @@ impl HttpContext for KuadrantFilter {
         // default action if we find no action_set where conditions apply
         let mut action = Action::Continue;
 
-        if let Some(action_sets) = self
-            .index
-            .get_longest_match_action_sets(self.request_authority().as_ref())
-        {
+        let authority = match self.request_authority() {
+            Ok(authority) => authority,
+            Err(_) => {
+                self.die(GrpcErrResponse::new_internal_server_error());
+                return Action::Continue;
+            }
+        };
+
+        if let Some(action_sets) = self.index.get_longest_match_action_sets(authority.as_ref()) {
             for action_set in action_sets {
                 match action_set.conditions_apply() {
                     Ok(true) => {
@@ -76,7 +100,7 @@ impl HttpContext for KuadrantFilter {
                             self.context_id, e
                         );
                         self.die(GrpcErrResponse::new_internal_server_error());
-                        break;
+                        return Action::Continue;
                     }
                 }
             }
@@ -176,15 +200,19 @@ impl KuadrantFilter {
         );
     }
 
-    fn request_authority(&self) -> String {
-        match self.get_http_request_header(":authority") {
-            None => {
-                warn!(":authority header not found");
-                String::new()
+    fn request_authority(&self) -> Result<String, Status> {
+        match hostcalls::get_map_value(MapType::HttpRequestHeaders, ":authority") {
+            Ok(Some(host)) => {
+                let split_host = host.split_once(':').map_or(host.as_str(), |(h, _)| h);
+                Ok(split_host.to_owned())
             }
-            Some(host) => {
-                let split_host = host.split(':').collect::<Vec<_>>();
-                split_host[0].to_owned()
+            Ok(None) => {
+                error!(":authority header not found");
+                Err(Status::NotFound)
+            }
+            Err(e) => {
+                error!("failed to retrieve :authority header: {:?}", e);
+                Err(e)
             }
         }
     }
