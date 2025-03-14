@@ -11,6 +11,41 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+pub(super) mod errors {
+    use crate::data::{EvaluationError, PropertyError};
+    use protobuf::ProtobufError;
+    use std::fmt::{Debug, Display, Formatter};
+
+    #[derive(Debug)]
+    pub enum BuildMessageError {
+        Evaluation(EvaluationError),
+        Property(PropertyError),
+        Serialization(ProtobufError),
+    }
+
+    impl From<EvaluationError> for BuildMessageError {
+        fn from(e: EvaluationError) -> Self {
+            BuildMessageError::Evaluation(e)
+        }
+    }
+
+    impl Display for BuildMessageError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                BuildMessageError::Evaluation(e) => {
+                    write!(f, "BuildMessageError::Evaluation {{ {:?} }}", e)
+                }
+                BuildMessageError::Property(e) => {
+                    write!(f, "BuildMessageError::Property {{ {:?} }}", e)
+                }
+                BuildMessageError::Serialization(e) => {
+                    write!(f, "BuildMessageError::Serialization {{ {:?} }}", e)
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct GrpcService {
     service: Rc<Service>,

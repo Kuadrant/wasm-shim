@@ -11,17 +11,17 @@ pub(super) mod errors {
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    #[derive(PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub enum PropertyError {
-        GetPropertyError(PropError),
-        ParsePropertyError(PropError),
+        Get(PropError),
+        Parse(PropError),
     }
 
     impl Error for PropertyError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match self {
-                PropertyError::GetPropertyError(err) => Some(err),
-                PropertyError::ParsePropertyError(err) => Some(err),
+                PropertyError::Get(err) => Some(err),
+                PropertyError::Parse(err) => Some(err),
             }
         }
     }
@@ -29,36 +29,24 @@ pub(super) mod errors {
     impl Display for PropertyError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
-                PropertyError::GetPropertyError(e) => {
-                    write!(f, "PropertyError::GetPropertyError {{ {} }}", e)
+                PropertyError::Get(e) => {
+                    write!(f, "PropertyError::Get {{ {:?} }}", e)
                 }
-                PropertyError::ParsePropertyError(e) => {
-                    write!(f, "PropertyError::ParsePropertyError {{ {} }}", e)
+                PropertyError::Parse(e) => {
+                    write!(f, "PropertyError::Parse {{ {:?} }}", e)
                 }
             }
         }
     }
 
-    impl Debug for PropertyError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", self)
-        }
-    }
-
-    #[derive(PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub struct PropError {
         message: String,
     }
 
     impl Display for PropError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "PropError {{ message: {} }}", self.message)
-        }
-    }
-
-    impl Debug for PropError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", self)
+            write!(f, "PropError {{ message: {:?} }}", self.message)
         }
     }
 
@@ -173,10 +161,10 @@ where
 {
     match crate::data::property::get_property(path) {
         Ok(Some(attribute_bytes)) => Ok(Some(
-            T::parse(attribute_bytes).map_err(PropertyError::ParsePropertyError)?,
+            T::parse(attribute_bytes).map_err(PropertyError::Parse)?,
         )),
         Ok(None) => Ok(None),
-        Err(e) => Err(PropertyError::GetPropertyError(PropError::new(format!(
+        Err(e) => Err(PropertyError::Get(PropError::new(format!(
             "get_attribute: error: {e:?}"
         )))),
     }

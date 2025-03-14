@@ -1,12 +1,14 @@
 use crate::configuration::{Action, DataType, FailureMode, Service};
-use crate::data::Expression;
-use crate::data::Predicate;
+use crate::data::{EvaluationError, Predicate};
+use crate::data::{Expression, PredicateResult};
 use crate::envoy::{
     HeaderValue, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse,
     RateLimitResponse_Code, StatusCode,
 };
+use crate::runtime_action::ResponseResult;
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
 use cel_interpreter::Value;
+use cel_parser::ParseError;
 use log::{debug, error};
 use protobuf::RepeatedField;
 use std::rc::Rc;
@@ -18,44 +20,52 @@ struct DescriptorEntryBuilder {
 }
 
 impl DescriptorEntryBuilder {
-    pub fn new(data_type: &DataType) -> Result<Self, String> {
+    pub fn new(data_type: &DataType) -> Result<Self, ParseError> {
         match data_type {
             DataType::Static(static_item) => Ok(DescriptorEntryBuilder {
                 key: static_item.key.clone(),
-                expression: Expression::new(format!("'{}'", static_item.value).as_str())
-                    .map_err(|e| e.to_string())?,
+                expression: Expression::new(format!("'{}'", static_item.value).as_str())?,
             }),
             DataType::Expression(exp_item) => Ok(DescriptorEntryBuilder {
                 key: exp_item.key.clone(),
-                expression: Expression::new(&exp_item.value).map_err(|e| e.to_string())?,
+                expression: Expression::new(&exp_item.value)?,
             }),
         }
     }
 
-    pub fn evaluate(&self) -> RateLimitDescriptor_Entry {
-        let (key, value) = (
-            self.key.clone(),
-            match self.expression.eval() {
-                Ok(value) => match value {
-                    Value::Int(n) => format!("{n}"),
-                    Value::UInt(n) => format!("{n}"),
-                    Value::Float(n) => format!("{n}"),
-                    // todo this probably should be a proper string literal!
-                    Value::String(s) => (*s).clone(),
-                    Value::Bool(b) => format!("{b}"),
-                    Value::Null => "null".to_owned(),
-                    _ => panic!("Only scalar values can be sent as data"),
-                },
-                Err(err) => {
-                    error!("Failed to evaluate {:?}: {}", self.expression, err);
-                    panic!("Err out of this!")
+    pub fn evaluate(&self) -> Result<RateLimitDescriptor_Entry, EvaluationError> {
+        let key = self.key.clone();
+        let value = match self.expression.eval() {
+            Ok(value) => match value {
+                Value::Int(n) => format!("{n}"),
+                Value::UInt(n) => format!("{n}"),
+                Value::Float(n) => format!("{n}"),
+                Value::String(s) => (*s).clone(),
+                Value::Bool(b) => format!("{b}"),
+                Value::Null => "null".to_owned(),
+                _ => {
+                    error!(
+                        "Failed to match type for expression `{:?}`",
+                        self.expression
+                    );
+                    return Err(EvaluationError::new(
+                        self.expression.clone(),
+                        "Only scalar values can be sent as data".to_string(),
+                    ));
                 }
             },
-        );
+            Err(err) => {
+                error!("Failed to evaluate `{:?}`: {}", self.expression, err);
+                return Err(EvaluationError::new(
+                    self.expression.clone(),
+                    format!("Evaluation failed: {}", err),
+                ));
+            }
+        };
         let mut descriptor_entry = RateLimitDescriptor_Entry::new();
         descriptor_entry.set_key(key);
         descriptor_entry.set_value(value);
-        descriptor_entry
+        Ok(descriptor_entry)
     }
 }
 
@@ -66,10 +76,10 @@ struct ConditionalData {
 }
 
 impl ConditionalData {
-    pub fn new(action: &Action) -> Result<Self, String> {
+    pub fn new(action: &Action) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &action.predicates {
-            predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+            predicates.push(Predicate::new(predicate)?);
         }
 
         let mut data = Vec::default();
@@ -79,29 +89,30 @@ impl ConditionalData {
         Ok(ConditionalData { data, predicates })
     }
 
-    fn predicates_apply(&self) -> bool {
-        let predicates = &self.predicates;
-        predicates.is_empty()
-            || predicates.iter().all(|predicate| match predicate.test() {
-                Ok(b) => b,
-                Err(err) => {
-                    error!("Failed to evaluate {:?}: {}", predicates, err);
-                    panic!("Err out of this!")
-                }
-            })
+    fn predicates_apply(&self) -> PredicateResult {
+        if self.predicates.is_empty() {
+            return Ok(true);
+        }
+        for predicate in &self.predicates {
+            // if it does not apply or errors exit early
+            if !predicate.test()? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
-    pub fn entries(&self) -> RepeatedField<RateLimitDescriptor_Entry> {
-        if !self.predicates_apply() {
-            return RepeatedField::default();
+    pub fn entries(&self) -> Result<RepeatedField<RateLimitDescriptor_Entry>, EvaluationError> {
+        if !self.predicates_apply()? {
+            return Ok(RepeatedField::default());
         }
 
         let mut entries = RepeatedField::default();
         for entry_builder in self.data.iter() {
-            entries.push(entry_builder.evaluate());
+            entries.push(entry_builder.evaluate()?);
         }
 
-        entries
+        Ok(entries)
     }
 }
 
@@ -114,7 +125,7 @@ pub struct RateLimitAction {
 }
 
 impl RateLimitAction {
-    pub fn new(action: &Action, service: &Service) -> Result<Self, String> {
+    pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
         Ok(Self {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
             scope: action.scope.clone(),
@@ -123,16 +134,16 @@ impl RateLimitAction {
         })
     }
 
-    pub fn build_descriptor(&self) -> RateLimitDescriptor {
+    pub fn build_descriptor(&self) -> Result<RateLimitDescriptor, EvaluationError> {
         let mut entries = RepeatedField::default();
 
         for conditional_data in self.conditional_data_sets.iter() {
-            entries.extend(conditional_data.entries());
+            entries.extend(conditional_data.entries()?);
         }
 
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
-        res
+        Ok(res)
     }
 
     pub fn get_grpcservice(&self) -> Rc<GrpcService> {
@@ -143,18 +154,18 @@ impl RateLimitAction {
         self.scope.as_str()
     }
 
-    pub fn conditions_apply(&self) -> bool {
+    pub fn conditions_apply(&self) -> PredicateResult {
         // For RateLimitAction conditions always apply.
         // It is when building the descriptor that it may be empty because predicates do not
         // evaluate to true.
-        true
+        Ok(true)
     }
 
     pub fn get_failure_mode(&self) -> FailureMode {
         self.grpc_service.get_failure_mode()
     }
 
-    pub fn resolve_failure_mode(&self) -> Result<HeaderKind, GrpcErrResponse> {
+    pub fn resolve_failure_mode(&self) -> ResponseResult {
         match self.get_failure_mode() {
             FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
             FailureMode::Allow => {
@@ -285,7 +296,8 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert!(rl_action.conditions_apply());
+        assert!(rl_action.conditions_apply().is_ok());
+        assert!(rl_action.conditions_apply().expect("is ok"));
     }
 
     #[test]
@@ -294,7 +306,8 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert!(rl_action.conditions_apply());
+        assert!(rl_action.conditions_apply().is_ok());
+        assert!(rl_action.conditions_apply().expect("is ok"));
     }
 
     #[test]
@@ -303,7 +316,10 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert_eq!(rl_action.build_descriptor(), RateLimitDescriptor::default());
+        let descriptor_result = rl_action.build_descriptor();
+        assert!(descriptor_result.is_ok());
+        let descriptor = descriptor_result.expect("is ok");
+        assert_eq!(descriptor, RateLimitDescriptor::default());
     }
 
     #[test]
@@ -318,7 +334,9 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor = rl_action.build_descriptor();
+        let descriptor_result = rl_action.build_descriptor();
+        assert!(descriptor_result.is_ok());
+        let descriptor = descriptor_result.expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -336,7 +354,9 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor = rl_action.build_descriptor();
+        let descriptor_result = rl_action.build_descriptor();
+        assert!(descriptor_result.is_ok());
+        let descriptor = descriptor_result.expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -356,7 +376,10 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert_eq!(rl_action.build_descriptor(), RateLimitDescriptor::default());
+        let descriptor_result = rl_action.build_descriptor();
+        assert!(descriptor_result.is_ok());
+        let descriptor = descriptor_result.expect("is ok");
+        assert_eq!(descriptor, RateLimitDescriptor::default());
     }
 
     #[test]
@@ -401,7 +424,9 @@ mod test {
 
         // it should generate descriptor entries from action 1 and action 3
 
-        let descriptor = rl_action_1.build_descriptor();
+        let descriptor_result = rl_action_1.build_descriptor();
+        assert!(descriptor_result.is_ok());
+        let descriptor = descriptor_result.expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 2);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));

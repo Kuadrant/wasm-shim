@@ -1,5 +1,5 @@
 use crate::envoy::{RateLimitDescriptor, RateLimitRequest};
-use log::debug;
+use crate::service::errors::BuildMessageError;
 use protobuf::{Message, RepeatedField};
 
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
@@ -24,11 +24,10 @@ impl RateLimitService {
     pub fn request_message_as_bytes(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, BuildMessageError> {
         Self::request_message(domain, descriptors)
             .write_to_bytes()
-            .map_err(|e| debug!("Failed to write protobuf message to bytes: {e:?}"))
-            .ok()
+            .map_err(BuildMessageError::Serialization)
     }
 }
 

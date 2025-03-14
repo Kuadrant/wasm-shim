@@ -1,5 +1,6 @@
 use crate::configuration::{ActionSet, Service};
 use crate::data::{Predicate, PredicateResult, PredicateVec};
+use crate::runtime_action::errors::NewActionError;
 use crate::runtime_action::RuntimeAction;
 use crate::service::{GrpcErrResponse, HeaderKind, IndexedGrpcRequest};
 use std::collections::HashMap;
@@ -16,12 +17,11 @@ impl RuntimeActionSet {
     pub fn new(
         action_set: &ActionSet,
         services: &HashMap<String, Service>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, NewActionError> {
         // route predicates
         let mut route_rule_predicates = Vec::default();
         for predicate in &action_set.route_rule_conditions.predicates {
-            route_rule_predicates
-                .push(Predicate::route_rule(predicate).map_err(|e| e.to_string())?);
+            route_rule_predicates.push(Predicate::route_rule(predicate)?);
         }
 
         // actions
@@ -72,6 +72,7 @@ impl RuntimeActionSet {
             .find_map(|(i, action)| {
                 action
                     .process_request()
+                    .expect("REMOVE_EXPECT")
                     .map(|request| IndexedGrpcRequest::new(start + i, request))
             })
     }
@@ -105,7 +106,7 @@ mod test {
             .expect("should not happen from an empty set of actions");
 
         assert!(runtime_action_set.conditions_apply().is_ok());
-        assert!(runtime_action_set.conditions_apply().unwrap());
+        assert!(runtime_action_set.conditions_apply().expect("is ok"));
     }
 
     #[test]
@@ -123,7 +124,7 @@ mod test {
             .expect("should not happen from an empty set of actions");
 
         assert!(runtime_action_set.conditions_apply().is_ok());
-        assert!(runtime_action_set.conditions_apply().unwrap());
+        assert!(runtime_action_set.conditions_apply().expect("is ok"));
     }
 
     #[test]
@@ -141,7 +142,7 @@ mod test {
             .expect("should not happen from an empty set of actions");
 
         assert!(runtime_action_set.conditions_apply().is_ok());
-        assert!(!runtime_action_set.conditions_apply().unwrap());
+        assert!(!runtime_action_set.conditions_apply().expect("is ok"));
     }
 
     #[test]

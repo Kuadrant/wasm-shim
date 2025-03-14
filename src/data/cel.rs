@@ -24,6 +24,7 @@ pub(super) mod errors {
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
+    #[derive(Debug)]
     pub struct EvaluationError {
         expression: Expression,
         message: String,
@@ -35,49 +36,43 @@ pub(super) mod errors {
         }
     }
 
-    #[derive(PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub enum CelError {
-        PropertyError(PropertyError),
-        ResolveError(ExecutionError),
+        Property(PropertyError),
+        Resolve(ExecutionError),
     }
 
     impl Error for CelError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match self {
-                CelError::PropertyError(err) => Some(err),
-                CelError::ResolveError(err) => Some(err),
+                CelError::Property(err) => Some(err),
+                CelError::Resolve(err) => Some(err),
             }
         }
     }
 
     impl From<PropertyError> for CelError {
         fn from(e: PropertyError) -> Self {
-            CelError::PropertyError(e)
+            CelError::Property(e)
         }
     }
 
     impl From<ExecutionError> for CelError {
         fn from(e: ExecutionError) -> Self {
-            CelError::ResolveError(e)
+            CelError::Resolve(e)
         }
     }
 
     impl Display for CelError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
-                CelError::PropertyError(e) => {
-                    write!(f, "CelError::PropertyError {{ {} }}", e)
+                CelError::Property(e) => {
+                    write!(f, "CelError::Property {{ {:?} }}", e)
                 }
-                CelError::ResolveError(e) => {
-                    write!(f, "CelError::ResolveError {{ {} }}", e)
+                CelError::Resolve(e) => {
+                    write!(f, "CelError::Resolve {{ {:?} }}", e)
                 }
             }
-        }
-    }
-
-    impl Debug for CelError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", self)
         }
     }
 
@@ -87,16 +82,6 @@ pub(super) mod errors {
                 expression,
                 message,
             }
-        }
-    }
-
-    impl Debug for EvaluationError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(
-                f,
-                "EvaluationError {{ expression: {:?}, message: {} }}",
-                self.expression, self.message
-            )
         }
     }
 

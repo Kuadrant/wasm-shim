@@ -8,10 +8,11 @@ pub use attribute::store_metadata;
 #[cfg(feature = "debug-host-behaviour")]
 pub use cel::debug_all_well_known_attributes;
 
+pub use cel::errors::EvaluationError;
 pub use cel::Expression;
 pub use cel::Predicate;
 pub use cel::PredicateResult;
 pub use cel::PredicateVec;
 
-pub use attribute::errors::PropertyError;
+pub use attribute::errors::{PropError, PropertyError};
 pub use property::Path as PropertyPath;
