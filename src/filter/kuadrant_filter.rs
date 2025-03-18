@@ -37,6 +37,7 @@ impl Context for KuadrantFilter {
                 } else if let Some(response_body) =
                     hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size)
                         .unwrap_or_else(|e| {
+                            // get_buffer panics instead of returning an Error so this will not happen
                             error!(
                                 "on_grpc_call_response failed to read gRPC receive buffer: `{:?}`",
                                 e
@@ -212,6 +213,7 @@ impl KuadrantFilter {
                 Err(Status::NotFound)
             }
             Err(e) => {
+                // get_map_value panics instead of returning an Error so this will not happen
                 error!("failed to retrieve :authority header: {:?}", e);
                 Err(e)
             }
