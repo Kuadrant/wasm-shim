@@ -1,6 +1,6 @@
 use crate::configuration::{ActionSet, Service};
 use crate::data::{Predicate, PredicateResult, PredicateVec};
-use crate::runtime_action::errors::NewActionError;
+use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::RuntimeAction;
 use crate::service::{GrpcErrResponse, HeaderKind, IndexedGrpcRequest};
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ impl RuntimeActionSet {
     pub fn new(
         action_set: &ActionSet,
         services: &HashMap<String, Service>,
-    ) -> Result<Self, NewActionError> {
+    ) -> Result<Self, ActionCreationError> {
         // route predicates
         let mut route_rule_predicates = Vec::default();
         for predicate in &action_set.route_rule_conditions.predicates {

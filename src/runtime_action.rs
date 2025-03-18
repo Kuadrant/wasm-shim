@@ -2,7 +2,7 @@ use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::data::PredicateResult;
 use crate::ratelimit_action::RateLimitAction;
-use crate::runtime_action::errors::NewActionError;
+use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
 use crate::service::errors::BuildMessageError;
 use crate::service::rate_limit::RateLimitService;
@@ -23,34 +23,37 @@ pub(super) mod errors {
     use std::fmt::{Debug, Display, Formatter};
 
     #[derive(Debug)]
-    pub enum NewActionError {
+    pub enum ActionCreationError {
         Parse(ParseError),
         UnknownService(String),
     }
 
-    impl From<ParseError> for NewActionError {
-        fn from(e: ParseError) -> NewActionError {
-            NewActionError::Parse(e)
+    impl From<ParseError> for ActionCreationError {
+        fn from(e: ParseError) -> ActionCreationError {
+            ActionCreationError::Parse(e)
         }
     }
 
-    impl PartialEq for NewActionError {
-        fn eq(&self, other: &NewActionError) -> bool {
+    impl PartialEq for ActionCreationError {
+        fn eq(&self, other: &ActionCreationError) -> bool {
             match (self, other) {
-                (NewActionError::Parse(_), NewActionError::Parse(_)) => false,
-                (NewActionError::UnknownService(a), NewActionError::UnknownService(b)) => a == b,
+                (ActionCreationError::Parse(_), ActionCreationError::Parse(_)) => false,
+                (
+                    ActionCreationError::UnknownService(a),
+                    ActionCreationError::UnknownService(b),
+                ) => a == b,
                 _ => false,
             }
         }
     }
 
-    impl Display for NewActionError {
+    impl Display for ActionCreationError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
-                NewActionError::Parse(e) => {
+                ActionCreationError::Parse(e) => {
                     write!(f, "NewActionError::Parse {{ {:?} }}", e)
                 }
-                NewActionError::UnknownService(e) => {
+                ActionCreationError::UnknownService(e) => {
                     write!(f, "NewActionError::UnknownService {{ {:?} }}", e)
                 }
             }
@@ -65,10 +68,10 @@ impl RuntimeAction {
     pub fn new(
         action: &Action,
         services: &HashMap<String, Service>,
-    ) -> Result<Self, NewActionError> {
+    ) -> Result<Self, ActionCreationError> {
         let service = services
             .get(&action.service)
-            .ok_or(NewActionError::UnknownService(format!(
+            .ok_or(ActionCreationError::UnknownService(format!(
                 "Unknown service: {}",
                 action.service
             )))?;

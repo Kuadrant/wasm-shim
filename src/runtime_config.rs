@@ -1,11 +1,11 @@
 use crate::action_set_index::ActionSetIndex;
 use crate::configuration::PluginConfiguration;
-use crate::runtime_action::errors::NewActionError;
+use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action_set::RuntimeActionSet;
 use std::rc::Rc;
 
 impl TryFrom<PluginConfiguration> for ActionSetIndex {
-    type Error = NewActionError;
+    type Error = ActionCreationError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = ActionSetIndex::new();
@@ -143,7 +143,7 @@ mod test {
         let result = ActionSetIndex::try_from(serde_res.expect("That didn't work"));
         assert_eq!(
             result.err(),
-            Some(NewActionError::UnknownService(
+            Some(ActionCreationError::UnknownService(
                 "Unknown service: unknown".to_string()
             ))
         );
