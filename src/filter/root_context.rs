@@ -2,10 +2,11 @@ use crate::action_set_index::ActionSetIndex;
 use crate::configuration::PluginConfiguration;
 use crate::filter::kuadrant_filter::KuadrantFilter;
 use crate::service::HeaderResolver;
+use crate::service_metrics::ServiceMetrics;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
-use proxy_wasm::types::ContextType;
+use proxy_wasm::types::{ContextType, MetricType};
 use std::rc::Rc;
 
 const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -17,6 +18,8 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 pub struct FilterRoot {
     pub context_id: u32,
     pub action_set_index: Rc<ActionSetIndex>,
+    pub auth_service_metrics: Rc<ServiceMetrics>,
+    pub rl_service_metrics: Rc<ServiceMetrics>,
 }
 
 impl RootContext for FilterRoot {
@@ -29,6 +32,10 @@ impl RootContext for FilterRoot {
             "#{} {} {}: VM started",
             self.context_id, WASM_SHIM_HEADER, full_version
         );
+
+        self.rl_service_metrics = Rc::new(ServiceMetrics::from_host("kuadrant.rate_limit"));
+        self.auth_service_metrics = Rc::new(ServiceMetrics::from_host("kuadrant.auth"));
+
         true
     }
 
@@ -39,6 +46,8 @@ impl RootContext for FilterRoot {
             context_id,
             Rc::clone(&self.action_set_index),
             header_resolver,
+            &self.auth_service_metrics,
+            &self.rl_service_metrics,
         )))
     }
 

@@ -4,6 +4,7 @@ use crate::filter::operations::{
 };
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
+use crate::service_metrics::ServiceMetrics;
 use log::{debug, error, warn};
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -19,6 +20,9 @@ pub(crate) struct KuadrantFilter {
     grpc_message_receiver_operation: Option<GrpcMessageReceiverOperation>,
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
+
+    auth_service_metrics: Rc<ServiceMetrics>,
+    rl_service_metrics: Rc<ServiceMetrics>,
 }
 
 impl Context for KuadrantFilter {
@@ -263,6 +267,8 @@ impl KuadrantFilter {
         context_id: u32,
         index: Rc<ActionSetIndex>,
         header_resolver: Rc<HeaderResolver>,
+        auth_service_metrics: &Rc<ServiceMetrics>,
+        rl_service_metrics: &Rc<ServiceMetrics>,
     ) -> Self {
         Self {
             context_id,
@@ -271,6 +277,8 @@ impl KuadrantFilter {
             grpc_message_receiver_operation: None,
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),
+            auth_service_metrics: Rc::clone(auth_service_metrics),
+            rl_service_metrics: Rc::clone(rl_service_metrics),
         }
     }
 }

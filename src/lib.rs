@@ -10,6 +10,7 @@ mod runtime_action;
 mod runtime_action_set;
 mod runtime_config;
 mod service;
+mod service_metrics;
 
 #[cfg_attr(
     all(
@@ -43,6 +44,8 @@ extern "C" fn start() {
         Box::new(FilterRoot {
             context_id,
             action_set_index: Default::default(),
+            auth_service_metrics: Default::default(),
+            rl_service_metrics: Default::default(),
         })
     });
 }
