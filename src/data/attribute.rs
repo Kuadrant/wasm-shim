@@ -78,46 +78,40 @@ impl AttributeValue for String {
 
 impl AttributeValue for i64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
-        let bytes: Result<[u8; 8], _> = raw_attribute[..8].try_into();
-        if bytes.is_ok() && raw_attribute.len() == 8 {
-            if let Ok(bytes) = bytes {
-                return Ok(i64::from_le_bytes(bytes));
-            }
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(i64::from_le_bytes(bytes)),
+            Err(_) => Err(PropError::new(format!(
+                "parse: Int value expected to be 8 bytes, but got {}",
+                ra_len,
+            ))),
         }
-        Err(PropError::new(format!(
-            "parse: Int value expected to be 8 bytes, but got {}",
-            raw_attribute.len()
-        )))
     }
 }
 
 impl AttributeValue for u64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
-        let bytes: Result<[u8; 8], _> = raw_attribute[..8].try_into();
-        if bytes.is_ok() && raw_attribute.len() == 8 {
-            if let Ok(bytes) = bytes {
-                return Ok(u64::from_le_bytes(bytes));
-            }
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(u64::from_le_bytes(bytes)),
+            Err(_) => Err(PropError::new(format!(
+                "parse: UInt value expected to be 8 bytes, but got {}",
+                ra_len,
+            ))),
         }
-        Err(PropError::new(format!(
-            "parse: UInt value expected to be 8 bytes, but got {}",
-            raw_attribute.len()
-        )))
     }
 }
 
 impl AttributeValue for f64 {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
-        let bytes: Result<[u8; 8], _> = raw_attribute[..8].try_into();
-        if bytes.is_ok() && raw_attribute.len() == 8 {
-            if let Ok(bytes) = bytes {
-                return Ok(f64::from_le_bytes(bytes));
-            }
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(f64::from_le_bytes(bytes)),
+            Err(_) => Err(PropError::new(format!(
+                "parse: Float value expected to be 8 bytes, but got {}",
+                ra_len,
+            ))),
         }
-        Err(PropError::new(format!(
-            "parse: Float value expected to be 8 bytes, but got {}",
-            raw_attribute.len()
-        )))
     }
 }
 
@@ -141,17 +135,17 @@ impl AttributeValue for bool {
 
 impl AttributeValue for DateTime<FixedOffset> {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
-        let bytes: Result<[u8; 8], _> = raw_attribute[..8].try_into();
-        if bytes.is_ok() && raw_attribute.len() == 8 {
-            if let Ok(bytes) = bytes {
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => {
                 let nanos = i64::from_le_bytes(bytes);
-                return Ok(DateTime::from_timestamp_nanos(nanos).into());
+                Ok(DateTime::from_timestamp_nanos(nanos).into())
             }
+            Err(_) => Err(PropError::new(format!(
+                "parse: Timestamp expected to be 8 bytes, but got {}",
+                ra_len,
+            ))),
         }
-        Err(PropError::new(format!(
-            "parse: Timestamp expected to be 8 bytes, but got {}",
-            raw_attribute.len()
-        )))
     }
 }
 
