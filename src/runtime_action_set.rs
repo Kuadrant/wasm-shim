@@ -106,9 +106,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-
-        assert!(runtime_action_set.conditions_apply().is_ok());
-        assert!(runtime_action_set.conditions_apply().expect("is ok"));
+        assert_eq!(runtime_action_set.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -124,9 +122,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-
-        assert!(runtime_action_set.conditions_apply().is_ok());
-        assert!(runtime_action_set.conditions_apply().expect("is ok"));
+        assert_eq!(runtime_action_set.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -142,9 +138,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-
-        assert!(runtime_action_set.conditions_apply().is_ok());
-        assert!(!runtime_action_set.conditions_apply().expect("is ok"));
+        assert_eq!(runtime_action_set.conditions_apply(), Ok(false));
     }
 
     #[test]

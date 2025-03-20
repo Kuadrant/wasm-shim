@@ -197,15 +197,13 @@ mod test {
     #[test]
     fn empty_predicates_do_apply() {
         let auth_action = build_auth_action_with_predicates(Vec::default());
-        assert!(auth_action.conditions_apply().is_ok());
-        assert!(auth_action.conditions_apply().expect("is ok"));
+        assert_eq!(auth_action.conditions_apply(), Ok(true));
     }
 
     #[test]
     fn when_all_predicates_are_truthy_action_apply() {
         let auth_action = build_auth_action_with_predicates(vec!["true".into(), "true".into()]);
-        assert!(auth_action.conditions_apply().is_ok());
-        assert!(auth_action.conditions_apply().expect("is ok"));
+        assert_eq!(auth_action.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -216,8 +214,7 @@ mod test {
             "true".into(),
             "false".into(),
         ]);
-        assert!(auth_action.conditions_apply().is_ok());
-        assert!(!auth_action.conditions_apply().expect("is ok"));
+        assert_eq!(auth_action.conditions_apply(), Ok(false));
     }
 
     #[test]

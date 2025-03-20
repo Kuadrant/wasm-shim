@@ -296,8 +296,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert!(rl_action.conditions_apply().is_ok());
-        assert!(rl_action.conditions_apply().expect("is ok"));
+        assert_eq!(rl_action.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -306,8 +305,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert!(rl_action.conditions_apply().is_ok());
-        assert!(rl_action.conditions_apply().expect("is ok"));
+        assert_eq!(rl_action.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -316,10 +314,10 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor_result = rl_action.build_descriptor();
-        assert!(descriptor_result.is_ok());
-        let descriptor = descriptor_result.expect("is ok");
-        assert_eq!(descriptor, RateLimitDescriptor::default());
+        assert_eq!(
+            rl_action.build_descriptor(),
+            Ok(RateLimitDescriptor::default())
+        );
     }
 
     #[test]
@@ -334,9 +332,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor_result = rl_action.build_descriptor();
-        assert!(descriptor_result.is_ok());
-        let descriptor = descriptor_result.expect("is ok");
+        let descriptor = rl_action.build_descriptor().expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -354,9 +350,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor_result = rl_action.build_descriptor();
-        assert!(descriptor_result.is_ok());
-        let descriptor = descriptor_result.expect("is ok");
+        let descriptor = rl_action.build_descriptor().expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -376,9 +370,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor_result = rl_action.build_descriptor();
-        assert!(descriptor_result.is_ok());
-        let descriptor = descriptor_result.expect("is ok");
+        let descriptor = rl_action.build_descriptor().expect("is ok");
         assert_eq!(descriptor, RateLimitDescriptor::default());
     }
 
@@ -423,10 +415,7 @@ mod test {
         assert!(rl_action_1.merge(rl_action_3).is_none());
 
         // it should generate descriptor entries from action 1 and action 3
-
-        let descriptor_result = rl_action_1.build_descriptor();
-        assert!(descriptor_result.is_ok());
-        let descriptor = descriptor_result.expect("is ok");
+        let descriptor = rl_action_1.build_descriptor().expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 2);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
