@@ -1,5 +1,6 @@
 use std::path::Path;
 
+#[allow(clippy::unwrap_used)]
 pub fn wasm_module() -> String {
     let wasm_file = Path::new("target/wasm32-unknown-unknown/release/wasm_shim.wasm");
     assert!(

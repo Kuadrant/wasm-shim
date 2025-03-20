@@ -688,22 +688,22 @@ pub mod data {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("address").expect("address is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "source.address".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
 
             match map.data.get("destination").expect("destination is some") {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("port").expect("port is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "destination.port".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
 
             match map.data.get("request").expect("request is some") {
@@ -711,16 +711,16 @@ pub mod data {
                     assert_eq!(map.len(), 2);
                     assert!(map.get("method").is_some());
                     match map.get("method").expect("method is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.method".into()),
                     }
                     assert!(map.get("referer").is_some());
                     match map.get("referer").expect("referer is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.referer".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
         }
     }
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(attr.path, path);
         match attr.cel_type {
             Some(ValueType::String) => {}
-            _ => panic!("Not supposed to get here!"),
+            _ => unreachable!("Not supposed to get here!"),
         }
     }
 

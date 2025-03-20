@@ -236,7 +236,7 @@ mod test {
             assert_eq!(auth_service.failure_mode, FailureMode::Deny);
             assert_eq!(auth_service.timeout, Timeout(Duration::from_millis(24)))
         } else {
-            panic!()
+            unreachable!()
         }
 
         if let Some(rl_service) = services.get("limitador") {
@@ -245,7 +245,7 @@ mod test {
             assert_eq!(rl_service.failure_mode, FailureMode::Allow);
             assert_eq!(rl_service.timeout, Timeout(Duration::from_millis(42)))
         } else {
-            panic!()
+            unreachable!()
         }
 
         let predicates = &plugin_config.action_sets[0]
@@ -277,14 +277,14 @@ mod test {
             assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
             assert_eq!(static_item.value, "1");
         } else {
-            panic!();
+            unreachable!();
         }
 
         if let DataType::Expression(exp) = &rl_data_items[1].item {
             assert_eq!(exp.key, "username");
             assert_eq!(exp.value, "auth.metadata.username");
         } else {
-            panic!();
+            unreachable!();
         }
     }
 
