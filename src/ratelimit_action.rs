@@ -454,7 +454,7 @@ mod test {
                 );
             }
             HeaderKind::Request(_headers) => {
-                panic!("ratelimitresponse should not return Request headers")
+                unreachable!("ratelimitresponse should not return Request headers")
             }
         }
     }

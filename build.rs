@@ -22,6 +22,7 @@ fn set_features(env: &str) {
     println!("cargo:rustc-env={env}={features:?}");
 }
 
+#[allow(clippy::indexing_slicing)]
 fn set_git_hash(env: &str) {
     let git_sha = Command::new("/usr/bin/git")
         .args(["rev-parse", "HEAD"])
@@ -52,6 +53,7 @@ fn set_git_hash(env: &str) {
     }
 }
 
+#[allow(clippy::expect_used)]
 fn generate_protobuf() -> Result<(), Box<dyn Error>> {
     let custom = protoc_rust::Customize {
         serde_derive: Some(true),

@@ -43,3 +43,10 @@ serial_test = "2.0.0"
 
 [build-dependencies]
 protoc-rust = "2.27"
+
+[lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+#eventually clean all these up as well
+#indexing_slicing = "deny"

@@ -237,7 +237,7 @@ mod test {
 
         match result.expect("is ok") {
             HeaderKind::Response(_headers) => {
-                panic!("check_response should not return Response headers")
+                unreachable!("check_response should not return Response headers")
             }
             HeaderKind::Request(headers) => assert!(headers.is_empty()),
         }
@@ -249,7 +249,7 @@ mod test {
 
         match result.expect("is ok") {
             HeaderKind::Response(_headers) => {
-                panic!("check_response should not return Response headers")
+                unreachable!("check_response should not return Response headers")
             }
             HeaderKind::Request(headers) => {
                 assert!(!headers.is_empty());

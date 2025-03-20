@@ -202,9 +202,16 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
                 Entry::Occupied(mut e) => {
                     if allow_repeats {
                         if let Value::List(ref mut list) = e.get_mut() {
-                            Arc::get_mut(list)
-                                .expect("This isn't ever shared!")
-                                .push(new_v);
+                            match Arc::get_mut(list) {
+                                None =>  {
+                                    return Err(ExecutionError::FunctionError {
+                                        function: "decode_query_string".to_string(),
+                                        message: "concurrent modifications not allowed! How is this even shared?".to_string(),
+                                    })
+                                }
+                                Some(v) => v
+                                    .push(new_v),
+                            }
                         } else {
                             let v = e.get().clone();
                             let list = Value::List([v, new_v].to_vec().into());
@@ -417,6 +424,7 @@ fn json_to_cel(json: &str) -> Value {
         Ok(json) => match json {
             JsonValue::Null => Value::Null,
             JsonValue::Bool(b) => b.into(),
+            #[allow(clippy::expect_used)]
             JsonValue::Number(n) => {
                 if n.is_u64() {
                     n.as_u64().expect("Unreachable: number must be u64").into()
@@ -680,22 +688,22 @@ pub mod data {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("address").expect("address is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "source.address".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
 
             match map.data.get("destination").expect("destination is some") {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("port").expect("port is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "destination.port".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
 
             match map.data.get("request").expect("request is some") {
@@ -703,16 +711,16 @@ pub mod data {
                     assert_eq!(map.len(), 2);
                     assert!(map.get("method").is_some());
                     match map.get("method").expect("method is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.method".into()),
                     }
                     assert!(map.get("referer").is_some());
                     match map.get("referer").expect("referer is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.referer".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
         }
     }
@@ -899,7 +907,7 @@ mod tests {
         assert_eq!(attr.path, path);
         match attr.cel_type {
             Some(ValueType::String) => {}
-            _ => panic!("Not supposed to get here!"),
+            _ => unreachable!("Not supposed to get here!"),
         }
     }
 
