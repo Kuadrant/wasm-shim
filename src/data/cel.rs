@@ -202,9 +202,16 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
                 Entry::Occupied(mut e) => {
                     if allow_repeats {
                         if let Value::List(ref mut list) = e.get_mut() {
-                            Arc::get_mut(list)
-                                .expect("This isn't ever shared!")
-                                .push(new_v);
+                            match Arc::get_mut(list) {
+                                None =>  {
+                                    return Err(ExecutionError::FunctionError {
+                                        function: "decode_query_string".to_string(),
+                                        message: "concurrent modifications not allowed! How is this even shared?".to_string(),
+                                    })
+                                }
+                                Some(v) => v
+                                    .push(new_v),
+                            }
                         } else {
                             let v = e.get().clone();
                             let list = Value::List([v, new_v].to_vec().into());
@@ -417,6 +424,7 @@ fn json_to_cel(json: &str) -> Value {
         Ok(json) => match json {
             JsonValue::Null => Value::Null,
             JsonValue::Bool(b) => b.into(),
+            #[allow(clippy::expect_used)]
             JsonValue::Number(n) => {
                 if n.is_u64() {
                     n.as_u64().expect("Unreachable: number must be u64").into()

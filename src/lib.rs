@@ -2,7 +2,7 @@ mod action_set_index;
 mod auth_action;
 mod configuration;
 mod data;
-#[allow(renamed_and_removed_lints)]
+#[allow(renamed_and_removed_lints, clippy::panic, clippy::unwrap_used)]
 mod envoy;
 mod filter;
 mod ratelimit_action;
@@ -36,8 +36,7 @@ extern "C" fn start() {
 
     proxy_wasm::set_log_level(LogLevel::Trace);
     std::panic::set_hook(Box::new(|panic_info| {
-        proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string())
-            .expect("failed to log panic_info");
+        let _ = proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string());
     }));
     proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
         info!("#{} set_root_context", context_id);
