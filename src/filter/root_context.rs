@@ -45,8 +45,14 @@ impl RootContext for FilterRoot {
     fn on_configure(&mut self, _config_size: usize) -> bool {
         info!("#{} on_configure", self.context_id);
         let configuration: Vec<u8> = match self.get_plugin_configuration() {
-            Some(c) => c,
-            None => return false,
+            Ok(cfg) => match cfg {
+                Some(c) => c,
+                None => return false,
+            },
+            Err(status) => {
+                log::error!("#{} on_configure: {:?}", self.context_id, status);
+                return false;
+            }
         };
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {

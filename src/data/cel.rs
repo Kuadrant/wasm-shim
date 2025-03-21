@@ -190,15 +190,13 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
                 })
                 .into_owned()
                 .into();
-            match map.entry(
-                decode(key)
-                    .unwrap_or_else(|e| {
-                        warn!("failed to decode query key, using default: {e:?}");
-                        Cow::from(key)
-                    })
-                    .into_owned()
-                    .into(),
-            ) {
+            let key = decode(key)
+                .unwrap_or_else(|e| {
+                    warn!("failed to decode query key, using default: {e:?}");
+                    Cow::from(key)
+                })
+                .into_owned();
+            match map.entry(key.into()) {
                 Entry::Occupied(mut e) => {
                     if allow_repeats {
                         if let Value::List(ref mut list) = e.get_mut() {
