@@ -119,7 +119,14 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_response_headers", self.context_id);
         if let Some(response_headers) = mem::take(&mut self.response_headers_to_add) {
             for (header, value) in response_headers {
-                self.add_http_response_header(header.as_str(), value.as_str())
+                if let Err(status) = self.add_http_response_header(header.as_str(), value.as_str())
+                {
+                    log::error!(
+                        "#{} on_http_response_headers: failed to add headers: {:?}",
+                        self.context_id,
+                        status
+                    );
+                }
             }
         }
         Action::Continue
@@ -188,14 +195,14 @@ impl KuadrantFilter {
             Operation::Done() => {
                 debug!("handle_operation: Done");
                 self.add_request_headers();
-                self.resume_http_request();
+                let _ = self.resume_http_request();
                 Action::Continue
             }
         }
     }
 
     fn die(&mut self, die: GrpcErrResponse) {
-        self.send_http_response(
+        let _ = self.send_http_response(
             die.status_code(),
             die.headers(),
             Some(die.body().as_bytes()),
@@ -241,7 +248,13 @@ impl KuadrantFilter {
     fn add_request_headers(&mut self) {
         if let Some(request_headers) = mem::take(&mut self.request_headers_to_add) {
             for (header, value) in request_headers {
-                self.add_http_request_header(header.as_str(), value.as_str())
+                if let Err(status) = self.add_http_request_header(header.as_str(), value.as_str()) {
+                    log::error!(
+                        "add_http_request_headers failed for {}: {:?}",
+                        &header,
+                        status
+                    );
+                }
             }
         }
     }

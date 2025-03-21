@@ -245,8 +245,10 @@ impl HeaderResolver {
         self.headers.get_or_init(|| {
             let mut headers = Vec::new();
             for header in TracingHeader::all() {
-                if let Some(value) = ctx.get_http_request_header_bytes((*header).as_str()) {
-                    headers.push(((*header).as_str(), value));
+                match ctx.get_http_request_header_bytes((*header).as_str()) {
+                    Ok(Some(value)) => headers.push(((*header).as_str(), value)),
+                    Ok(None) => (),
+                    Err(status) => log::error!("Error getting header: {:?} ", status),
                 }
             }
             headers
@@ -279,6 +281,7 @@ impl TracingHeader {
 mod test {
     use super::*;
     use proxy_wasm::traits::Context;
+    use proxy_wasm::types::Status;
     use std::collections::HashMap;
 
     struct MockHost {
@@ -294,8 +297,8 @@ mod test {
     impl Context for MockHost {}
 
     impl proxy_wasm::traits::HttpContext for MockHost {
-        fn get_http_request_header_bytes(&self, name: &str) -> Option<Bytes> {
-            self.headers.get(name).map(|b| b.to_owned())
+        fn get_http_request_header_bytes(&self, name: &str) -> Result<Option<Bytes>, Status> {
+            Ok(self.headers.get(name).map(|b| b.to_owned()))
         }
     }
 

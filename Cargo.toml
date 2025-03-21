@@ -21,7 +21,7 @@ with-serde = ["protobuf/with-serde"]
 debug-host-behaviour = []
 
 [dependencies]
-proxy-wasm = "0.2.1"
+proxy-wasm = { git = "https://github.com/Kuadrant/proxy-wasm-rust-sdk.git", branch = "kuadrant"}
 serde_json = "1.0"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
