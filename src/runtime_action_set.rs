@@ -1,5 +1,6 @@
 use crate::configuration::{ActionSet, Service};
-use crate::data::{Predicate, PredicateVec};
+use crate::data::{Predicate, PredicateResult, PredicateVec};
+use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::RuntimeAction;
 use crate::service::{GrpcErrResponse, HeaderKind, IndexedGrpcRequest};
 use std::collections::HashMap;
@@ -12,16 +13,17 @@ pub struct RuntimeActionSet {
     pub runtime_actions: Vec<Rc<RuntimeAction>>,
 }
 
+pub type IndexedRequestResult = Result<Option<IndexedGrpcRequest>, GrpcErrResponse>;
+
 impl RuntimeActionSet {
     pub fn new(
         action_set: &ActionSet,
         services: &HashMap<String, Service>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ActionCreationError> {
         // route predicates
         let mut route_rule_predicates = Vec::default();
         for predicate in &action_set.route_rule_conditions.predicates {
-            route_rule_predicates
-                .push(Predicate::route_rule(predicate).map_err(|e| e.to_string())?);
+            route_rule_predicates.push(Predicate::route_rule(predicate)?);
         }
 
         // actions
@@ -56,31 +58,32 @@ impl RuntimeActionSet {
         folded_actions
     }
 
-    pub fn conditions_apply(&self) -> bool {
+    pub fn conditions_apply(&self) -> PredicateResult {
         self.route_rule_predicates.apply()
     }
 
-    pub fn find_first_grpc_request(&self) -> Option<IndexedGrpcRequest> {
+    pub fn find_first_grpc_request(&self) -> IndexedRequestResult {
         self.find_next_grpc_request(0)
     }
 
-    pub fn find_next_grpc_request(&self, start: usize) -> Option<IndexedGrpcRequest> {
-        self.runtime_actions
-            .iter()
-            .skip(start)
-            .enumerate()
-            .find_map(|(i, action)| {
-                action
-                    .process_request()
-                    .map(|request| IndexedGrpcRequest::new(start + i, request))
-            })
+    pub fn find_next_grpc_request(&self, start: usize) -> IndexedRequestResult {
+        for (index, action) in self.runtime_actions.iter().skip(start).enumerate() {
+            match action.process_request() {
+                Ok(Some(request)) => {
+                    return Ok(Some(IndexedGrpcRequest::new(start + index, request)))
+                }
+                Ok(None) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
     }
 
     pub fn process_grpc_response(
         &self,
         index: usize,
         msg: &[u8],
-    ) -> Result<(Option<IndexedGrpcRequest>, HeaderKind), GrpcErrResponse> {
+    ) -> Result<(IndexedRequestResult, HeaderKind), GrpcErrResponse> {
         self.runtime_actions[index]
             .process_response(msg)
             .map(|headers| {
@@ -103,8 +106,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-
-        assert!(runtime_action_set.conditions_apply())
+        assert_eq!(runtime_action_set.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -120,8 +122,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-
-        assert!(runtime_action_set.conditions_apply())
+        assert_eq!(runtime_action_set.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -137,13 +138,11 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-
-        assert!(!runtime_action_set.conditions_apply())
+        assert_eq!(runtime_action_set.conditions_apply(), Ok(false));
     }
 
     #[test]
-    #[should_panic]
-    fn when_a_cel_expression_does_not_evaluate_to_bool_panics() {
+    fn when_a_cel_expression_does_not_evaluate_to_bool_returns_error() {
         let action_set = ActionSet::new(
             "some_name".to_owned(),
             RouteRuleConditions {
@@ -155,7 +154,7 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-        runtime_action_set.conditions_apply();
+        assert!(runtime_action_set.conditions_apply().is_err());
     }
 
     fn build_rl_service() -> Service {

@@ -1,5 +1,6 @@
-use crate::data::get_attribute;
+use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::property::{host_get_map, Path};
+use crate::data::{get_attribute, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
@@ -7,7 +8,7 @@ use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
-use log::{error, warn};
+use log::warn;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
@@ -16,6 +17,84 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
+
+pub(super) mod errors {
+    use crate::data::{Expression, PropertyError};
+    use cel_interpreter::ExecutionError;
+    use std::error::Error;
+    use std::fmt::{Debug, Display, Formatter};
+
+    #[derive(Debug)]
+    pub struct EvaluationError {
+        expression: Expression,
+        message: String,
+    }
+
+    impl PartialEq for EvaluationError {
+        fn eq(&self, other: &Self) -> bool {
+            self.message == other.message
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    pub enum CelError {
+        Property(PropertyError),
+        Resolve(ExecutionError),
+    }
+
+    impl Error for CelError {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            match self {
+                CelError::Property(err) => Some(err),
+                CelError::Resolve(err) => Some(err),
+            }
+        }
+    }
+
+    impl From<PropertyError> for CelError {
+        fn from(e: PropertyError) -> Self {
+            CelError::Property(e)
+        }
+    }
+
+    impl From<ExecutionError> for CelError {
+        fn from(e: ExecutionError) -> Self {
+            CelError::Resolve(e)
+        }
+    }
+
+    impl Display for CelError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                CelError::Property(e) => {
+                    write!(f, "CelError::Property {{ {:?} }}", e)
+                }
+                CelError::Resolve(e) => {
+                    write!(f, "CelError::Resolve {{ {:?} }}", e)
+                }
+            }
+        }
+    }
+
+    impl EvaluationError {
+        pub fn new(expression: Expression, message: String) -> EvaluationError {
+            EvaluationError {
+                expression,
+                message,
+            }
+        }
+    }
+
+    impl Display for EvaluationError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "EvaluationError {{ expression: {:?}, message: {} }}",
+                self.expression, self.message
+            )
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Expression {
@@ -59,12 +138,12 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
-    pub fn eval(&self) -> Result<Value, String> {
+    pub fn eval(&self) -> Result<Value, CelError> {
         let mut ctx = create_context();
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
         }
-        let Map { map } = self.build_data_map();
+        let Map { map } = self.build_data_map()?;
 
         ctx.add_function("getHostProperty", get_host_property);
 
@@ -74,7 +153,7 @@ impl Expression {
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
             );
         }
-        Value::resolve(&self.expression, &ctx).map_err(|err| format!("{err:?}"))
+        Value::resolve(&self.expression, &ctx).map_err(|e| e.into())
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]
@@ -82,7 +161,7 @@ impl Expression {
         ctx.add_function("queryMap", decode_query_string);
     }
 
-    fn build_data_map(&self) -> Map {
+    fn build_data_map(&self) -> Result<Map, PropertyError> {
         data::AttributeMap::new(self.attributes.clone()).into()
     }
 }
@@ -111,21 +190,26 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
                 })
                 .into_owned()
                 .into();
-            match map.entry(
-                decode(key)
-                    .unwrap_or_else(|e| {
-                        warn!("failed to decode query key, using default: {e:?}");
-                        Cow::from(key)
-                    })
-                    .into_owned()
-                    .into(),
-            ) {
+            let key = decode(key)
+                .unwrap_or_else(|e| {
+                    warn!("failed to decode query key, using default: {e:?}");
+                    Cow::from(key)
+                })
+                .into_owned();
+            match map.entry(key.into()) {
                 Entry::Occupied(mut e) => {
                     if allow_repeats {
                         if let Value::List(ref mut list) = e.get_mut() {
-                            Arc::get_mut(list)
-                                .expect("This isn't ever shared!")
-                                .push(new_v);
+                            match Arc::get_mut(list) {
+                                None =>  {
+                                    return Err(ExecutionError::FunctionError {
+                                        function: "decode_query_string".to_string(),
+                                        message: "concurrent modifications not allowed! How is this even shared?".to_string(),
+                                    })
+                                }
+                                Some(v) => v
+                                    .push(new_v),
+                            }
                         } else {
                             let v = e.get().clone();
                             let list = Value::List([v, new_v].to_vec().into());
@@ -208,6 +292,8 @@ pub struct Predicate {
     expression: Expression,
 }
 
+pub type PredicateResult = Result<bool, EvaluationError>;
+
 impl Predicate {
     pub fn new(predicate: &str) -> Result<Self, ParseError> {
         Ok(Self {
@@ -224,31 +310,39 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self) -> Result<bool, String> {
+    pub fn test(&self) -> PredicateResult {
         match self.expression.eval() {
             Ok(value) => match value {
                 Value::Bool(result) => Ok(result),
-                _ => Err(format!("Expected boolean value, got {value:?}")),
+                _ => Err(EvaluationError::new(
+                    self.expression.clone(),
+                    format!("Expected boolean value, got {value:?}"),
+                )),
             },
-            Err(err) => Err(err),
+            Err(err) => Err(EvaluationError::new(
+                self.expression.clone(),
+                err.to_string(),
+            )),
         }
     }
 }
 
 pub trait PredicateVec {
-    fn apply(&self) -> bool;
+    fn apply(&self) -> PredicateResult;
 }
 
 impl PredicateVec for Vec<Predicate> {
-    fn apply(&self) -> bool {
-        self.is_empty()
-            || self.iter().all(|predicate| match predicate.test() {
-                Ok(b) => b,
-                Err(err) => {
-                    error!("Failed to evaluate {:?}: {}", predicate, err);
-                    panic!("Err out of this!")
-                }
-            })
+    fn apply(&self) -> PredicateResult {
+        if self.is_empty() {
+            return Ok(true);
+        }
+        for predicate in self.iter() {
+            // if it does not apply or errors exit early
+            if !predicate.test()? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -273,46 +367,39 @@ impl Clone for Attribute {
 }
 
 impl Attribute {
-    pub fn get(&self) -> Value {
+    pub fn get(&self) -> Result<Value, PropertyError> {
         match &self.cel_type {
             Some(t) => match t {
-                ValueType::String => get_attribute::<String>(&self.path)
-                    .expect("Failed getting to known attribute")
+                ValueType::String => Ok(get_attribute::<String>(&self.path)?
                     .map(|v| Value::String(v.into()))
-                    .unwrap_or(Value::Null),
-                ValueType::Int => get_attribute::<i64>(&self.path)
-                    .expect("Failed getting to known attribute")
+                    .unwrap_or(Value::Null)),
+                ValueType::Int => Ok(get_attribute::<i64>(&self.path)?
                     .map(Value::Int)
-                    .unwrap_or(Value::Null),
-                ValueType::UInt => get_attribute::<u64>(&self.path)
-                    .expect("Failed getting to known attribute")
+                    .unwrap_or(Value::Null)),
+                ValueType::UInt => Ok(get_attribute::<u64>(&self.path)?
                     .map(Value::UInt)
-                    .unwrap_or(Value::Null),
-                ValueType::Float => get_attribute::<f64>(&self.path)
-                    .expect("Failed getting to known attribute")
+                    .unwrap_or(Value::Null)),
+                ValueType::Float => Ok(get_attribute::<f64>(&self.path)?
                     .map(Value::Float)
-                    .unwrap_or(Value::Null),
-                ValueType::Bool => get_attribute::<bool>(&self.path)
-                    .expect("Failed getting to known attribute")
+                    .unwrap_or(Value::Null)),
+                ValueType::Bool => Ok(get_attribute::<bool>(&self.path)?
                     .map(Value::Bool)
-                    .unwrap_or(Value::Null),
-                ValueType::Bytes => get_attribute::<Vec<u8>>(&self.path)
-                    .expect("Failed getting to known attribute")
+                    .unwrap_or(Value::Null)),
+                ValueType::Bytes => Ok(get_attribute::<Vec<u8>>(&self.path)?
                     .map(|v| Value::Bytes(v.into()))
-                    .unwrap_or(Value::Null),
-                ValueType::Timestamp => get_attribute::<DateTime<FixedOffset>>(&self.path)
-                    .expect("Failed getting to known attribute")
+                    .unwrap_or(Value::Null)),
+                ValueType::Timestamp => Ok(get_attribute::<DateTime<FixedOffset>>(&self.path)?
                     .map(Value::Timestamp)
-                    .unwrap_or(Value::Null),
-                ValueType::Map => host_get_map(&self.path)
+                    .unwrap_or(Value::Null)),
+                ValueType::Map => Ok(host_get_map(&self.path)
                     .map(cel_interpreter::objects::Map::from)
                     .map(Value::Map)
-                    .unwrap_or(Value::Null),
+                    .unwrap_or(Value::Null)),
                 _ => todo!("Need support for `{t}`s!"),
             },
-            None => match get_attribute::<String>(&self.path).expect("Path must resolve!") {
-                None => Value::Null,
-                Some(json) => json_to_cel(&json),
+            None => match get_attribute::<String>(&self.path)? {
+                None => Ok(Value::Null),
+                Some(json) => Ok(json_to_cel(&json)),
             },
         }
     }
@@ -335,6 +422,7 @@ fn json_to_cel(json: &str) -> Value {
         Ok(json) => match json {
             JsonValue::Null => Value::Null,
             JsonValue::Bool(b) => b.into(),
+            #[allow(clippy::expect_used)]
             JsonValue::Number(n) => {
                 if n.is_u64() {
                     n.as_u64().expect("Unreachable: number must be u64").into()
@@ -505,6 +593,7 @@ pub fn debug_all_well_known_attributes() {
 
 pub mod data {
     use crate::data::cel::Attribute;
+    use crate::data::PropertyError;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -546,23 +635,23 @@ pub mod data {
         }
     }
 
-    impl From<AttributeMap> for Map {
+    impl From<AttributeMap> for Result<Map, PropertyError> {
         fn from(value: AttributeMap) -> Self {
             map_to_value(value.data)
         }
     }
 
-    fn map_to_value(map: HashMap<String, Token>) -> Map {
+    fn map_to_value(map: HashMap<String, Token>) -> Result<Map, PropertyError> {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
             let k = key.into();
             let v = match value {
-                Token::Value(v) => v.get(),
-                Token::Node(map) => Value::Map(map_to_value(map)),
+                Token::Value(v) => v.get()?,
+                Token::Node(map) => Value::Map(map_to_value(map)?),
             };
             out.insert(k, v);
         }
-        Map { map: Arc::new(out) }
+        Ok(Map { map: Arc::new(out) })
     }
 
     #[cfg(test)]
@@ -597,22 +686,22 @@ pub mod data {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("address").expect("address is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "source.address".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
 
             match map.data.get("destination").expect("destination is some") {
                 Token::Node(map) => {
                     assert_eq!(map.len(), 1);
                     match map.get("port").expect("port is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "destination.port".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
 
             match map.data.get("request").expect("request is some") {
@@ -620,16 +709,16 @@ pub mod data {
                     assert_eq!(map.len(), 2);
                     assert!(map.get("method").is_some());
                     match map.get("method").expect("method is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.method".into()),
                     }
                     assert!(map.get("referer").is_some());
                     match map.get("referer").expect("referer is some") {
-                        Token::Node(_) => panic!("Not supposed to get here!"),
+                        Token::Node(_) => unreachable!("Not supposed to get here!"),
                         Token::Value(v) => assert_eq!(v.path, "request.referer".into()),
                     }
                 }
-                Token::Value(_) => panic!("Not supposed to get here!"),
+                Token::Value(_) => unreachable!("Not supposed to get here!"),
             }
         }
     }
@@ -797,13 +886,15 @@ mod tests {
         )));
         let value = known_attribute_for(&"destination.port".into())
             .expect("destination.port known attribute exists")
-            .get();
+            .get()
+            .expect("There is no property error!");
         assert_eq!(value, 80.into());
         property::test::TEST_PROPERTY_VALUE
             .set(Some(("request.method".into(), "GET".bytes().collect())));
         let value = known_attribute_for(&"request.method".into())
             .expect("request.method known attribute exists")
-            .get();
+            .get()
+            .expect("There is no property error!");
         assert_eq!(value, "GET".into());
     }
 
@@ -814,7 +905,7 @@ mod tests {
         assert_eq!(attr.path, path);
         match attr.cel_type {
             Some(ValueType::String) => {}
-            _ => panic!("Not supposed to get here!"),
+            _ => unreachable!("Not supposed to get here!"),
         }
     }
 

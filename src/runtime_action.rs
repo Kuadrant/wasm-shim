@@ -1,7 +1,10 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
+use crate::data::PredicateResult;
 use crate::ratelimit_action::RateLimitAction;
+use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
+use crate::service::errors::BuildMessageError;
 use crate::service::rate_limit::RateLimitService;
 use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService, HeaderKind};
 use log::debug;
@@ -15,11 +18,63 @@ pub enum RuntimeAction {
     RateLimit(RateLimitAction),
 }
 
+pub(super) mod errors {
+    use cel_parser::ParseError;
+    use std::fmt::{Debug, Display, Formatter};
+
+    #[derive(Debug)]
+    pub enum ActionCreationError {
+        Parse(ParseError),
+        UnknownService(String),
+    }
+
+    impl From<ParseError> for ActionCreationError {
+        fn from(e: ParseError) -> ActionCreationError {
+            ActionCreationError::Parse(e)
+        }
+    }
+
+    impl PartialEq for ActionCreationError {
+        fn eq(&self, other: &ActionCreationError) -> bool {
+            match (self, other) {
+                (ActionCreationError::Parse(_), ActionCreationError::Parse(_)) => false,
+                (
+                    ActionCreationError::UnknownService(a),
+                    ActionCreationError::UnknownService(b),
+                ) => a == b,
+                _ => false,
+            }
+        }
+    }
+
+    impl Display for ActionCreationError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                ActionCreationError::Parse(e) => {
+                    write!(f, "NewActionError::Parse {{ {:?} }}", e)
+                }
+                ActionCreationError::UnknownService(e) => {
+                    write!(f, "NewActionError::UnknownService {{ {:?} }}", e)
+                }
+            }
+        }
+    }
+}
+
+pub type RequestResult = Result<Option<GrpcRequest>, GrpcErrResponse>;
+pub type ResponseResult = Result<HeaderKind, GrpcErrResponse>;
+
 impl RuntimeAction {
-    pub fn new(action: &Action, services: &HashMap<String, Service>) -> Result<Self, String> {
+    pub fn new(
+        action: &Action,
+        services: &HashMap<String, Service>,
+    ) -> Result<Self, ActionCreationError> {
         let service = services
             .get(&action.service)
-            .ok_or(format!("Unknown service: {}", action.service))?;
+            .ok_or(ActionCreationError::UnknownService(format!(
+                "Unknown service: {}",
+                action.service
+            )))?;
 
         match service.service_type {
             ServiceType::RateLimit => Ok(Self::RateLimit(RateLimitAction::new(action, service)?)),
@@ -34,7 +89,7 @@ impl RuntimeAction {
         }
     }
 
-    pub fn conditions_apply(&self) -> bool {
+    pub fn conditions_apply(&self) -> PredicateResult {
         match self {
             Self::Auth(auth_action) => auth_action.conditions_apply(),
             Self::RateLimit(rl_action) => rl_action.conditions_apply(),
@@ -48,7 +103,7 @@ impl RuntimeAction {
         }
     }
 
-    pub fn resolve_failure_mode(&self) -> Result<HeaderKind, GrpcErrResponse> {
+    pub fn resolve_failure_mode(&self) -> ResponseResult {
         match self {
             Self::Auth(auth_action) => auth_action.resolve_failure_mode(),
             Self::RateLimit(rl_action) => rl_action.resolve_failure_mode(),
@@ -66,15 +121,18 @@ impl RuntimeAction {
         Some(other)
     }
 
-    pub fn process_request(&self) -> Option<GrpcRequest> {
-        if !self.conditions_apply() {
-            None
-        } else {
-            self.grpc_service().build_request(self.build_message())
+    pub fn process_request(&self) -> RequestResult {
+        match self.conditions_apply() {
+            Ok(false) => Ok(None),
+            Ok(true) => match self.build_message() {
+                Ok(message) => Ok(self.grpc_service().build_request(message)),
+                Err(_) => self.resolve_failure_mode().map(|_| None),
+            },
+            Err(_) => self.resolve_failure_mode().map(|_| None),
         }
     }
 
-    pub fn process_response(&self, msg: &[u8]) -> Result<HeaderKind, GrpcErrResponse> {
+    pub fn process_response(&self, msg: &[u8]) -> ResponseResult {
         match self {
             Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
                 Ok(check_response) => auth_action.process_response(check_response),
@@ -93,22 +151,23 @@ impl RuntimeAction {
         }
     }
 
-    pub fn build_message(&self) -> Option<Vec<u8>> {
+    pub fn build_message(&self) -> Result<Option<Vec<u8>>, BuildMessageError> {
         match self {
             RuntimeAction::RateLimit(rl_action) => {
-                let descriptor = rl_action.build_descriptor();
+                let descriptor = rl_action.build_descriptor()?;
                 if descriptor.entries.is_empty() {
                     debug!("build_message(rl): empty descriptors");
-                    None
+                    Ok(None)
                 } else {
                     RateLimitService::request_message_as_bytes(
                         String::from(rl_action.scope()),
                         vec![descriptor].into(),
                     )
+                    .map(Some)
                 }
             }
             RuntimeAction::Auth(auth_action) => {
-                AuthService::request_message_as_bytes(String::from(auth_action.scope()))
+                AuthService::request_message_as_bytes(String::from(auth_action.scope())).map(Some)
             }
         }
     }

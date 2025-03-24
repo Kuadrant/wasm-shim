@@ -1,7 +1,9 @@
 use crate::configuration::{Action, FailureMode, Service};
-use crate::data::{store_metadata, Predicate, PredicateVec};
+use crate::data::{store_metadata, Predicate, PredicateResult, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
+use crate::runtime_action::ResponseResult;
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
+use cel_parser::ParseError;
 use log::{debug, warn};
 use std::rc::Rc;
 
@@ -13,10 +15,10 @@ pub struct AuthAction {
 }
 
 impl AuthAction {
-    pub fn new(action: &Action, service: &Service) -> Result<Self, String> {
+    pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &action.predicates {
-            predicates.push(Predicate::new(predicate).map_err(|e| e.to_string())?);
+            predicates.push(Predicate::new(predicate)?);
         }
 
         Ok(AuthAction {
@@ -34,7 +36,7 @@ impl AuthAction {
         self.scope.as_str()
     }
 
-    pub fn conditions_apply(&self) -> bool {
+    pub fn conditions_apply(&self) -> PredicateResult {
         self.predicates.apply()
     }
 
@@ -42,7 +44,7 @@ impl AuthAction {
         self.grpc_service.get_failure_mode()
     }
 
-    pub fn resolve_failure_mode(&self) -> Result<HeaderKind, GrpcErrResponse> {
+    pub fn resolve_failure_mode(&self) -> ResponseResult {
         match self.get_failure_mode() {
             FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
             FailureMode::Allow => {
@@ -52,14 +54,13 @@ impl AuthAction {
         }
     }
 
-    pub fn process_response(
-        &self,
-        check_response: CheckResponse,
-    ) -> Result<HeaderKind, GrpcErrResponse> {
+    pub fn process_response(&self, check_response: CheckResponse) -> ResponseResult {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
-        store_metadata(check_response.get_dynamic_metadata());
+        if store_metadata(check_response.get_dynamic_metadata()).is_err() {
+            return self.resolve_failure_mode();
+        }
 
         match check_response.http_response {
             None => {
@@ -196,13 +197,13 @@ mod test {
     #[test]
     fn empty_predicates_do_apply() {
         let auth_action = build_auth_action_with_predicates(Vec::default());
-        assert!(auth_action.conditions_apply());
+        assert_eq!(auth_action.conditions_apply(), Ok(true));
     }
 
     #[test]
     fn when_all_predicates_are_truthy_action_apply() {
         let auth_action = build_auth_action_with_predicates(vec!["true".into(), "true".into()]);
-        assert!(auth_action.conditions_apply());
+        assert_eq!(auth_action.conditions_apply(), Ok(true));
     }
 
     #[test]
@@ -213,11 +214,10 @@ mod test {
             "true".into(),
             "false".into(),
         ]);
-        assert!(!auth_action.conditions_apply());
+        assert_eq!(auth_action.conditions_apply(), Ok(false));
     }
 
     #[test]
-    #[should_panic]
     fn when_a_cel_expression_does_not_evaluate_to_bool_panics() {
         let auth_action = build_auth_action_with_predicates(vec![
             "true".into(),
@@ -225,7 +225,7 @@ mod test {
             "true".into(),
             "1".into(),
         ]);
-        auth_action.conditions_apply();
+        assert!(auth_action.conditions_apply().is_err());
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod test {
 
         match result.expect("is ok") {
             HeaderKind::Response(_headers) => {
-                panic!("check_response should not return Response headers")
+                unreachable!("check_response should not return Response headers")
             }
             HeaderKind::Request(headers) => assert!(headers.is_empty()),
         }
@@ -249,7 +249,7 @@ mod test {
 
         match result.expect("is ok") {
             HeaderKind::Response(_headers) => {
-                panic!("check_response should not return Response headers")
+                unreachable!("check_response should not return Response headers")
             }
             HeaderKind::Request(headers) => {
                 assert!(!headers.is_empty());

@@ -4,9 +4,10 @@ use crate::filter::operations::{
 };
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
-use log::{debug, warn};
+use log::{debug, error, warn};
+use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
-use proxy_wasm::types::{Action, Status};
+use proxy_wasm::types::{Action, BufferType, MapType, Status};
 use std::mem;
 use std::rc::Rc;
 
@@ -26,22 +27,41 @@ impl Context for KuadrantFilter {
             "#{} on_grpc_call_response: received gRPC call response: token: {token_id}, status: {status_code}",
             self.context_id
         );
-        let receiver = mem::take(&mut self.grpc_message_receiver_operation)
-            .expect("We need an operation pending a gRPC response");
 
-        let mut ops = Vec::new();
+        match mem::take(&mut self.grpc_message_receiver_operation) {
+            Some(receiver) => {
+                let mut ops = Vec::new();
 
-        if status_code != Status::Ok as u32 {
-            ops.push(receiver.fail());
-        } else if let Some(response_body) = self.get_grpc_call_response_body(0, resp_size) {
-            ops.extend(receiver.digest_grpc_response(&response_body));
-        } else {
-            ops.push(receiver.fail());
+                if status_code != Status::Ok as u32 {
+                    ops.push(receiver.fail());
+                } else if let Some(response_body) =
+                    hostcalls::get_buffer(BufferType::GrpcReceiveBuffer, 0, resp_size)
+                        .unwrap_or_else(|e| {
+                            // get_buffer panics instead of returning an Error so this will not happen
+                            error!(
+                                "on_grpc_call_response failed to read gRPC receive buffer: `{:?}`",
+                                e
+                            );
+                            None
+                        })
+                {
+                    ops.extend(receiver.digest_grpc_response(&response_body));
+                } else {
+                    ops.push(receiver.fail());
+                }
+
+                ops.into_iter().for_each(|op| {
+                    self.handle_operation(op);
+                })
+            }
+            None => {
+                error!(
+                    "#{} on_grpc_call_response: received gRPC response but no pending receiver",
+                    self.context_id
+                );
+                self.die(GrpcErrResponse::new_internal_server_error())
+            }
         }
-
-        ops.into_iter().for_each(|op| {
-            self.handle_operation(op);
-        })
     }
 }
 
@@ -55,19 +75,35 @@ impl HttpContext for KuadrantFilter {
         // default action if we find no action_set where conditions apply
         let mut action = Action::Continue;
 
-        if let Some(action_sets) = self
-            .index
-            .get_longest_match_action_sets(self.request_authority().as_ref())
-        {
-            if let Some(action_set) = action_sets
-                .iter()
-                .find(|action_set| action_set.conditions_apply(/* self */))
-            {
-                debug!(
-                    "#{} action_set selected {}",
-                    self.context_id, action_set.name
-                );
-                action = self.start_flow(Rc::clone(action_set))
+        let authority = match self.request_authority() {
+            Ok(authority) => authority,
+            Err(_) => {
+                self.die(GrpcErrResponse::new_internal_server_error());
+                return Action::Continue;
+            }
+        };
+
+        if let Some(action_sets) = self.index.get_longest_match_action_sets(authority.as_ref()) {
+            for action_set in action_sets {
+                match action_set.conditions_apply() {
+                    Ok(true) => {
+                        debug!(
+                            "#{} action_set selected {}",
+                            self.context_id, action_set.name
+                        );
+                        action = self.start_flow(Rc::clone(action_set));
+                        break;
+                    }
+                    Ok(false) => continue,
+                    Err(e) => {
+                        error!(
+                            "#{} on_http_request_headers: failed to apply conditions: {:?}",
+                            self.context_id, e
+                        );
+                        self.die(GrpcErrResponse::new_internal_server_error());
+                        return Action::Continue;
+                    }
+                }
             }
         }
 
@@ -83,7 +119,14 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_response_headers", self.context_id);
         if let Some(response_headers) = mem::take(&mut self.response_headers_to_add) {
             for (header, value) in response_headers {
-                self.add_http_response_header(header.as_str(), value.as_str())
+                if let Err(status) = self.add_http_response_header(header.as_str(), value.as_str())
+                {
+                    log::error!(
+                        "#{} on_http_response_headers: failed to add headers: {:?}",
+                        self.context_id,
+                        status
+                    );
+                }
             }
         }
         Action::Continue
@@ -94,10 +137,11 @@ impl KuadrantFilter {
     fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>) -> Action {
         let grpc_request = action_set.find_first_grpc_request();
         let op = match grpc_request {
-            None => Operation::Done(),
-            Some(indexed_req) => {
+            Ok(None) => Operation::Done(),
+            Ok(Some(indexed_req)) => {
                 Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(action_set, indexed_req))
             }
+            Err(grpc_err_response) => Operation::Die(grpc_err_response),
         };
         self.handle_operation(op)
     }
@@ -151,29 +195,34 @@ impl KuadrantFilter {
             Operation::Done() => {
                 debug!("handle_operation: Done");
                 self.add_request_headers();
-                self.resume_http_request();
+                let _ = self.resume_http_request();
                 Action::Continue
             }
         }
     }
 
     fn die(&mut self, die: GrpcErrResponse) {
-        self.send_http_response(
+        let _ = self.send_http_response(
             die.status_code(),
             die.headers(),
             Some(die.body().as_bytes()),
         );
     }
 
-    fn request_authority(&self) -> String {
-        match self.get_http_request_header(":authority") {
-            None => {
-                warn!(":authority header not found");
-                String::new()
+    fn request_authority(&self) -> Result<String, Status> {
+        match hostcalls::get_map_value(MapType::HttpRequestHeaders, ":authority") {
+            Ok(Some(host)) => {
+                let split_host = host.split_once(':').map_or(host.as_str(), |(h, _)| h);
+                Ok(split_host.to_owned())
             }
-            Some(host) => {
-                let split_host = host.split(':').collect::<Vec<_>>();
-                split_host[0].to_owned()
+            Ok(None) => {
+                error!(":authority header not found");
+                Err(Status::NotFound)
+            }
+            Err(e) => {
+                // get_map_value panics instead of returning an Error so this will not happen
+                error!("failed to retrieve :authority header: {:?}", e);
+                Err(e)
             }
         }
     }
@@ -199,7 +248,13 @@ impl KuadrantFilter {
     fn add_request_headers(&mut self) {
         if let Some(request_headers) = mem::take(&mut self.request_headers_to_add) {
             for (header, value) in request_headers {
-                self.add_http_request_header(header.as_str(), value.as_str())
+                if let Err(status) = self.add_http_request_header(header.as_str(), value.as_str()) {
+                    log::error!(
+                        "add_http_request_headers failed for {}: {:?}",
+                        &header,
+                        status
+                    );
+                }
             }
         }
     }

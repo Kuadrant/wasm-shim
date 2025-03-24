@@ -11,6 +11,41 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+pub(super) mod errors {
+    use crate::data::{EvaluationError, PropertyError};
+    use protobuf::ProtobufError;
+    use std::fmt::{Debug, Display, Formatter};
+
+    #[derive(Debug)]
+    pub enum BuildMessageError {
+        Evaluation(EvaluationError),
+        Property(PropertyError),
+        Serialization(ProtobufError),
+    }
+
+    impl From<EvaluationError> for BuildMessageError {
+        fn from(e: EvaluationError) -> Self {
+            BuildMessageError::Evaluation(e)
+        }
+    }
+
+    impl Display for BuildMessageError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                BuildMessageError::Evaluation(e) => {
+                    write!(f, "BuildMessageError::Evaluation {{ {:?} }}", e)
+                }
+                BuildMessageError::Property(e) => {
+                    write!(f, "BuildMessageError::Property {{ {:?} }}", e)
+                }
+                BuildMessageError::Serialization(e) => {
+                    write!(f, "BuildMessageError::Serialization {{ {:?} }}", e)
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct GrpcService {
     service: Rc<Service>,
@@ -210,8 +245,10 @@ impl HeaderResolver {
         self.headers.get_or_init(|| {
             let mut headers = Vec::new();
             for header in TracingHeader::all() {
-                if let Some(value) = ctx.get_http_request_header_bytes((*header).as_str()) {
-                    headers.push(((*header).as_str(), value));
+                match ctx.get_http_request_header_bytes((*header).as_str()) {
+                    Ok(Some(value)) => headers.push(((*header).as_str(), value)),
+                    Ok(None) => (),
+                    Err(status) => log::error!("Error getting header: {:?} ", status),
                 }
             }
             headers
@@ -244,6 +281,7 @@ impl TracingHeader {
 mod test {
     use super::*;
     use proxy_wasm::traits::Context;
+    use proxy_wasm::types::Status;
     use std::collections::HashMap;
 
     struct MockHost {
@@ -259,8 +297,8 @@ mod test {
     impl Context for MockHost {}
 
     impl proxy_wasm::traits::HttpContext for MockHost {
-        fn get_http_request_header_bytes(&self, name: &str) -> Option<Bytes> {
-            self.headers.get(name).map(|b| b.to_owned())
+        fn get_http_request_header_bytes(&self, name: &str) -> Result<Option<Bytes>, Status> {
+            Ok(self.headers.get(name).map(|b| b.to_owned()))
         }
     }
 

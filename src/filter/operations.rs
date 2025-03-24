@@ -1,5 +1,5 @@
 use crate::configuration::FailureMode;
-use crate::runtime_action_set::RuntimeActionSet;
+use crate::runtime_action_set::{IndexedRequestResult, RuntimeActionSet};
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderKind, IndexedGrpcRequest};
 use std::rc::Rc;
 
@@ -61,12 +61,7 @@ impl GrpcMessageReceiverOperation {
                 if !headers.is_empty() {
                     operations.push(Operation::AddHeaders(HeaderOperation::new(headers)))
                 }
-                operations.push(match next_msg {
-                    None => Operation::Done(),
-                    Some(indexed_req) => Operation::SendGrpcRequest(
-                        GrpcMessageSenderOperation::new(self.runtime_action_set, indexed_req),
-                    ),
-                });
+                operations.push(self.handle_next(next_msg));
                 operations
             }
             Err(grpc_err_resp) => vec![Operation::Die(grpc_err_resp)],
@@ -76,16 +71,23 @@ impl GrpcMessageReceiverOperation {
     pub fn fail(self) -> Operation {
         match self.runtime_action_set.runtime_actions[self.current_index].get_failure_mode() {
             FailureMode::Deny => Operation::Die(GrpcErrResponse::new_internal_server_error()),
-            FailureMode::Allow => match self
-                .runtime_action_set
-                .find_next_grpc_request(self.current_index + 1)
-            {
-                None => Operation::Done(),
-                Some(indexed_req) => Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(
-                    self.runtime_action_set,
-                    indexed_req,
-                )),
-            },
+            FailureMode::Allow => {
+                let next = self
+                    .runtime_action_set
+                    .find_next_grpc_request(self.current_index + 1);
+                self.handle_next(next)
+            }
+        }
+    }
+
+    fn handle_next(self, indexed_request_result: IndexedRequestResult) -> Operation {
+        match indexed_request_result {
+            Ok(None) => Operation::Done(),
+            Ok(Some(indexed_req)) => Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(
+                self.runtime_action_set,
+                indexed_req,
+            )),
+            Err(grpc_err_resp) => Operation::Die(grpc_err_resp),
         }
     }
 }

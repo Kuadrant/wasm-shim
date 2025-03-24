@@ -67,13 +67,10 @@ pub fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status>
 pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
     match *path.tokens() {
         ["request", "headers"] => {
-            let map =
-                proxy_wasm::hostcalls::get_map(proxy_wasm::types::MapType::HttpRequestHeaders)
-                    .expect("Failed to get_map request.headers")
-                    .into_iter()
-                    .collect();
-            debug!("get_map: {map:#?}");
-            Ok(map)
+            match proxy_wasm::hostcalls::get_map(proxy_wasm::types::MapType::HttpRequestHeaders) {
+                Ok(map) => Ok(map.into_iter().collect()),
+                Err(status) => Err(format!("Error get request.headers: {:?}", status)),
+            }
         }
         _ => Err(format!("Unknown map requested {:?}", path)),
     }

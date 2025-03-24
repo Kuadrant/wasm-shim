@@ -1,4 +1,5 @@
-use crate::data::PropertyPath;
+use crate::data::attribute::errors::PropError;
+use crate::data::{PropertyError, PropertyPath};
 use chrono::{DateTime, FixedOffset};
 use log::{debug, error, warn};
 use protobuf::well_known_types::Struct;
@@ -6,132 +7,179 @@ use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
+pub(super) mod errors {
+    use std::error::Error;
+    use std::fmt::{Debug, Display, Formatter};
+
+    #[derive(Debug, PartialEq)]
+    pub enum PropertyError {
+        Get(PropError),
+        Parse(PropError),
+    }
+
+    impl Error for PropertyError {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            match self {
+                PropertyError::Get(err) => Some(err),
+                PropertyError::Parse(err) => Some(err),
+            }
+        }
+    }
+
+    impl Display for PropertyError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                PropertyError::Get(e) => {
+                    write!(f, "PropertyError::Get {{ {:?} }}", e)
+                }
+                PropertyError::Parse(e) => {
+                    write!(f, "PropertyError::Parse {{ {:?} }}", e)
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    pub struct PropError {
+        message: String,
+    }
+
+    impl Display for PropError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "PropError {{ message: {:?} }}", self.message)
+        }
+    }
+
+    impl Error for PropError {}
+
+    impl PropError {
+        pub fn new(message: String) -> PropError {
+            PropError { message }
+        }
+    }
+}
+
 pub trait AttributeValue {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String>
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError>
     where
         Self: Sized;
 }
 
 impl AttributeValue for String {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
         String::from_utf8(raw_attribute).map_err(|err| {
-            format!(
+            PropError::new(format!(
                 "parse: failed to parse selector String value, error: {}",
                 err
-            )
+            ))
         })
     }
 }
 
 impl AttributeValue for i64 {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
-        if raw_attribute.len() != 8 {
-            return Err(format!(
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(i64::from_le_bytes(bytes)),
+            Err(_) => Err(PropError::new(format!(
                 "parse: Int value expected to be 8 bytes, but got {}",
-                raw_attribute.len()
-            ));
+                ra_len,
+            ))),
         }
-        Ok(i64::from_le_bytes(
-            raw_attribute[..8]
-                .try_into()
-                .expect("This has to be 8 bytes long!"),
-        ))
     }
 }
 
 impl AttributeValue for u64 {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
-        if raw_attribute.len() != 8 {
-            return Err(format!(
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(u64::from_le_bytes(bytes)),
+            Err(_) => Err(PropError::new(format!(
                 "parse: UInt value expected to be 8 bytes, but got {}",
-                raw_attribute.len()
-            ));
+                ra_len,
+            ))),
         }
-        Ok(u64::from_le_bytes(
-            raw_attribute[..8]
-                .try_into()
-                .expect("This has to be 8 bytes long!"),
-        ))
     }
 }
 
 impl AttributeValue for f64 {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
-        if raw_attribute.len() != 8 {
-            return Err(format!(
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(f64::from_le_bytes(bytes)),
+            Err(_) => Err(PropError::new(format!(
                 "parse: Float value expected to be 8 bytes, but got {}",
-                raw_attribute.len()
-            ));
+                ra_len,
+            ))),
         }
-        Ok(f64::from_le_bytes(
-            raw_attribute[..8]
-                .try_into()
-                .expect("This has to be 8 bytes long!"),
-        ))
     }
 }
 
 impl AttributeValue for Vec<u8> {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
         Ok(raw_attribute)
     }
 }
 
 impl AttributeValue for bool {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
-        if raw_attribute.len() != 1 {
-            return Err(format!(
-                "parse: Bool value expected to be 1 byte, but got {}",
-                raw_attribute.len()
-            ));
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+        if raw_attribute.len() == 1 {
+            return Ok(raw_attribute[0] & 1 == 1);
         }
-        Ok(raw_attribute[0] & 1 == 1)
+        Err(PropError::new(format!(
+            "parse: Bool value expected to be 1 byte, but got {}",
+            raw_attribute.len()
+        )))
     }
 }
 
 impl AttributeValue for DateTime<FixedOffset> {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, String> {
-        if raw_attribute.len() != 8 {
-            return Err(format!(
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => {
+                let nanos = i64::from_le_bytes(bytes);
+                Ok(DateTime::from_timestamp_nanos(nanos).into())
+            }
+            Err(_) => Err(PropError::new(format!(
                 "parse: Timestamp expected to be 8 bytes, but got {}",
-                raw_attribute.len()
-            ));
+                ra_len,
+            ))),
         }
-
-        let nanos = i64::from_le_bytes(
-            raw_attribute.as_slice()[..8]
-                .try_into()
-                .expect("This has to be 8 bytes long!"),
-        );
-        Ok(DateTime::from_timestamp_nanos(nanos).into())
     }
 }
 
-pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, String>
+pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, PropertyError>
 where
     T: AttributeValue,
 {
     match crate::data::property::get_property(path) {
-        Ok(Some(attribute_bytes)) => Ok(Some(T::parse(attribute_bytes)?)),
+        Ok(Some(attribute_bytes)) => Ok(Some(
+            T::parse(attribute_bytes).map_err(PropertyError::Parse)?,
+        )),
         Ok(None) => Ok(None),
-        Err(e) => Err(format!("get_attribute: error: {e:?}")),
+        Err(e) => Err(PropertyError::Get(PropError::new(format!(
+            "get_attribute: error: {e:?}"
+        )))),
     }
 }
 
-pub fn set_attribute(attr: &str, value: &[u8]) {
-    match crate::data::property::set_property(PropertyPath::from(attr), Some(value)) {
-        Ok(_) => (),
-        Err(_) => error!("set_attribute: failed to set property {attr}"),
-    };
+pub fn set_attribute(attr: &str, value: &[u8]) -> Result<(), PropertyError> {
+    crate::data::property::set_property(PropertyPath::from(attr), Some(value))
+        .map_err(|e| PropertyError::Get(PropError::new(format!("set_attribute: error: {e:?}"))))
 }
 
-pub fn store_metadata(metastruct: &Struct) {
+pub fn store_metadata(metastruct: &Struct) -> Result<(), PropertyError> {
     let metadata = process_metadata(metastruct, String::new());
     for (key, value) in metadata {
         let attr = format!("{KUADRANT_NAMESPACE}\\.auth\\.{key}");
         debug!("set_attribute: {attr} = {value}");
-        set_attribute(attr.as_str(), value.into_bytes().as_slice());
+        if let Err(e) = set_attribute(attr.as_str(), value.into_bytes().as_slice()) {
+            error!("set_attribute: failed to set property {attr}: {e:?}");
+            return Err(e);
+        }
     }
+    Ok(())
 }
 
 fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
