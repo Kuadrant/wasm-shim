@@ -139,8 +139,7 @@ impl HttpContext for KuadrantFilter {
 
 impl KuadrantFilter {
     fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>) -> Action {
-        let grpc_request = action_set.find_first_grpc_request();
-        let op = match grpc_request {
+        let op = match action_set.find_first_grpc_request() {
             Ok(None) => Operation::Done(),
             Ok(Some(indexed_req)) => {
                 Operation::SendGrpcRequest(GrpcMessageSenderOperation::new(action_set, indexed_req))
