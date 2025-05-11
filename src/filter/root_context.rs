@@ -6,7 +6,7 @@ use crate::service_metrics::ServiceMetrics;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
-use proxy_wasm::types::{ContextType, MetricType};
+use proxy_wasm::types::ContextType;
 use std::rc::Rc;
 
 const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");

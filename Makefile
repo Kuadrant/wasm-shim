@@ -23,6 +23,9 @@ endif
 $(PROTOC_BIN):
 	$(call get-protoc,$(PROJECT_PATH),https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-$(PROTOC_OS).zip)
 
+.PHONY: protoc
+protoc: $(PROTOC_BIN) ## Download protoc locally if necessary.
+
 # builds the module and move to deploy folder
 build: $(PROTOC_BIN)
 	@echo "Building the wasm filter"
