@@ -35,6 +35,14 @@ impl GrpcMessageSenderOperation {
             GrpcMessageReceiverOperation::new(self.runtime_action_set, index),
         )
     }
+
+    pub fn report_err(self) {
+        let index = self.grpc_request.index();
+        match self.runtime_action_set.runtime_actions[index].get_failure_mode() {
+            FailureMode::Deny => {}
+            FailureMode::Allow => {}
+        }
+    }
 }
 
 pub struct GrpcMessageReceiverOperation {

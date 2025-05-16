@@ -3,6 +3,7 @@ use crate::data::{store_metadata, Predicate, PredicateResult, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
 use crate::runtime_action::ResponseResult;
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
+use crate::service_metrics::ServiceMetrics;
 use cel_parser::ParseError;
 use log::{debug, warn};
 use std::rc::Rc;
@@ -12,10 +13,15 @@ pub struct AuthAction {
     grpc_service: Rc<GrpcService>,
     scope: String,
     predicates: Vec<Predicate>,
+    service_metrics: Rc<ServiceMetrics>,
 }
 
 impl AuthAction {
-    pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
+    pub fn new(
+        action: &Action,
+        service: &Service,
+        service_metrics: &Rc<ServiceMetrics>,
+    ) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &action.predicates {
             predicates.push(Predicate::new(predicate)?);
@@ -25,6 +31,7 @@ impl AuthAction {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
             scope: action.scope.clone(),
             predicates,
+            service_metrics: Rc::clone(service_metrics),
         })
     }
 
@@ -108,6 +115,10 @@ impl AuthAction {
                 (hv.key.to_owned(), hv.value.to_owned())
             })
             .collect()
+    }
+
+    pub fn get_service_metrics(&self) -> &ServiceMetrics {
+        &self.service_metrics
     }
 }
 

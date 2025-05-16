@@ -171,6 +171,13 @@ impl RuntimeAction {
             }
         }
     }
+
+    pub fn get_service_metrics(&self) -> &ServiceMetrics {
+        match self {
+            Self::Auth(auth_action) => auth_action.get_service_metrics(),
+            Self::RateLimit(rl_action) => rl_action.get_service_metrics(),
+        }
+    }
 }
 
 #[cfg(test)]

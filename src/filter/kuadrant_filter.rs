@@ -159,6 +159,7 @@ impl KuadrantFilter {
                         Ok(_token) => Operation::AwaitGrpcResponse(receiver_op),
                         Err(status) => {
                             debug!("handle_operation: failed to send grpc request `{status:?}`");
+                            sender_op.report_err();
                             receiver_op.fail()
                         }
                     }
