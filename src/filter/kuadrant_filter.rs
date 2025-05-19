@@ -1,7 +1,9 @@
 use crate::action_set_index::ActionSetIndex;
+use crate::configuration::FailureMode;
 use crate::filter::operations::{
     GrpcMessageReceiverOperation, GrpcMessageSenderOperation, Operation,
 };
+use crate::runtime_action::RuntimeAction;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
 use crate::service_metrics::ServiceMetrics;
@@ -154,12 +156,14 @@ impl KuadrantFilter {
             Operation::SendGrpcRequest(sender_op) => {
                 debug!("handle_operation: SendGrpcRequest");
                 let next_op = {
+                    let failure_mode = sender_op.get_failure_mode();
+                    let service_metrics = self.service_metrics(sender_op.get_runtime_action());
                     let (req, receiver_op) = sender_op.build_receiver_operation();
                     match self.send_grpc_request(req) {
                         Ok(_token) => Operation::AwaitGrpcResponse(receiver_op),
                         Err(status) => {
                             debug!("handle_operation: failed to send grpc request `{status:?}`");
-                            sender_op.report_err();
+                            self.report_err(failure_mode, service_metrics);
                             receiver_op.fail()
                         }
                     }
@@ -202,6 +206,20 @@ impl KuadrantFilter {
                 let _ = self.resume_http_request();
                 Action::Continue
             }
+        }
+    }
+
+    fn service_metrics(&self, runtime_action: &Rc<RuntimeAction>) -> &Rc<ServiceMetrics> {
+        match **runtime_action {
+            RuntimeAction::Auth(_) => &self.auth_service_metrics,
+            RuntimeAction::RateLimit(_) => &self.rl_service_metrics,
+        }
+    }
+
+    fn report_err(&self, failure_mode: FailureMode, service_metrics: &Rc<ServiceMetrics>) {
+        match failure_mode {
+            FailureMode::Deny => service_metrics.report_error(),
+            FailureMode::Allow => service_metrics.report_allowed_on_failure(),
         }
     }
 

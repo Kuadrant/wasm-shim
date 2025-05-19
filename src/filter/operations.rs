@@ -1,4 +1,5 @@
 use crate::configuration::FailureMode;
+use crate::runtime_action::RuntimeAction;
 use crate::runtime_action_set::{IndexedRequestResult, RuntimeActionSet};
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderKind, IndexedGrpcRequest};
 use std::rc::Rc;
@@ -36,12 +37,12 @@ impl GrpcMessageSenderOperation {
         )
     }
 
-    pub fn report_err(self) {
-        let index = self.grpc_request.index();
-        match self.runtime_action_set.runtime_actions[index].get_failure_mode() {
-            FailureMode::Deny => {}
-            FailureMode::Allow => {}
-        }
+    pub fn get_failure_mode(&self) -> FailureMode {
+        self.runtime_action_set.runtime_actions[self.grpc_request.index()].get_failure_mode()
+    }
+
+    pub fn get_runtime_action(&self) -> &Rc<RuntimeAction> {
+        &self.runtime_action_set.runtime_actions[self.grpc_request.index()]
     }
 }
 

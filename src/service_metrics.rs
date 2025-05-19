@@ -55,12 +55,12 @@ impl ServiceMetrics {
             Err(e) => panic!("Error: {:?}", e),
         };
 
-        Self {
+        Self::new(
             ok_metric_id,
             error_metric_id,
-            rejected_metric_id: over_limit_metric_id,
+            over_limit_metric_id,
             failure_mode_allowed_metric_id,
-        }
+        )
     }
 
     #[cfg(test)]

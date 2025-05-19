@@ -7,7 +7,6 @@ use crate::envoy::{
 };
 use crate::runtime_action::ResponseResult;
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
-use crate::service_metrics::{self, ServiceMetrics};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::{debug, error};
@@ -123,21 +122,15 @@ pub struct RateLimitAction {
     scope: String,
     service_name: String,
     conditional_data_sets: Vec<ConditionalData>,
-    service_metrics: Rc<ServiceMetrics>,
 }
 
 impl RateLimitAction {
-    pub fn new(
-        action: &Action,
-        service: &Service,
-        service_metrics: &Rc<ServiceMetrics>,
-    ) -> Result<Self, ParseError> {
+    pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
         Ok(Self {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
             scope: action.scope.clone(),
             service_name: action.service.clone(),
             conditional_data_sets: vec![ConditionalData::new(action)?],
-            service_metrics: Rc::clone(service_metrics),
         })
     }
 
@@ -235,10 +228,6 @@ impl RateLimitAction {
             .iter()
             .map(|header| (header.key.to_owned(), header.value.to_owned()))
             .collect()
-    }
-
-    pub fn get_service_metrics(&self) -> &ServiceMetrics {
-        &self.service_metrics
     }
 }
 
