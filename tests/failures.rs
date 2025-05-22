@@ -1,7 +1,9 @@
 use crate::util::common::wasm_module;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::Status as TestStatus;
-use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
+use proxy_wasm_test_framework::types::{
+    Action, BufferType, LogLevel, MapType, MetricType, ReturnType,
+};
 use serial_test::serial;
 
 pub mod util;
@@ -23,6 +25,14 @@ fn it_fails_on_first_action_grpc_call() {
         .unwrap();
 
     let root_context = 1;
+    let rl_ok_metric_id = 1;
+    let rl_error_metric_id = 2;
+    let rl_over_limit_metric_id = 3;
+    let rl_failure_mode_allowed_metric_id = 4;
+    let auth_ok_metric_id = 5;
+    let auth_error_metric_id = 6;
+    let auth_over_limit_metric_id = 7;
+    let auth_failure_mode_allowed_metric_id = 8;
     let cfg = r#"{
         "services": {
             "mistyped-service": {
@@ -59,6 +69,40 @@ fn it_fails_on_first_action_grpc_call() {
         .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
+    module
+        .call_proxy_on_vm_start(root_context, 0)
+        // expect log line with unpredictable hash number like
+        // #1 Kuadrant wasm module v0.10.0-dev (48a65804) ["+with-serde"] release: VM started
+        // None value means here "whatever"
+        .expect_log(Some(LogLevel::Info), None)
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.rate_limit.ok"))
+        .returning(Some(rl_ok_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.rate_limit.error"))
+        .returning(Some(rl_error_metric_id))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.rate_limit.over_limit"),
+        )
+        .returning(Some(rl_over_limit_metric_id))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.rate_limit.failure_mode_allowed"),
+        )
+        .returning(Some(rl_failure_mode_allowed_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.auth.ok"))
+        .returning(Some(auth_ok_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.auth.error"))
+        .returning(Some(auth_error_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.auth.over_limit"))
+        .returning(Some(auth_over_limit_metric_id))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.auth.failure_mode_allowed"),
+        )
+        .returning(Some(auth_failure_mode_allowed_metric_id))
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
@@ -111,6 +155,7 @@ fn it_fails_on_first_action_grpc_call() {
             Some(LogLevel::Debug),
             Some("handle_operation: failed to send grpc request `ParseFailure`"),
         )
+        .expect_increment_metric(Some(rl_error_metric_id), Some(1))
         .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(500),
@@ -141,6 +186,14 @@ fn it_fails_on_second_action_grpc_call() {
         .unwrap();
 
     let root_context = 1;
+    let rl_ok_metric_id = 1;
+    let rl_error_metric_id = 2;
+    let rl_over_limit_metric_id = 3;
+    let rl_failure_mode_allowed_metric_id = 4;
+    let auth_ok_metric_id = 5;
+    let auth_error_metric_id = 6;
+    let auth_over_limit_metric_id = 7;
+    let auth_failure_mode_allowed_metric_id = 8;
     let cfg = r#"{
         "services": {
             "limitador": {
@@ -195,6 +248,41 @@ fn it_fails_on_second_action_grpc_call() {
         .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
+
+    module
+        .call_proxy_on_vm_start(root_context, 0)
+        // expect log line with unpredictable hash number like
+        // #1 Kuadrant wasm module v0.10.0-dev (48a65804) ["+with-serde"] release: VM started
+        // None value means here "whatever"
+        .expect_log(Some(LogLevel::Info), None)
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.rate_limit.ok"))
+        .returning(Some(rl_ok_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.rate_limit.error"))
+        .returning(Some(rl_error_metric_id))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.rate_limit.over_limit"),
+        )
+        .returning(Some(rl_over_limit_metric_id))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.rate_limit.failure_mode_allowed"),
+        )
+        .returning(Some(rl_failure_mode_allowed_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.auth.ok"))
+        .returning(Some(auth_ok_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.auth.error"))
+        .returning(Some(auth_error_metric_id))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.auth.over_limit"))
+        .returning(Some(auth_over_limit_metric_id))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.auth.failure_mode_allowed"),
+        )
+        .returning(Some(auth_failure_mode_allowed_metric_id))
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
@@ -283,6 +371,7 @@ fn it_fails_on_second_action_grpc_call() {
             Some(LogLevel::Debug),
             Some("handle_operation: failed to send grpc request `ParseFailure`"),
         )
+        .expect_increment_metric(Some(rl_error_metric_id), Some(1))
         .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(500),
