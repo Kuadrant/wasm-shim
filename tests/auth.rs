@@ -166,7 +166,7 @@ fn it_auths() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -184,10 +184,6 @@ fn it_auths() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -215,7 +211,6 @@ fn it_auths() {
             Some(LogLevel::Debug),
             Some("process_response(auth): received OkHttpResponse"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -358,7 +353,7 @@ fn it_denies() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -376,10 +371,6 @@ fn it_denies() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -407,7 +398,6 @@ fn it_denies() {
             Some(LogLevel::Debug),
             Some("process_response(auth): received DeniedHttpResponse"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(401),
             None,
@@ -568,7 +558,7 @@ fn it_does_not_fold_auth_actions() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -586,10 +576,6 @@ fn it_does_not_fold_auth_actions() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -681,7 +667,7 @@ fn it_does_not_fold_auth_actions() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         .expect_grpc_call(
             Some("authorino-cluster"),
@@ -692,10 +678,6 @@ fn it_does_not_fold_auth_actions() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -723,7 +705,6 @@ fn it_does_not_fold_auth_actions() {
             Some(LogLevel::Debug),
             Some("process_response(auth): received OkHttpResponse"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

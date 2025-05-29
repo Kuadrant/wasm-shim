@@ -37,14 +37,13 @@ pub use {
         AttributeContext_Request,
     },
     base::{HeaderValue, HeaderValueOption, Metadata},
-    external_auth::{CheckRequest, CheckResponse, CheckResponse_oneof_http_response},
+    external_auth::{
+        CheckRequest, CheckResponse, CheckResponse_oneof_http_response, DeniedHttpResponse,
+    },
     http_status::StatusCode,
     ratelimit::{RateLimitDescriptor, RateLimitDescriptor_Entry},
     rls::{RateLimitRequest, RateLimitResponse, RateLimitResponse_Code},
 };
 
 #[cfg(test)]
-pub use {
-    external_auth::{DeniedHttpResponse, OkHttpResponse},
-    http_status::HttpStatus,
-};
+pub use {external_auth::OkHttpResponse, http_status::HttpStatus};
