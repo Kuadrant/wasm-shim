@@ -155,13 +155,25 @@ impl RuntimeAction {
         match self {
             RuntimeAction::RateLimit(rl_action) => {
                 let descriptor = rl_action.build_descriptor()?;
+                let known_attrs = rl_action.get_known_attributes()?;
+
                 if descriptor.entries.is_empty() {
                     debug!("build_message(rl): empty descriptors");
                     Ok(None)
                 } else {
+                    let domain = known_attrs
+                        .get("ratelimit.domain")
+                        .cloned()
+                        .unwrap_or_else(|| rl_action.scope().to_string());
+                    let hits_addend = known_attrs
+                        .get("ratelimit.hits_addend")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(1);
+
                     RateLimitService::request_message_as_bytes(
-                        String::from(rl_action.scope()),
+                        domain,
                         vec![descriptor].into(),
+                        hits_addend,
                     )
                     .map(Some)
                 }
@@ -176,8 +188,9 @@ impl RuntimeAction {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::configuration::{Action, FailureMode, ServiceType, Timeout};
-
+    use crate::configuration::{
+        Action, DataItem, DataType, ExpressionItem, FailureMode, ServiceType, Timeout,
+    };
     fn build_rl_service() -> Service {
         Service {
             service_type: ServiceType::RateLimit,
@@ -271,5 +284,51 @@ mod test {
             .expect("action building failed. Maybe predicates compilation?");
 
         assert!(auth_r_action_0.merge(rl_r_action_0).is_some());
+    }
+
+    #[test]
+    fn test_build_message_uses_known_attributes() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_rl"), build_rl_service());
+
+        let mut action = build_action("service_rl", "scope");
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "'value_1'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "'3'".into(),
+                }),
+            },
+        ];
+        action.data.extend(data);
+
+        let runtime_action = RuntimeAction::new(&action, &services).unwrap();
+
+        if let RuntimeAction::RateLimit(ref rl_action) = runtime_action {
+            let attrs = rl_action.get_known_attributes().unwrap();
+            assert_eq!(
+                attrs.get("ratelimit.domain").map(|s| s.as_str()),
+                Some("test")
+            );
+            assert_eq!(
+                attrs.get("ratelimit.hits_addend").map(|s| s.as_str()),
+                Some("3")
+            );
+        }
+
+        //TODO: pstefans - debug build message causing linking with CC error
+        // let msg_bytes = runtime_action.build_message().unwrap().expect("Message should be Some");
     }
 }
