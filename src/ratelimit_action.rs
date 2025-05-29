@@ -11,6 +11,7 @@ use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::{debug, error};
 use protobuf::RepeatedField;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -18,6 +19,8 @@ struct DescriptorEntryBuilder {
     pub key: String,
     pub expression: Expression,
 }
+
+const KNOWN_ATTRIBUTES: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"];
 
 impl DescriptorEntryBuilder {
     pub fn new(data_type: &DataType) -> Result<Self, ParseError> {
@@ -109,7 +112,9 @@ impl ConditionalData {
 
         let mut entries = RepeatedField::default();
         for entry_builder in self.data.iter() {
-            entries.push(entry_builder.evaluate()?);
+            if !KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
+                entries.push(entry_builder.evaluate()?);
+            }
         }
 
         Ok(entries)
@@ -144,6 +149,28 @@ impl RateLimitAction {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Ok(res)
+    }
+
+    pub fn get_known_attributes(&self) -> Result<HashMap<String, String>, EvaluationError> {
+        let mut result = HashMap::new();
+
+        for conditional_data in &self.conditional_data_sets {
+            for entry_builder in &conditional_data.data {
+                if KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
+                    let entry = entry_builder.evaluate()?;
+                    if result
+                        .insert(entry.key.clone(), entry.value.clone())
+                        .is_some()
+                    {
+                        return Err(EvaluationError::new(
+                            entry_builder.expression.clone(),
+                            format!("Duplicate key found: {}", entry.key),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     pub fn get_grpcservice(&self) -> Rc<GrpcService> {
@@ -321,13 +348,91 @@ mod test {
     }
 
     #[test]
+    fn get_known_attributes_from_descriptor_entries() {
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "'3'".into(),
+                }),
+            },
+        ];
+        let action = build_action(Vec::default(), data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let descriptor = rl_action.build_descriptor().expect("is ok");
+        let known_attributes = rl_action.get_known_attributes().expect("is ok");
+        assert_eq!(descriptor.get_entries().len(), 0);
+        assert_eq!(known_attributes.len(), 2);
+        assert_eq!(
+            known_attributes.get("ratelimit.domain"),
+            Some(&"test".to_string())
+        );
+        assert_eq!(
+            known_attributes.get("ratelimit.hits_addend"),
+            Some(&"3".to_string())
+        );
+    }
+
+    #[test]
+    fn get_known_attributes_from_descriptor_entries_duplicate_keys() {
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "'3'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+        ];
+        let action = build_action(Vec::default(), data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        rl_action.build_descriptor().expect("is ok");
+        rl_action.get_known_attributes().expect_err("is err");
+    }
+
+    #[test]
     fn descriptor_entry_from_expression() {
-        let data = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "'value_1'".into(),
-            }),
-        }];
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "'value_1'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "'3'".into(),
+                }),
+            },
+        ];
         let action = build_action(Vec::default(), data);
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
