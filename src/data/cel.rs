@@ -728,8 +728,9 @@ pub mod data {
 mod tests {
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::data::property;
-    use cel_interpreter::objects::ValueType;
+    use cel_interpreter::objects::{Map, ValueType};
     use cel_interpreter::Value;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
@@ -920,5 +921,83 @@ mod tests {
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
+    }
+
+    #[test]
+    fn parse_json_cel_function() {
+        let value = Expression::new(
+            r#"
+            parseJSON('{ "foo" : "bar" }').foo == 'bar'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, true.into());
+
+        let value = Expression::new(
+            r#"
+            parseJSON('null')
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, Value::Null);
+
+        let value = Expression::new(
+            r#"
+            parseJSON('true')'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, true.into());
+
+        let value = Expression::new(
+            r#"
+            parseJSON('1')'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, 1.into());
+
+        let value = Expression::new(
+            r#"
+            parseJSON('"this is a string"')'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, "this is a string".into());
+
+        let value = Expression::new(
+            r#"
+            parseJSON('[]')'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, Value::List(vec!().into()));
+
+        let value = Expression::new(
+            r#"
+            parseJSON('{}')'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(
+            value,
+            Value::Map(Map {
+                map: Arc::new(HashMap::default()),
+            })
+        );
     }
 }
