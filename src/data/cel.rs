@@ -146,6 +146,7 @@ impl Expression {
         let Map { map } = self.build_data_map()?;
 
         ctx.add_function("getHostProperty", get_host_property);
+        ctx.add_function("parseJSON", parse_json_to_cel);
 
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
@@ -267,6 +268,50 @@ fn get_host_property(This(this): This<Value>) -> ResolveResult {
             }
         }
         _ => Err(this.error_expected_type(ValueType::List)),
+    }
+}
+
+fn parse_json_to_cel(This(this): This<Value>) -> ResolveResult {
+    match this {
+        Value::String(ref json) => {
+            let json_value: JsonValue = serde_json::from_str(json)
+                .map_err(|e| ExecutionError::function_error("parseJSON", e))?;
+            Ok(json_to_cel_recursive(json_value))
+        }
+        _ => Err(this.error_expected_type(ValueType::String)),
+    }
+}
+
+fn json_to_cel_recursive(json_value: JsonValue) -> Value {
+    match json_value {
+        JsonValue::Null => Value::Null,
+        JsonValue::Bool(b) => b.into(),
+        #[allow(clippy::expect_used)]
+        JsonValue::Number(n) => {
+            if n.is_u64() {
+                n.as_u64().unwrap_or(0).into()
+            } else if n.is_i64() {
+                n.as_i64().unwrap_or(0).into()
+            } else {
+                n.as_f64().unwrap_or(0.0).into()
+            }
+        }
+        JsonValue::String(str) => str.into(),
+        JsonValue::Array(arr) => Value::List(
+            arr.into_iter()
+                .map(|v| json_to_cel_recursive(v))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        JsonValue::Object(json_map) => {
+            let mut map = HashMap::default();
+            for (k, v) in json_map.into_iter() {
+                map.insert(k.as_str().into(), json_to_cel_recursive(v));
+            }
+            Value::Map(Map {
+                map: Arc::from(map),
+            })
+        }
     }
 }
 
@@ -416,26 +461,11 @@ pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
         })
 }
 
-fn json_to_cel(json: &str) -> Value {
-    let json_value: Result<JsonValue, _> = serde_json::from_str(json);
+fn json_to_cel(json_str: &str) -> Value {
+    let json_value: Result<JsonValue, _> = serde_json::from_str(json_str);
     match json_value {
-        Ok(json) => match json {
-            JsonValue::Null => Value::Null,
-            JsonValue::Bool(b) => b.into(),
-            #[allow(clippy::expect_used)]
-            JsonValue::Number(n) => {
-                if n.is_u64() {
-                    n.as_u64().expect("Unreachable: number must be u64").into()
-                } else if n.is_i64() {
-                    n.as_i64().expect("Unreachable: number must be i64").into()
-                } else {
-                    n.as_f64().expect("Unreachable: number must be f64").into()
-                }
-            }
-            JsonValue::String(str) => str.into(),
-            _ => todo!("Need support for more Json!"),
-        },
-        _ => json.into(),
+        Ok(json) => json_to_cel_recursive(json),
+        _ => json_str.into(),
     }
 }
 
@@ -927,16 +957,6 @@ mod tests {
     fn parse_json_cel_function() {
         let value = Expression::new(
             r#"
-            parseJSON('{ "foo" : "bar" }').foo == 'bar'
-            "#,
-        )
-        .expect("This is valid CEL!")
-        .eval()
-        .expect("This must evaluate!");
-        assert_eq!(value, true.into());
-
-        let value = Expression::new(
-            r#"
             parseJSON('null')
             "#,
         )
@@ -947,7 +967,7 @@ mod tests {
 
         let value = Expression::new(
             r#"
-            parseJSON('true')'
+            parseJSON('true')
             "#,
         )
         .expect("This is valid CEL!")
@@ -957,7 +977,7 @@ mod tests {
 
         let value = Expression::new(
             r#"
-            parseJSON('1')'
+            parseJSON('1')
             "#,
         )
         .expect("This is valid CEL!")
@@ -967,7 +987,7 @@ mod tests {
 
         let value = Expression::new(
             r#"
-            parseJSON('"this is a string"')'
+            parseJSON('"this is a string"')
             "#,
         )
         .expect("This is valid CEL!")
@@ -977,7 +997,7 @@ mod tests {
 
         let value = Expression::new(
             r#"
-            parseJSON('[]')'
+            parseJSON('[]')
             "#,
         )
         .expect("This is valid CEL!")
@@ -987,7 +1007,30 @@ mod tests {
 
         let value = Expression::new(
             r#"
-            parseJSON('{}')'
+            parseJSON('[1, "a", { "foo" : "bar" }]')
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(
+            value,
+            Value::List(
+                [
+                    Value::Int(1),
+                    Value::String(String::from("a").into()),
+                    Value::Map(Map {
+                        map: Arc::new(HashMap::from([("foo".into(), "bar".into())])),
+                    })
+                ]
+                .to_vec()
+                .into()
+            )
+        );
+
+        let value = Expression::new(
+            r#"
+            parseJSON('{}')
             "#,
         )
         .expect("This is valid CEL!")
@@ -999,5 +1042,43 @@ mod tests {
                 map: Arc::new(HashMap::default()),
             })
         );
+
+        let value = Expression::new(
+            r#"
+            parseJSON('{ "foo" : "1", "bar": 2 }')
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(
+            value,
+            Value::Map(Map {
+                map: Arc::new(HashMap::from([
+                    ("foo".into(), "1".into()),
+                    ("bar".into(), 2.into()),
+                ])),
+            })
+        );
+
+        let value = Expression::new(
+            r#"
+            parseJSON('{ "foo" : "bar" }').foo == 'bar'
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, true.into());
+
+        let value = Expression::new(
+            r#"
+            parseJSON('{ "foo" : "1", "bar": 2 }').foo
+            "#,
+        )
+        .expect("This is valid CEL!")
+        .eval()
+        .expect("This must evaluate!");
+        assert_eq!(value, "1".into());
     }
 }
