@@ -11,7 +11,7 @@ use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::{debug, error};
 use protobuf::RepeatedField;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -151,26 +151,88 @@ impl RateLimitAction {
         Ok(res)
     }
 
-    pub fn get_known_attributes(&self) -> Result<HashMap<String, String>, EvaluationError> {
-        let mut result = HashMap::new();
+    pub fn get_known_attributes(&self) -> Result<(u32, String), EvaluationError> {
+        let mut hits_addend = 1;
+        let mut domain = String::new();
+        let mut duplicate_keys = HashSet::new();
 
         for conditional_data in &self.conditional_data_sets {
             for entry_builder in &conditional_data.data {
                 if KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
-                    let entry = entry_builder.evaluate()?;
-                    if result
-                        .insert(entry.key.clone(), entry.value.clone())
-                        .is_some()
-                    {
-                        return Err(EvaluationError::new(
+                    let val = entry_builder.expression.eval().map_err(|err| {
+                        EvaluationError::new(
                             entry_builder.expression.clone(),
-                            format!("Duplicate key found: {}", entry.key),
-                        ));
+                            format!("Failed to evaluate expression: {}", err),
+                        )
+                    })?;
+                    match entry_builder.key.as_str() {
+                        "ratelimit.domain" => {
+                            if !duplicate_keys.insert(entry_builder.key.as_str()) {
+                                return Err(EvaluationError::new(
+                                    entry_builder.expression.clone(),
+                                    format!(
+                                        "ratelimit.domain has duplicate entries: {}",
+                                        entry_builder.key
+                                    ),
+                                ));
+                            }
+                            match val {
+                                Value::String(s) => {
+                                    if s.is_empty() {
+                                        return Err(EvaluationError::new(
+                                            entry_builder.expression.clone(),
+                                            "ratelimit.domain cannot be empty".to_string(),
+                                        ));
+                                    }
+                                    domain = s.to_string();
+                                }
+                                _ => {
+                                    return Err(EvaluationError::new(
+                                        entry_builder.expression.clone(),
+                                        format!(
+                                            "Expected string for ratelimit.domain, got: {:?}",
+                                            val
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
+                        "ratelimit.hits_addend" => {
+                            if !duplicate_keys.insert(entry_builder.key.as_str()) {
+                                return Err(EvaluationError::new(
+                                    entry_builder.expression.clone(),
+                                    format!(
+                                        "ratelimit.hits_addend has duplicate entries: {}",
+                                        entry_builder.key
+                                    ),
+                                ));
+                            }
+                            match val {
+                                Value::Int(i) => {
+                                    if i >= 0 && i <= u32::MAX as i64 {
+                                        hits_addend = i as u32;
+                                    } else {
+                                        return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {:?}", val), ));
+                                    }
+                                }
+                                Value::UInt(u) => {
+                                    if u <= u32::MAX as u64 {
+                                        hits_addend = u as u32;
+                                    } else {
+                                        return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {:?}", val), ));
+                                    }
+                                }
+                                _ => {
+                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("Only integer values are allowed for known attributes, got: {:?}", val), ));
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
         }
-        Ok(result)
+        Ok((hits_addend, domain))
     }
 
     pub fn get_grpcservice(&self) -> Rc<GrpcService> {
@@ -359,7 +421,7 @@ mod test {
             DataItem {
                 item: DataType::Expression(ExpressionItem {
                     key: "ratelimit.hits_addend".into(),
-                    value: "'3'".into(),
+                    value: "3".into(),
                 }),
             },
         ];
@@ -370,15 +432,38 @@ mod test {
         let descriptor = rl_action.build_descriptor().expect("is ok");
         let known_attributes = rl_action.get_known_attributes().expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 0);
-        assert_eq!(known_attributes.len(), 2);
-        assert_eq!(
-            known_attributes.get("ratelimit.domain"),
-            Some(&"test".to_string())
-        );
-        assert_eq!(
-            known_attributes.get("ratelimit.hits_addend"),
-            Some(&"3".to_string())
-        );
+        let (hits_addend, domain) = known_attributes;
+        assert_eq!(hits_addend, 3);
+        assert_eq!(domain, "test");
+    }
+
+    #[test]
+    fn get_known_attributes_duplicate_entries_fail() {
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "3".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "4".into(),
+                }),
+            },
+        ];
+        let action = build_action(Vec::default(), data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        _ = rl_action.get_known_attributes().expect_err("is err");
     }
 
     #[test]

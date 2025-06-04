@@ -155,19 +155,17 @@ impl RuntimeAction {
         match self {
             RuntimeAction::RateLimit(rl_action) => {
                 let descriptor = rl_action.build_descriptor()?;
-                let mut known_attrs = rl_action.get_known_attributes()?;
+                let (hits_addend, domain_attr) = rl_action.get_known_attributes()?;
 
                 if descriptor.entries.is_empty() {
                     debug!("build_message(rl): empty descriptors");
                     Ok(None)
                 } else {
-                    let domain = known_attrs
-                        .remove("ratelimit.domain")
-                        .unwrap_or_else(|| rl_action.scope().to_string());
-                    let hits_addend = known_attrs
-                        .get("ratelimit.hits_addend")
-                        .and_then(|v| v.parse::<u32>().ok())
-                        .unwrap_or(1);
+                    let domain = if domain_attr.is_empty() {
+                        rl_action.scope().to_string()
+                    } else {
+                        domain_attr
+                    };
 
                     RateLimitService::request_message_as_bytes(
                         domain,
@@ -307,7 +305,7 @@ mod test {
             DataItem {
                 item: DataType::Expression(ExpressionItem {
                     key: "ratelimit.hits_addend".into(),
-                    value: "'3'".into(),
+                    value: "1+1".into(),
                 }),
             },
         ];
@@ -316,15 +314,9 @@ mod test {
         let runtime_action = RuntimeAction::new(&action, &services).unwrap();
 
         if let RuntimeAction::RateLimit(ref rl_action) = runtime_action {
-            let attrs = rl_action.get_known_attributes().unwrap();
-            assert_eq!(
-                attrs.get("ratelimit.domain").map(|s| s.as_str()),
-                Some("test")
-            );
-            assert_eq!(
-                attrs.get("ratelimit.hits_addend").map(|s| s.as_str()),
-                Some("3")
-            );
+            let (hits_addend, domain) = rl_action.get_known_attributes().unwrap();
+            assert_eq!(hits_addend, 2);
+            assert_eq!(domain, "test");
         }
     }
 }
