@@ -84,17 +84,25 @@ impl HttpContext for KuadrantFilter {
         };
 
         if let Some(action_sets) = self.index.get_longest_match_action_sets(authority.as_ref()) {
-            for action_set in action_sets {
+            let action_set_opt = action_sets.into_iter().find_map(|action_set| {
+                // returns the first non-None result,
+                // namely when condition apply OR there is an error
                 match action_set.conditions_apply() {
-                    Ok(true) => {
+                    Ok(true) => Some(Ok(action_set)),
+                    Ok(false) => None,
+                    Err(e) => Some(Err(e)),
+                }
+            });
+
+            if let Some(action_set_res) = action_set_opt {
+                match action_set_res {
+                    Ok(action_set) => {
                         debug!(
                             "#{} action_set selected {}",
                             self.context_id, action_set.name
                         );
                         action = self.start_flow(Rc::clone(action_set));
-                        break;
                     }
-                    Ok(false) => continue,
                     Err(e) => {
                         error!(
                             "#{} on_http_request_headers: failed to apply conditions: {:?}",
@@ -107,11 +115,6 @@ impl HttpContext for KuadrantFilter {
             }
         }
 
-        if action == Action::Continue {
-            // the request headers are currently always None, however this is one of two phases
-            // where headers should be added
-            self.add_request_headers()
-        }
         action
     }
 
