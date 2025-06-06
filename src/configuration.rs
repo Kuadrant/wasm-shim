@@ -99,7 +99,7 @@ pub struct PluginConfiguration {
     pub action_sets: Vec<ActionSet>,
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
     #[serde(rename = "type")]

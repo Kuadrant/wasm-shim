@@ -46,7 +46,7 @@ pub(super) mod errors {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct GrpcService {
     service: Rc<Service>,
     name: &'static str,

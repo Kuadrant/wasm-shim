@@ -14,7 +14,7 @@ use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
@@ -101,6 +101,26 @@ pub struct Expression {
     attributes: Vec<Attribute>,
     expression: CelExpression,
     extended: bool,
+}
+
+impl Display for Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Expression {{ expression: {:?}, attributes: {:?}, extended: {} }}",
+            self.expression, self.attributes, self.extended
+        )
+    }
+}
+
+impl PartialEq for Expression {
+    fn eq(&self, other: &Self) -> bool {
+        let attributes_match = self.attributes == other.attributes;
+        let extended_match = self.extended == other.extended;
+        let expressions_match =
+            format!("{:?}", self.expression) == format!("{:?}", other.expression);
+        attributes_match && extended_match && expressions_match
+    }
 }
 
 impl Expression {
@@ -287,7 +307,7 @@ fn create_context<'a>() -> Context<'a> {
 
 mod strings;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Predicate {
     expression: Expression,
 }
@@ -363,6 +383,19 @@ impl Clone for Attribute {
             path: self.path.clone(),
             cel_type: self.cel_type.as_ref().map(copy),
         }
+    }
+}
+
+impl PartialEq for Attribute {
+    fn eq(&self, other: &Self) -> bool {
+        let paths_match = self.path == other.path;
+        let cel_types_match = match (&self.cel_type, &other.cel_type) {
+            (Some(a), Some(b)) => a.to_string() == b.to_string(),
+            (None, None) => true,
+            _ => false,
+        };
+
+        paths_match && cel_types_match
     }
 }
 

@@ -12,7 +12,7 @@ use protobuf::Message;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RuntimeAction {
     Auth(AuthAction),
     RateLimit(RateLimitAction),
@@ -26,6 +26,7 @@ pub(super) mod errors {
     pub enum ActionCreationError {
         Parse(ParseError),
         UnknownService(String),
+        InvalidAction(String),
     }
 
     impl From<ParseError> for ActionCreationError {
@@ -55,6 +56,9 @@ pub(super) mod errors {
                 }
                 ActionCreationError::UnknownService(e) => {
                     write!(f, "NewActionError::UnknownService {{ {:?} }}", e)
+                }
+                ActionCreationError::InvalidAction(e) => {
+                    write!(f, "NewActionError::InvalidAction {{ {:?} }}", e)
                 }
             }
         }
@@ -110,15 +114,21 @@ impl RuntimeAction {
         }
     }
 
-    #[must_use]
-    pub fn merge(&mut self, other: RuntimeAction) -> Option<RuntimeAction> {
+    pub fn merge(
+        &mut self,
+        other: RuntimeAction,
+    ) -> Result<Option<RuntimeAction>, ActionCreationError> {
         // only makes sense for rate limiting actions
-        if let Self::RateLimit(self_rl_action) = self {
-            if let Self::RateLimit(other_rl_action) = other {
-                return self_rl_action.merge(other_rl_action).map(Self::RateLimit);
+        match (self, other) {
+            (Self::RateLimit(self_rl_action), Self::RateLimit(other_rl_action)) => {
+                match self_rl_action.merge(other_rl_action) {
+                    Ok(None) => Ok(None),
+                    Ok(Some(unmerged_action)) => Ok(Some(Self::RateLimit(unmerged_action))),
+                    Err(e) => Err(e),
+                }
             }
+            (_, unmatched_other) => Ok(Some(unmatched_other)),
         }
-        Some(other)
     }
 
     pub fn process_request(&self) -> RequestResult {
@@ -228,7 +238,8 @@ mod test {
         let rl_r_action_1 = RuntimeAction::new(&rl_action_1, &services)
             .expect("action building failed. Maybe predicates compilation?");
 
-        assert!(rl_r_action_0.merge(rl_r_action_1).is_none());
+        let result = rl_r_action_0.merge(rl_r_action_1.clone());
+        assert_eq!(result, Ok(None));
     }
 
     #[test]
@@ -244,7 +255,8 @@ mod test {
         let auth_r_action_1 = RuntimeAction::new(&auth_action_1, &services)
             .expect("action building failed. Maybe predicates compilation?");
 
-        assert!(auth_r_action_0.merge(auth_r_action_1).is_some());
+        let result = auth_r_action_0.merge(auth_r_action_1.clone());
+        assert_eq!(result, Ok(Some(auth_r_action_1)));
     }
 
     #[test]
@@ -262,7 +274,8 @@ mod test {
         let auth_r_action_0 = RuntimeAction::new(&auth_action_0, &services)
             .expect("action building failed. Maybe predicates compilation?");
 
-        assert!(rl_r_action_0.merge(auth_r_action_0).is_some());
+        let result = rl_r_action_0.merge(auth_r_action_0.clone());
+        assert_eq!(result, Ok(Some(auth_r_action_0)));
     }
 
     #[test]
@@ -280,7 +293,8 @@ mod test {
         let mut auth_r_action_0 = RuntimeAction::new(&auth_action_0, &services)
             .expect("action building failed. Maybe predicates compilation?");
 
-        assert!(auth_r_action_0.merge(rl_r_action_0).is_some());
+        let result = auth_r_action_0.merge(rl_r_action_0.clone());
+        assert_eq!(result, Ok(Some(rl_r_action_0)));
     }
 
     #[test]

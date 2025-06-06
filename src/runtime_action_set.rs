@@ -31,7 +31,7 @@ impl RuntimeActionSet {
         for action in action_set.actions.iter() {
             all_runtime_actions.push(RuntimeAction::new(action, services)?);
         }
-        let runtime_actions = Self::merge_subsequent_actions_of_a_kind(all_runtime_actions);
+        let runtime_actions = Self::merge_subsequent_actions_of_a_kind(all_runtime_actions)?;
 
         Ok(Self {
             name: action_set.name.clone(),
@@ -42,20 +42,21 @@ impl RuntimeActionSet {
 
     fn merge_subsequent_actions_of_a_kind(
         runtime_actions: Vec<RuntimeAction>,
-    ) -> Vec<RuntimeAction> {
-        // fold subsequent actions of a kind (kind being defined in the action)
+    ) -> Result<Vec<RuntimeAction>, ActionCreationError> {
         let mut folded_actions: Vec<RuntimeAction> = Vec::default();
         for r_action in runtime_actions {
             match folded_actions.last_mut() {
-                Some(existing) => {
-                    if let Some(action) = existing.merge(r_action) {
-                        folded_actions.push(action);
+                Some(existing_action) => match existing_action.merge(r_action) {
+                    Ok(None) => {}
+                    Ok(Some(unmerged_action)) => {
+                        folded_actions.push(unmerged_action);
                     }
-                }
+                    Err(e) => return Err(e),
+                },
                 None => folded_actions.push(r_action),
             }
         }
-        folded_actions
+        Ok(folded_actions)
     }
 
     pub fn conditions_apply(&self) -> PredicateResult {

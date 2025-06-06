@@ -7,7 +7,7 @@ use cel_parser::ParseError;
 use log::{debug, warn};
 use std::rc::Rc;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct AuthAction {
     grpc_service: Rc<GrpcService>,
     scope: String,
