@@ -419,6 +419,16 @@ mod test {
             .collect::<RepeatedField<HeaderValue>>()
     }
 
+    fn build_action_for_known_attribute(key: &str, value: &str) -> Action {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: key.into(),
+                value: value.into(),
+            }),
+        }];
+        build_action(String::new(), vec!["true".into()], data)
+    }
+
     #[test]
     fn empty_predicates_do_apply() {
         let action = build_action(String::new(), Vec::default(), Vec::default());
@@ -447,6 +457,73 @@ mod test {
             rl_action.build_descriptor(),
             Ok(RateLimitDescriptor::default())
         );
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_empty_domain() {
+        let action = build_action_for_known_attribute("ratelimit.domain", "''");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        // Assuming EvaluationError implements Debug or Display
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("ratelimit.domain cannot be empty"));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_non_string_domain() {
+        let action = build_action_for_known_attribute("ratelimit.domain", "123");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("Expected string for ratelimit.domain"));
+        assert!(error_message.contains("got: Int(123)"));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_negative_hits_addend() {
+        let action = build_action_for_known_attribute("ratelimit.hits_addend", "-1");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
+        assert!(error_message.contains("got: Int(-1)"));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_too_large_hits_addend() {
+        let too_large_value = (u32::MAX as u64 + 1).to_string();
+        let action = build_action_for_known_attribute("ratelimit.hits_addend", &too_large_value);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+
+        assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
+        assert!(error_message.contains(&format!("got: Int({})", too_large_value)));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_non_integer_hits_addend() {
+        let action = build_action_for_known_attribute("ratelimit.hits_addend", "'not-a-number'");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("Only integer values are allowed for known attributes"));
+        assert!(error_message.contains("got: String"));
     }
 
     #[test]
