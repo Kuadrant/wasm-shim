@@ -546,6 +546,8 @@ fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mu
             properties(e, all, path);
         }
         CelExpression::FunctionCall(_, target, args) => {
+            // The attributes of the values returned by functions are skipped.
+            path.clear();
             if let Some(target) = target {
                 properties(target, all, path);
             }
@@ -748,6 +750,15 @@ mod tests {
         .expect("This is valid CEL!");
         assert_eq!(value.attributes.len(), 3);
         assert_eq!(value.attributes[0].path, "auth.identity".into());
+
+        let value = Expression::new("foo.bar && a.b.c").expect("This is valid CEL!");
+        assert_eq!(value.attributes.len(), 2);
+        assert_eq!(value.attributes[0].path, "foo.bar".into());
+        assert_eq!(value.attributes[1].path, "a.b.c".into());
+
+        let value = Expression::new("my_func(foo.bar).a.b > 3").expect("This is valid CEL!");
+        assert_eq!(value.attributes.len(), 1);
+        assert_eq!(value.attributes[0].path, "foo.bar".into());
     }
 
     #[test]
