@@ -47,15 +47,14 @@ impl ActionSetIndex {
 #[cfg(test)]
 mod tests {
     use crate::action_set_index::ActionSetIndex;
+    use crate::configuration::ActionSet;
     use crate::runtime_action_set::RuntimeActionSet;
+    use std::collections::HashMap;
     use std::rc::Rc;
 
     fn build_ratelimit_action_set(name: &str) -> RuntimeActionSet {
-        RuntimeActionSet {
-            name: name.to_owned(),
-            route_rule_predicates: Default::default(),
-            runtime_actions: Vec::new(),
-        }
+        let action_set = ActionSet::new(name.to_owned(), Default::default(), Vec::new());
+        RuntimeActionSet::new(&action_set, &HashMap::default()).expect("should be good")
     }
 
     #[test]

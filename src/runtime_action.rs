@@ -1,6 +1,6 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::data::PredicateResult;
+use crate::data::{Expression, Predicate, PredicateResult};
 use crate::ratelimit_action::RateLimitAction;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
@@ -11,6 +11,12 @@ use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Phase {
+    OnRequestHeaders,
+    OnRequestBody,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum RuntimeAction {
@@ -192,6 +198,50 @@ impl RuntimeAction {
     }
 }
 
+fn minimum_required_phase(fn_names: Vec<&str>) -> Phase {
+    match fn_names.iter().any(|&x| x == "requestBodyJSON") {
+        true => Phase::OnRequestBody,
+        false => Phase::OnRequestHeaders,
+    }
+}
+
+pub trait MinimumRequiredPhase {
+    fn phase(&self) -> Phase;
+}
+
+impl MinimumRequiredPhase for RuntimeAction {
+    fn phase(&self) -> Phase {
+        match self {
+            Self::Auth(auth_action) => auth_action.phase(),
+            Self::RateLimit(rl_action) => rl_action.phase(),
+        }
+    }
+}
+
+impl MinimumRequiredPhase for Predicate {
+    fn phase(&self) -> Phase {
+        minimum_required_phase(self.fn_names())
+    }
+}
+
+impl MinimumRequiredPhase for Expression {
+    fn phase(&self) -> Phase {
+        minimum_required_phase(self.fn_names())
+    }
+}
+
+impl MinimumRequiredPhase for Vec<Predicate> {
+    fn phase(&self) -> Phase {
+        match self
+            .iter()
+            .any(|predicate| predicate.phase() == Phase::OnRequestBody)
+        {
+            true => Phase::OnRequestBody,
+            false => Phase::OnRequestHeaders,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -332,5 +382,98 @@ mod test {
             assert_eq!(hits_addend, 2);
             assert_eq!(domain, "test");
         }
+    }
+
+    #[test]
+    fn minimum_required_phase() {
+        // empty inputnames
+        assert_eq!(
+            super::minimum_required_phase(Vec::default()),
+            Phase::OnRequestHeaders
+        );
+
+        // requestBodyJSON not in function names
+        let fn_names = vec!["func_a", "func_b"];
+        assert_eq!(
+            super::minimum_required_phase(fn_names),
+            Phase::OnRequestHeaders
+        );
+
+        // requestBodyJSON in function names
+        let fn_names = vec!["func_a", "func_b", "requestBodyJSON", "func_c"];
+        assert_eq!(
+            super::minimum_required_phase(fn_names),
+            Phase::OnRequestBody
+        );
+    }
+
+    #[test]
+    fn expression_minimum_required_phase() {
+        // requestBodyJSON not in expression
+        let expr =
+            Expression::new("func_a([func_b(), 'bar.baz', 'looks_like_a_func(56)', 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert_eq!(expr.phase(), Phase::OnRequestHeaders);
+
+        // requestBodyJSON not as expression function but exists as part of the expression str
+        let expr =
+            Expression::new("func_a([func_b(), 'bar.baz', 'requestBodyJSON(56)', 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert_eq!(expr.phase(), Phase::OnRequestHeaders);
+
+        // requestBodyJSON in expression
+        let expr =
+            Expression::new("func_a([func_b(), 'bar.baz', requestBodyJSON(56), 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert_eq!(expr.phase(), Phase::OnRequestBody);
+    }
+
+    #[test]
+    fn predicate_minimum_required_phase() {
+        // requestBodyJSON not in predicate
+        let predicate =
+            Predicate::new("func_a([func_b(), 'bar.baz', 'looks_like_a_func(56)', 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert_eq!(predicate.phase(), Phase::OnRequestHeaders);
+
+        // requestBodyJSON not as expression function but exists as part of the expression str
+        let predicate =
+            Predicate::new("func_a([func_b(), 'bar.baz', 'requestBodyJSON(56)', 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert_eq!(predicate.phase(), Phase::OnRequestHeaders);
+
+        // requestBodyJSON in expression
+        let predicate =
+            Predicate::new("func_a([func_b(), 'bar.baz', requestBodyJSON(56), 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert_eq!(predicate.phase(), Phase::OnRequestBody);
+    }
+
+    #[test]
+    fn vec_predicate_minimum_required_phase() {
+        // empty
+        let predicates: Vec<Predicate> = Vec::default();
+        assert_eq!(predicates.phase(), Phase::OnRequestHeaders);
+
+        // all on_request_headers
+        let predicates: Vec<Predicate> = vec![
+            Predicate::new("1 + 1 == 2").expect("this is a valid CEL!"),
+            Predicate::new("1 + 2 == 3").expect("this is a valid CEL!"),
+        ];
+        assert_eq!(predicates.phase(), Phase::OnRequestHeaders);
+
+        // one on_request_body after on_request_headers
+        let predicates: Vec<Predicate> = vec![
+            Predicate::new("1 + 1 == 2").expect("this is a valid CEL!"),
+            Predicate::new("requestBodyJSON('model')").expect("this is a valid CEL!"),
+        ];
+        assert_eq!(predicates.phase(), Phase::OnRequestBody);
+
+        // one on_request_headers after on_request_body
+        let predicates: Vec<Predicate> = vec![
+            Predicate::new("requestBodyJSON('model')").expect("this is a valid CEL!"),
+            Predicate::new("1 + 1 == 2").expect("this is a valid CEL!"),
+        ];
+        assert_eq!(predicates.phase(), Phase::OnRequestBody);
     }
 }

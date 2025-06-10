@@ -6,7 +6,7 @@ use crate::envoy::{
     RateLimitResponse_Code, StatusCode,
 };
 use crate::runtime_action::errors::ActionCreationError;
-use crate::runtime_action::ResponseResult;
+use crate::runtime_action::{MinimumRequiredPhase, Phase, ResponseResult};
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
@@ -73,6 +73,18 @@ impl DescriptorEntryBuilder {
     }
 }
 
+impl MinimumRequiredPhase for Vec<DescriptorEntryBuilder> {
+    fn phase(&self) -> Phase {
+        match self
+            .iter()
+            .any(|d| d.expression.phase() == Phase::OnRequestBody)
+        {
+            true => Phase::OnRequestBody,
+            false => Phase::OnRequestHeaders,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 struct ConditionalData {
     pub data: Vec<DescriptorEntryBuilder>,
@@ -119,6 +131,16 @@ impl ConditionalData {
         }
 
         Ok(entries)
+    }
+
+    pub fn phase(&self) -> Phase {
+        let predicates_phase = self.predicates.phase();
+        let data_phase = self.data.phase();
+        if predicates_phase == Phase::OnRequestBody || data_phase == Phase::OnRequestBody {
+            Phase::OnRequestBody
+        } else {
+            Phase::OnRequestHeaders
+        }
     }
 }
 
@@ -355,6 +377,24 @@ impl RateLimitAction {
     }
 }
 
+impl MinimumRequiredPhase for RateLimitAction {
+    fn phase(&self) -> Phase {
+        let phase_vec: Vec<Phase> = self
+            .conditional_data_sets
+            .iter()
+            .map(|c| c.phase())
+            .collect();
+
+        match phase_vec
+            .into_iter()
+            .any(|elem| elem == Phase::OnRequestBody)
+        {
+            true => Phase::OnRequestBody,
+            false => Phase::OnRequestHeaders,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -388,6 +428,19 @@ mod test {
             predicates,
             data,
         }
+    }
+
+    fn build_rl_action(predicates: Vec<String>, data: Vec<(String, String)>) -> RateLimitAction {
+        let data = data
+            .into_iter()
+            .map(|(key, value)| DataItem {
+                item: DataType::Expression(ExpressionItem { key, value }),
+            })
+            .collect();
+        let action = build_action(predicates, data);
+        let service = build_service();
+        RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates or data compilation?")
     }
 
     fn build_ratelimit_response(
@@ -884,5 +937,78 @@ mod test {
 
         let headers = result.expect("is ok");
         assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn minimum_required_phase() {
+        // empty
+        let rl_action = build_rl_action(Vec::default(), Vec::default());
+        assert_eq!(rl_action.phase(), Phase::OnRequestHeaders);
+
+        // only predicates on_request_headers
+        let rl_action = build_rl_action(
+            vec!["1 + 1 == 2".into(), "1 + 2 == 3".into()],
+            Vec::default(),
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestHeaders);
+
+        // only predicates on_request_body
+        let rl_action = build_rl_action(
+            vec!["1 + 1 == 2".into(), "requestBodyJSON('model')".into()],
+            Vec::default(),
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestBody);
+
+        // only data on_request_headers
+        let rl_action = build_rl_action(
+            Vec::default(),
+            vec![
+                ("key1".into(), "1 + 1 == 2".into()),
+                ("key2".into(), "1 + 2 == 3".into()),
+            ],
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestHeaders);
+
+        // only data on_request_body
+        let rl_action = build_rl_action(
+            Vec::default(),
+            vec![
+                ("key2".into(), "1 + 2 == 3".into()),
+                ("key1".into(), "requestBodyJSON('model')".into()),
+            ],
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestBody);
+
+        // on_request_headers
+        let rl_action = build_rl_action(
+            vec!["1 + 1 == 2".into(), "1 + 2 == 3".into()],
+            vec![
+                ("key1".into(), "1 + 1 == 2".into()),
+                ("key2".into(), "1 + 2 == 3".into()),
+            ],
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestHeaders);
+
+        // predicates on_request_body
+        // data on_request_headers
+        let rl_action = build_rl_action(
+            vec!["1 + 1 == 2".into(), "requestBodyJSON('model')".into()],
+            vec![
+                ("key1".into(), "1 + 1 == 2".into()),
+                ("key2".into(), "1 + 2 == 3".into()),
+            ],
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestBody);
+
+        // predicates on_request_headers
+        // data on_request_body
+        let rl_action = build_rl_action(
+            vec!["1 + 1 == 2".into(), "1 + 2 == 3".into()],
+            vec![
+                ("key1".into(), "1 + 2 == 3".into()),
+                ("key2".into(), "requestBodyJSON('model')".into()),
+            ],
+        );
+        assert_eq!(rl_action.phase(), Phase::OnRequestBody);
     }
 }

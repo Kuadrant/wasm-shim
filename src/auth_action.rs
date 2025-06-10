@@ -1,7 +1,7 @@
 use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{store_metadata, Predicate, PredicateResult, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
-use crate::runtime_action::ResponseResult;
+use crate::runtime_action::{MinimumRequiredPhase, Phase, ResponseResult};
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
 use cel_parser::ParseError;
 use log::{debug, warn};
@@ -108,6 +108,12 @@ impl AuthAction {
                 (hv.key.to_owned(), hv.value.to_owned())
             })
             .collect()
+    }
+}
+
+impl MinimumRequiredPhase for AuthAction {
+    fn phase(&self) -> Phase {
+        self.predicates.phase()
     }
 }
 
@@ -330,5 +336,31 @@ mod test {
 
         let headers = result.expect("is ok");
         assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn minimum_required_phase() {
+        // empty
+        let auth_action = build_auth_action_with_predicates(Vec::default());
+        assert_eq!(auth_action.phase(), Phase::OnRequestHeaders);
+
+        // all on_request_headers
+        let auth_action =
+            build_auth_action_with_predicates(vec!["1 + 1 == 2".into(), "1 + 2 == 3".into()]);
+        assert_eq!(auth_action.phase(), Phase::OnRequestHeaders);
+
+        // one on_request_body after on_request_headers
+        let auth_action = build_auth_action_with_predicates(vec![
+            "1 + 1 == 2".into(),
+            "requestBodyJSON('model')".into(),
+        ]);
+        assert_eq!(auth_action.phase(), Phase::OnRequestBody);
+
+        // one on_request_headers after on_request_body
+        let auth_action = build_auth_action_with_predicates(vec![
+            "requestBodyJSON('model')".into(),
+            "1 + 1 == 2".into(),
+        ]);
+        assert_eq!(auth_action.phase(), Phase::OnRequestBody);
     }
 }

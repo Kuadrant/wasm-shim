@@ -3,6 +3,7 @@ pub(crate) mod rate_limit;
 
 use crate::configuration::{FailureMode, Service, ServiceType};
 use crate::envoy::StatusCode;
+use crate::runtime_action::Phase;
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
@@ -102,19 +103,24 @@ impl GrpcService {
 pub struct IndexedGrpcRequest {
     index: usize,
     request: GrpcRequest,
+    phase: Phase,
 }
 
 impl IndexedGrpcRequest {
-    pub(crate) fn new(index: usize, request: GrpcRequest) -> Self {
-        Self { index, request }
+    pub(crate) fn new(index: usize, request: GrpcRequest, phase: Phase) -> Self {
+        Self {
+            index,
+            request,
+            phase,
+        }
     }
 
     pub fn index(&self) -> usize {
         self.index
     }
 
-    pub fn request(self) -> GrpcRequest {
-        self.request
+    pub fn request(self) -> (GrpcRequest, Phase) {
+        (self.request, self.phase)
     }
 }
 

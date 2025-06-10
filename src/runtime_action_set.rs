@@ -1,8 +1,9 @@
 use crate::configuration::{ActionSet, Service};
 use crate::data::{Predicate, PredicateResult, PredicateVec};
 use crate::runtime_action::errors::ActionCreationError;
-use crate::runtime_action::RuntimeAction;
+use crate::runtime_action::{Phase, RuntimeAction};
 use crate::service::{GrpcErrResponse, HeaderKind, IndexedGrpcRequest};
+use partitioner_by_phase::PartitionerByPhase;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -10,7 +11,8 @@ use std::rc::Rc;
 pub struct RuntimeActionSet {
     pub name: String,
     pub route_rule_predicates: Vec<Predicate>,
-    pub runtime_actions: Vec<Rc<RuntimeAction>>,
+    request_headers_runtime_actions: Vec<Rc<RuntimeAction>>,
+    request_body_runtime_actions: Vec<Rc<RuntimeAction>>,
 }
 
 pub type IndexedRequestResult = Result<Option<IndexedGrpcRequest>, GrpcErrResponse>;
@@ -31,12 +33,24 @@ impl RuntimeActionSet {
         for action in action_set.actions.iter() {
             all_runtime_actions.push(RuntimeAction::new(action, services)?);
         }
-        let runtime_actions = Self::merge_subsequent_actions_of_a_kind(all_runtime_actions)?;
+        let (req_header_actions, req_body_actions) =
+            Self::partition_by_request_phase(all_runtime_actions);
 
         Ok(Self {
             name: action_set.name.clone(),
             route_rule_predicates,
-            runtime_actions: runtime_actions.into_iter().map(Rc::new).collect(),
+            request_headers_runtime_actions: Self::merge_subsequent_actions_of_a_kind(
+                req_header_actions,
+            )?
+            .into_iter()
+            .map(Rc::new)
+            .collect(),
+            request_body_runtime_actions: Self::merge_subsequent_actions_of_a_kind(
+                req_body_actions,
+            )?
+            .into_iter()
+            .map(Rc::new)
+            .collect(),
         })
     }
 
@@ -63,15 +77,15 @@ impl RuntimeActionSet {
         self.route_rule_predicates.apply()
     }
 
-    pub fn find_first_grpc_request(&self) -> IndexedRequestResult {
-        self.find_next_grpc_request(0)
+    pub fn find_first_grpc_request(&self, phase: Phase) -> IndexedRequestResult {
+        self.find_next_grpc_request(0, phase)
     }
 
-    pub fn find_next_grpc_request(&self, start: usize) -> IndexedRequestResult {
-        for (index, action) in self.runtime_actions.iter().skip(start).enumerate() {
+    pub fn find_next_grpc_request(&self, start: usize, phase: Phase) -> IndexedRequestResult {
+        for (index, action) in self.runtime_actions(&phase).iter().skip(start).enumerate() {
             match action.process_request() {
                 Ok(Some(request)) => {
-                    return Ok(Some(IndexedGrpcRequest::new(start + index, request)))
+                    return Ok(Some(IndexedGrpcRequest::new(start + index, request, phase)))
                 }
                 Ok(None) => continue,
                 Err(e) => return Err(e),
@@ -80,17 +94,151 @@ impl RuntimeActionSet {
         Ok(None)
     }
 
+    pub fn runtime_actions(&self, phase: &Phase) -> &Vec<Rc<RuntimeAction>> {
+        match phase {
+            Phase::OnRequestHeaders => &self.request_headers_runtime_actions,
+            Phase::OnRequestBody => &self.request_body_runtime_actions,
+        }
+    }
+
     pub fn process_grpc_response(
         &self,
         index: usize,
         msg: &[u8],
+        phase: Phase,
     ) -> Result<(IndexedRequestResult, HeaderKind), GrpcErrResponse> {
-        self.runtime_actions[index]
+        self.runtime_actions(&phase)[index]
             .process_response(msg)
             .map(|headers| {
-                let next_msg = self.find_next_grpc_request(index + 1);
+                let next_msg = self.find_next_grpc_request(index + 1, phase);
                 (next_msg, headers)
             })
+    }
+
+    fn partition_by_request_phase(
+        runtime_actions: Vec<RuntimeAction>,
+    ) -> (Vec<RuntimeAction>, Vec<RuntimeAction>) {
+        let mut partitioner = PartitionerByPhase::new();
+        for action in runtime_actions {
+            partitioner.next(action);
+        }
+        partitioner.collect()
+    }
+}
+
+mod partitioner_by_phase {
+    use crate::runtime_action::{MinimumRequiredPhase, Phase};
+
+    enum State {
+        OnRequestHeaders,
+        OnRequestBody,
+    }
+
+    pub struct PartitionerByPhase<T: MinimumRequiredPhase> {
+        state: State,
+        request_headers_phase: Vec<T>,
+        request_body_phase: Vec<T>,
+    }
+
+    impl<T: MinimumRequiredPhase> PartitionerByPhase<T> {
+        pub fn new() -> Self {
+            Self {
+                state: State::OnRequestHeaders,
+                request_headers_phase: Vec::default(),
+                request_body_phase: Vec::default(),
+            }
+        }
+        pub fn next(&mut self, action: T) {
+            match self.state {
+                // only checks phase if in request headers state
+                State::OnRequestHeaders => match action.phase() {
+                    Phase::OnRequestBody => {
+                        self.request_body_phase.push(action);
+                        self.state = State::OnRequestBody;
+                    }
+                    Phase::OnRequestHeaders => self.request_headers_phase.push(action),
+                },
+                State::OnRequestBody => self.request_body_phase.push(action),
+            }
+        }
+
+        pub fn collect(self) -> (Vec<T>, Vec<T>) {
+            (self.request_headers_phase, self.request_body_phase)
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::PartitionerByPhase;
+        use crate::runtime_action::{MinimumRequiredPhase, Phase};
+
+        struct Action {
+            phase: Phase,
+        }
+
+        impl From<Phase> for Action {
+            fn from(phase: Phase) -> Self {
+                Action { phase }
+            }
+        }
+
+        impl MinimumRequiredPhase for Action {
+            fn phase(&self) -> Phase {
+                self.phase.clone()
+            }
+        }
+
+        #[test]
+        fn empty_action_set() {
+            let partitioner: PartitionerByPhase<Action> = PartitionerByPhase::new();
+            let (request_headers_actions, request_body_actions) = partitioner.collect();
+            assert_eq!(request_headers_actions.len(), 0);
+            assert_eq!(request_body_actions.len(), 0);
+        }
+
+        #[test]
+        fn simple() {
+            let mut partitioner: PartitionerByPhase<Action> = PartitionerByPhase::new();
+            partitioner.next(Phase::OnRequestHeaders.into());
+            partitioner.next(Phase::OnRequestHeaders.into());
+            partitioner.next(Phase::OnRequestBody.into());
+            partitioner.next(Phase::OnRequestHeaders.into());
+            let (request_headers_actions, request_body_actions) = partitioner.collect();
+            assert_eq!(request_headers_actions.len(), 2);
+            assert_eq!(request_headers_actions[0].phase(), Phase::OnRequestHeaders);
+            assert_eq!(request_headers_actions[1].phase(), Phase::OnRequestHeaders);
+            assert_eq!(request_body_actions.len(), 2);
+            assert_eq!(request_body_actions[0].phase(), Phase::OnRequestBody);
+            assert_eq!(request_body_actions[1].phase(), Phase::OnRequestHeaders);
+        }
+
+        #[test]
+        fn all_request_headers() {
+            let mut partitioner: PartitionerByPhase<Action> = PartitionerByPhase::new();
+            partitioner.next(Phase::OnRequestHeaders.into());
+            partitioner.next(Phase::OnRequestHeaders.into());
+            partitioner.next(Phase::OnRequestHeaders.into());
+            let (request_headers_actions, request_body_actions) = partitioner.collect();
+            assert_eq!(request_headers_actions.len(), 3);
+            assert_eq!(request_headers_actions[0].phase(), Phase::OnRequestHeaders);
+            assert_eq!(request_headers_actions[1].phase(), Phase::OnRequestHeaders);
+            assert_eq!(request_headers_actions[2].phase(), Phase::OnRequestHeaders);
+            assert_eq!(request_body_actions.len(), 0);
+        }
+
+        #[test]
+        fn all_request_body() {
+            let mut partitioner: PartitionerByPhase<Action> = PartitionerByPhase::new();
+            partitioner.next(Phase::OnRequestBody.into());
+            partitioner.next(Phase::OnRequestBody.into());
+            partitioner.next(Phase::OnRequestHeaders.into());
+            let (request_headers_actions, request_body_actions) = partitioner.collect();
+            assert_eq!(request_headers_actions.len(), 0);
+            assert_eq!(request_body_actions.len(), 3);
+            assert_eq!(request_body_actions[0].phase(), Phase::OnRequestBody);
+            assert_eq!(request_body_actions[1].phase(), Phase::OnRequestBody);
+            assert_eq!(request_body_actions[2].phase(), Phase::OnRequestHeaders);
+        }
     }
 }
 
@@ -201,7 +349,12 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &services)
             .expect("should not happen for simple actions");
 
-        assert_eq!(runtime_action_set.runtime_actions.len(), 1);
+        assert_eq!(
+            runtime_action_set
+                .runtime_actions(&Phase::OnRequestHeaders)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -222,7 +375,12 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &services)
             .expect("should not happen from simple actions");
 
-        assert_eq!(runtime_action_set.runtime_actions.len(), 2);
+        assert_eq!(
+            runtime_action_set
+                .runtime_actions(&Phase::OnRequestHeaders)
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -245,7 +403,12 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &services)
             .expect("should not happen from simple actions");
 
-        assert_eq!(runtime_action_set.runtime_actions.len(), 3);
+        assert_eq!(
+            runtime_action_set
+                .runtime_actions(&Phase::OnRequestHeaders)
+                .len(),
+            3
+        );
     }
 
     #[test]
@@ -275,6 +438,11 @@ mod test {
         let runtime_action_set = RuntimeActionSet::new(&action_set, &services)
             .expect("should not happen from simple actions");
 
-        assert_eq!(runtime_action_set.runtime_actions.len(), 3);
+        assert_eq!(
+            runtime_action_set
+                .runtime_actions(&Phase::OnRequestHeaders)
+                .len(),
+            3
+        );
     }
 }

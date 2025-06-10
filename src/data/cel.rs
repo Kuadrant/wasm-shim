@@ -184,6 +184,14 @@ impl Expression {
     fn build_data_map(&self) -> Result<Map, PropertyError> {
         data::AttributeMap::new(self.attributes.clone()).into()
     }
+
+    /// Returns all CEL function names
+    /// it can be expensive operation, use it at configuration time, not at request time.
+    pub fn fn_names<'e>(&'e self) -> Vec<&'e str> {
+        let mut names = Vec::default();
+        fn_names_recursive(&self.expression, &mut names);
+        names
+    }
 }
 
 /// Decodes the query string and returns a Map where the key is the parameter's name and
@@ -344,6 +352,10 @@ impl Predicate {
                 err.to_string(),
             )),
         }
+    }
+
+    pub fn fn_names<'e>(&'e self) -> Vec<&'e str> {
+        self.expression.fn_names()
     }
 }
 
@@ -624,6 +636,64 @@ pub fn debug_all_well_known_attributes() {
             }
         }
     })
+}
+
+fn fn_names_recursive<'e>(expr: &'e CelExpression, all: &mut Vec<&'e str>) {
+    match expr {
+        CelExpression::Atom(_) => {}
+        CelExpression::Arithmetic(e1, _, e2)
+        | CelExpression::Relation(e1, _, e2)
+        | CelExpression::Or(e1, e2)
+        | CelExpression::And(e1, e2) => {
+            fn_names_recursive(e1, all);
+            fn_names_recursive(e2, all);
+        }
+        CelExpression::Ternary(e1, e2, e3) => {
+            fn_names_recursive(e1, all);
+            fn_names_recursive(e2, all);
+            fn_names_recursive(e3, all);
+        }
+        CelExpression::Unary(_, e) => {
+            fn_names_recursive(e, all);
+        }
+        CelExpression::Member(e, m) => {
+            fn_names_recursive(e, all);
+            match &**m {
+                Member::Attribute(_) => {}
+                Member::Index(e) => {
+                    fn_names_recursive(e, all);
+                }
+                Member::Fields(v) => {
+                    for (_, e) in v {
+                        fn_names_recursive(e, all);
+                    }
+                }
+            }
+        }
+        CelExpression::List(items) => {
+            for e in items {
+                fn_names_recursive(e, all);
+            }
+        }
+        CelExpression::Map(items) => {
+            for (e1, e2) in items {
+                fn_names_recursive(e1, all);
+                fn_names_recursive(e2, all);
+            }
+        }
+        CelExpression::Ident(_) => {}
+        CelExpression::FunctionCall(name, target, args) => {
+            if let CelExpression::Ident(name) = &**name {
+                all.push(name.as_str());
+            }
+            if let Some(target) = target {
+                fn_names_recursive(target, all);
+            }
+            for e in args {
+                fn_names_recursive(e, all);
+            }
+        }
+    }
 }
 
 pub mod data {
@@ -964,5 +1034,16 @@ mod tests {
             .eval()
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
+    }
+
+    #[test]
+    fn expressions_fn_name() {
+        let value =
+            Expression::new("func_a([func_b(), 'bar.baz', 'looks_like_a_func(56)', 4.func_c()])")
+                .expect("This is valid CEL!");
+        assert!(value.fn_names().iter().any(|&x| x == "func_a"));
+        assert!(value.fn_names().iter().any(|&x| x == "func_b"));
+        assert!(value.fn_names().iter().any(|&x| x == "func_c"));
+        assert!(value.fn_names().iter().all(|&x| x != "looks_like_a_func"));
     }
 }

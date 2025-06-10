@@ -1,4 +1,5 @@
 use crate::configuration::FailureMode;
+use crate::runtime_action::Phase;
 use crate::runtime_action_set::{IndexedRequestResult, RuntimeActionSet};
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderKind, IndexedGrpcRequest};
 use std::rc::Rc;
@@ -30,9 +31,10 @@ impl GrpcMessageSenderOperation {
 
     pub fn build_receiver_operation(self) -> (GrpcRequest, GrpcMessageReceiverOperation) {
         let index = self.grpc_request.index();
+        let (grpc_request, phase) = self.grpc_request.request();
         (
-            self.grpc_request.request(),
-            GrpcMessageReceiverOperation::new(self.runtime_action_set, index),
+            grpc_request,
+            GrpcMessageReceiverOperation::new(self.runtime_action_set, index, phase),
         )
     }
 }
@@ -40,20 +42,28 @@ impl GrpcMessageSenderOperation {
 pub struct GrpcMessageReceiverOperation {
     runtime_action_set: Rc<RuntimeActionSet>,
     current_index: usize,
+    phase: Phase,
 }
 
 impl GrpcMessageReceiverOperation {
-    pub fn new(runtime_action_set: Rc<RuntimeActionSet>, current_index: usize) -> Self {
+    pub fn new(
+        runtime_action_set: Rc<RuntimeActionSet>,
+        current_index: usize,
+        phase: Phase,
+    ) -> Self {
         Self {
             runtime_action_set,
             current_index,
+            phase,
         }
     }
 
     pub fn digest_grpc_response(self, msg: &[u8]) -> Vec<Operation> {
-        let result = self
-            .runtime_action_set
-            .process_grpc_response(self.current_index, msg);
+        let result = self.runtime_action_set.process_grpc_response(
+            self.current_index,
+            msg,
+            self.phase.clone(),
+        );
 
         match result {
             Ok((next_msg, headers)) => {
@@ -69,12 +79,14 @@ impl GrpcMessageReceiverOperation {
     }
 
     pub fn fail(self) -> Operation {
-        match self.runtime_action_set.runtime_actions[self.current_index].get_failure_mode() {
+        match self.runtime_action_set.runtime_actions(&self.phase)[self.current_index]
+            .get_failure_mode()
+        {
             FailureMode::Deny => Operation::Die(GrpcErrResponse::new_internal_server_error()),
             FailureMode::Allow => {
                 let next = self
                     .runtime_action_set
-                    .find_next_grpc_request(self.current_index + 1);
+                    .find_next_grpc_request(self.current_index + 1, self.phase.clone());
                 self.handle_next(next)
             }
         }

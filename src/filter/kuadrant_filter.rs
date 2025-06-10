@@ -2,13 +2,13 @@ use crate::action_set_index::ActionSetIndex;
 use crate::filter::operations::{
     GrpcMessageReceiverOperation, GrpcMessageSenderOperation, Operation,
 };
+use crate::runtime_action::Phase;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::{GrpcErrResponse, GrpcRequest, HeaderResolver, Headers};
 use log::{debug, error, warn};
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, BufferType, MapType, Status};
-use std::mem;
 use std::rc::Rc;
 
 pub(crate) struct KuadrantFilter {
@@ -17,6 +17,7 @@ pub(crate) struct KuadrantFilter {
     header_resolver: Rc<HeaderResolver>,
 
     grpc_message_receiver_operation: Option<GrpcMessageReceiverOperation>,
+    action_set: Option<Rc<RuntimeActionSet>>,
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
 }
@@ -28,7 +29,7 @@ impl Context for KuadrantFilter {
             self.context_id
         );
 
-        match mem::take(&mut self.grpc_message_receiver_operation) {
+        match self.grpc_message_receiver_operation.take() {
             Some(receiver) => {
                 let mut ops = Vec::new();
 
@@ -88,7 +89,7 @@ impl HttpContext for KuadrantFilter {
                 // returns the first non-None result,
                 // namely when condition apply OR there is an error
                 match action_set.conditions_apply() {
-                    Ok(true) => Some(Ok(action_set)),
+                    Ok(true) => Some(Ok(Rc::clone(action_set))),
                     Ok(false) => None,
                     Err(e) => Some(Err(e)),
                 }
@@ -101,7 +102,10 @@ impl HttpContext for KuadrantFilter {
                             "#{} action_set selected {}",
                             self.context_id, action_set.name
                         );
-                        action = self.start_flow(Rc::clone(action_set));
+                        // will be needed for coming request phases
+                        // TODO: always set?? only if needed...
+                        self.action_set = Some(Rc::clone(&action_set));
+                        action = self.start_flow(action_set, Phase::OnRequestHeaders);
                     }
                     Err(e) => {
                         error!(
@@ -118,9 +122,43 @@ impl HttpContext for KuadrantFilter {
         action
     }
 
+    fn on_http_request_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
+        debug!(
+            "#{} on_http_request_body: body_size: {body_size}, end_of_stream: {end_of_stream}",
+            self.context_id
+        );
+
+        match &self.action_set {
+            // action_set has not been registered for this request, nothing to do here
+            None => Action::Continue,
+            Some(action_set) => {
+                match action_set.runtime_actions(&Phase::OnRequestBody).len() == 0 {
+                    // action_set does not have any job to be done for this request
+                    // at the request body phase. Nothing to do here
+                    true => Action::Continue,
+                    false => match end_of_stream {
+                        // This is not the end of the stream,
+                        // so the complete request body is not yet available.
+                        // Until JSON parsing is supported in streaming mode,
+                        // the entire request body must be available.
+                        // There is nothing to do here at the moment.
+                        false => Action::Pause,
+                        true => {
+                            debug!(
+                                "#{} on_http_request_body: action_set selected {}",
+                                self.context_id, action_set.name
+                            );
+                            self.start_flow(Rc::clone(action_set), Phase::OnRequestBody)
+                        }
+                    },
+                }
+            }
+        }
+    }
+
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
-        if let Some(response_headers) = mem::take(&mut self.response_headers_to_add) {
+        if let Some(response_headers) = self.response_headers_to_add.take() {
             for (header, value) in response_headers {
                 if let Err(status) = self.add_http_response_header(header.as_str(), value.as_str())
                 {
@@ -137,8 +175,8 @@ impl HttpContext for KuadrantFilter {
 }
 
 impl KuadrantFilter {
-    fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>) -> Action {
-        let grpc_request = action_set.find_first_grpc_request();
+    fn start_flow(&mut self, action_set: Rc<RuntimeActionSet>, phase: Phase) -> Action {
+        let grpc_request = action_set.find_first_grpc_request(phase);
         let op = match grpc_request {
             Ok(None) => Operation::Done(),
             Ok(Some(indexed_req)) => {
@@ -249,7 +287,7 @@ impl KuadrantFilter {
     }
 
     fn add_request_headers(&mut self) {
-        if let Some(request_headers) = mem::take(&mut self.request_headers_to_add) {
+        if let Some(request_headers) = self.request_headers_to_add.take() {
             for (header, value) in request_headers {
                 if let Err(status) = self.add_http_request_header(header.as_str(), value.as_str()) {
                     log::error!(
@@ -272,6 +310,7 @@ impl KuadrantFilter {
             index,
             header_resolver,
             grpc_message_receiver_operation: None,
+            action_set: None,
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),
         }
