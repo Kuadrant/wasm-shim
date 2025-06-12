@@ -1,15 +1,16 @@
 use crate::data::cel::errors::{CelError, EvaluationError};
-use crate::data::property::{host_get_map, Path};
-use crate::data::{get_attribute, PropertyError};
+use crate::data::property::{host_get_buffer, host_get_map, Path};
+use crate::data::{get_attribute, read_request_body_size, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
+use gjson::Value as GJsonValue;
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
 use log::warn;
-use proxy_wasm::types::{Bytes, Status};
+use proxy_wasm::types::{BufferType, Bytes, Status};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -166,6 +167,7 @@ impl Expression {
         let Map { map } = self.build_data_map()?;
 
         ctx.add_function("getHostProperty", get_host_property);
+        ctx.add_function("requestBodyJSON", request_body_json);
 
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
@@ -295,6 +297,64 @@ fn get_host_property(This(this): This<Value>) -> ResolveResult {
             }
         }
         _ => Err(this.error_expected_type(ValueType::List)),
+    }
+}
+
+fn request_body_json(This(this): This<Value>) -> ResolveResult {
+    match this {
+        Value::String(ref path) => {
+            let body_size = read_request_body_size()
+                .map_err(|prop_err| ExecutionError::function_error("requestBodyJSON", prop_err))?;
+            let json_body_opt = host_get_buffer(BufferType::HttpRequestBody, 0, body_size)
+                .map_err(|e| {
+                    ExecutionError::function_error("requestBodyJSON", format!("Status: {:?}", e))
+                })?;
+            match json_body_opt {
+                None => Ok(Value::Null),
+                Some(json_body_raw) => {
+                    let json_body = String::from_utf8(json_body_raw)
+                        .map_err(|err| ExecutionError::function_error("requestBodyJSON", err))?;
+                    if !gjson::valid(json_body.as_str()) {
+                        Err(ExecutionError::function_error(
+                            "requestBodyJSON",
+                            "request body: invalid json",
+                        ))
+                    } else {
+                        Ok(json_to_cel_recursive(gjson::get(
+                            json_body.as_str(),
+                            path.as_str(),
+                        )))
+                    }
+                }
+            }
+        }
+        _ => Err(this.error_expected_type(ValueType::String)),
+    }
+}
+
+fn json_to_cel_recursive(json_value: GJsonValue) -> Value {
+    match json_value.kind() {
+        gjson::Kind::Null => Value::Null,
+        gjson::Kind::True => true.into(),
+        gjson::Kind::False => false.into(),
+        gjson::Kind::Number => json_value.i64().into(),
+        gjson::Kind::String => json_value.str().into(),
+        gjson::Kind::Array => json_value
+            .array()
+            .into_iter()
+            .map(|v| json_to_cel_recursive(v))
+            .collect::<Vec<_>>()
+            .into(),
+        gjson::Kind::Object => {
+            let mut map = HashMap::default();
+            json_value.each(|key, value| -> bool {
+                map.insert(key.str().into(), json_to_cel_recursive(value));
+                true // keep iterating
+            });
+            Value::Map(Map {
+                map: Arc::from(map),
+            })
+        }
     }
 }
 
@@ -831,10 +891,11 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
+    use crate::data::cel::errors::CelError;
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::data::property;
     use cel_interpreter::objects::ValueType;
-    use cel_interpreter::Value;
+    use cel_interpreter::{ExecutionError, Value};
     use std::sync::Arc;
 
     #[test]
@@ -1045,5 +1106,112 @@ mod tests {
         assert!(value.fn_names().iter().any(|&x| x == "func_b"));
         assert!(value.fn_names().iter().any(|&x| x == "func_c"));
         assert!(value.fn_names().iter().all(|&x| x != "looks_like_a_func"));
+    }
+
+    #[test]
+    fn expressions_request_body_json_01_basic() {
+        let request_body = r#"
+        {
+            "name": "John Doe",
+            "age": 43
+        }"#;
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.internal.request_body_size",
+            ]),
+            (request_body.len() as u64).to_le_bytes().into(),
+        )));
+        property::test::TEST_REQUEST_BUFFER_VALUE.set(Some(request_body.into()));
+        let value = Expression::new("requestBodyJSON('name')")
+            .expect("This is valid CEL!")
+            .eval()
+            .expect("This must evaluate!");
+        assert_eq!(value, ("John Doe").into());
+    }
+
+    #[test]
+    fn expressions_request_body_json_02_input_error() {
+        let request_body = r#"
+        {
+            "name": "John Doe",
+            "age": 43
+        }"#;
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.internal.request_body_size",
+            ]),
+            (request_body.len() as u64).to_le_bytes().into(),
+        )));
+        property::test::TEST_REQUEST_BUFFER_VALUE.set(Some(request_body.into()));
+        let res = Expression::new("requestBodyJSON(['crap'])")
+            .expect("This is valid CEL!")
+            .eval();
+        assert!(
+            res.is_err_and(|err| match err {
+                CelError::Resolve(exec_err) => match exec_err {
+                    ExecutionError::UnexpectedType { .. } => true,
+                    _ => false,
+                },
+                _ => false,
+            }),
+            "should fail on expected arg type"
+        );
+    }
+
+    #[test]
+    fn expressions_request_body_json_03_invalid_json() {
+        let request_body = "👾👾👾👾👾👾";
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.internal.request_body_size",
+            ]),
+            (request_body.len() as u64).to_le_bytes().into(),
+        )));
+        property::test::TEST_REQUEST_BUFFER_VALUE.set(Some(request_body.into()));
+        let res = Expression::new("requestBodyJSON('my_attr')")
+            .expect("This is valid CEL!")
+            .eval();
+        assert!(
+            res.is_err_and(|err| match err {
+                CelError::Resolve(exec_err) => match exec_err {
+                    ExecutionError::FunctionError { function, message } =>
+                        function == "requestBodyJSON" && message == "request body: invalid json",
+
+                    _ => false,
+                },
+                _ => false,
+            }),
+            "should fail on invalid json"
+        );
+    }
+
+    #[test]
+    fn expressions_request_body_json_04_invalid_string() {
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.internal.request_body_size",
+            ]),
+            5u64.to_le_bytes().into(),
+        )));
+        // some invalid bytes, in a vector
+        property::test::TEST_REQUEST_BUFFER_VALUE.set(Some(vec![0, 159, 146, 150].into()));
+        let res = Expression::new("requestBodyJSON('my_attr')")
+            .expect("This is valid CEL!")
+            .eval();
+        assert!(
+            res.is_err_and(|err| match err {
+                CelError::Resolve(exec_err) => match exec_err {
+                    ExecutionError::FunctionError { function, message } =>
+                        function == "requestBodyJSON" && message.contains("invalid utf-8 sequence"),
+                    _ => false,
+                },
+                _ => false,
+            }),
+            "should fail on FromUtf8Error"
+        );
     }
 }

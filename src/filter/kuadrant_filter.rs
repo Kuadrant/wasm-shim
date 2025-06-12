@@ -103,7 +103,6 @@ impl HttpContext for KuadrantFilter {
                             self.context_id, action_set.name
                         );
                         // will be needed for coming request phases
-                        // TODO: always set?? only if needed...
                         self.action_set = Some(Rc::clone(&action_set));
                         action = self.start_flow(action_set, Phase::OnRequestHeaders);
                     }
@@ -132,6 +131,8 @@ impl HttpContext for KuadrantFilter {
             // action_set has not been registered for this request, nothing to do here
             None => Action::Continue,
             Some(action_set) => {
+                // Need to check if there is something to do before expending
+                // time and resources reading the body
                 match action_set.runtime_actions(&Phase::OnRequestBody).len() == 0 {
                     // action_set does not have any job to be done for this request
                     // at the request body phase. Nothing to do here
@@ -145,9 +146,19 @@ impl HttpContext for KuadrantFilter {
                         false => Action::Pause,
                         true => {
                             debug!(
-                                "#{} on_http_request_body: action_set selected {}",
-                                self.context_id, action_set.name
+                                "#{} on_http_request_body (size: {}): action_set selected {}",
+                                self.context_id, body_size, action_set.name
                             );
+                            // Store the request body size as a property on the host
+                            // so that it is available during CEL evaluation.
+                            if let Err(e) = crate::data::store_request_body_size(body_size) {
+                                error!(
+                                "#{} on_http_request_body (size: {}): cannot store request body size: {e}",
+                                self.context_id, body_size
+                                );
+                                let _ = self.send_http_response(500, Vec::default(), None);
+                                return Action::Continue;
+                            }
                             self.start_flow(Rc::clone(action_set), Phase::OnRequestBody)
                         }
                     },

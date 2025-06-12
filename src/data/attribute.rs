@@ -222,6 +222,19 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
     result
 }
 
+pub fn store_request_body_size(body_size: usize) -> Result<(), PropertyError> {
+    let attr = format!("{KUADRANT_NAMESPACE}\\.internal\\.request_body_size");
+    set_attribute(attr.as_str(), (body_size as u64).to_le_bytes().as_slice())
+}
+
+pub fn read_request_body_size() -> Result<usize, PropertyError> {
+    get_attribute::<u64>(&PropertyPath::new(vec!["internal", "request_body_size"]))?
+        .map(|val| val as usize)
+        .ok_or(PropertyError::Get(PropError::new(
+            "request body size not found".into(),
+        )))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::process_metadata;

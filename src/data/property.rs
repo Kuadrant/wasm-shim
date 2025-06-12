@@ -1,7 +1,7 @@
 use crate::data::attribute::KUADRANT_NAMESPACE;
 use log::debug;
 use log::warn;
-use proxy_wasm::types::Status;
+use proxy_wasm::types::{BufferType, Bytes, Status};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -63,6 +63,23 @@ pub fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status>
     Ok(())
 }
 
+#[cfg(test)]
+pub fn host_get_buffer(
+    buffer_type: BufferType,
+    start: usize,
+    max_size: usize,
+) -> Result<Option<Bytes>, Status> {
+    debug!("host_get_buffer: type {buffer_type:?}, start: {start}, max_size: {max_size}");
+    match buffer_type {
+        BufferType::HttpRequestBody => match test::TEST_REQUEST_BUFFER_VALUE.take() {
+            None => Err(Status::NotFound),
+            Some(data) => Ok(Some(data)),
+        },
+        // Not implemented yet
+        _ => Err(Status::BadArgument),
+    }
+}
+
 #[cfg(not(test))]
 pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
     match *path.tokens() {
@@ -88,10 +105,21 @@ pub(super) fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), 
     proxy_wasm::hostcalls::set_property(path.tokens(), value)
 }
 
+#[cfg(not(test))]
+pub fn host_get_buffer(
+    buffer_type: BufferType,
+    start: usize,
+    max_size: usize,
+) -> Result<Option<Bytes>, Status> {
+    debug!("host_get_buffer: type {buffer_type:?}, start: {start}, max_size: {max_size}");
+    proxy_wasm::hostcalls::get_buffer(buffer_type, start, max_size)
+}
+
 pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
         ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
+        ["internal", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
         _ => host_get_property(path),
     }
 }
@@ -168,6 +196,7 @@ pub mod test {
 
     thread_local!(
         pub static TEST_PROPERTY_VALUE: Cell<Option<(Path, Vec<u8>)>> = const { Cell::new(None) };
+        pub static TEST_REQUEST_BUFFER_VALUE: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
     );
 
     #[test]
