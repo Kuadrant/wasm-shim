@@ -5,19 +5,23 @@ use crate::envoy::{
     HeaderValue, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse,
     RateLimitResponse_Code, StatusCode,
 };
+use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::ResponseResult;
 use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::{debug, error};
 use protobuf::RepeatedField;
+use std::collections::HashMap;
 use std::rc::Rc;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 struct DescriptorEntryBuilder {
     pub key: String,
     pub expression: Expression,
 }
+
+const KNOWN_ATTRIBUTES: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"];
 
 impl DescriptorEntryBuilder {
     pub fn new(data_type: &DataType) -> Result<Self, ParseError> {
@@ -69,7 +73,7 @@ impl DescriptorEntryBuilder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 struct ConditionalData {
     pub data: Vec<DescriptorEntryBuilder>,
     pub predicates: Vec<Predicate>,
@@ -109,14 +113,16 @@ impl ConditionalData {
 
         let mut entries = RepeatedField::default();
         for entry_builder in self.data.iter() {
-            entries.push(entry_builder.evaluate()?);
+            if !KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
+                entries.push(entry_builder.evaluate()?);
+            }
         }
 
         Ok(entries)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RateLimitAction {
     grpc_service: Rc<GrpcService>,
     scope: String,
@@ -144,6 +150,64 @@ impl RateLimitAction {
         let mut res = RateLimitDescriptor::new();
         res.set_entries(entries);
         Ok(res)
+    }
+
+    pub fn get_known_attributes(&self) -> Result<(u32, String), EvaluationError> {
+        let mut hits_addend = 1;
+        let mut domain = String::new();
+
+        for conditional_data in &self.conditional_data_sets {
+            for entry_builder in &conditional_data.data {
+                if KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
+                    let val = entry_builder.expression.eval().map_err(|err| {
+                        EvaluationError::new(
+                            entry_builder.expression.clone(),
+                            format!("Failed to evaluate expression: {}", err),
+                        )
+                    })?;
+                    match entry_builder.key.as_str() {
+                        "ratelimit.domain" => match val {
+                            Value::String(s) => {
+                                if s.is_empty() {
+                                    return Err(EvaluationError::new(
+                                        entry_builder.expression.clone(),
+                                        "ratelimit.domain cannot be empty".to_string(),
+                                    ));
+                                }
+                                domain = s.to_string();
+                            }
+                            _ => {
+                                return Err(EvaluationError::new(
+                                    entry_builder.expression.clone(),
+                                    format!("Expected string for ratelimit.domain, got: {:?}", val),
+                                ));
+                            }
+                        },
+                        "ratelimit.hits_addend" => match val {
+                            Value::Int(i) => {
+                                if i >= 0 && i <= u32::MAX as i64 {
+                                    hits_addend = i as u32;
+                                } else {
+                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {:?}", val), ));
+                                }
+                            }
+                            Value::UInt(u) => {
+                                if u <= u32::MAX as u64 {
+                                    hits_addend = u as u32;
+                                } else {
+                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {:?}", val), ));
+                                }
+                            }
+                            _ => {
+                                return Err(EvaluationError::new(entry_builder.expression.clone(), format!("Only integer values are allowed for known attributes, got: {:?}", val), ));
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok((hits_addend, domain))
     }
 
     pub fn get_grpcservice(&self) -> Rc<GrpcService> {
@@ -175,14 +239,74 @@ impl RateLimitAction {
         }
     }
 
-    #[must_use]
-    pub fn merge(&mut self, other: RateLimitAction) -> Option<RateLimitAction> {
-        if self.scope == other.scope && self.service_name == other.service_name {
-            self.conditional_data_sets
-                .extend(other.conditional_data_sets);
-            return None;
+    pub fn validate_ratelimit_action_conditional_data(&self) -> Result<(), ActionCreationError> {
+        for conditional_data_set in &self.conditional_data_sets {
+            let mut seen_key_values: HashMap<String, String> = HashMap::new();
+
+            for entry_builder in &conditional_data_set.data {
+                let key = entry_builder.key.clone();
+                let current_value = entry_builder.expression.to_string();
+
+                if let Some(existing_value) = seen_key_values.get(&key) {
+                    if *existing_value != current_value {
+                        let error_message = format!(
+                            "Invalid ConditionalDataSet: key '{}' has conflicting internal values ('{}' and '{}').",
+                            key, existing_value, current_value
+                        );
+                        error!("{}", error_message);
+                        return Err(ActionCreationError::InvalidAction(error_message));
+                    }
+                } else {
+                    seen_key_values.insert(key, current_value);
+                }
+            }
         }
-        Some(other)
+        Ok(())
+    }
+
+    pub fn merge(
+        &mut self,
+        other: RateLimitAction,
+    ) -> Result<Option<RateLimitAction>, ActionCreationError> {
+        self.validate_ratelimit_action_conditional_data()?;
+        other.validate_ratelimit_action_conditional_data()?;
+
+        if self.scope != other.scope || self.service_name != other.service_name {
+            return Ok(Some(other));
+        }
+
+        let mut self_key_values: HashMap<String, String> = HashMap::new();
+        for conditional_data_set in &self.conditional_data_sets {
+            for entry_builder in &conditional_data_set.data {
+                self_key_values.insert(
+                    entry_builder.key.clone(),
+                    entry_builder.expression.to_string(),
+                );
+            }
+        }
+
+        for other_conditional_data_set in &other.conditional_data_sets {
+            for other_entry_builder in &other_conditional_data_set.data {
+                let key = &other_entry_builder.key;
+                let other_value = other_entry_builder.expression.to_string();
+
+                if let Some(self_value) = self_key_values.get(key) {
+                    if *self_value != other_value {
+                        let error_message = format!(
+                            "Conflicting values within RateLimitActions for key '{}': '{}' and '{}'",
+                            key, self_value, other_value
+                        );
+                        error!("{}", error_message);
+                        return Err(ActionCreationError::InvalidAction(error_message));
+                    }
+                }
+            }
+        }
+
+        self.conditional_data_sets
+            .extend(other.conditional_data_sets);
+
+        Ok(None)
     }
 
     pub fn process_response(
@@ -238,6 +362,7 @@ mod test {
         Action, DataItem, DataType, ExpressionItem, FailureMode, Service, ServiceType, StaticItem,
         Timeout,
     };
+    use core::str;
 
     fn build_service() -> Service {
         build_service_with_failure_mode(FailureMode::default())
@@ -252,10 +377,14 @@ mod test {
         }
     }
 
-    fn build_action(predicates: Vec<String>, data: Vec<DataItem>) -> Action {
+    fn build_action(mut scope: String, predicates: Vec<String>, data: Vec<DataItem>) -> Action {
+        if scope.is_empty() {
+            scope = "some_scope".to_string();
+        }
+
         Action {
             service: "some_service".into(),
-            scope: "some_scope".into(),
+            scope,
             predicates,
             data,
         }
@@ -290,9 +419,19 @@ mod test {
             .collect::<RepeatedField<HeaderValue>>()
     }
 
+    fn build_action_for_known_attribute(key: &str, value: &str) -> Action {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: key.into(),
+                value: value.into(),
+            }),
+        }];
+        build_action(String::new(), vec!["true".into()], data)
+    }
+
     #[test]
     fn empty_predicates_do_apply() {
-        let action = build_action(Vec::default(), Vec::default());
+        let action = build_action(String::new(), Vec::default(), Vec::default());
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -301,7 +440,7 @@ mod test {
 
     #[test]
     fn even_with_falsy_predicates_conditions_apply() {
-        let action = build_action(vec!["false".into()], Vec::default());
+        let action = build_action(String::new(), vec!["false".into()], Vec::default());
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -310,7 +449,7 @@ mod test {
 
     #[test]
     fn empty_data_generates_empty_descriptor() {
-        let action = build_action(Vec::default(), Vec::default());
+        let action = build_action(String::new(), Vec::default(), Vec::default());
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -321,14 +460,123 @@ mod test {
     }
 
     #[test]
+    fn get_known_attribute_fails_on_empty_domain() {
+        let action = build_action_for_known_attribute("ratelimit.domain", "''");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        // Assuming EvaluationError implements Debug or Display
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("ratelimit.domain cannot be empty"));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_non_string_domain() {
+        let action = build_action_for_known_attribute("ratelimit.domain", "123");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("Expected string for ratelimit.domain"));
+        assert!(error_message.contains("got: Int(123)"));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_negative_hits_addend() {
+        let action = build_action_for_known_attribute("ratelimit.hits_addend", "-1");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
+        assert!(error_message.contains("got: Int(-1)"));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_too_large_hits_addend() {
+        let too_large_value = (u32::MAX as u64 + 1).to_string();
+        let action = build_action_for_known_attribute("ratelimit.hits_addend", &too_large_value);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+
+        assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
+        assert!(error_message.contains(&format!("got: Int({})", too_large_value)));
+    }
+
+    #[test]
+    fn get_known_attribute_fails_on_non_integer_hits_addend() {
+        let action = build_action_for_known_attribute("ratelimit.hits_addend", "'not-a-number'");
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service).unwrap();
+
+        let result = rl_action.get_known_attributes();
+        assert!(result.is_err());
+        let error_message = format!("{:?}", result.unwrap_err());
+        assert!(error_message.contains("Only integer values are allowed for known attributes"));
+        assert!(error_message.contains("got: String"));
+    }
+
+    #[test]
+    fn get_known_attributes_from_descriptor_entries() {
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "3".into(),
+                }),
+            },
+        ];
+        let action = build_action(String::new(), Vec::default(), data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let descriptor = rl_action.build_descriptor().expect("is ok");
+        let known_attributes = rl_action.get_known_attributes().expect("is ok");
+        assert_eq!(descriptor.get_entries().len(), 0);
+        let (hits_addend, domain) = known_attributes;
+        assert_eq!(hits_addend, 3);
+        assert_eq!(domain, "test");
+    }
+
+    #[test]
     fn descriptor_entry_from_expression() {
-        let data = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "'value_1'".into(),
-            }),
-        }];
-        let action = build_action(Vec::default(), data);
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "'3'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "'value_1'".into(),
+                }),
+            },
+        ];
+        let action = build_action(String::new(), Vec::default(), data);
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -346,7 +594,7 @@ mod test {
                 value: "value_1".into(),
             }),
         }];
-        let action = build_action(Vec::default(), data);
+        let action = build_action(String::new(), Vec::default(), data);
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -366,7 +614,7 @@ mod test {
         }];
 
         let predicates = vec!["false".into(), "true".into()];
-        let action = build_action(predicates, data);
+        let action = build_action(String::new(), predicates, data);
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -385,7 +633,7 @@ mod test {
             }),
         }];
         let predicates_1 = vec!["true".into()];
-        let action_1 = build_action(predicates_1, data_1);
+        let action_1 = build_action(String::new(), predicates_1, data_1);
         let mut rl_action_1 = RateLimitAction::new(&action_1, &service)
             .expect("action building failed. Maybe predicates compilation?");
 
@@ -396,7 +644,7 @@ mod test {
             }),
         }];
         let predicates_2 = vec!["false".into()];
-        let action_2 = build_action(predicates_2, data_2);
+        let action_2 = build_action(String::new(), predicates_2, data_2);
         let rl_action_2 = RateLimitAction::new(&action_2, &service)
             .expect("action building failed. Maybe predicates compilation?");
 
@@ -407,12 +655,11 @@ mod test {
             }),
         }];
         let predicates_3 = vec!["true".into()];
-        let action_3 = build_action(predicates_3, data_3);
+        let action_3 = build_action(String::new(), predicates_3, data_3);
         let rl_action_3 = RateLimitAction::new(&action_3, &service)
             .expect("action building failed. Maybe predicates compilation?");
-
-        assert!(rl_action_1.merge(rl_action_2).is_none());
-        assert!(rl_action_1.merge(rl_action_3).is_none());
+        assert_eq!(rl_action_1.merge(rl_action_2), Ok(None));
+        assert_eq!(rl_action_1.merge(rl_action_3), Ok(None));
 
         // it should generate descriptor entries from action 1 and action 3
         let descriptor = rl_action_1.build_descriptor().expect("is ok");
@@ -424,8 +671,114 @@ mod test {
     }
 
     #[test]
+    fn merge_fails_on_conflicting_values_with_same_scope() {
+        let service = build_service();
+
+        let data_1 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "1".into(),
+            }),
+        }];
+        let predicates_1 = vec!["true".into()];
+        let action_1 = build_action(String::new(), predicates_1, data_1);
+        let mut rl_action_1 =
+            RateLimitAction::new(&action_1, &service).expect("action building failed");
+
+        let data_2 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "2".into(),
+            }),
+        }];
+        let predicates_2 = vec!["false".into()];
+        let action_2 = build_action(String::new(), predicates_2, data_2);
+        let rl_action_2 =
+            RateLimitAction::new(&action_2, &service).expect("action building failed");
+
+        assert!(rl_action_1.merge(rl_action_2).is_err());
+    }
+
+    #[test]
+    fn merge_fails_if_other_action_has_internal_conflicts() {
+        let service = build_service();
+
+        let data_1 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "1".into(),
+            }),
+        }];
+        let predicates_1 = vec!["true".into()];
+        let action_1 = build_action(String::new(), predicates_1, data_1);
+        let mut rl_action_1 =
+            RateLimitAction::new(&action_1, &service).expect("action building failed");
+
+        let data_3 = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "3".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "2".into(),
+                }),
+            },
+        ];
+        let predicates_3 = vec!["true".into()];
+        let action_3 = build_action("scope_3".to_string(), predicates_3, data_3);
+        let rl_action_3 =
+            RateLimitAction::new(&action_3, &service).expect("action building failed");
+
+        assert!(rl_action_1.merge(rl_action_3).is_err());
+    }
+
+    #[test]
+    fn merge_succeeds_with_identical_duplicate_keys() {
+        let service = build_service();
+
+        let data_1 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "1".into(),
+            }),
+        }];
+        let predicates_1 = vec!["true".into()];
+        let action_1 = build_action(String::new(), predicates_1, data_1);
+        let mut rl_action_1 =
+            RateLimitAction::new(&action_1, &service).expect("action building failed");
+
+        let data_4 = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "1".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "1".into(),
+                }),
+            },
+        ];
+        let predicates_4 = vec!["true".into()];
+        let action_4 = build_action(String::new(), predicates_4, data_4);
+        let rl_action_4 =
+            RateLimitAction::new(&action_4, &service).expect("action building failed");
+
+        assert_eq!(rl_action_1.merge(rl_action_4), Ok(None));
+        let (hits_addend, domain) = rl_action_1.get_known_attributes().expect("is ok");
+        assert_eq!(hits_addend, 1);
+        assert_eq!(domain, "");
+    }
+
+    #[test]
     fn process_ok_response() {
-        let action = build_action(Vec::default(), Vec::default());
+        let action = build_action(String::new(), Vec::default(), Vec::default());
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -462,7 +815,7 @@ mod test {
     #[test]
     fn process_overlimit_response() {
         let headers = vec![("x-ratelimit-limit", "10"), ("x-ratelimit-remaining", "0")];
-        let action = build_action(Vec::default(), Vec::default());
+        let action = build_action(String::new(), Vec::default(), Vec::default());
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
@@ -504,7 +857,7 @@ mod test {
 
     #[test]
     fn process_error_response() {
-        let action = build_action(Vec::default(), Vec::default());
+        let action = build_action(String::new(), Vec::default(), Vec::default());
         let deny_service = build_service_with_failure_mode(FailureMode::Deny);
         let rl_action = RateLimitAction::new(&action, &deny_service)
             .expect("action building failed. Maybe predicates compilation?");

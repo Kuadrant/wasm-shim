@@ -11,11 +11,12 @@ impl RateLimitService {
     pub fn request_message(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
+        hits_addend: u32,
     ) -> RateLimitRequest {
         RateLimitRequest {
             domain,
             descriptors,
-            hits_addend: 1,
+            hits_addend,
             unknown_fields: Default::default(),
             cached_size: Default::default(),
         }
@@ -24,8 +25,9 @@ impl RateLimitService {
     pub fn request_message_as_bytes(
         domain: String,
         descriptors: RepeatedField<RateLimitDescriptor>,
+        hits_addend: u32,
     ) -> Result<Vec<u8>, BuildMessageError> {
-        Self::request_message(domain, descriptors)
+        Self::request_message(domain, descriptors, hits_addend)
             .write_to_bytes()
             .map_err(BuildMessageError::Serialization)
     }
@@ -47,7 +49,7 @@ mod tests {
         field.set_entries(RepeatedField::from_vec(vec![entry]));
         let descriptors = RepeatedField::from_vec(vec![field]);
 
-        RateLimitService::request_message(domain.to_string(), descriptors.clone())
+        RateLimitService::request_message(domain.to_string(), descriptors.clone(), 1)
     }
     #[test]
     fn builds_correct_message() {
