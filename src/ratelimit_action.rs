@@ -437,7 +437,7 @@ mod test {
                 item: DataType::Expression(ExpressionItem { key, value }),
             })
             .collect();
-        let action = build_action(predicates, data);
+        let action = build_action(String::new(), predicates, data);
         let service = build_service();
         RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates or data compilation?")
