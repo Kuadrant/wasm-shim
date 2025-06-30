@@ -51,7 +51,7 @@ pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
             "X-Auth".to_string(),
             "kuadrant".to_string(),
         )])),
-        _ => Err(format!("Unknown map requested {:?}", path)),
+        _ => Err(format!("Unknown map requested {path:?}")),
     }
 }
 
@@ -69,22 +69,22 @@ pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
         ["request", "headers"] => {
             match proxy_wasm::hostcalls::get_map(proxy_wasm::types::MapType::HttpRequestHeaders) {
                 Ok(map) => Ok(map.into_iter().collect()),
-                Err(status) => Err(format!("Error get request.headers: {:?}", status)),
+                Err(status) => Err(format!("Error get request.headers: {status:?}")),
             }
         }
-        _ => Err(format!("Unknown map requested {:?}", path)),
+        _ => Err(format!("Unknown map requested {path:?}")),
     }
 }
 
 #[cfg(not(test))]
 pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
-    debug!("get_property: {:?}", path);
+    debug!("get_property: {path:?}");
     proxy_wasm::hostcalls::get_property(path.tokens())
 }
 
 #[cfg(not(test))]
 pub(super) fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status> {
-    debug!("set_property: {:?}", path);
+    debug!("set_property: {path:?}");
     proxy_wasm::hostcalls::set_property(path.tokens(), value)
 }
 

@@ -59,10 +59,10 @@ impl DescriptorEntryBuilder {
                 }
             },
             Err(err) => {
-                error!("Failed to evaluate `{:?}`: {}", self.expression, err);
+                error!("Failed to evaluate `{:?}`: {err}", self.expression);
                 return Err(EvaluationError::new(
                     self.expression.clone(),
-                    format!("Evaluation failed: {}", err),
+                    format!("Evaluation failed: {err}"),
                 ));
             }
         };
@@ -162,7 +162,7 @@ impl RateLimitAction {
                     let val = entry_builder.expression.eval().map_err(|err| {
                         EvaluationError::new(
                             entry_builder.expression.clone(),
-                            format!("Failed to evaluate expression: {}", err),
+                            format!("Failed to evaluate expression: {err}"),
                         )
                     })?;
                     match entry_builder.key.as_str() {
@@ -179,7 +179,7 @@ impl RateLimitAction {
                             _ => {
                                 return Err(EvaluationError::new(
                                     entry_builder.expression.clone(),
-                                    format!("Expected string for ratelimit.domain, got: {:?}", val),
+                                    format!("Expected string for ratelimit.domain, got: {val:?}"),
                                 ));
                             }
                         },
@@ -188,18 +188,18 @@ impl RateLimitAction {
                                 if i >= 0 && i <= u32::MAX as i64 {
                                     hits_addend = i as u32;
                                 } else {
-                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {:?}", val), ));
+                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {val:?}")));
                                 }
                             }
                             Value::UInt(u) => {
                                 if u <= u32::MAX as u64 {
                                     hits_addend = u as u32;
                                 } else {
-                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {:?}", val), ));
+                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {val:?}")));
                                 }
                             }
                             _ => {
-                                return Err(EvaluationError::new(entry_builder.expression.clone(), format!("Only integer values are allowed for known attributes, got: {:?}", val), ));
+                                return Err(EvaluationError::new(entry_builder.expression.clone(), format!("Only integer values are allowed for known attributes, got: {val:?}")));
                             }
                         },
                         _ => {}
@@ -250,10 +250,9 @@ impl RateLimitAction {
                 if let Some(existing_value) = seen_key_values.get(&key) {
                     if *existing_value != current_value {
                         let error_message = format!(
-                            "Invalid ConditionalDataSet: key '{}' has conflicting internal values ('{}' and '{}').",
-                            key, existing_value, current_value
+                            "Invalid ConditionalDataSet: key '{key}' has conflicting internal values ('{existing_value}' and '{current_value}').",
                         );
-                        error!("{}", error_message);
+                        error!("{error_message}");
                         return Err(ActionCreationError::InvalidAction(error_message));
                     }
                 } else {
@@ -293,8 +292,7 @@ impl RateLimitAction {
                 if let Some(self_value) = self_key_values.get(key) {
                     if *self_value != other_value {
                         let error_message = format!(
-                            "Conflicting values within RateLimitActions for key '{}': '{}' and '{}'",
-                            key, self_value, other_value
+                            "Conflicting values within RateLimitActions for key '{key}': '{self_value}' and '{other_value}'",
                         );
                         error!("{}", error_message);
                         return Err(ActionCreationError::InvalidAction(error_message));
@@ -510,7 +508,7 @@ mod test {
         let error_message = format!("{:?}", result.unwrap_err());
 
         assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
-        assert!(error_message.contains(&format!("got: Int({})", too_large_value)));
+        assert!(error_message.contains(&format!("got: Int({too_large_value})")));
     }
 
     #[test]

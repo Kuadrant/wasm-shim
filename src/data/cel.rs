@@ -67,10 +67,10 @@ pub(super) mod errors {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 CelError::Property(e) => {
-                    write!(f, "CelError::Property {{ {:?} }}", e)
+                    write!(f, "CelError::Property {{ {e:?} }}")
                 }
                 CelError::Resolve(e) => {
-                    write!(f, "CelError::Resolve {{ {:?} }}", e)
+                    write!(f, "CelError::Resolve {{ {e:?} }}")
                 }
             }
         }
@@ -282,7 +282,7 @@ fn get_host_property(This(this): This<Value>) -> ResolveResult {
                 },
                 Err(err) => Err(ExecutionError::FunctionError {
                     function: "hostcalls::get_property".to_string(),
-                    message: format!("Status: {:?}", err),
+                    message: format!("Status: {err:?}"),
                 }),
             }
         }

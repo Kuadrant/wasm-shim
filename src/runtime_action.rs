@@ -52,13 +52,13 @@ pub(super) mod errors {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 ActionCreationError::Parse(e) => {
-                    write!(f, "NewActionError::Parse {{ {:?} }}", e)
+                    write!(f, "NewActionError::Parse {{ {e:?} }}")
                 }
                 ActionCreationError::UnknownService(e) => {
-                    write!(f, "NewActionError::UnknownService {{ {:?} }}", e)
+                    write!(f, "NewActionError::UnknownService {{ {e:?} }}")
                 }
                 ActionCreationError::InvalidAction(e) => {
-                    write!(f, "NewActionError::InvalidAction {{ {:?} }}", e)
+                    write!(f, "NewActionError::InvalidAction {{ {e:?} }}")
                 }
             }
         }
