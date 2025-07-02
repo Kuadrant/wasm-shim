@@ -30,10 +30,10 @@ pub(super) mod errors {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 PropertyError::Get(e) => {
-                    write!(f, "PropertyError::Get {{ {:?} }}", e)
+                    write!(f, "PropertyError::Get {{ {e:?} }}")
                 }
                 PropertyError::Parse(e) => {
-                    write!(f, "PropertyError::Parse {{ {:?} }}", e)
+                    write!(f, "PropertyError::Parse {{ {e:?} }}")
                 }
             }
         }
@@ -69,8 +69,7 @@ impl AttributeValue for String {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
         String::from_utf8(raw_attribute).map_err(|err| {
             PropError::new(format!(
-                "parse: failed to parse selector String value, error: {}",
-                err
+                "parse: failed to parse selector String value, error: {err}"
             ))
         })
     }
@@ -82,8 +81,7 @@ impl AttributeValue for i64 {
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => Ok(i64::from_le_bytes(bytes)),
             Err(_) => Err(PropError::new(format!(
-                "parse: Int value expected to be 8 bytes, but got {}",
-                ra_len,
+                "parse: Int value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
     }
@@ -95,8 +93,7 @@ impl AttributeValue for u64 {
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => Ok(u64::from_le_bytes(bytes)),
             Err(_) => Err(PropError::new(format!(
-                "parse: UInt value expected to be 8 bytes, but got {}",
-                ra_len,
+                "parse: UInt value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
     }
@@ -108,8 +105,7 @@ impl AttributeValue for f64 {
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => Ok(f64::from_le_bytes(bytes)),
             Err(_) => Err(PropError::new(format!(
-                "parse: Float value expected to be 8 bytes, but got {}",
-                ra_len,
+                "parse: Float value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
     }
@@ -142,8 +138,7 @@ impl AttributeValue for DateTime<FixedOffset> {
                 Ok(DateTime::from_timestamp_nanos(nanos).into())
             }
             Err(_) => Err(PropError::new(format!(
-                "parse: Timestamp expected to be 8 bytes, but got {}",
-                ra_len,
+                "parse: Timestamp expected to be 8 bytes, but got {ra_len}",
             ))),
         }
     }

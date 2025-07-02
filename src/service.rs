@@ -33,13 +33,13 @@ pub(super) mod errors {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 BuildMessageError::Evaluation(e) => {
-                    write!(f, "BuildMessageError::Evaluation {{ {:?} }}", e)
+                    write!(f, "BuildMessageError::Evaluation {{ {e:?} }}")
                 }
                 BuildMessageError::Property(e) => {
-                    write!(f, "BuildMessageError::Property {{ {:?} }}", e)
+                    write!(f, "BuildMessageError::Property {{ {e:?} }}")
                 }
                 BuildMessageError::Serialization(e) => {
-                    write!(f, "BuildMessageError::Serialization {{ {:?} }}", e)
+                    write!(f, "BuildMessageError::Serialization {{ {e:?} }}")
                 }
             }
         }
