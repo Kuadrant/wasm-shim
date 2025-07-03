@@ -11,6 +11,8 @@ use proxy_wasm::types::{Action, BufferType, MapType, Status};
 use std::mem;
 use std::rc::Rc;
 
+mod attribute_store;
+
 pub(crate) struct KuadrantFilter {
     context_id: u32,
     index: Rc<ActionSetIndex>,
