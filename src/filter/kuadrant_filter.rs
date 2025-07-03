@@ -14,7 +14,7 @@ use std::rc::Rc;
 pub(crate) struct KuadrantFilter {
     context_id: u32,
     index: Rc<ActionSetIndex>,
-    header_resolver: Rc<HeaderResolver>,
+    header_resolver: HeaderResolver,
 
     grpc_message_receiver_operation: Option<GrpcMessageReceiverOperation>,
     response_headers_to_add: Option<Headers>,
@@ -265,7 +265,7 @@ impl KuadrantFilter {
     pub fn new(
         context_id: u32,
         index: Rc<ActionSetIndex>,
-        header_resolver: Rc<HeaderResolver>,
+        header_resolver: HeaderResolver,
     ) -> Self {
         Self {
             context_id,
