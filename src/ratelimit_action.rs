@@ -231,6 +231,121 @@ impl RateLimitAction {
     }
 }
 
+#[derive(Debug)]
+pub struct RateLimitCheckAction {
+    grpc_service: Rc<GrpcService>,
+    scope: String,
+    service_name: String,
+    conditional_data_sets: Vec<ConditionalData>,
+}
+
+impl RateLimitCheckAction {
+    pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
+        Ok(Self {
+            grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
+            scope: action.scope.clone(),
+            service_name: action.service.clone(),
+            conditional_data_sets: vec![ConditionalData::new(action)?],
+        })
+    }
+
+    pub fn build_descriptor(&self) -> Result<RateLimitDescriptor, EvaluationError> {
+        let mut entries = RepeatedField::default();
+
+        for conditional_data in self.conditional_data_sets.iter() {
+            entries.extend(conditional_data.entries()?);
+        }
+
+        let mut res = RateLimitDescriptor::new();
+        res.set_entries(entries);
+        Ok(res)
+    }
+
+    pub fn get_grpcservice(&self) -> Rc<GrpcService> {
+        Rc::clone(&self.grpc_service)
+    }
+
+    pub fn scope(&self) -> &str {
+        self.scope.as_str()
+    }
+
+    pub fn conditions_apply(&self) -> PredicateResult {
+        // For RateLimitCheckAction conditions always apply.
+        // It is when building the descriptor that it may be empty because predicates do not
+        // evaluate to true.
+        Ok(true)
+    }
+
+    pub fn get_failure_mode(&self) -> FailureMode {
+        self.grpc_service.get_failure_mode()
+    }
+
+    pub fn resolve_failure_mode(&self) -> ResponseResult {
+        match self.get_failure_mode() {
+            FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
+            FailureMode::Allow => {
+                debug!("process_response(rl_check): continuing as FailureMode Allow");
+                Ok(HeaderKind::Response(Vec::default()))
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn merge(&mut self, other: RateLimitCheckAction) -> Option<RateLimitCheckAction> {
+        if self.scope == other.scope && self.service_name == other.service_name {
+            self.conditional_data_sets
+                .extend(other.conditional_data_sets);
+            return None;
+        }
+        Some(other)
+    }
+
+    pub fn process_response(
+        &self,
+        rate_limit_response: RateLimitResponse,
+    ) -> Result<HeaderKind, GrpcErrResponse> {
+        match rate_limit_response {
+            RateLimitResponse {
+                overall_code: RateLimitResponse_Code::UNKNOWN,
+                ..
+            } => {
+                debug!("process_response(rl_check): received UNKNOWN response");
+                self.resolve_failure_mode()
+            }
+            RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OVER_LIMIT,
+                response_headers_to_add: rl_headers,
+                ..
+            } => {
+                debug!("process_response(rl_check): received OVER_LIMIT response");
+                let response_headers = Self::get_header_vec(rl_headers);
+                Err(GrpcErrResponse::new(
+                    StatusCode::TooManyRequests as u32,
+                    response_headers,
+                    "Too Many Requests\n".to_string(),
+                ))
+            }
+            RateLimitResponse {
+                overall_code: RateLimitResponse_Code::OK,
+                response_headers_to_add: additional_headers,
+                ..
+            } => {
+                debug!("process_response(rl_check): received OK response");
+                Ok(HeaderKind::Response(Self::get_header_vec(
+                    additional_headers,
+                )))
+            }
+        }
+    }
+
+    fn get_header_vec(headers: RepeatedField<HeaderValue>) -> Headers {
+        headers
+            .iter()
+            .map(|header| (header.key.to_owned(), header.value.to_owned()))
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -531,5 +646,177 @@ mod test {
 
         let headers = result.expect("is ok");
         assert!(headers.is_empty());
+    }
+
+
+    fn build_rl_check_service() -> Service {
+        build_rl_check_service_with_failure_mode(FailureMode::default())
+    }
+
+    fn build_rl_check_service_with_failure_mode(failure_mode: FailureMode) -> Service {
+        Service {
+            service_type: ServiceType::RateLimitCheck,
+            endpoint: "some_endpoint".into(),
+            failure_mode,
+            timeout: Timeout::default(),
+        }
+    }
+
+    // RateLimitCheckAction Tests
+    #[test]
+    fn rl_check_empty_predicates_do_apply() {
+        let action = build_action(Vec::default(), Vec::default());
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        assert_eq!(rl_check_action.conditions_apply(), Ok(true));
+    }
+
+    #[test]
+    fn rl_check_even_with_falsy_predicates_conditions_apply() {
+        let action = build_action(vec!["false".into()], Vec::default());
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        assert_eq!(rl_check_action.conditions_apply(), Ok(true));
+    }
+
+    #[test]
+    fn rl_check_empty_data_generates_empty_descriptor() {
+        let action = build_action(Vec::default(), Vec::default());
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        assert_eq!(
+            rl_check_action.build_descriptor(),
+            Ok(RateLimitDescriptor::default())
+        );
+    }
+
+    #[test]
+    fn rl_check_descriptor_entry_from_expression() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "'value_1'".into(),
+            }),
+        }];
+        let action = build_action(Vec::default(), data);
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let descriptor = rl_check_action.build_descriptor().expect("is ok");
+        assert_eq!(descriptor.get_entries().len(), 1);
+        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
+        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+    }
+
+    #[test]
+    fn rl_check_descriptor_entry_from_static() {
+        let data = vec![DataItem {
+            item: DataType::Static(StaticItem {
+                key: "key_1".into(),
+                value: "value_1".into(),
+            }),
+        }];
+        let action = build_action(Vec::default(), data);
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let descriptor = rl_check_action.build_descriptor().expect("is ok");
+        assert_eq!(descriptor.get_entries().len(), 1);
+        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
+        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+    }
+
+    #[test]
+    fn rl_check_descriptor_entries_not_generated_when_predicates_evaluate_to_false() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "'value_1'".into(),
+            }),
+        }];
+
+        let predicates = vec!["false".into(), "true".into()];
+        let action = build_action(predicates, data);
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let descriptor = rl_check_action.build_descriptor().expect("is ok");
+        assert_eq!(descriptor, RateLimitDescriptor::default());
+    }
+
+    #[test]
+    fn rl_check_process_ok_response() {
+        let action = build_action(Vec::default(), Vec::default());
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let ok_response_without_headers =
+            build_ratelimit_response(RateLimitResponse_Code::OK, None);
+        let result = rl_check_action.process_response(ok_response_without_headers);
+        assert!(result.is_ok());
+
+        let headers = result.expect("is ok");
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn rl_check_process_overlimit_response() {
+        let headers = vec![("x-ratelimit-limit", "10"), ("x-ratelimit-remaining", "0")];
+        let action = build_action(Vec::default(), Vec::default());
+        let service = build_rl_check_service();
+        let rl_check_action = RateLimitCheckAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let overlimit_response =
+            build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, Some(headers.clone()));
+        let result = rl_check_action.process_response(overlimit_response);
+        assert!(result.is_err());
+
+        let grpc_err_response = result.expect_err("is err");
+        assert_eq!(
+            grpc_err_response.status_code(),
+            StatusCode::TooManyRequests as u32
+        );
+        assert_eq!(grpc_err_response.body(), "Too Many Requests\n");
+    }
+
+    #[test]
+    fn rl_check_merged_actions_work() {
+        let service = build_rl_check_service();
+
+        let data_1 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "'value_1'".into(),
+            }),
+        }];
+        let predicates_1 = vec!["true".into()];
+        let action_1 = build_action(predicates_1, data_1);
+        let mut rl_check_action_1 = RateLimitCheckAction::new(&action_1, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let data_2 = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_2".into(),
+                value: "'value_2'".into(),
+            }),
+        }];
+        let predicates_2 = vec!["true".into()];
+        let action_2 = build_action(predicates_2, data_2);
+        let rl_check_action_2 = RateLimitCheckAction::new(&action_2, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        assert!(rl_check_action_1.merge(rl_check_action_2).is_none());
+
+        let descriptor = rl_check_action_1.build_descriptor().expect("is ok");
+        assert_eq!(descriptor.get_entries().len(), 2);
+        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
+        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+        assert_eq!(descriptor.get_entries()[1].key, String::from("key_2"));
+        assert_eq!(descriptor.get_entries()[1].value, String::from("value_2"));
     }
 }

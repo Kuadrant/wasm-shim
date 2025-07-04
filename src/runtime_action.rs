@@ -1,7 +1,7 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::data::PredicateResult;
-use crate::ratelimit_action::RateLimitAction;
+use crate::ratelimit_action::{RateLimitAction, RateLimitCheckAction};
 use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
 use crate::service::errors::BuildMessageError;
@@ -16,6 +16,7 @@ use std::rc::Rc;
 pub enum RuntimeAction {
     Auth(AuthAction),
     RateLimit(RateLimitAction),
+    RateLimitCheck(RateLimitCheckAction),
 }
 
 pub(super) mod errors {
@@ -79,6 +80,7 @@ impl RuntimeAction {
         match service.service_type {
             ServiceType::RateLimit => Ok(Self::RateLimit(RateLimitAction::new(action, service)?)),
             ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service)?)),
+            ServiceType::RateLimitCheck => Ok(Self::RateLimitCheck(RateLimitCheckAction::new(action, service)?)),
         }
     }
 
@@ -86,6 +88,7 @@ impl RuntimeAction {
         match self {
             Self::Auth(auth_action) => auth_action.get_grpcservice(),
             Self::RateLimit(rl_action) => rl_action.get_grpcservice(),
+            Self::RateLimitCheck(rl_check_action) => rl_check_action.get_grpcservice(),
         }
     }
 
@@ -93,6 +96,7 @@ impl RuntimeAction {
         match self {
             Self::Auth(auth_action) => auth_action.conditions_apply(),
             Self::RateLimit(rl_action) => rl_action.conditions_apply(),
+            Self::RateLimitCheck(rl_check_action) => rl_check_action.conditions_apply(),
         }
     }
 
@@ -100,6 +104,7 @@ impl RuntimeAction {
         match self {
             Self::Auth(auth_action) => auth_action.get_failure_mode(),
             Self::RateLimit(rl_action) => rl_action.get_failure_mode(),
+            Self::RateLimitCheck(rl_check_action) => rl_check_action.get_failure_mode(),
         }
     }
 
@@ -107,6 +112,7 @@ impl RuntimeAction {
         match self {
             Self::Auth(auth_action) => auth_action.resolve_failure_mode(),
             Self::RateLimit(rl_action) => rl_action.resolve_failure_mode(),
+            Self::RateLimitCheck(rl_check_action) => rl_check_action.resolve_failure_mode(),
         }
     }
 
@@ -116,6 +122,11 @@ impl RuntimeAction {
         if let Self::RateLimit(self_rl_action) = self {
             if let Self::RateLimit(other_rl_action) = other {
                 return self_rl_action.merge(other_rl_action).map(Self::RateLimit);
+            }
+        }
+        if let Self::RateLimitCheck(self_rl_check_action) = self {
+            if let Self::RateLimitCheck(other_rl_check_action) = other {
+                return self_rl_check_action.merge(other_rl_check_action).map(Self::RateLimitCheck);
             }
         }
         Some(other)
@@ -148,6 +159,13 @@ impl RuntimeAction {
                     self.resolve_failure_mode()
                 }
             },
+            Self::RateLimitCheck(rl_check_action) => match Message::parse_from_bytes(msg) {
+                Ok(rate_limit_response) => rl_check_action.process_response(rate_limit_response),
+                Err(e) => {
+                    debug!("process_response(rl_check): failed to parse response `{e:?}`");
+                    self.resolve_failure_mode()
+                }
+            },
         }
     }
 
@@ -161,6 +179,19 @@ impl RuntimeAction {
                 } else {
                     RateLimitService::request_message_as_bytes(
                         String::from(rl_action.scope()),
+                        vec![descriptor].into(),
+                    )
+                    .map(Some)
+                }
+            }
+            RuntimeAction::RateLimitCheck(rl_check_action) => {
+                let descriptor = rl_check_action.build_descriptor()?;
+                if descriptor.entries.is_empty() {
+                    debug!("build_message(rl_check): empty descriptors");
+                    Ok(None)
+                } else {
+                    RateLimitService::request_message_as_bytes(
+                        String::from(rl_check_action.scope()),
                         vec![descriptor].into(),
                     )
                     .map(Some)
@@ -191,6 +222,15 @@ mod test {
         Service {
             service_type: ServiceType::Auth,
             endpoint: "authorino".into(),
+            failure_mode: FailureMode::default(),
+            timeout: Timeout::default(),
+        }
+    }
+
+    fn build_rl_check_service() -> Service {
+        Service {
+            service_type: ServiceType::RateLimitCheck,
+            endpoint: "limitador".into(),
             failure_mode: FailureMode::default(),
             timeout: Timeout::default(),
         }
@@ -271,5 +311,55 @@ mod test {
             .expect("action building failed. Maybe predicates compilation?");
 
         assert!(auth_r_action_0.merge(rl_r_action_0).is_some());
+    }
+
+    #[test]
+    fn rl_check_actions_are_merged() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_rl_check"), build_rl_check_service());
+
+        let rl_check_action_0 = build_action("service_rl_check", "scope");
+        let rl_check_action_1 = build_action("service_rl_check", "scope");
+
+        let mut rl_check_r_action_0 = RuntimeAction::new(&rl_check_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+        let rl_check_r_action_1 = RuntimeAction::new(&rl_check_action_1, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        assert!(rl_check_r_action_0.merge(rl_check_r_action_1).is_none());
+    }
+
+    #[test]
+    fn rl_check_actions_do_not_merge_with_rl_actions() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_rl"), build_rl_service());
+        services.insert(String::from("service_rl_check"), build_rl_check_service());
+
+        let rl_action_0 = build_action("service_rl", "scope");
+        let rl_check_action_0 = build_action("service_rl_check", "scope");
+
+        let mut rl_r_action_0 = RuntimeAction::new(&rl_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+        let rl_check_r_action_0 = RuntimeAction::new(&rl_check_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        assert!(rl_r_action_0.merge(rl_check_r_action_0).is_some());
+    }
+
+    #[test]
+    fn rl_check_actions_do_not_merge_with_auth_actions() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_auth"), build_auth_service());
+        services.insert(String::from("service_rl_check"), build_rl_check_service());
+
+        let auth_action_0 = build_action("service_auth", "scope");
+        let rl_check_action_0 = build_action("service_rl_check", "scope");
+
+        let mut auth_r_action_0 = RuntimeAction::new(&auth_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+        let rl_check_r_action_0 = RuntimeAction::new(&rl_check_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        assert!(auth_r_action_0.merge(rl_check_r_action_0).is_some());
     }
 }
