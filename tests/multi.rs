@@ -183,7 +183,7 @@ fn it_performs_authenticated_rate_limiting() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -201,10 +201,6 @@ fn it_performs_authenticated_rate_limiting() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -225,10 +221,7 @@ fn it_performs_authenticated_rate_limiting() {
             Some(LogLevel::Debug),
             Some("process_response(auth): received OkHttpResponse"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -238,10 +231,6 @@ fn it_performs_authenticated_rate_limiting() {
             Some(5000),
         )
         .returning(Ok(43))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -258,7 +247,6 @@ fn it_performs_authenticated_rate_limiting() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -401,7 +389,7 @@ fn unauthenticated_does_not_ratelimit() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -419,10 +407,6 @@ fn unauthenticated_does_not_ratelimit() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -450,7 +434,6 @@ fn unauthenticated_does_not_ratelimit() {
             Some(LogLevel::Debug),
             Some("process_response(auth): received DeniedHttpResponse"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(401),
             None,
@@ -670,7 +653,7 @@ fn authenticated_one_ratelimit_action_matches() {
         .returning(Some(data::source::port::P_45000))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: authorino-cluster envoy.service.auth.v3.Authorization Check 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -688,10 +671,6 @@ fn authenticated_one_ratelimit_action_matches() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -727,7 +706,7 @@ fn authenticated_one_ratelimit_action_matches() {
         .returning(Some("1.2.3.4:80".as_bytes()))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -738,10 +717,6 @@ fn authenticated_one_ratelimit_action_matches() {
             Some(5000),
         )
         .returning(Ok(43))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -758,7 +733,6 @@ fn authenticated_one_ratelimit_action_matches() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

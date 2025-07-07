@@ -2,12 +2,14 @@ use crate::configuration::{Action, DataType, FailureMode, Service};
 use crate::data::{EvaluationError, Predicate};
 use crate::data::{Expression, PredicateResult};
 use crate::envoy::{
-    HeaderValue, RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse,
-    RateLimitResponse_Code, StatusCode,
+    RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse, RateLimitResponse_Code,
+    StatusCode,
 };
+use crate::filter::operations::{EventualOperation, Operation};
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::ResponseResult;
-use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
+use crate::service::errors::ProcessGrpcMessageError;
+use crate::service::{from_envoy_rl_headers, DirectResponse, GrpcService};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::{debug, error};
@@ -229,16 +231,6 @@ impl RateLimitAction {
         self.grpc_service.get_failure_mode()
     }
 
-    pub fn resolve_failure_mode(&self) -> ResponseResult {
-        match self.get_failure_mode() {
-            FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
-            FailureMode::Allow => {
-                debug!("process_response(rl): continuing as FailureMode Allow");
-                Ok(HeaderKind::Response(Vec::default()))
-            }
-        }
-    }
-
     pub fn validate_ratelimit_action_conditional_data(&self) -> Result<(), ActionCreationError> {
         for conditional_data_set in &self.conditional_data_sets {
             let mut seen_key_values: HashMap<String, String> = HashMap::new();
@@ -307,17 +299,14 @@ impl RateLimitAction {
         Ok(None)
     }
 
-    pub fn process_response(
-        &self,
-        rate_limit_response: RateLimitResponse,
-    ) -> Result<HeaderKind, GrpcErrResponse> {
+    pub fn process_response(&self, rate_limit_response: RateLimitResponse) -> ResponseResult {
         match rate_limit_response {
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::UNKNOWN,
                 ..
             } => {
                 debug!("process_response(rl): received UNKNOWN response");
-                self.resolve_failure_mode()
+                Err(ProcessGrpcMessageError::UnsupportedField)
             }
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OVER_LIMIT,
@@ -325,12 +314,12 @@ impl RateLimitAction {
                 ..
             } => {
                 debug!("process_response(rl): received OVER_LIMIT response");
-                let response_headers = Self::get_header_vec(rl_headers);
-                Err(GrpcErrResponse::new(
+                Ok(DirectResponse::new(
                     StatusCode::TooManyRequests as u32,
-                    response_headers,
+                    from_envoy_rl_headers(rl_headers),
                     "Too Many Requests\n".to_string(),
-                ))
+                )
+                .into())
             }
             RateLimitResponse {
                 overall_code: RateLimitResponse_Code::OK,
@@ -338,18 +327,13 @@ impl RateLimitAction {
                 ..
             } => {
                 debug!("process_response(rl): received OK response");
-                Ok(HeaderKind::Response(Self::get_header_vec(
-                    additional_headers,
-                )))
+                Ok(Operation::EventualOps(vec![
+                    EventualOperation::AddResponseHeaders(from_envoy_rl_headers(
+                        additional_headers,
+                    )),
+                ]))
             }
         }
-    }
-
-    fn get_header_vec(headers: RepeatedField<HeaderValue>) -> Headers {
-        headers
-            .iter()
-            .map(|header| (header.key.to_owned(), header.value.to_owned()))
-            .collect()
     }
 }
 
@@ -360,6 +344,7 @@ mod test {
         Action, DataItem, DataType, ExpressionItem, FailureMode, Service, ServiceType, StaticItem,
         Timeout,
     };
+    use crate::envoy::HeaderValue;
     use core::str;
 
     fn build_service() -> Service {
@@ -785,9 +770,19 @@ mod test {
             build_ratelimit_response(RateLimitResponse_Code::OK, None);
         let result = rl_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
-
-        let headers = result.expect("is ok");
-        assert!(headers.is_empty());
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::EventualOps(_)));
+        if let Operation::EventualOps(ops) = op {
+            assert_eq!(ops.len(), 1);
+            assert!(matches!(ops[0], EventualOperation::AddResponseHeaders(_)));
+            if let EventualOperation::AddResponseHeaders(headers) = &ops[0] {
+                assert!(headers.is_empty());
+            } else {
+                unreachable!("Expected AddResponseHeaders operation");
+            }
+        } else {
+            unreachable!("Expected EventualOps operation");
+        }
 
         let ok_response_with_header = build_ratelimit_response(
             RateLimitResponse_Code::OK,
@@ -795,18 +790,22 @@ mod test {
         );
         let result = rl_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
-
-        match result.expect("is ok") {
-            HeaderKind::Response(headers) => {
-                assert!(!headers.is_empty());
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::EventualOps(_)));
+        if let Operation::EventualOps(ops) = op {
+            assert_eq!(ops.len(), 1);
+            assert!(matches!(ops[0], EventualOperation::AddResponseHeaders(_)));
+            if let EventualOperation::AddResponseHeaders(headers) = &ops[0] {
+                assert_eq!(headers.len(), 1);
                 assert_eq!(
                     headers[0],
                     ("my_header".to_string(), "my_value".to_string())
                 );
+            } else {
+                unreachable!("Expected AddResponseHeaders operation");
             }
-            HeaderKind::Request(_headers) => {
-                unreachable!("ratelimitresponse should not return Request headers")
-            }
+        } else {
+            unreachable!("Expected EventualOps operation");
         }
     }
 
@@ -821,36 +820,42 @@ mod test {
         let overlimit_response_empty =
             build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, None);
         let result = rl_action.process_response(overlimit_response_empty);
-        assert!(result.is_err());
-
-        let grpc_err_response = result.expect_err("is err");
-        assert_eq!(
-            grpc_err_response.status_code(),
-            StatusCode::TooManyRequests as u32
-        );
-        assert!(grpc_err_response.headers().is_empty());
-        assert_eq!(grpc_err_response.body(), "Too Many Requests\n");
+        assert!(result.is_ok());
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::DirectResponse(_)));
+        if let Operation::DirectResponse(direct_response) = op {
+            assert_eq!(
+                direct_response.status_code(),
+                StatusCode::TooManyRequests as u32
+            );
+            assert!(direct_response.headers().is_empty());
+            assert_eq!(direct_response.body(), "Too Many Requests\n");
+        } else {
+            unreachable!("Expected DirectResponse operation");
+        }
 
         let denied_response_headers =
             build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, Some(headers.clone()));
         let result = rl_action.process_response(denied_response_headers);
-        assert!(result.is_err());
-
-        let grpc_err_response = result.expect_err("is err");
-        assert_eq!(
-            grpc_err_response.status_code(),
-            StatusCode::TooManyRequests as u32
-        );
-
-        let response_headers = grpc_err_response.headers();
-        headers.iter().zip(response_headers.iter()).for_each(
-            |((header_one, value_one), (header_two, value_two))| {
-                assert_eq!(header_one, header_two);
-                assert_eq!(value_one, value_two);
-            },
-        );
-
-        assert_eq!(grpc_err_response.body(), "Too Many Requests\n");
+        assert!(result.is_ok());
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::DirectResponse(_)));
+        if let Operation::DirectResponse(direct_response) = op {
+            assert_eq!(
+                direct_response.status_code(),
+                StatusCode::TooManyRequests as u32
+            );
+            let response_headers = direct_response.headers();
+            headers.iter().zip(response_headers.iter()).for_each(
+                |((header_one, value_one), (header_two, value_two))| {
+                    assert_eq!(header_one, header_two);
+                    assert_eq!(value_one, value_two);
+                },
+            );
+            assert_eq!(direct_response.body(), "Too Many Requests\n");
+        } else {
+            unreachable!("Expected DirectResponse operation");
+        }
     }
 
     #[test]
@@ -863,24 +868,10 @@ mod test {
         let error_response = build_ratelimit_response(RateLimitResponse_Code::UNKNOWN, None);
         let result = rl_action.process_response(error_response.clone());
         assert!(result.is_err());
-
-        let grpc_err_response = result.expect_err("is err");
-        assert_eq!(
-            grpc_err_response.status_code(),
-            StatusCode::InternalServerError as u32
-        );
-
-        assert!(grpc_err_response.headers().is_empty());
-        assert_eq!(grpc_err_response.body(), "Internal Server Error.\n");
-
-        let allow_service = build_service_with_failure_mode(FailureMode::Allow);
-        let rl_action = RateLimitAction::new(&action, &allow_service)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let result = rl_action.process_response(error_response);
-        assert!(result.is_ok());
-
-        let headers = result.expect("is ok");
-        assert!(headers.is_empty());
+        let err_response = result.expect_err("is err");
+        assert!(matches!(
+            err_response,
+            ProcessGrpcMessageError::UnsupportedField
+        ));
     }
 }

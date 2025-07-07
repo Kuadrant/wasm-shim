@@ -1,8 +1,10 @@
 use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{store_metadata, Predicate, PredicateResult, PredicateVec};
-use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response, HeaderValueOption};
+use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response};
+use crate::filter::operations::{EventualOperation, Operation};
 use crate::runtime_action::ResponseResult;
-use crate::service::{GrpcErrResponse, GrpcService, HeaderKind, Headers};
+use crate::service::errors::ProcessGrpcMessageError;
+use crate::service::{from_envoy_headers, DirectResponse, GrpcService};
 use cel_parser::ParseError;
 use log::{debug, warn};
 use std::rc::Rc;
@@ -44,70 +46,47 @@ impl AuthAction {
         self.grpc_service.get_failure_mode()
     }
 
-    pub fn resolve_failure_mode(&self) -> ResponseResult {
-        match self.get_failure_mode() {
-            FailureMode::Deny => Err(GrpcErrResponse::new_internal_server_error()),
-            FailureMode::Allow => {
-                debug!("process_response(auth): continuing as FailureMode Allow");
-                Ok(HeaderKind::Request(Vec::default()))
-            }
-        }
-    }
-
     pub fn process_response(&self, check_response: CheckResponse) -> ResponseResult {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
-        if store_metadata(check_response.get_dynamic_metadata()).is_err() {
-            return self.resolve_failure_mode();
-        }
+        store_metadata(check_response.get_dynamic_metadata())
+            .map_err(|e| ProcessGrpcMessageError::Property(e))?;
 
         match check_response.http_response {
             None => {
                 debug!("process_response(auth): received no http_response");
-                self.resolve_failure_mode()
+                Err(ProcessGrpcMessageError::EmptyResponse)
             }
             Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
                 debug!("process_response(auth): received DeniedHttpResponse");
-                let status_code = denied_response.get_status().get_code();
-                let response_headers = Self::get_header_vec(denied_response.get_headers());
-                Err(GrpcErrResponse::new(
-                    status_code as u32,
-                    response_headers,
-                    denied_response.body,
-                ))
+                let direct_response: DirectResponse = denied_response.into();
+                Ok(direct_response.into())
             }
             Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                 debug!("process_response(auth): received OkHttpResponse");
 
                 if !ok_response.get_response_headers_to_add().is_empty() {
                     warn!("process_response(auth): Unsupported field 'response_headers_to_add' in OkHttpResponse");
-                    return Err(GrpcErrResponse::new_internal_server_error());
+                    Err(ProcessGrpcMessageError::UnsupportedField)
                 } else if !ok_response.get_headers_to_remove().is_empty() {
                     warn!("process_response(auth): Unsupported field 'headers_to_remove' in OkHttpResponse");
-                    return Err(GrpcErrResponse::new_internal_server_error());
+                    Err(ProcessGrpcMessageError::UnsupportedField)
                 } else if !ok_response.get_query_parameters_to_set().is_empty() {
                     warn!("process_response(auth): Unsupported field 'query_parameters_to_set' in OkHttpResponse");
-                    return Err(GrpcErrResponse::new_internal_server_error());
+                    Err(ProcessGrpcMessageError::UnsupportedField)
                 } else if !ok_response.get_query_parameters_to_remove().is_empty() {
                     warn!("process_response(auth): Unsupported field 'query_parameters_to_remove' in OkHttpResponse");
-                    return Err(GrpcErrResponse::new_internal_server_error());
+                    Err(ProcessGrpcMessageError::UnsupportedField)
+                } else {
+                    Ok(Operation::EventualOps(vec![
+                        EventualOperation::AddRequestHeaders(from_envoy_headers(
+                            ok_response.get_headers(),
+                        )),
+                    ]))
                 }
-                Ok(HeaderKind::Request(Self::get_header_vec(
-                    ok_response.get_headers(),
-                )))
             }
         }
-    }
-
-    fn get_header_vec(headers: &[HeaderValueOption]) -> Headers {
-        headers
-            .iter()
-            .map(|header| {
-                let hv = header.get_header();
-                (hv.key.to_owned(), hv.value.to_owned())
-            })
-            .collect()
     }
 }
 
@@ -115,7 +94,9 @@ impl AuthAction {
 mod test {
     use super::*;
     use crate::configuration::{Action, FailureMode, Service, ServiceType, Timeout};
-    use crate::envoy::{DeniedHttpResponse, HeaderValue, HttpStatus, OkHttpResponse, StatusCode};
+    use crate::envoy::{
+        DeniedHttpResponse, HeaderValue, HeaderValueOption, HttpStatus, OkHttpResponse, StatusCode,
+    };
     use protobuf::RepeatedField;
 
     fn build_auth_action_with_predicates(predicates: Vec<String>) -> AuthAction {
@@ -234,30 +215,40 @@ mod test {
         let ok_response_without_headers = build_check_response(StatusCode::OK, None, None);
         let result = auth_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
-
-        match result.expect("is ok") {
-            HeaderKind::Response(_headers) => {
-                unreachable!("check_response should not return Response headers")
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::EventualOps(_)));
+        if let Operation::EventualOps(ops) = op {
+            assert_eq!(ops.len(), 1);
+            assert!(matches!(ops[0], EventualOperation::AddRequestHeaders(_)));
+            if let EventualOperation::AddRequestHeaders(headers) = &ops[0] {
+                assert!(headers.is_empty());
+            } else {
+                unreachable!("Expected AddRequestHeaders operation");
             }
-            HeaderKind::Request(headers) => assert!(headers.is_empty()),
+        } else {
+            unreachable!("Expected EventualOps operation");
         }
 
         let ok_response_with_header =
             build_check_response(StatusCode::OK, Some(vec![("my_header", "my_value")]), None);
         let result = auth_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
-
-        match result.expect("is ok") {
-            HeaderKind::Response(_headers) => {
-                unreachable!("check_response should not return Response headers")
-            }
-            HeaderKind::Request(headers) => {
-                assert!(!headers.is_empty());
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::EventualOps(_)));
+        if let Operation::EventualOps(ops) = op {
+            assert_eq!(ops.len(), 1);
+            assert!(matches!(ops[0], EventualOperation::AddRequestHeaders(_)));
+            if let EventualOperation::AddRequestHeaders(headers) = &ops[0] {
+                assert_eq!(headers.len(), 1);
                 assert_eq!(
                     headers[0],
                     ("my_header".to_string(), "my_value".to_string())
                 );
+            } else {
+                unreachable!("Expected AddRequestHeaders operation");
             }
+        } else {
+            unreachable!("Expected EventualOps operation");
         }
     }
 
@@ -270,15 +261,9 @@ mod test {
         let auth_action = build_auth_action_with_predicates(Vec::default());
         let denied_response_empty = build_check_response(StatusCode::Forbidden, None, None);
         let result = auth_action.process_response(denied_response_empty);
-        assert!(result.is_err());
-
-        let grpc_err_response = result.expect_err("is err");
-        assert_eq!(
-            grpc_err_response.status_code(),
-            StatusCode::Forbidden as u32
-        );
-        assert!(grpc_err_response.headers().is_empty());
-        assert_eq!(grpc_err_response.body(), String::default());
+        assert!(result.is_ok());
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::DirectResponse(_)));
 
         let denied_response_content = build_check_response(
             StatusCode::Forbidden,
@@ -286,23 +271,23 @@ mod test {
             Some("my_body".to_string()),
         );
         let result = auth_action.process_response(denied_response_content);
-        assert!(result.is_err());
+        assert!(result.is_ok());
 
-        let grpc_err_response = result.expect_err("is err");
-        assert_eq!(
-            grpc_err_response.status_code(),
-            StatusCode::Forbidden as u32
-        );
-
-        let response_headers = grpc_err_response.headers();
-        headers.iter().zip(response_headers.iter()).for_each(
-            |((header_one, value_one), (header_two, value_two))| {
-                assert_eq!(header_one, header_two);
-                assert_eq!(value_one, value_two);
-            },
-        );
-
-        assert_eq!(grpc_err_response.body(), "my_body");
+        let op = result.expect("is ok");
+        assert!(matches!(op, Operation::DirectResponse(_)));
+        if let Operation::DirectResponse(direct_response) = op {
+            assert_eq!(direct_response.status_code(), StatusCode::Forbidden as u32);
+            let response_headers = direct_response.headers();
+            headers.iter().zip(response_headers.iter()).for_each(
+                |((header_one, value_one), (header_two, value_two))| {
+                    assert_eq!(header_one, header_two);
+                    assert_eq!(value_one, value_two);
+                },
+            );
+            assert_eq!(direct_response.body(), "my_body");
+        } else {
+            unreachable!("Expected DirectResponse operation");
+        }
     }
 
     #[test]
@@ -313,22 +298,10 @@ mod test {
         let result = auth_action.process_response(error_response);
         assert!(result.is_err());
 
-        let grpc_err_response = result.expect_err("is err");
-        assert_eq!(
-            grpc_err_response.status_code(),
-            StatusCode::InternalServerError as u32
-        );
-
-        assert!(grpc_err_response.headers().is_empty());
-        assert_eq!(grpc_err_response.body(), "Internal Server Error.\n");
-
-        let auth_action =
-            build_auth_action_with_predicates_and_failure_mode(Vec::default(), FailureMode::Allow);
-        let error_response = build_check_response(StatusCode::InternalServerError, None, None);
-        let result = auth_action.process_response(error_response);
-        assert!(result.is_ok());
-
-        let headers = result.expect("is ok");
-        assert!(headers.is_empty());
+        let err_response = result.expect_err("is err");
+        assert!(matches!(
+            err_response,
+            ProcessGrpcMessageError::EmptyResponse
+        ));
     }
 }
