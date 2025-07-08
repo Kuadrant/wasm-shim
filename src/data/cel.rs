@@ -799,6 +799,12 @@ pub trait AttributeResolver {
 #[derive(Default)]
 pub struct PathCache(std::collections::HashMap<Path, Value>);
 
+impl PathCache {
+    pub fn insert_path(&mut self, path: Path, value: Value) {
+        self.0.insert(path, value);
+    }
+}
+
 impl From<HashMap<Path, Value>> for PathCache {
     fn from(map: HashMap<Path, Value>) -> Self {
         PathCache(map)
