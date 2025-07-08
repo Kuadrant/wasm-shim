@@ -245,7 +245,7 @@ impl From<DeniedHttpResponse> for DirectResponse {
         let status_code = resp.get_status().get_code();
         let response_headers = resp
             .get_headers()
-            .into_iter()
+            .iter()
             .map(|header| {
                 let hv = header.get_header();
                 (hv.key.to_owned(), hv.value.to_owned())

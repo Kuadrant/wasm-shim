@@ -1,6 +1,6 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::data::PredicateResult;
+use crate::data::{AttributeResolver, PredicateResult};
 use crate::filter::operations::{EventualOperation, Operation};
 use crate::ratelimit_action::RateLimitAction;
 use crate::runtime_action::errors::ActionCreationError;
@@ -95,9 +95,12 @@ impl RuntimeAction {
         }
     }
 
-    fn conditions_apply(&self) -> PredicateResult {
+    fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
         match self {
-            Self::Auth(auth_action) => auth_action.conditions_apply(),
+            Self::Auth(auth_action) => auth_action.conditions_apply(resolver),
             Self::RateLimit(rl_action) => rl_action.conditions_apply(),
         }
     }
@@ -126,10 +129,13 @@ impl RuntimeAction {
         }
     }
 
-    pub fn build_request(&self) -> RequestResult {
-        match self.conditions_apply() {
+    pub fn build_request<T>(&self, resolver: &mut T) -> RequestResult
+    where
+        T: AttributeResolver,
+    {
+        match self.conditions_apply(resolver) {
             Ok(false) => Ok(None),
-            Ok(true) => match self.build_message() {
+            Ok(true) => match self.build_message(resolver) {
                 Ok(message) => Ok(self.grpc_service().build_request(message)),
                 Err(e) => match self.get_failure_mode() {
                     FailureMode::Deny => Err(e),
@@ -176,11 +182,14 @@ impl RuntimeAction {
         }
     }
 
-    fn build_message(&self) -> Result<Option<Vec<u8>>, BuildMessageError> {
+    fn build_message<T>(&self, resolver: &mut T) -> Result<Option<Vec<u8>>, BuildMessageError>
+    where
+        T: AttributeResolver,
+    {
         match self {
             RuntimeAction::RateLimit(rl_action) => {
-                let descriptor = rl_action.build_descriptor()?;
-                let (hits_addend, domain_attr) = rl_action.get_known_attributes()?;
+                let descriptor = rl_action.build_descriptor(resolver)?;
+                let (hits_addend, domain_attr) = rl_action.get_known_attributes(resolver)?;
 
                 if descriptor.entries.is_empty() {
                     debug!("build_message(rl): empty descriptors");
@@ -213,6 +222,7 @@ mod test {
     use crate::configuration::{
         Action, DataItem, DataType, ExpressionItem, FailureMode, ServiceType, Timeout,
     };
+    use crate::data::PathCache;
     fn build_rl_service() -> Service {
         Service {
             service_type: ServiceType::RateLimit,
@@ -343,7 +353,9 @@ mod test {
         let runtime_action = RuntimeAction::new(&action, &services).unwrap();
 
         if let RuntimeAction::RateLimit(ref rl_action) = runtime_action {
-            let (hits_addend, domain) = rl_action.get_known_attributes().unwrap();
+            let (hits_addend, domain) = rl_action
+                .get_known_attributes(&mut PathCache::default())
+                .unwrap();
             assert_eq!(hits_addend, 2);
             assert_eq!(domain, "test");
         }

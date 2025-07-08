@@ -1,5 +1,6 @@
 use crate::action_set_index::ActionSetIndex;
 use crate::configuration::FailureMode;
+use crate::data::PathCache;
 use crate::filter::operations::{EventualOperation, Operation};
 use crate::runtime_action::IndexedRequestResult;
 use crate::runtime_action_set::RuntimeActionSet;
@@ -17,7 +18,7 @@ pub(crate) struct KuadrantFilter {
     context_id: u32,
     index: Rc<ActionSetIndex>,
     header_resolver: HeaderResolver,
-
+    path_store: PathCache,
     grpc_message_receiver: Option<GrpcMessageReceiver>,
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
@@ -36,13 +37,11 @@ impl Context for KuadrantFilter {
                     match action_set.runtime_actions[index].get_failure_mode() {
                         FailureMode::Deny => {
                             self.die();
-                            return;
                         }
                         FailureMode::Allow => {
                             // increment index to continue with next
                             if let Action::Continue = self.run(action_set, index + 1) {
                                 self.done();
-                                return;
                             }
                         }
                     }
@@ -67,26 +66,22 @@ impl Context for KuadrantFilter {
                                     // increment index to continue with next
                                     if let Action::Continue = self.run(action_set, index + 1) {
                                         self.done();
-                                        return;
                                     }
                                 }
                                 Ok(Operation::DirectResponse(direct_response)) => {
                                     self.send_http_reponse(direct_response);
-                                    return;
                                 }
                                 Err(ProcessGrpcMessageError::Protobuf(e)) => {
                                     // processing the response failed
                                     // The action failure mode is set to deny, so we log the error and die
                                     debug!("ProtobufError while processing grpc response: {e:?}");
                                     self.die();
-                                    return;
                                 }
                                 Err(ProcessGrpcMessageError::Property(e)) => {
                                     // processing the response failed
                                     // The action failure mode is set to deny, so we log the error and die
                                     debug!("PropertyError while processing grpc response: {e:?}");
                                     self.die();
-                                    return;
                                 }
                                 Err(e) => {
                                     // processing the response failed
@@ -95,7 +90,6 @@ impl Context for KuadrantFilter {
                                         "Unexpected error while processing grpc response: {e:?}"
                                     );
                                     self.die();
-                                    return;
                                 }
                             }
                         }
@@ -103,13 +97,11 @@ impl Context for KuadrantFilter {
                             match action_set.runtime_actions[index].get_failure_mode() {
                                 FailureMode::Deny => {
                                     self.die();
-                                    return;
                                 }
                                 FailureMode::Allow => {
                                     // increment index to continue with next
                                     if let Action::Continue = self.run(action_set, index + 1) {
                                         self.done();
-                                        return;
                                     }
                                 }
                             }
@@ -150,7 +142,7 @@ impl HttpContext for KuadrantFilter {
             let action_set_opt = action_sets.iter().find_map(|action_set| {
                 // returns the first non-None result,
                 // namely when condition apply OR there is an error
-                match action_set.conditions_apply() {
+                match action_set.conditions_apply(&mut self.path_store) {
                     Ok(true) => Some(Ok(action_set)),
                     Ok(false) => None,
                     Err(e) => Some(Err(e)),
@@ -206,7 +198,7 @@ impl KuadrantFilter {
         start: usize,
     ) -> IndexedRequestResult {
         for (index, action) in action_set.runtime_actions.iter().skip(start).enumerate() {
-            match action.build_request()? {
+            match action.build_request(&mut self.path_store)? {
                 None => continue,
                 Some(grpc_request) => {
                     return Ok(Some(IndexedGrpcRequest::new(start + index, grpc_request)));
@@ -244,7 +236,7 @@ impl KuadrantFilter {
                                 }
                                 FailureMode::Allow => {
                                     // increment index to continue with next
-                                    index = index + 1;
+                                    index += 1;
                                 }
                             }
                         }
@@ -364,6 +356,7 @@ impl KuadrantFilter {
             context_id,
             index,
             header_resolver,
+            path_store: PathCache::default(),
             grpc_message_receiver: None,
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),

@@ -1,6 +1,6 @@
 use crate::configuration::{Action, DataType, FailureMode, Service};
-use crate::data::{EvaluationError, Predicate};
-use crate::data::{Expression, PredicateResult};
+use crate::data::{AttributeResolver, PredicateResult};
+use crate::data::{EvaluationError, Expression, Predicate};
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse, RateLimitResponse_Code,
     StatusCode,
@@ -39,9 +39,15 @@ impl DescriptorEntryBuilder {
         }
     }
 
-    pub fn evaluate(&self) -> Result<RateLimitDescriptor_Entry, EvaluationError> {
+    pub fn evaluate<T>(
+        &self,
+        resolver: &mut T,
+    ) -> Result<RateLimitDescriptor_Entry, EvaluationError>
+    where
+        T: AttributeResolver,
+    {
         let key = self.key.clone();
-        let value = match self.expression.eval() {
+        let value = match self.expression.eval(resolver) {
             Ok(value) => match value {
                 Value::Int(n) => format!("{n}"),
                 Value::UInt(n) => format!("{n}"),
@@ -95,28 +101,37 @@ impl ConditionalData {
         Ok(ConditionalData { data, predicates })
     }
 
-    fn predicates_apply(&self) -> PredicateResult {
+    fn predicates_apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
         if self.predicates.is_empty() {
             return Ok(true);
         }
         for predicate in &self.predicates {
             // if it does not apply or errors exit early
-            if !predicate.test()? {
+            if !predicate.test(resolver)? {
                 return Ok(false);
             }
         }
         Ok(true)
     }
 
-    pub fn entries(&self) -> Result<RepeatedField<RateLimitDescriptor_Entry>, EvaluationError> {
-        if !self.predicates_apply()? {
+    pub fn entries<T>(
+        &self,
+        resolver: &mut T,
+    ) -> Result<RepeatedField<RateLimitDescriptor_Entry>, EvaluationError>
+    where
+        T: AttributeResolver,
+    {
+        if !self.predicates_apply(resolver)? {
             return Ok(RepeatedField::default());
         }
 
         let mut entries = RepeatedField::default();
         for entry_builder in self.data.iter() {
             if !KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
-                entries.push(entry_builder.evaluate()?);
+                entries.push(entry_builder.evaluate(resolver)?);
             }
         }
 
@@ -142,11 +157,17 @@ impl RateLimitAction {
         })
     }
 
-    pub fn build_descriptor(&self) -> Result<RateLimitDescriptor, EvaluationError> {
+    pub fn build_descriptor<T>(
+        &self,
+        resolver: &mut T,
+    ) -> Result<RateLimitDescriptor, EvaluationError>
+    where
+        T: AttributeResolver,
+    {
         let mut entries = RepeatedField::default();
 
         for conditional_data in self.conditional_data_sets.iter() {
-            entries.extend(conditional_data.entries()?);
+            entries.extend(conditional_data.entries(resolver)?);
         }
 
         let mut res = RateLimitDescriptor::new();
@@ -154,14 +175,20 @@ impl RateLimitAction {
         Ok(res)
     }
 
-    pub fn get_known_attributes(&self) -> Result<(u32, String), EvaluationError> {
+    pub fn get_known_attributes<T>(
+        &self,
+        resolver: &mut T,
+    ) -> Result<(u32, String), EvaluationError>
+    where
+        T: AttributeResolver,
+    {
         let mut hits_addend = 1;
         let mut domain = String::new();
 
         for conditional_data in &self.conditional_data_sets {
             for entry_builder in &conditional_data.data {
                 if KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
-                    let val = entry_builder.expression.eval().map_err(|err| {
+                    let val = entry_builder.expression.eval(resolver).map_err(|err| {
                         EvaluationError::new(
                             entry_builder.expression.clone(),
                             format!("Failed to evaluate expression: {err}"),
@@ -344,6 +371,7 @@ mod test {
         Action, DataItem, DataType, ExpressionItem, FailureMode, Service, ServiceType, StaticItem,
         Timeout,
     };
+    use crate::data::PathCache;
     use crate::envoy::HeaderValue;
     use core::str;
 
@@ -437,7 +465,7 @@ mod test {
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
         assert_eq!(
-            rl_action.build_descriptor(),
+            rl_action.build_descriptor(&mut PathCache::default()),
             Ok(RateLimitDescriptor::default())
         );
     }
@@ -448,7 +476,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes();
+        let result = rl_action.get_known_attributes(&mut PathCache::default());
         assert!(result.is_err());
         // Assuming EvaluationError implements Debug or Display
         let error_message = format!("{:?}", result.unwrap_err());
@@ -461,7 +489,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes();
+        let result = rl_action.get_known_attributes(&mut PathCache::default());
         assert!(result.is_err());
         let error_message = format!("{:?}", result.unwrap_err());
         assert!(error_message.contains("Expected string for ratelimit.domain"));
@@ -474,7 +502,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes();
+        let result = rl_action.get_known_attributes(&mut PathCache::default());
         assert!(result.is_err());
         let error_message = format!("{:?}", result.unwrap_err());
         assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
@@ -488,7 +516,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes();
+        let result = rl_action.get_known_attributes(&mut PathCache::default());
         assert!(result.is_err());
         let error_message = format!("{:?}", result.unwrap_err());
 
@@ -502,7 +530,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes();
+        let result = rl_action.get_known_attributes(&mut PathCache::default());
         assert!(result.is_err());
         let error_message = format!("{:?}", result.unwrap_err());
         assert!(error_message.contains("Only integer values are allowed for known attributes"));
@@ -511,6 +539,7 @@ mod test {
 
     #[test]
     fn get_known_attributes_from_descriptor_entries() {
+        let mut resolver = PathCache::default();
         let data = vec![
             DataItem {
                 item: DataType::Expression(ExpressionItem {
@@ -529,8 +558,10 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor = rl_action.build_descriptor().expect("is ok");
-        let known_attributes = rl_action.get_known_attributes().expect("is ok");
+        let descriptor = rl_action.build_descriptor(&mut resolver).expect("is ok");
+        let known_attributes = rl_action
+            .get_known_attributes(&mut resolver)
+            .expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 0);
         let (hits_addend, domain) = known_attributes;
         assert_eq!(hits_addend, 3);
@@ -563,7 +594,9 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor = rl_action.build_descriptor().expect("is ok");
+        let descriptor = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -581,7 +614,9 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor = rl_action.build_descriptor().expect("is ok");
+        let descriptor = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -601,7 +636,9 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        let descriptor = rl_action.build_descriptor().expect("is ok");
+        let descriptor = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect("is ok");
         assert_eq!(descriptor, RateLimitDescriptor::default());
     }
 
@@ -645,7 +682,9 @@ mod test {
         assert_eq!(rl_action_1.merge(rl_action_3), Ok(None));
 
         // it should generate descriptor entries from action 1 and action 3
-        let descriptor = rl_action_1.build_descriptor().expect("is ok");
+        let descriptor = rl_action_1
+            .build_descriptor(&mut PathCache::default())
+            .expect("is ok");
         assert_eq!(descriptor.get_entries().len(), 2);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
@@ -754,7 +793,9 @@ mod test {
             RateLimitAction::new(&action_4, &service).expect("action building failed");
 
         assert_eq!(rl_action_1.merge(rl_action_4), Ok(None));
-        let (hits_addend, domain) = rl_action_1.get_known_attributes().expect("is ok");
+        let (hits_addend, domain) = rl_action_1
+            .get_known_attributes(&mut PathCache::default())
+            .expect("is ok");
         assert_eq!(hits_addend, 1);
         assert_eq!(domain, "");
     }
