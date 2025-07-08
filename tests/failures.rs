@@ -86,7 +86,7 @@ fn it_fails_on_first_action_grpc_call() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: does-not-exist envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -109,16 +109,15 @@ fn it_fails_on_first_action_grpc_call() {
         .returning(Err(TestStatus::ParseFailure))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: failed to send grpc request `ParseFailure`"),
+            Some("#2 run: failed to send grpc request `ParseFailure`"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(500),
             Some("Internal Server Error.\n"),
             Some(vec![]),
             Some(-1),
         )
-        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 }
 
@@ -222,7 +221,7 @@ fn it_fails_on_second_action_grpc_call() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -243,10 +242,6 @@ fn it_fails_on_second_action_grpc_call() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -263,10 +258,7 @@ fn it_fails_on_second_action_grpc_call() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: does-not-exist envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
         .expect_grpc_call(
             Some("does-not-exist"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -281,9 +273,8 @@ fn it_fails_on_second_action_grpc_call() {
         .returning(Err(TestStatus::ParseFailure))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: failed to send grpc request `ParseFailure`"),
+            Some("#2 run: failed to send grpc request `ParseFailure`"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(500),
             Some("Internal Server Error.\n"),
@@ -374,7 +365,7 @@ fn it_fails_on_first_action_grpc_response() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: unreachable-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -395,10 +386,6 @@ fn it_fails_on_first_action_grpc_response() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -409,7 +396,6 @@ fn it_fails_on_first_action_grpc_response() {
             Some(LogLevel::Debug),
             Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 14"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(500),
             Some("Internal Server Error.\n"),
@@ -519,7 +505,7 @@ fn it_fails_on_second_action_grpc_response() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -540,10 +526,6 @@ fn it_fails_on_second_action_grpc_response() {
             Some(5000),
         )
         .returning(Ok(first_call_token_id))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -567,7 +549,7 @@ fn it_fails_on_second_action_grpc_response() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: unreachable-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         .expect_grpc_call(
             Some("unreachable-cluster"),
@@ -581,10 +563,6 @@ fn it_fails_on_second_action_grpc_response() {
             Some(5000),
         )
         .returning(Ok(second_call_token_id))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -597,7 +575,6 @@ fn it_fails_on_second_action_grpc_response() {
                 "#2 on_grpc_call_response: received gRPC call response: token: {second_call_token_id}, status: {status_code}"
             ).as_str()),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Die"))
         .expect_send_local_response(
             Some(500),
             Some("Internal Server Error.\n"),

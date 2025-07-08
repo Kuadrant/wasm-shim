@@ -23,14 +23,18 @@ endif
 $(PROTOC_BIN):
 	$(call get-protoc,$(PROJECT_PATH),https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-$(PROTOC_VERSION)-$(PROTOC_OS).zip)
 
+.PHONY: protoc
+protoc: $(PROTOC_BIN) ## Download protoc locally if necessary.
+
+BUILD_OPTS=
+ifeq ($(BUILD),release)
+	BUILD_OPTS=--release
+endif
+
 # builds the module and move to deploy folder
 build: $(PROTOC_BIN)
 	@echo "Building the wasm filter"
-    ifeq ($(BUILD), release)
-		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown --release $(FEATURE_CMD)
-    else
-		export PATH=$(PROJECT_PATH)/bin:$$PATH; cargo build --target=wasm32-unknown-unknown $(FEATURE_CMD)
-    endif
+	PATH=$(PROJECT_PATH)/bin:$$PATH cargo build --target=wasm32-unknown-unknown $(BUILD_OPTS) $(FEATURE_CMD)
 
 # Remove old ones and fetch the latest third-party protobufs
 update-protobufs:

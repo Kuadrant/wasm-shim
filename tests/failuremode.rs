@@ -103,7 +103,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: unreachable-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -121,10 +121,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(first_call_token_id))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -138,7 +134,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -149,10 +145,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(second_call_token_id))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -172,10 +164,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         .expect_log(
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: Done"),
         )
         .execute_and_expect(ReturnType::None)
         .unwrap();
@@ -284,7 +272,7 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: unreachable-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -302,10 +290,6 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -315,10 +299,6 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: 42, status: {status_code}").as_str()),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: Die"),
         )
         .expect_send_local_response(Some(500), None, None, None)
         .execute_and_expect(ReturnType::None)

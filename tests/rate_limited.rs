@@ -164,10 +164,7 @@ fn it_limits() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
@@ -184,10 +181,6 @@ fn it_limits() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -204,7 +197,6 @@ fn it_limits() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -318,7 +310,7 @@ fn it_passes_additional_headers() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -336,10 +328,6 @@ fn it_passes_additional_headers() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -360,8 +348,6 @@ fn it_passes_additional_headers() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: AddHeaders"))
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -461,7 +447,7 @@ fn it_rate_limits_with_empty_predicates() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -479,10 +465,6 @@ fn it_rate_limits_with_empty_predicates() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -499,7 +481,6 @@ fn it_rate_limits_with_empty_predicates() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -594,7 +575,6 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
             Some(LogLevel::Debug),
             Some("build_message(rl): empty descriptors"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -709,7 +689,7 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -727,10 +707,6 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -747,7 +723,6 @@ fn it_folds_subsequent_actions_to_limitador_into_a_single_one() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

@@ -1,12 +1,13 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::data::PredicateResult;
+use crate::data::{AttributeResolver, PredicateResult};
+use crate::filter::operations::{EventualOperation, Operation};
 use crate::ratelimit_action::RateLimitAction;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
-use crate::service::errors::BuildMessageError;
+use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
 use crate::service::rate_limit::RateLimitService;
-use crate::service::{GrpcErrResponse, GrpcRequest, GrpcService, HeaderKind};
+use crate::service::{GrpcRequest, GrpcService, IndexedGrpcRequest};
 use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
@@ -65,8 +66,9 @@ pub(super) mod errors {
     }
 }
 
-pub type RequestResult = Result<Option<GrpcRequest>, GrpcErrResponse>;
-pub type ResponseResult = Result<HeaderKind, GrpcErrResponse>;
+pub type IndexedRequestResult = Result<Option<IndexedGrpcRequest>, BuildMessageError>;
+pub type RequestResult = Result<Option<GrpcRequest>, BuildMessageError>;
+pub type ResponseResult = Result<Operation, ProcessGrpcMessageError>;
 
 impl RuntimeAction {
     pub fn new(
@@ -93,9 +95,12 @@ impl RuntimeAction {
         }
     }
 
-    pub fn conditions_apply(&self) -> PredicateResult {
+    fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
         match self {
-            Self::Auth(auth_action) => auth_action.conditions_apply(),
+            Self::Auth(auth_action) => auth_action.conditions_apply(resolver),
             Self::RateLimit(rl_action) => rl_action.conditions_apply(),
         }
     }
@@ -104,13 +109,6 @@ impl RuntimeAction {
         match self {
             Self::Auth(auth_action) => auth_action.get_failure_mode(),
             Self::RateLimit(rl_action) => rl_action.get_failure_mode(),
-        }
-    }
-
-    pub fn resolve_failure_mode(&self) -> ResponseResult {
-        match self {
-            Self::Auth(auth_action) => auth_action.resolve_failure_mode(),
-            Self::RateLimit(rl_action) => rl_action.resolve_failure_mode(),
         }
     }
 
@@ -131,41 +129,67 @@ impl RuntimeAction {
         }
     }
 
-    pub fn process_request(&self) -> RequestResult {
-        match self.conditions_apply() {
+    pub fn build_request<T>(&self, resolver: &mut T) -> RequestResult
+    where
+        T: AttributeResolver,
+    {
+        match self.conditions_apply(resolver) {
             Ok(false) => Ok(None),
-            Ok(true) => match self.build_message() {
+            Ok(true) => match self.build_message(resolver) {
                 Ok(message) => Ok(self.grpc_service().build_request(message)),
-                Err(_) => self.resolve_failure_mode().map(|_| None),
+                Err(e) => match self.get_failure_mode() {
+                    FailureMode::Deny => Err(e),
+                    FailureMode::Allow => {
+                        debug!("continuing as FailureMode Allow");
+                        Ok(None)
+                    }
+                },
             },
-            Err(_) => self.resolve_failure_mode().map(|_| None),
+            Err(e) => match self.get_failure_mode() {
+                FailureMode::Deny => Err(e.into()),
+                FailureMode::Allow => {
+                    debug!("continuing as FailureMode Allow");
+                    Ok(None)
+                }
+            },
         }
     }
 
     pub fn process_response(&self, msg: &[u8]) -> ResponseResult {
-        match self {
-            Self::Auth(auth_action) => match Message::parse_from_bytes(msg) {
-                Ok(check_response) => auth_action.process_response(check_response),
-                Err(e) => {
-                    debug!("process_response(auth): failed to parse response `{e:?}`");
-                    self.resolve_failure_mode()
-                }
-            },
-            Self::RateLimit(rl_action) => match Message::parse_from_bytes(msg) {
-                Ok(rate_limit_response) => rl_action.process_response(rate_limit_response),
-                Err(e) => {
-                    debug!("process_response(rl): failed to parse response `{e:?}`");
-                    self.resolve_failure_mode()
+        let res = match self {
+            Self::Auth(auth_action) => {
+                let check_response =
+                    Message::parse_from_bytes(msg).map_err(ProcessGrpcMessageError::from)?;
+                auth_action.process_response(check_response)
+            }
+            Self::RateLimit(rl_action) => {
+                let rate_limit_response =
+                    Message::parse_from_bytes(msg).map_err(ProcessGrpcMessageError::from)?;
+                rl_action.process_response(rate_limit_response)
+            }
+        };
+
+        match res {
+            Ok(operation) => Ok(operation),
+            Err(e) => match self.get_failure_mode() {
+                FailureMode::Deny => Err(e),
+                FailureMode::Allow => {
+                    debug!("continuing as FailureMode Allow");
+                    let ops: Vec<EventualOperation> = vec![];
+                    Ok(ops.into())
                 }
             },
         }
     }
 
-    pub fn build_message(&self) -> Result<Option<Vec<u8>>, BuildMessageError> {
+    fn build_message<T>(&self, resolver: &mut T) -> Result<Option<Vec<u8>>, BuildMessageError>
+    where
+        T: AttributeResolver,
+    {
         match self {
             RuntimeAction::RateLimit(rl_action) => {
-                let descriptor = rl_action.build_descriptor()?;
-                let (hits_addend, domain_attr) = rl_action.get_known_attributes()?;
+                let descriptor = rl_action.build_descriptor(resolver)?;
+                let (hits_addend, domain_attr) = rl_action.get_known_attributes(resolver)?;
 
                 if descriptor.entries.is_empty() {
                     debug!("build_message(rl): empty descriptors");
@@ -198,6 +222,7 @@ mod test {
     use crate::configuration::{
         Action, DataItem, DataType, ExpressionItem, FailureMode, ServiceType, Timeout,
     };
+    use crate::data::PathCache;
     fn build_rl_service() -> Service {
         Service {
             service_type: ServiceType::RateLimit,
@@ -328,7 +353,9 @@ mod test {
         let runtime_action = RuntimeAction::new(&action, &services).unwrap();
 
         if let RuntimeAction::RateLimit(ref rl_action) = runtime_action {
-            let (hits_addend, domain) = rl_action.get_known_attributes().unwrap();
+            let (hits_addend, domain) = rl_action
+                .get_known_attributes(&mut PathCache::default())
+                .unwrap();
             assert_eq!(hits_addend, 2);
             assert_eq!(domain, "test");
         }

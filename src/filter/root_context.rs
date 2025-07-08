@@ -34,11 +34,10 @@ impl RootContext for FilterRoot {
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
         debug!("#{} create_http_context", context_id);
-        let header_resolver = Rc::new(HeaderResolver::new());
         Some(Box::new(KuadrantFilter::new(
             context_id,
             Rc::clone(&self.action_set_index),
-            header_resolver,
+            HeaderResolver::new(),
         )))
     }
 
