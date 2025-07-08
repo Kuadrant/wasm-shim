@@ -1,7 +1,10 @@
 use crate::configuration::{Action, FailureMode, Service};
-use crate::data::{store_metadata, AttributeResolver, Predicate, PredicateResult, PredicateVec};
+use crate::data::{
+    store_metadata, Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult,
+    PredicateVec,
+};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response};
-use crate::filter::operations::{EventualOperation, Operation};
+use crate::filter::operations::EventualOperation;
 use crate::runtime_action::ResponseResult;
 use crate::service::errors::ProcessGrpcMessageError;
 use crate::service::{from_envoy_headers, DirectResponse, GrpcService};
@@ -82,14 +85,21 @@ impl AuthAction {
                     warn!("process_response(auth): Unsupported field 'query_parameters_to_remove' in OkHttpResponse");
                     Err(ProcessGrpcMessageError::UnsupportedField)
                 } else {
-                    Ok(Operation::EventualOps(vec![
-                        EventualOperation::AddRequestHeaders(from_envoy_headers(
+                    Ok(
+                        vec![EventualOperation::AddRequestHeaders(from_envoy_headers(
                             ok_response.get_headers(),
-                        )),
-                    ]))
+                        ))]
+                        .into(),
+                    )
                 }
             }
         }
+    }
+}
+
+impl AttributeOwner for AuthAction {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        self.predicates.request_attributes()
     }
 }
 
@@ -101,6 +111,7 @@ mod test {
     use crate::envoy::{
         DeniedHttpResponse, HeaderValue, HeaderValueOption, HttpStatus, OkHttpResponse, StatusCode,
     };
+    use crate::filter::operations::ProcessGrpcMessageOperation;
     use protobuf::RepeatedField;
 
     fn build_auth_action_with_predicates(predicates: Vec<String>) -> AuthAction {
@@ -224,8 +235,8 @@ mod test {
         let result = auth_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::EventualOps(_)));
-        if let Operation::EventualOps(ops) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::EventualOps(_)));
+        if let ProcessGrpcMessageOperation::EventualOps(ops) = op {
             assert_eq!(ops.len(), 1);
             assert!(matches!(ops[0], EventualOperation::AddRequestHeaders(_)));
             if let EventualOperation::AddRequestHeaders(headers) = &ops[0] {
@@ -242,8 +253,8 @@ mod test {
         let result = auth_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::EventualOps(_)));
-        if let Operation::EventualOps(ops) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::EventualOps(_)));
+        if let ProcessGrpcMessageOperation::EventualOps(ops) = op {
             assert_eq!(ops.len(), 1);
             assert!(matches!(ops[0], EventualOperation::AddRequestHeaders(_)));
             if let EventualOperation::AddRequestHeaders(headers) = &ops[0] {
@@ -271,7 +282,7 @@ mod test {
         let result = auth_action.process_response(denied_response_empty);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::DirectResponse(_)));
+        assert!(matches!(op, ProcessGrpcMessageOperation::DirectResponse(_)));
 
         let denied_response_content = build_check_response(
             StatusCode::Forbidden,
@@ -282,8 +293,8 @@ mod test {
         assert!(result.is_ok());
 
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::DirectResponse(_)));
-        if let Operation::DirectResponse(direct_response) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::DirectResponse(_)));
+        if let ProcessGrpcMessageOperation::DirectResponse(direct_response) = op {
             assert_eq!(direct_response.status_code(), StatusCode::Forbidden as u32);
             let response_headers = direct_response.headers();
             headers.iter().zip(response_headers.iter()).for_each(
