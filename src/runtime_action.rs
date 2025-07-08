@@ -77,7 +77,9 @@ impl RuntimeAction {
             )))?;
 
         match service.service_type {
-            ServiceType::RateLimit => Ok(Self::RateLimit(RateLimitAction::new(action, service)?)),
+            ServiceType::RateLimit | ServiceType::RateLimitCheck => {
+                Ok(Self::RateLimit(RateLimitAction::new(action, service)?))
+            }
             ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service)?)),
         }
     }
@@ -196,6 +198,15 @@ mod test {
         }
     }
 
+    fn build_rl_check_service() -> Service {
+        Service {
+            service_type: ServiceType::RateLimitCheck,
+            endpoint: "limitador".into(),
+            failure_mode: FailureMode::default(),
+            timeout: Timeout::default(),
+        }
+    }
+
     fn build_action(service: &str, scope: &str) -> Action {
         Action {
             service: service.into(),
@@ -271,5 +282,23 @@ mod test {
             .expect("action building failed. Maybe predicates compilation?");
 
         assert!(auth_r_action_0.merge(rl_r_action_0).is_some());
+    }
+
+    #[test]
+    fn rl_actions_do_not_merge_rl_check() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_rl"), build_rl_service());
+        services.insert(String::from("service_rl_check"), build_rl_check_service());
+
+        let rl_action_0 = build_action("service_rl", "scope");
+        let rl_check_action_0 = build_action("service_rl_check", "scope");
+
+        let rl_r_action_0 = RuntimeAction::new(&rl_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        let mut rl_check_r_action_0 = RuntimeAction::new(&rl_check_action_0, &services)
+            .expect("action building failed. Maybe predicates compilation?");
+
+        assert!(rl_check_r_action_0.merge(rl_r_action_0).is_some());
     }
 }

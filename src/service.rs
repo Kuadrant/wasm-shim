@@ -4,7 +4,10 @@ pub(crate) mod rate_limit;
 use crate::configuration::{FailureMode, Service, ServiceType};
 use crate::envoy::StatusCode;
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
-use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
+use crate::service::rate_limit::{
+    KUADRANT_RATELIMIT_METHOD_NAME, KUADRANT_RATELIMIT_SERVICE_NAME, RATELIMIT_METHOD_NAME,
+    RATELIMIT_SERVICE_NAME,
+};
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
 use proxy_wasm::types::Bytes;
 use std::cell::OnceCell;
@@ -65,6 +68,11 @@ impl GrpcService {
                 service,
                 name: RATELIMIT_SERVICE_NAME,
                 method: RATELIMIT_METHOD_NAME,
+            },
+            ServiceType::RateLimitCheck => Self {
+                service,
+                name: KUADRANT_RATELIMIT_SERVICE_NAME,
+                method: KUADRANT_RATELIMIT_METHOD_NAME,
             },
         }
     }

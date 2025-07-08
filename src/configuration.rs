@@ -90,6 +90,8 @@ pub enum ServiceType {
     Auth,
     #[default]
     RateLimit,
+    #[serde(rename = "ratelimit-check")]
+    RateLimitCheck,
 }
 
 #[derive(Deserialize, Debug, Clone)]
