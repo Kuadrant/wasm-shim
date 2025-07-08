@@ -1,5 +1,5 @@
 use crate::configuration::{Action, FailureMode, Service};
-use crate::data::{store_metadata, Predicate, PredicateResult, PredicateVec};
+use crate::data::{store_metadata, AttributeResolver, Predicate, PredicateResult, PredicateVec};
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response};
 use crate::filter::operations::{EventualOperation, Operation};
 use crate::runtime_action::ResponseResult;
@@ -38,8 +38,11 @@ impl AuthAction {
         self.scope.as_str()
     }
 
-    pub fn conditions_apply(&self) -> PredicateResult {
-        self.predicates.apply()
+    pub fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
+        self.predicates.apply(resolver)
     }
 
     pub fn get_failure_mode(&self) -> FailureMode {
@@ -94,6 +97,7 @@ impl AuthAction {
 mod test {
     use super::*;
     use crate::configuration::{Action, FailureMode, Service, ServiceType, Timeout};
+    use crate::data::PathCache;
     use crate::envoy::{
         DeniedHttpResponse, HeaderValue, HeaderValueOption, HttpStatus, OkHttpResponse, StatusCode,
     };
@@ -177,36 +181,40 @@ mod test {
 
     #[test]
     fn empty_predicates_do_apply() {
+        let mut resolver = PathCache::default();
         let auth_action = build_auth_action_with_predicates(Vec::default());
-        assert_eq!(auth_action.conditions_apply(), Ok(true));
+        assert_eq!(auth_action.conditions_apply(&mut resolver), Ok(true));
     }
 
     #[test]
     fn when_all_predicates_are_truthy_action_apply() {
+        let mut resolver = PathCache::default();
         let auth_action = build_auth_action_with_predicates(vec!["true".into(), "true".into()]);
-        assert_eq!(auth_action.conditions_apply(), Ok(true));
+        assert_eq!(auth_action.conditions_apply(&mut resolver), Ok(true));
     }
 
     #[test]
     fn when_not_all_predicates_are_truthy_action_does_not_apply() {
+        let mut resolver = PathCache::default();
         let auth_action = build_auth_action_with_predicates(vec![
             "true".into(),
             "true".into(),
             "true".into(),
             "false".into(),
         ]);
-        assert_eq!(auth_action.conditions_apply(), Ok(false));
+        assert_eq!(auth_action.conditions_apply(&mut resolver), Ok(false));
     }
 
     #[test]
     fn when_a_cel_expression_does_not_evaluate_to_bool_panics() {
+        let mut resolver = PathCache::default();
         let auth_action = build_auth_action_with_predicates(vec![
             "true".into(),
             "true".into(),
             "true".into(),
             "1".into(),
         ]);
-        assert!(auth_action.conditions_apply().is_err());
+        assert!(auth_action.conditions_apply(&mut resolver).is_err());
     }
 
     #[test]

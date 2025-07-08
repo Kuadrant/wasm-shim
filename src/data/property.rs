@@ -46,12 +46,13 @@ pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> 
 
 #[cfg(test)]
 pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
-    match *path.tokens() {
-        ["request", "headers"] => Ok(HashMap::from([(
-            "X-Auth".to_string(),
-            "kuadrant".to_string(),
-        )])),
-        _ => Err(format!("Unknown map requested {path:?}")),
+    debug!("host_get_map: {:?}", path);
+    match test::TEST_MAP_VALUE.take() {
+        None => Err(format!("Unknown map requested {path:?}")),
+        Some((expected_path, data)) => {
+            assert_eq!(&expected_path, path);
+            Ok(data)
+        }
     }
 }
 
@@ -168,6 +169,8 @@ pub mod test {
 
     thread_local!(
         pub static TEST_PROPERTY_VALUE: Cell<Option<(Path, Vec<u8>)>> = const { Cell::new(None) };
+        pub static TEST_MAP_VALUE: Cell<Option<(Path, HashMap<String, String>)>> =
+            const { Cell::new(None) };
     );
 
     #[test]
