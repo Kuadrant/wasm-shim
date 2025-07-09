@@ -12,14 +12,15 @@ use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, BufferType, MapType, Status};
 use std::rc::Rc;
 
-type GrpcMessageReceiver = (usize, Rc<RuntimeActionSet>);
+type EventReceiver = (usize, Rc<RuntimeActionSet>);
 
 pub(crate) struct KuadrantFilter {
     context_id: u32,
     index: Rc<ActionSetIndex>,
     header_resolver: HeaderResolver,
     path_store: PathCache,
-    grpc_message_receiver: Option<GrpcMessageReceiver>,
+    grpc_message_receiver: Option<EventReceiver>,
+    request_body_receiver: Option<EventReceiver>,
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
 }
@@ -134,7 +135,7 @@ impl HttpContext for KuadrantFilter {
             Ok(authority) => authority,
             Err(_) => {
                 self.die();
-                return Action::Continue;
+                return Action::Pause;
             }
         };
 
@@ -164,13 +165,71 @@ impl HttpContext for KuadrantFilter {
                             self.context_id, e
                         );
                         self.die();
-                        return Action::Continue;
+                        return Action::Pause;
                     }
                 }
             }
         }
 
         action
+    }
+
+    fn on_http_request_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
+        debug!(
+            "#{} on_http_request_body: body_size: {body_size}, end_of_stream: {end_of_stream}",
+            self.context_id
+        );
+        // Need to check if there is something to do before expending
+        // time and resources reading the body
+        match self.request_body_receiver.take() {
+            None => Action::Continue, // No pending actions, filter can continue normally
+            Some((index, action_set)) => {
+                if !end_of_stream {
+                    // This is not the end of the stream, so the complete request body is not yet available.
+                    // Until JSON parsing is supported in streaming mode, the entire request body must be available.
+                    // There is nothing to do here at the moment.
+                    return Action::Pause;
+                }
+
+                match self.get_http_request_body(0, body_size) {
+                    Err(e) => {
+                        error!(
+                            "#{} on_http_request_body: failed to read the body: {:?}",
+                            self.context_id, e
+                        );
+                        self.die();
+                        Action::Pause
+                    }
+                    Ok(None) => {
+                        error!(
+                            "#{} on_http_request_body: expected some body bytes, but got None",
+                            self.context_id
+                        );
+                        self.die();
+                        Action::Pause
+                    }
+                    Ok(Some(body_bytes)) => match String::from_utf8(body_bytes) {
+                        Err(e) => {
+                            error!(
+                                "#{} on_http_request_body: failed to convert body to string: {:?}",
+                                self.context_id, e
+                            );
+                            self.die();
+                            Action::Pause
+                        }
+                        Ok(body_str) => {
+                            debug!(
+                                "#{} on_http_request_body (size: {body_size}): action_set selected {}",
+                                self.context_id, action_set.name
+                            );
+                            self.path_store
+                                .insert_path("request.body".into(), body_str.into());
+                            self.run(action_set, index)
+                        }
+                    },
+                }
+            }
+        }
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
@@ -358,6 +417,7 @@ impl KuadrantFilter {
             header_resolver,
             path_store: PathCache::default(),
             grpc_message_receiver: None,
+            request_body_receiver: None,
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),
         }
