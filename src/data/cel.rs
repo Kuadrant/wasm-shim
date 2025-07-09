@@ -3,7 +3,7 @@ use crate::data::property::{host_get_map, Path};
 use crate::data::{get_attribute, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
-use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
+use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
@@ -141,6 +141,13 @@ impl Expression {
             })
             .collect();
 
+        if expression.references().has_function("requestBodyJSON") {
+            attributes.push(Attribute {
+                path: "request.body".into(),
+                cel_type: Some(ValueType::String),
+            })
+        }
+
         attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
         Ok(Self {
@@ -170,6 +177,7 @@ impl Expression {
         let Map { map } = self.build_data_map(resolver)?;
 
         ctx.add_function("getHostProperty", get_host_property);
+        ctx.add_function("requestBodyJSON", request_body_json);
 
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
@@ -259,6 +267,47 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
         }
     }
     Ok(map.into())
+}
+
+fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
+    match ftx.ptx.get_variable("request")? {
+        Value::Map(map) => match map.get(&"body".into()) {
+            None => Err(ExecutionError::UndeclaredReference(Arc::new(
+                "request.body".into(),
+            ))),
+            Some(Value::String(s)) => {
+                todo!();
+            }
+            Some(v) => Err(ftx.error(format!(
+                "found request body of type {}, expected String",
+                v.type_of()
+            ))),
+        },
+        _ => {
+            return Err(ftx.error("request variable is not a Map"));
+        }
+    }
+
+    //match serde_json::from_str(request_body.as_str()) {
+    //    Ok(json_value) => {
+    //        let value = match json_pointer.as_str() {
+    //            "" => json_value,
+    //            _ => match json_value.pointer(&json_pointer) {
+    //                Some(value) => value.clone(),
+    //                None => {
+    //                    return Err(ftx.error(format!(
+    //                        "JSON Pointer '{}' not found in request body",
+    //                        json_pointer
+    //                    )));
+    //                }
+    //            },
+    //        };
+    //        Ok(Value::from_json_value(value))
+    //    }
+    //    Err(err) => Err(ftx.error(format!("Failed to parse request body as JSON: {err}"))),
+    //}
+    //let json_value: JsonValue = serde_json::from_str(request_body);
+    //Err(err) => Err(ftx.error(format!("'{regex}' not a valid regex:\n{err}"))),
 }
 
 #[cfg(test)]
@@ -741,8 +790,6 @@ pub mod data {
                 &mut resolver,
             );
 
-            println!("{:#?}", map.data);
-
             assert_eq!(3, map.data.len());
             assert!(map.data.contains_key("source"));
             assert!(map.data.contains_key("destination"));
@@ -827,11 +874,11 @@ impl AttributeResolver for PathCache {
 #[cfg(test)]
 mod tests {
     use super::Attribute;
-    use crate::data::cel::{known_attribute_for, Expression, PathCache, Predicate};
+    use crate::data::cel::{known_attribute_for, CelError, Expression, PathCache, Predicate};
     use crate::data::property;
     use crate::data::property::Path;
     use cel_interpreter::objects::ValueType;
-    use cel_interpreter::Value;
+    use cel_interpreter::{ExecutionError, Value};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -1075,5 +1122,119 @@ mod tests {
             .eval(&mut resolver)
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
+    }
+
+    #[test]
+    fn expression_request_body_json_only_string_as_arg() {
+        let mut resolver = PathCache::default();
+        let err = Expression::new("requestBodyJSON()")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! func arg is missing!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
+        ));
+
+        let mut resolver = PathCache::default();
+        let err = Expression::new("requestBodyJSON(['a', 'b'])")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! arrays not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+
+        let mut resolver = PathCache::default();
+        let err = Expression::new("requestBodyJSON(123435)")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! nums not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+
+        let mut resolver = PathCache::default();
+        let err = Expression::new("requestBodyJSON(true)")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! bools not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+    }
+
+    #[test]
+    fn expression_request_body_json_body_does_not_exist() {
+        let err = Expression::new("requestBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut PathCache::default())
+            .expect_err("This must error! body not available!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UndeclaredReference(_))
+        ));
+        if let CelError::Resolve(ExecutionError::UndeclaredReference(r)) = err {
+            assert_eq!(r, Arc::new("request.body".into()));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_request_body_json_body_wrong_type() {
+        let mut resolver: PathCache = build_resolver(vec![("request.body".into(), 1.into())]);
+        let err = Expression::new("requestBodyJSON('/name')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body has unexpected type!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("requestBodyJSON"));
+            assert!(m.contains("found request body of type"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_request_body_json_body_exists() {
+        let body = r#"
+        {
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        }"#;
+        let mut resolver: PathCache = build_resolver(vec![("request.body".into(), body.into())]);
+        let value = Expression::new("requestBodyJSON('/name')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, "John Doe".into());
+
+        let value = Expression::new("requestBodyJSON('/age')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, 43.into());
+
+        let value = Expression::new("requestBodyJSON('/phones/0')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, "+44 1234567".into());
     }
 }
