@@ -5,6 +5,9 @@ use protobuf::{Message, RepeatedField};
 pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitService";
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
+pub const KUADRANT_RATELIMIT_SERVICE_NAME: &str = "kuadrant.service.ratelimit.v1.RateLimitService";
+pub const KUADRANT_RATELIMIT_METHOD_NAME: &str = "CheckRateLimit";
+
 pub struct RateLimitService;
 
 impl RateLimitService {
