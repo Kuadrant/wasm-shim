@@ -152,13 +152,11 @@ impl RuntimeAction {
     pub fn process_response(&self, msg: &[u8]) -> ResponseResult {
         let res = match self {
             Self::Auth(auth_action) => {
-                let check_response =
-                    Message::parse_from_bytes(msg).map_err(ProcessGrpcMessageError::from)?;
+                let check_response = Message::parse_from_bytes(msg)?;
                 auth_action.process_response(check_response)
             }
             Self::RateLimit(rl_action) => {
-                let rate_limit_response =
-                    Message::parse_from_bytes(msg).map_err(ProcessGrpcMessageError::from)?;
+                let rate_limit_response = Message::parse_from_bytes(msg)?;
                 rl_action.process_response(rate_limit_response)
             }
         };
