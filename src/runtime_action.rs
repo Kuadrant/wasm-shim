@@ -165,6 +165,13 @@ impl RuntimeAction {
 
         match res {
             Ok(operation) => Ok(operation),
+            Err(ProcessGrpcMessageError::UnsupportedField) => {
+                // this case should error (direct response / stop flow) regardless of FailureMode
+                // the fields are unsupported by the external auth service
+                // and could be an indication of a man in the middle attack,
+                // so the request should not proceed
+                Err(ProcessGrpcMessageError::UnsupportedField)
+            }
             Err(e) => match self.get_failure_mode() {
                 FailureMode::Deny => Err(e),
                 FailureMode::Allow => {
