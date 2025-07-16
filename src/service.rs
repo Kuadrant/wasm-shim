@@ -2,7 +2,6 @@ pub(crate) mod auth;
 pub(crate) mod rate_limit;
 
 use crate::configuration::{FailureMode, Service, ServiceType};
-use crate::envoy::DeniedHttpResponse;
 use crate::envoy::{HeaderValue, HeaderValueOption, StatusCode};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME};
@@ -237,21 +236,6 @@ impl DirectResponse {
 
     pub fn body(&self) -> &str {
         self.body.as_str()
-    }
-}
-
-impl From<DeniedHttpResponse> for DirectResponse {
-    fn from(resp: DeniedHttpResponse) -> Self {
-        let status_code = resp.get_status().get_code();
-        let response_headers = resp
-            .get_headers()
-            .iter()
-            .map(|header| {
-                let hv = header.get_header();
-                (hv.key.to_owned(), hv.value.to_owned())
-            })
-            .collect();
-        Self::new(status_code as u32, response_headers, resp.body)
     }
 }
 
