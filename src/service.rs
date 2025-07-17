@@ -26,6 +26,7 @@ pub(super) mod errors {
         Property(PropertyError),
         Serialization(ProtobufError),
         RequestBodyNotAvailable,
+        ResponseBodyNotAvailable,
     }
 
     impl From<EvaluationError> for BuildMessageError {
@@ -35,6 +36,9 @@ pub(super) mod errors {
             if e.to_string().contains("RequestBodyNotAvailable") {
                 // return error regardless of failure mode
                 BuildMessageError::RequestBodyNotAvailable
+            } else if e.to_string().contains("ResponseBodyNotAvailable") {
+                // return error regardless of failure mode
+                BuildMessageError::ResponseBodyNotAvailable
             } else {
                 BuildMessageError::Evaluation(e)
             }
@@ -55,6 +59,9 @@ pub(super) mod errors {
                 }
                 BuildMessageError::RequestBodyNotAvailable => {
                     write!(f, "BuildMessageError::RequestBodyNotAvailable")
+                }
+                BuildMessageError::ResponseBodyNotAvailable => {
+                    write!(f, "BuildMessageError::ResponseBodyNotAvailable")
                 }
             }
         }

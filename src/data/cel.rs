@@ -154,7 +154,10 @@ impl Expression {
 
         if expression.references().has_function("responseBodyJSON") {
             attributes.push(Attribute {
-                path: "response.body".into(),
+                // Injects the response body into the CEL context for internal use by the
+                // responseBodyJSON function. The body is intentionally not exposed as a
+                // top-level variable and cannot be directly referenced in the CEL expression.
+                path: "@kuadrant.response\\.body".into(),
                 cel_type: Some(ValueType::String),
             })
         }
@@ -289,11 +292,11 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
 }
 
 fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
-    eval_body_json(BodyOwner::Request, ftx, json_pointer)
+    eval_body_json(BodyRef::Request, ftx, json_pointer)
 }
 
 fn response_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
-    eval_body_json(BodyOwner::Response, ftx, json_pointer)
+    eval_body_json(BodyRef::Response, ftx, json_pointer)
 }
 
 enum BodyRef {
@@ -311,7 +314,7 @@ impl BodyRef {
 }
 
 fn eval_body_json(
-    body_ref: BodyOwner,
+    body_ref: BodyRef,
     ftx: &FunctionContext,
     json_pointer: Arc<String>,
 ) -> ResolveResult {
@@ -438,6 +441,14 @@ impl Predicate {
                 Err(EvaluationError::new(
                     self.expression.clone(),
                     "RequestBodyNotAvailable".into(),
+                ))
+            }
+            Err(CelError::Property(PropertyError::ResponseBodyNotAvailable)) => {
+                // TODO: EvaluationError is not specific enough to distinguish between errors
+                // consider returning a more specific error type
+                Err(EvaluationError::new(
+                    self.expression.clone(),
+                    "ResponseBodyNotAvailable".into(),
                 ))
             }
             Err(err) => {
@@ -1303,7 +1314,7 @@ mod tests {
         }) = err
         {
             assert_eq!(f, String::from("requestBodyJSON"));
-            assert!(m.contains("found request body of type int, expected String"));
+            assert!(m.contains("found request.body of type int, expected String"));
         } else {
             unreachable!("Not supposed to get here!");
         }
@@ -1326,7 +1337,7 @@ mod tests {
         }) = err
         {
             assert_eq!(f, String::from("requestBodyJSON"));
-            assert!(m.contains("failed to parse request body as JSON"));
+            assert!(m.contains("failed to parse request.body as JSON"));
         } else {
             unreachable!("Not supposed to get here!");
         }
@@ -1351,7 +1362,7 @@ mod tests {
             assert_eq!(f, String::from("requestBodyJSON"));
             assert_eq!(
                 m,
-                String::from("JSON Pointer '/foo' not found in request body")
+                String::from("JSON Pointer '/foo' not found in request.body")
             );
         } else {
             unreachable!("Not supposed to get here!");
@@ -1506,7 +1517,7 @@ mod tests {
 
     #[test]
     fn expression_response_body_json_body_wrong_type() {
-        let mut resolver = build_resolver(vec![("response.body".into(), 1.into())]);
+        let mut resolver = build_resolver(vec![("@kuadrant.response\\.body".into(), 1.into())]);
         let err = Expression::new("responseBodyJSON('/foo')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1521,7 +1532,7 @@ mod tests {
         }) = err
         {
             assert_eq!(f, String::from("responseBodyJSON"));
-            assert!(m.contains("found response body of type int, expected String"));
+            assert!(m.contains("found response.body of type int, expected String"));
         } else {
             unreachable!("Not supposed to get here!");
         }
@@ -1544,7 +1555,7 @@ mod tests {
         }) = err
         {
             assert_eq!(f, String::from("responseBodyJSON"));
-            assert!(m.contains("failed to parse response body as JSON"));
+            assert!(m.contains("failed to parse response.body as JSON"));
         } else {
             unreachable!("Not supposed to get here!");
         }
@@ -1569,7 +1580,7 @@ mod tests {
             assert_eq!(f, String::from("responseBodyJSON"));
             assert_eq!(
                 m,
-                String::from("JSON Pointer '/foo' not found in response body")
+                String::from("JSON Pointer '/foo' not found in response.body")
             );
         } else {
             unreachable!("Not supposed to get here!");
@@ -1610,7 +1621,7 @@ mod tests {
     #[test]
     fn path_cache_response_body_not_found() {
         let response_body_attr = Attribute {
-            path: "response.body".into(),
+            path: "@kuadrant.response\\.body".into(),
             cel_type: Some(ValueType::String),
         };
 
