@@ -158,12 +158,16 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
-    pub fn eval(&self) -> Result<Value, CelError> {
+    /// Evaluates the given expression using the provided resolver.
+    pub fn eval<T>(&self, resolver: &mut T) -> Result<Value, CelError>
+    where
+        T: AttributeResolver,
+    {
         let mut ctx = create_context();
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
         }
-        let Map { map } = self.build_data_map()?;
+        let Map { map } = self.build_data_map(resolver)?;
 
         ctx.add_function("getHostProperty", get_host_property);
 
@@ -181,8 +185,11 @@ impl Expression {
         ctx.add_function("queryMap", decode_query_string);
     }
 
-    fn build_data_map(&self) -> Result<Map, PropertyError> {
-        data::AttributeMap::new(self.attributes.clone()).into()
+    fn build_data_map<T>(&self, resolver: &mut T) -> Result<Map, PropertyError>
+    where
+        T: AttributeResolver,
+    {
+        data::AttributeMap::new(self.attributes.clone(), resolver).into()
     }
 }
 
@@ -330,8 +337,11 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self) -> PredicateResult {
-        match self.expression.eval() {
+    pub fn test<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
+        match self.expression.eval(resolver) {
             Ok(value) => match value {
                 Value::Bool(result) => Ok(result),
                 _ => Err(EvaluationError::new(
@@ -348,17 +358,22 @@ impl Predicate {
 }
 
 pub trait PredicateVec {
-    fn apply(&self) -> PredicateResult;
+    fn apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver;
 }
 
 impl PredicateVec for Vec<Predicate> {
-    fn apply(&self) -> PredicateResult {
+    fn apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
         if self.is_empty() {
             return Ok(true);
         }
         for predicate in self.iter() {
             // if it does not apply or errors exit early
-            if !predicate.test()? {
+            if !predicate.test(resolver)? {
                 return Ok(false);
             }
         }
@@ -627,7 +642,7 @@ pub fn debug_all_well_known_attributes() {
 }
 
 pub mod data {
-    use crate::data::cel::Attribute;
+    use crate::data::cel::{Attribute, AttributeResolver};
     use crate::data::PropertyError;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
@@ -640,12 +655,16 @@ pub mod data {
         Value(Attribute),
     }
 
-    pub struct AttributeMap {
+    pub struct AttributeMap<'a, T: AttributeResolver> {
         data: HashMap<String, Token>,
+        resolver: &'a mut T,
     }
 
-    impl AttributeMap {
-        pub fn new(attributes: Vec<Attribute>) -> Self {
+    impl<'a, T> AttributeMap<'a, T>
+    where
+        T: AttributeResolver,
+    {
+        pub fn new(attributes: Vec<Attribute>, resolver: &'a mut T) -> Self {
             let mut root = HashMap::default();
             for attr in attributes {
                 let mut node = &mut root;
@@ -666,23 +685,32 @@ pub mod data {
                     }
                 }
             }
-            Self { data: root }
+            Self {
+                data: root,
+                resolver,
+            }
         }
     }
 
-    impl From<AttributeMap> for Result<Map, PropertyError> {
-        fn from(value: AttributeMap) -> Self {
-            map_to_value(value.data)
+    impl<'a, T> From<AttributeMap<'a, T>> for Result<Map, PropertyError>
+    where
+        T: AttributeResolver,
+    {
+        fn from(value: AttributeMap<'a, T>) -> Self {
+            map_to_value(value.data, value.resolver)
         }
     }
 
-    fn map_to_value(map: HashMap<String, Token>) -> Result<Map, PropertyError> {
+    fn map_to_value<T>(map: HashMap<String, Token>, resolver: &mut T) -> Result<Map, PropertyError>
+    where
+        T: AttributeResolver,
+    {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
             let k = key.into();
             let v = match value {
-                Token::Value(v) => v.get()?,
-                Token::Node(map) => Value::Map(map_to_value(map)?),
+                Token::Value(v) => resolver.resolve(&v)?,
+                Token::Node(map) => Value::Map(map_to_value(map, resolver)?),
             };
             out.insert(k, v);
         }
@@ -693,9 +721,11 @@ pub mod data {
     mod tests {
         use crate::data::cel::data::{AttributeMap, Token};
         use crate::data::cel::known_attribute_for;
+        use crate::data::cel::PathCache;
 
         #[test]
         fn it_works() {
+            let mut resolver = PathCache::default();
             let map = AttributeMap::new(
                 [
                     known_attribute_for(&"request.method".into())
@@ -708,6 +738,7 @@ pub mod data {
                         .expect("destination.port known attribute exists"),
                 ]
                 .into(),
+                &mut resolver,
             );
 
             println!("{:#?}", map.data);
@@ -759,20 +790,78 @@ pub mod data {
     }
 }
 
+pub type AttributeResolverResult = Result<Value, PropertyError>;
+
+pub trait AttributeResolver {
+    fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult;
+}
+
+#[derive(Default)]
+pub struct PathCache(std::collections::HashMap<Path, Value>);
+
+impl From<HashMap<Path, Value>> for PathCache {
+    fn from(map: HashMap<Path, Value>) -> Self {
+        PathCache(map)
+    }
+}
+
+impl AttributeResolver for PathCache {
+    fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
+        match self.0.entry(attribute.path.clone()) {
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Vacant(entry) => {
+                let value = attribute.get()?;
+                entry.insert(value.clone());
+                Ok(value)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::data::cel::{known_attribute_for, Expression, Predicate};
-    use crate::data::property;
+    use super::*;
+    use crate::data::cel::{known_attribute_for, Expression, PathCache, Predicate};
+    use crate::data::property::Path;
+    use crate::data::{property, PropError};
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
+    use std::collections::HashMap;
     use std::sync::Arc;
+
+    pub struct TestResolver(std::collections::HashMap<Path, Value>);
+
+    impl From<HashMap<Path, Value>> for TestResolver {
+        fn from(map: HashMap<Path, Value>) -> Self {
+            TestResolver(map)
+        }
+    }
+
+    impl AttributeResolver for TestResolver {
+        fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
+            match self.0.get(&attribute.path) {
+                None => Err(PropertyError::Get(PropError::new("NotFound".into()))),
+                Some(val) => Ok(val.clone()),
+            }
+        }
+    }
+
+    fn build_resolver(elems: Vec<(Path, Value)>) -> TestResolver {
+        let mut map: HashMap<Path, Value> = HashMap::default();
+        for (path, value) in elems {
+            map.insert(path, value);
+        }
+
+        map.into()
+    }
 
     #[test]
     fn predicates() {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("source.port".into(), 65432_i64.to_le_bytes().into())));
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        let mut resolver = build_resolver(vec![("source.port".into(), 65432_i64.into())]);
+        assert!(predicate
+            .test(&mut resolver)
+            .expect("This must evaluate properly!"));
     }
 
     #[test]
@@ -795,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn expressions_to_json_resolve() {
+    fn attribute_to_json_resolve() {
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec![
                 "filter_state",
@@ -803,50 +892,60 @@ mod tests {
             ]),
             "true".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.anonymous")
-            .expect("This is valid CEL!")
-            .eval()
-            .expect("This must evaluate!");
+        let value = Attribute {
+            path: "auth.identity.anonymous".into(),
+            cel_type: None,
+        }
+        .get()
+        .expect("This must resolve!");
         assert_eq!(value, true.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age")
-            .expect("This is valid CEL!")
-            .eval()
-            .expect("This must evaluate!");
+        let value = Attribute {
+            path: "auth.identity.age".into(),
+            cel_type: None,
+        }
+        .get()
+        .expect("This must evaluate!");
         assert_eq!(value, 42.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42.3".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age")
-            .expect("This is valid CEL!")
-            .eval()
-            .expect("This must evaluate!");
+        let value = Attribute {
+            path: "auth.identity.age".into(),
+            cel_type: None,
+        }
+        .get()
+        .expect("This must evaluate!");
         assert_eq!(value, 42.3.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
             "\"John\"".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age")
-            .expect("This is valid CEL!")
-            .eval()
-            .expect("This must evaluate!");
+        let value = Attribute {
+            path: "auth.identity.name".into(),
+            cel_type: None,
+        }
+        .get()
+        .expect("This must evaluate!");
         assert_eq!(value, "John".into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "-42".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.name")
-            .expect("This is valid CEL!")
-            .eval()
-            .expect("This must evaluate!");
+        let value = Attribute {
+            path: "auth.identity.age".into(),
+            cel_type: None,
+        }
+        .get()
+        .expect("This must evaluate!");
         assert_eq!(value, (-42).into());
 
         // let's fall back to strings, as that's what we read and set in store_metadata
@@ -854,21 +953,42 @@ mod tests {
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "some random crap".bytes().collect(),
         )));
-        let value = Expression::new("auth.identity.age")
-            .expect("This is valid CEL!")
-            .eval()
-            .expect("This must evaluate!");
+        let value = Attribute {
+            path: "auth.identity.age".into(),
+            cel_type: None,
+        }
+        .get()
+        .expect("This must evaluate!");
         assert_eq!(value, "some random crap".into());
     }
 
     #[test]
-    fn decodes_query_string() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
-                .bytes()
-                .collect(),
+    fn attribute_to_map_resolve() {
+        property::test::TEST_MAP_VALUE.set(Some((
+            "request.headers".into(),
+            HashMap::from([
+                ("key_a".into(), "val_a".into()),
+                ("key_b".into(), "val_b".into()),
+            ]),
         )));
+        let value = known_attribute_for(&"request.headers".into())
+            .expect("This is valid attribute")
+            .get()
+            .expect("This must resolve!");
+        assert_eq!(
+            value,
+            HashMap::<String, String>::from([
+                ("key_a".into(), "val_a".into()),
+                ("key_b".into(), "val_b".into()),
+            ])
+            .into()
+        );
+    }
+
+    #[test]
+    fn decodes_query_string() {
+        let mut resolver =
+            build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
         let predicate = Predicate::route_rule(
             "queryMap(request.query, true)['param1'] == '👾 ' && \
             queryMap(request.query, true)['param2'] == 'Exterminate!' && \
@@ -878,48 +998,47 @@ mod tests {
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        assert!(predicate
+            .test(&mut resolver)
+            .expect("This must evaluate properly!"));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
-                .bytes()
-                .collect(),
-        )));
+        let mut resolver=
+            build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
         let predicate = Predicate::route_rule(
             "queryMap(request.query, false)['param2'] == 'Exterminate!' && \
             queryMap(request.query, false)['👾'] == '123' \
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        assert!(predicate
+            .test(&mut resolver)
+            .expect("This must evaluate properly!"));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "%F0%9F%91%BE".bytes().collect(),
-        )));
+        let mut resolver = build_resolver(vec![("request.query".into(), "%F0%9F%91%BE".into())]);
         let predicate =
             Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
-        assert!(predicate.test().expect("This must evaluate properly!"));
-    }
+        assert!(predicate
+            .test(&mut resolver)
+            .expect("This must evaluate properly!"));
 
-    #[test]
-    fn kuadrant_generated_predicates() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
-                .bytes()
-                .collect(),
-        )));
+        let mut resolver =
+            build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
         let predicate = Predicate::route_rule(
             "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
         )
         .expect("This is valid!");
-        assert_eq!(predicate.test(), Ok(true));
+        assert_eq!(predicate.test(&mut resolver), Ok(true));
+    }
 
+    #[test]
+    fn kuadrant_generated_predicates() {
+        let headerr_value_map: HashMap<String, String> =
+            HashMap::from([("X-Auth".into(), "kuadrant".into())]);
+        let mut resolver =
+            build_resolver(vec![("request.headers".into(), headerr_value_map.into())]);
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert_eq!(predicate.test(), Ok(true));
+        assert_eq!(predicate.test(&mut resolver), Ok(true));
     }
 
     #[test]
@@ -959,10 +1078,25 @@ mod tests {
             property::Path::new(vec!["foo", "bar.baz"]),
             b"\xCA\xFE".to_vec(),
         )));
+        let mut resolver = PathCache::default();
         let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&mut resolver)
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
+    }
+
+    #[test]
+    fn expression_attribute_does_not_resolve() {
+        let err = Expression::new("unknown.attribute")
+            .expect("This is valid CEL!")
+            .eval(&mut build_resolver(vec![]))
+            .expect_err("This must error! body not available!");
+        assert!(matches!(err, CelError::Property(PropertyError::Get(_))));
+        if let CelError::Property(PropertyError::Get(r)) = err {
+            assert_eq!(r, PropError::new("NotFound".into()));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 }

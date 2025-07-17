@@ -1,5 +1,5 @@
 use crate::configuration::{ActionSet, Service};
-use crate::data::{Predicate, PredicateResult, PredicateVec};
+use crate::data::{AttributeResolver, Predicate, PredicateResult, PredicateVec};
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::RuntimeAction;
 use std::collections::HashMap;
@@ -56,8 +56,11 @@ impl RuntimeActionSet {
         Ok(folded_actions)
     }
 
-    pub fn conditions_apply(&self) -> PredicateResult {
-        self.route_rule_predicates.apply()
+    pub fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
+    where
+        T: AttributeResolver,
+    {
+        self.route_rule_predicates.apply(resolver)
     }
 }
 
@@ -67,6 +70,7 @@ mod test {
     use crate::configuration::{
         Action, ActionSet, FailureMode, RouteRuleConditions, ServiceType, Timeout,
     };
+    use crate::data::PathCache;
 
     #[test]
     fn empty_route_rule_predicates_do_apply() {
@@ -74,7 +78,10 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-        assert_eq!(runtime_action_set.conditions_apply(), Ok(true));
+        assert_eq!(
+            runtime_action_set.conditions_apply(&mut PathCache::default()),
+            Ok(true)
+        );
     }
 
     #[test]
@@ -90,7 +97,10 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-        assert_eq!(runtime_action_set.conditions_apply(), Ok(true));
+        assert_eq!(
+            runtime_action_set.conditions_apply(&mut PathCache::default()),
+            Ok(true)
+        );
     }
 
     #[test]
@@ -106,7 +116,10 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-        assert_eq!(runtime_action_set.conditions_apply(), Ok(false));
+        assert_eq!(
+            runtime_action_set.conditions_apply(&mut PathCache::default()),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -122,7 +135,9 @@ mod test {
 
         let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
             .expect("should not happen from an empty set of actions");
-        assert!(runtime_action_set.conditions_apply().is_err());
+        assert!(runtime_action_set
+            .conditions_apply(&mut PathCache::default())
+            .is_err());
     }
 
     fn build_rl_service() -> Service {

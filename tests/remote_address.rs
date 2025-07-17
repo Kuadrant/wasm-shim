@@ -98,12 +98,6 @@ fn it_limits_based_on_source_address() {
         // retrieving properties for data
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property: path: [\"source\", \"address\"]"),
-        )
-        .expect_get_property(Some(vec!["source", "address"]))
-        .returning(Some(data::source::ADDRESS))
-        .expect_log(
-            Some(LogLevel::Debug),
             Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
