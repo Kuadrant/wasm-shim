@@ -1,13 +1,15 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::data::{AttributeResolver, PredicateResult};
-use crate::filter::operations::{EventualOperation, Operation};
+use crate::data::{Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult};
+use crate::filter::operations::{
+    EventualOperation, ProcessGrpcMessageOperation, ProcessNextRequestOperation,
+};
 use crate::ratelimit_action::RateLimitAction;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
 use crate::service::rate_limit::RateLimitService;
-use crate::service::{GrpcRequest, GrpcService, IndexedGrpcRequest};
+use crate::service::{GrpcRequest, GrpcService};
 use log::debug;
 use protobuf::Message;
 use std::collections::HashMap;
@@ -66,9 +68,9 @@ pub(super) mod errors {
     }
 }
 
-pub type IndexedRequestResult = Result<Option<IndexedGrpcRequest>, BuildMessageError>;
+pub type NextRequestResult = Result<ProcessNextRequestOperation, BuildMessageError>;
 pub type RequestResult = Result<Option<GrpcRequest>, BuildMessageError>;
-pub type ResponseResult = Result<Operation, ProcessGrpcMessageError>;
+pub type ResponseResult = Result<ProcessGrpcMessageOperation, ProcessGrpcMessageError>;
 
 impl RuntimeAction {
     pub fn new(
@@ -137,23 +139,11 @@ impl RuntimeAction {
     {
         match self.conditions_apply(resolver) {
             Ok(false) => Ok(None),
-            Ok(true) => match self.build_message(resolver) {
-                Ok(message) => Ok(self.grpc_service().build_request(message)),
-                Err(e) => match self.get_failure_mode() {
-                    FailureMode::Deny => Err(e),
-                    FailureMode::Allow => {
-                        debug!("continuing as FailureMode Allow");
-                        Ok(None)
-                    }
-                },
-            },
-            Err(e) => match self.get_failure_mode() {
-                FailureMode::Deny => Err(e.into()),
-                FailureMode::Allow => {
-                    debug!("continuing as FailureMode Allow");
-                    Ok(None)
-                }
-            },
+            Ok(true) => {
+                let message = self.build_message(resolver)?;
+                Ok(self.grpc_service().build_request(message))
+            }
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -220,6 +210,23 @@ impl RuntimeAction {
                 AuthService::request_message_as_bytes(String::from(auth_action.scope())).map(Some)
             }
         }
+    }
+}
+
+impl AttributeOwner for RuntimeAction {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        match self {
+            Self::Auth(auth_action) => auth_action.request_attributes(),
+            Self::RateLimit(rl_action) => rl_action.request_attributes(),
+        }
+    }
+}
+
+impl AttributeOwner for Vec<Predicate> {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        self.iter()
+            .flat_map(|predicate| predicate.request_attributes())
+            .collect()
     }
 }
 
@@ -394,5 +401,39 @@ mod test {
             assert_eq!(hits_addend, 2);
             assert_eq!(domain, "test");
         }
+    }
+
+    #[test]
+    fn action_request_attribute() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_rl"), build_rl_service());
+
+        let mut action = build_action("service_rl", "scope");
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "request.host".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_2".into(),
+                    value: "request.method".into(),
+                }),
+            },
+            // duplicated attribute
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_3".into(),
+                    value: "request.method".into(),
+                }),
+            },
+        ];
+        action.data.extend(data);
+
+        let runtime_action = RuntimeAction::new(&action, &services).unwrap();
+
+        assert_eq!(runtime_action.request_attributes().len(), 3);
     }
 }

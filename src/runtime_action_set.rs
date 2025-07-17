@@ -1,5 +1,7 @@
 use crate::configuration::{ActionSet, Service};
-use crate::data::{AttributeResolver, Predicate, PredicateResult, PredicateVec};
+use crate::data::{
+    Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult, PredicateVec,
+};
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::RuntimeAction;
 use std::collections::HashMap;
@@ -61,6 +63,15 @@ impl RuntimeActionSet {
         T: AttributeResolver,
     {
         self.route_rule_predicates.apply(resolver)
+    }
+}
+
+impl AttributeOwner for RuntimeActionSet {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        self.runtime_actions
+            .iter()
+            .flat_map(|action| action.request_attributes())
+            .collect()
     }
 }
 

@@ -50,6 +50,54 @@ evaluating to a `bool` value, while `Expression`, used for passing data to a ser
 
 These expression can operate on the data made available to them through the Well Known Attributes, see below
 
+### Custom CEL Functions
+
+#### `requestBodyJSON(json_pointer)`
+
+Parses request body as json and looks up a value by a JSON Pointer.
+JSON Pointer defines a string syntax for identifying a specific value within a JavaScript Object Notation (JSON) document.
+A Pointer is a Unicode string with the reference tokens separated by `/`.
+For more information read [RFC6901](https://datatracker.ietf.org/doc/html/rfc6901).
+
+If the request body is not a valid JSON, the function returns evaluation error.
+If there is no such value, the function returns evaluation error.
+If the value is found, it returns the value as a CEL `Value`.
+
+Example:
+
+when the request body is:
+
+```json
+{
+  "my": {
+    "value": "hello",
+    "list": ["a", "b", "c"]
+  }
+}
+```
+and the expression is:
+
+```yaml
+data:
+- expression:
+    key: my_value
+    value: requestBodyJSON('/my/value')
+```
+
+it evaluates to: `"hello"` CEL value. Similarly,
+
+`requestBodyJSON('/my/list/1')` evaluates to `"b"` CEL value.
+
+`requestBodyJSON('/a/b/c')` evaluates to `Null` CEL value.
+
+
+It can also be used in predicates:
+
+```yaml
+predicates:
+- requestBodyJSON('/my/value')
+```
+
 ### Well Known Attributes
 
 | Attribute                                                                                               | Description                                                                                                                                                                                                                    |

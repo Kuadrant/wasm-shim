@@ -160,6 +160,11 @@ impl Path {
     pub fn tokens(&self) -> Vec<&str> {
         self.tokens.iter().map(String::as_str).collect()
     }
+
+    pub fn is_request(&self) -> bool {
+        // request.body is not a valid request attribute, so we exclude it
+        self.tokens.len() > 1 && self.tokens[0] == "request" && self.tokens[1] != "body"
+    }
 }
 
 #[cfg(test)]

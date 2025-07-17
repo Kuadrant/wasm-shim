@@ -15,6 +15,7 @@ pub(super) mod errors {
     pub enum PropertyError {
         Get(PropError),
         Parse(PropError),
+        RequestBodyNotAvailable,
     }
 
     impl Error for PropertyError {
@@ -22,6 +23,7 @@ pub(super) mod errors {
             match self {
                 PropertyError::Get(err) => Some(err),
                 PropertyError::Parse(err) => Some(err),
+                PropertyError::RequestBodyNotAvailable => None,
             }
         }
     }
@@ -34,6 +36,9 @@ pub(super) mod errors {
                 }
                 PropertyError::Parse(e) => {
                     write!(f, "PropertyError::Parse {{ {e:?} }}")
+                }
+                PropertyError::RequestBodyNotAvailable => {
+                    write!(f, "PropertyError::RequestBodyNotAvailable")
                 }
             }
         }

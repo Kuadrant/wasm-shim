@@ -1,20 +1,20 @@
-use crate::service::{DirectResponse, Headers};
+use crate::service::{DirectResponse, Headers, IndexedGrpcRequest};
 
 #[derive(Debug)]
-pub enum Operation {
+pub enum ProcessGrpcMessageOperation {
     EventualOps(Vec<EventualOperation>),
     DirectResponse(DirectResponse),
 }
 
-impl From<DirectResponse> for Operation {
+impl From<DirectResponse> for ProcessGrpcMessageOperation {
     fn from(e: DirectResponse) -> Self {
-        Operation::DirectResponse(e)
+        ProcessGrpcMessageOperation::DirectResponse(e)
     }
 }
 
-impl From<Vec<EventualOperation>> for Operation {
+impl From<Vec<EventualOperation>> for ProcessGrpcMessageOperation {
     fn from(e: Vec<EventualOperation>) -> Self {
-        Operation::EventualOps(e)
+        ProcessGrpcMessageOperation::EventualOps(e)
     }
 }
 
@@ -22,4 +22,16 @@ impl From<Vec<EventualOperation>> for Operation {
 pub enum EventualOperation {
     AddRequestHeaders(Headers),
     AddResponseHeaders(Headers),
+}
+
+pub enum ProcessNextRequestOperation {
+    GrpcRequest(IndexedGrpcRequest),
+    AwaitRequestBody(usize),
+    Done,
+}
+
+impl From<IndexedGrpcRequest> for ProcessNextRequestOperation {
+    fn from(e: IndexedGrpcRequest) -> Self {
+        ProcessNextRequestOperation::GrpcRequest(e)
+    }
 }
