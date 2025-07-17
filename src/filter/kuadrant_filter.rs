@@ -8,7 +8,7 @@ use crate::runtime_action::NextRequestResult;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
 use crate::service::{DirectResponse, GrpcRequest, HeaderResolver, Headers, IndexedGrpcRequest};
-use log::{debug, error, warn};
+use log::{debug, error};
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, BufferType, MapType, Status};
@@ -20,6 +20,7 @@ enum Phase {
     RequestHeaders,
     RequestBody,
     ResponseHeaders,
+    ResponseBody,
 }
 
 pub(crate) struct KuadrantFilter {
@@ -29,6 +30,7 @@ pub(crate) struct KuadrantFilter {
     path_store: PathCache,
     grpc_message_receiver: Option<EventReceiver>,
     request_body_receiver: Option<EventReceiver>,
+    response_body_receiver: Option<EventReceiver>,
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
     phase: Phase,
@@ -266,6 +268,8 @@ impl HttpContext for KuadrantFilter {
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         self.phase = Phase::ResponseHeaders;
+        // response headers can only be added at this phase. At the response body time is already
+        // too late
         if let Some(response_headers) = self.response_headers_to_add.take() {
             for (header, value) in response_headers {
                 if let Err(status) = self.add_http_response_header(header.as_str(), value.as_str())
@@ -279,6 +283,66 @@ impl HttpContext for KuadrantFilter {
             }
         }
         Action::Continue
+    }
+
+    fn on_http_response_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
+        debug!(
+            "#{} on_http_response_body: body_size: {body_size}, end_of_stream: {end_of_stream}",
+            self.context_id
+        );
+        self.phase = Phase::ResponseBody;
+        // Need to check if there is something to do before expending
+        // time and resources reading the body
+        match self.response_body_receiver.take() {
+            None => Action::Continue, // No pending actions, filter can continue normally
+            Some((index, action_set)) => {
+                if !end_of_stream {
+                    // This is not the end of the stream, so the complete request body is not yet available.
+                    // Until JSON parsing is supported in streaming mode, the entire request body must be available.
+                    // There is nothing to do here at the moment.
+                    self.response_body_receiver = Some((index, action_set));
+                    return Action::Pause;
+                }
+
+                match self.get_http_response_body(0, body_size) {
+                    Err(e) => {
+                        error!(
+                            "#{} get_http_response_body: failed to read the body: {:?}",
+                            self.context_id, e
+                        );
+                        self.die();
+                        Action::Pause
+                    }
+                    Ok(None) => {
+                        error!(
+                            "#{} get_http_response_body: expected some body bytes, but got None",
+                            self.context_id
+                        );
+                        self.die();
+                        Action::Pause
+                    }
+                    Ok(Some(body_bytes)) => match String::from_utf8(body_bytes) {
+                        Err(e) => {
+                            error!(
+                                "#{} get_http_response_body: failed to convert body to string: {:?}",
+                                self.context_id, e
+                            );
+                            self.die();
+                            Action::Pause
+                        }
+                        Ok(body_str) => {
+                            debug!(
+                                "#{} on_http_response_body (size: {body_size}): action_set selected {}",
+                                self.context_id, action_set.name
+                            );
+                            self.path_store
+                                .insert_path("response.body".into(), body_str.into());
+                            self.run(action_set, index)
+                        }
+                    },
+                }
+            }
+        }
     }
 }
 
@@ -302,6 +366,14 @@ impl KuadrantFilter {
                     // and failure mode does not apply, must wait for the request body to be
                     // available
                     return Ok(ProcessNextRequestOperation::AwaitRequestBody(start + index));
+                }
+                Err(BuildMessageError::ResponseBodyNotAvailable) => {
+                    // this error indicates that the response body is not available
+                    // and failure mode does not apply, must wait for the response body to be
+                    // available
+                    return Ok(ProcessNextRequestOperation::AwaitResponseBody(
+                        start + index,
+                    ));
                 }
                 Err(e) => match action.get_failure_mode() {
                     FailureMode::Deny => return Err(e),
@@ -355,6 +427,12 @@ impl KuadrantFilter {
                     self.request_body_receiver = Some((indexed_req, action_set));
                     return Action::Continue;
                 }
+                Ok(ProcessNextRequestOperation::AwaitResponseBody(indexed_req)) => {
+                    // this arm indicates that the response body is not available
+                    // must wait for the response body to be available
+                    self.response_body_receiver = Some((indexed_req, action_set));
+                    return Action::Continue;
+                }
                 Err(err) => {
                     // Building the request failed
                     // The action failure mode is set to deny, so we log the error and die
@@ -369,17 +447,30 @@ impl KuadrantFilter {
     fn handle_eventual_operation(&mut self, operation: EventualOperation) {
         match operation {
             EventualOperation::AddRequestHeaders(headers) => {
-                if let Some(existing_headers) = self.request_headers_to_add.as_mut() {
-                    existing_headers.extend(headers);
-                } else {
-                    warn!("Trying to add request headers after phase has ended!")
+                if !headers.is_empty() {
+                    if let Phase::RequestHeaders = self.phase {
+                        if let Some(existing_headers) = self.request_headers_to_add.as_mut() {
+                            existing_headers.extend(headers);
+                        }
+                    } else {
+                        debug!("Ignoring trying to add request headers after phase has ended!");
+                    }
                 }
             }
             EventualOperation::AddResponseHeaders(headers) => {
-                if let Some(existing_headers) = self.response_headers_to_add.as_mut() {
-                    existing_headers.extend(headers);
-                } else {
-                    warn!("Trying to add response headers after phase has ended!")
+                if !headers.is_empty() {
+                    match self.phase {
+                        Phase::RequestHeaders | Phase::RequestBody | Phase::ResponseHeaders => {
+                            if let Some(existing_headers) = self.response_headers_to_add.as_mut() {
+                                existing_headers.extend(headers);
+                            }
+                        }
+                        _ => {
+                            debug!(
+                                "Ignoring trying to add response headers after phase has ended!"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -390,10 +481,18 @@ impl KuadrantFilter {
     }
 
     fn done_processing_grpc_call_response(&mut self) {
-        if let Phase::RequestHeaders = self.phase {
-            self.add_request_headers();
+        match self.phase {
+            Phase::RequestHeaders => {
+                self.add_request_headers();
+                let _ = self.resume_http_request();
+            }
+            Phase::RequestBody => {
+                let _ = self.resume_http_request();
+            }
+            Phase::ResponseHeaders | Phase::ResponseBody => {
+                let _ = self.resume_http_response();
+            }
         }
-        let _ = self.resume_http_request();
     }
 
     fn send_http_reponse(&self, direct_response: DirectResponse) {
@@ -474,6 +573,7 @@ impl KuadrantFilter {
             path_store: PathCache::default(),
             grpc_message_receiver: None,
             request_body_receiver: None,
+            response_body_receiver: None,
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),
             phase: Phase::RequestHeaders,

@@ -437,6 +437,14 @@ impl Predicate {
                     "RequestBodyNotAvailable".into(),
                 ))
             }
+            Err(CelError::Property(PropertyError::ResponseBodyNotAvailable)) => {
+                // TODO: EvaluationError is not specific enough to distinguish between errors
+                // consider returning a more specific error type
+                Err(EvaluationError::new(
+                    self.expression.clone(),
+                    "ResponseBodyNotAvailable".into(),
+                ))
+            }
             Err(err) => {
                 error!("Failed to evaluate `{:?}`: {err}", self.expression);
                 Err(EvaluationError::new(
