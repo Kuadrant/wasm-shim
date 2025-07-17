@@ -149,6 +149,13 @@ impl Expression {
             })
         }
 
+        if expression.references().has_function("responseBodyJSON") {
+            attributes.push(Attribute {
+                path: "response.body".into(),
+                cel_type: Some(ValueType::String),
+            })
+        }
+
         attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
         Ok(Self {
@@ -179,8 +186,16 @@ impl Expression {
 
         ctx.add_function("getHostProperty", get_host_property);
         ctx.add_function("requestBodyJSON", request_body_json);
+        ctx.add_function("responseBodyJSON", response_body_json);
 
-        for binding in ["request", "metadata", "source", "destination", "auth"] {
+        for binding in [
+            "request",
+            "response",
+            "metadata",
+            "source",
+            "destination",
+            "auth",
+        ] {
             ctx.add_variable_from_value(
                 binding,
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
@@ -271,31 +286,58 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
 }
 
 fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
-    match ftx.ptx.get_variable("request")? {
+    eval_body_json(BodyOwner::Request, ftx, json_pointer)
+}
+
+fn response_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
+    eval_body_json(BodyOwner::Response, ftx, json_pointer)
+}
+
+enum BodyOwner {
+    Request,
+    Response,
+}
+
+impl BodyOwner {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BodyOwner::Request => "request",
+            BodyOwner::Response => "response",
+        }
+    }
+}
+
+fn eval_body_json(
+    body_owner: BodyOwner,
+    ftx: &FunctionContext,
+    json_pointer: Arc<String>,
+) -> ResolveResult {
+    let body_owner = body_owner.as_str();
+    match ftx.ptx.get_variable(body_owner)? {
         Value::Map(map) => match map.get(&"body".into()) {
-            None => Err(ExecutionError::UndeclaredReference(Arc::new(
-                "request.body".into(),
-            ))),
+            None => Err(ExecutionError::UndeclaredReference(Arc::new(format!(
+                "{body_owner}.body",
+            )))),
             Some(Value::String(s)) => {
                 let json_value: JsonResult<JsonValue> = serde_json::from_str(s.as_str());
                 match json_value {
                     Err(err) => {
-                        Err(ftx.error(format!("failed to parse request body as JSON: {err}")))
+                        Err(ftx.error(format!("failed to parse {body_owner} body as JSON: {err}",)))
                     }
                     Ok(json_value) => match json_value.pointer(json_pointer.as_str()) {
                         Some(value) => Ok(json_value_to_cel(value.clone())),
                         None => Err(ftx.error(format!(
-                            "JSON Pointer '{json_pointer}' not found in request body"
+                            "JSON Pointer '{json_pointer}' not found in {body_owner} body",
                         ))),
                     },
                 }
             }
             Some(v) => Err(ftx.error(format!(
-                "found request body of type {}, expected String",
+                "found {body_owner} body of type {}, expected String",
                 v.type_of()
             ))),
         },
-        _ => Err(ftx.error("request variable is not a Map")),
+        _ => Err(ftx.error("{body_owner} variable is not a Map")),
     }
 }
 
@@ -871,6 +913,10 @@ impl AttributeResolver for PathCache {
                     // signals that the request body is not available
                     Err(PropertyError::RequestBodyNotAvailable)
                 }
+                ["response", "body"] => {
+                    // signals that the response body is not available
+                    Err(PropertyError::ResponseBodyNotAvailable)
+                }
                 _ => {
                     let value = attribute.get()?;
                     entry.insert(value.clone());
@@ -937,8 +983,12 @@ mod tests {
         map.into()
     }
 
-    fn build_resolver_with_body(body: String) -> TestResolver {
+    fn build_resolver_with_request_body(body: String) -> TestResolver {
         build_resolver(vec![("request.body".into(), body.into())])
+    }
+
+    fn build_resolver_with_response_body(body: String) -> TestResolver {
+        build_resolver(vec![("response.body".into(), body.into())])
     }
 
     #[test]
@@ -1188,7 +1238,7 @@ mod tests {
 
     #[test]
     fn expression_request_body_json_only_string_as_arg() {
-        let mut resolver = build_resolver_with_body("{}".into());
+        let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON()")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1198,7 +1248,7 @@ mod tests {
             CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
         ));
 
-        let mut resolver = build_resolver_with_body("{}".into());
+        let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON(['a', 'b'])")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1208,7 +1258,7 @@ mod tests {
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
 
-        let mut resolver = build_resolver_with_body("{}".into());
+        let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON(123435)")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1218,7 +1268,7 @@ mod tests {
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
 
-        let mut resolver = build_resolver_with_body("{}".into());
+        let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON(true)")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1254,7 +1304,7 @@ mod tests {
 
     #[test]
     fn expression_request_body_json_when_body_is_not_json() {
-        let mut resolver = build_resolver_with_body("some crab".into());
+        let mut resolver = build_resolver_with_request_body("some crab".into());
         let err = Expression::new("requestBodyJSON('/foo')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1277,7 +1327,7 @@ mod tests {
 
     #[test]
     fn expression_request_body_json_when_pointer_does_not_exist() {
-        let mut resolver = build_resolver_with_body("{}".into());
+        let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON('/foo')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1312,7 +1362,7 @@ mod tests {
                 "+44 2345678"
             ]
         }"#;
-        let mut resolver = build_resolver_with_body(body.into());
+        let mut resolver = build_resolver_with_request_body(body.into());
         let value = Expression::new("requestBodyJSON('/name')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
@@ -1399,5 +1449,166 @@ mod tests {
             1,
             "One request attributes expected!"
         );
+    }
+
+    #[test]
+    fn expression_response_body_json_only_string_as_arg() {
+        let mut resolver = build_resolver_with_response_body("{}".into());
+        let err = Expression::new("responseBodyJSON()")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! func arg is missing!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
+        ));
+
+        let mut resolver = build_resolver_with_response_body("{}".into());
+        let err = Expression::new("responseBodyJSON(['a', 'b'])")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! arrays not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+
+        let mut resolver = build_resolver_with_response_body("{}".into());
+        let err = Expression::new("responseBodyJSON(123435)")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! nums not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+
+        let mut resolver = build_resolver_with_response_body("{}".into());
+        let err = Expression::new("responseBodyJSON(true)")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! bools not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+    }
+
+    #[test]
+    fn expression_response_body_json_body_wrong_type() {
+        let mut resolver = build_resolver(vec![("response.body".into(), 1.into())]);
+        let err = Expression::new("responseBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body has unexpected type!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("responseBodyJSON"));
+            assert!(m.contains("found response body of type int, expected String"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_response_body_json_when_body_is_not_json() {
+        let mut resolver = build_resolver_with_response_body("some crab".into());
+        let err = Expression::new("responseBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body has unexpected type!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("responseBodyJSON"));
+            assert!(m.contains("failed to parse response body as JSON"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_response_body_json_when_pointer_does_not_exist() {
+        let mut resolver = build_resolver_with_response_body("{}".into());
+        let err = Expression::new("responseBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body not available!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("responseBodyJSON"));
+            assert_eq!(
+                m,
+                String::from("JSON Pointer '/foo' not found in response body")
+            );
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_response_body_json_body_exists() {
+        let body = r#"
+        {
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        }"#;
+        let mut resolver = build_resolver_with_response_body(body.into());
+        let value = Expression::new("responseBodyJSON('/name')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, "John Doe".into());
+
+        let value = Expression::new("responseBodyJSON('/age')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, 43.into());
+
+        let value = Expression::new("responseBodyJSON('/phones/0')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, "+44 1234567".into());
+    }
+
+    #[test]
+    fn path_cache_response_body_not_found() {
+        let response_body_attr = Attribute {
+            path: "response.body".into(),
+            cel_type: Some(ValueType::String),
+        };
+
+        let mut resolver = PathCache::default();
+        let err = resolver
+            .resolve(&response_body_attr)
+            .expect_err("This must error! body not available!");
+
+        assert!(matches!(err, PropertyError::ResponseBodyNotAvailable));
     }
 }
