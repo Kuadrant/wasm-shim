@@ -104,7 +104,7 @@ fn it_limits_based_on_source_address() {
         .returning(Some(data::source::ADDRESS))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("handle_operation: SendGrpcRequest"),
+            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
         )
         // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
@@ -126,10 +126,6 @@ fn it_limits_based_on_source_address() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("handle_operation: AwaitGrpcResponse"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -146,7 +142,6 @@ fn it_limits_based_on_source_address() {
             Some(LogLevel::Debug),
             Some("process_response(rl): received OK response"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("handle_operation: Done"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 

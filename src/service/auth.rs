@@ -1,9 +1,10 @@
 use crate::data::{get_attribute, PropError, PropertyError};
 use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
-    AttributeContext_Request, CheckRequest, Metadata, SocketAddress,
+    AttributeContext_Request, CheckRequest, DeniedHttpResponse, Metadata, SocketAddress,
 };
 use crate::service::errors::BuildMessageError;
+use crate::service::DirectResponse;
 use chrono::{DateTime, FixedOffset};
 use protobuf::well_known_types::Timestamp;
 use protobuf::Message;
@@ -13,6 +14,21 @@ use std::collections::HashMap;
 
 pub const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
 pub const AUTH_METHOD_NAME: &str = "Check";
+
+impl From<DeniedHttpResponse> for DirectResponse {
+    fn from(resp: DeniedHttpResponse) -> Self {
+        let status_code = resp.get_status().get_code();
+        let response_headers = resp
+            .get_headers()
+            .iter()
+            .map(|header| {
+                let hv = header.get_header();
+                (hv.key.to_owned(), hv.value.to_owned())
+            })
+            .collect();
+        Self::new(status_code as u32, response_headers, resp.body)
+    }
+}
 
 pub struct AuthService;
 

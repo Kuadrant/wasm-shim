@@ -2,13 +2,14 @@ pub(crate) mod auth;
 pub(crate) mod rate_limit;
 
 use crate::configuration::{FailureMode, Service, ServiceType};
-use crate::envoy::StatusCode;
+use crate::envoy::{HeaderValue, HeaderValueOption, StatusCode};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{
     KUADRANT_RATELIMIT_METHOD_NAME, KUADRANT_RATELIMIT_SERVICE_NAME, RATELIMIT_METHOD_NAME,
     RATELIMIT_SERVICE_NAME,
 };
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
+use protobuf::RepeatedField;
 use proxy_wasm::types::Bytes;
 use std::cell::OnceCell;
 use std::rc::Rc;
@@ -45,6 +46,20 @@ pub(super) mod errors {
                     write!(f, "BuildMessageError::Serialization {{ {e:?} }}")
                 }
             }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum ProcessGrpcMessageError {
+        Protobuf(ProtobufError),
+        Property(PropertyError),
+        EmptyResponse,
+        UnsupportedField,
+    }
+
+    impl From<ProtobufError> for ProcessGrpcMessageError {
+        fn from(e: ProtobufError) -> Self {
+            ProcessGrpcMessageError::Protobuf(e)
         }
     }
 }
@@ -174,28 +189,32 @@ impl GrpcRequest {
 }
 
 pub type Headers = Vec<(String, String)>;
-#[derive(Debug)]
-pub enum HeaderKind {
-    Response(Headers),
-    Request(Headers),
+
+pub fn from_envoy_rl_headers(headers: RepeatedField<HeaderValue>) -> Headers {
+    headers
+        .into_iter()
+        .map(|header| (header.key, header.value))
+        .collect()
 }
 
-impl HeaderKind {
-    pub fn is_empty(&self) -> bool {
-        match self {
-            HeaderKind::Response(headers) | HeaderKind::Request(headers) => headers.is_empty(),
-        }
-    }
+pub fn from_envoy_headers(headers: &[HeaderValueOption]) -> Headers {
+    headers
+        .iter()
+        .map(|header| {
+            let hv = header.get_header();
+            (hv.key.to_owned(), hv.value.to_owned())
+        })
+        .collect()
 }
 
 #[derive(Debug)]
-pub struct GrpcErrResponse {
+pub struct DirectResponse {
     status_code: u32,
     response_headers: Headers,
     body: String,
 }
 
-impl GrpcErrResponse {
+impl DirectResponse {
     pub fn new(status_code: u32, response_headers: Headers, body: String) -> Self {
         Self {
             status_code,
