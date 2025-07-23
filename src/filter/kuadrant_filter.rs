@@ -254,7 +254,7 @@ impl HttpContext for KuadrantFilter {
                                 self.context_id, action_set.name
                             );
                             self.path_store
-                                .insert_path("request.body".into(), body_str.into());
+                                .insert_path("@kuadrant.request\\.body".into(), body_str.into());
                             self.run(action_set, index)
                         }
                     },

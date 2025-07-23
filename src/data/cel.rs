@@ -144,7 +144,10 @@ impl Expression {
 
         if expression.references().has_function("requestBodyJSON") {
             attributes.push(Attribute {
-                path: "request.body".into(),
+                // Injects the request body into the CEL context for internal use by the
+                // requestBodyJSON function. The body is intentionally not exposed as a
+                // top-level variable and cannot be directly referenced in the CEL expression.
+                path: "@kuadrant.request\\.body".into(),
                 cel_type: Some(ValueType::String),
             })
         }
@@ -180,7 +183,14 @@ impl Expression {
         ctx.add_function("getHostProperty", get_host_property);
         ctx.add_function("requestBodyJSON", request_body_json);
 
-        for binding in ["request", "metadata", "source", "destination", "auth"] {
+        for binding in [
+            "request",
+            "metadata",
+            "source",
+            "destination",
+            "auth",
+            "@kuadrant",
+        ] {
             ctx.add_variable_from_value(
                 binding,
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
@@ -271,11 +281,11 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
 }
 
 fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
-    match ftx.ptx.get_variable("request")? {
-        Value::Map(map) => match map.get(&"body".into()) {
-            None => Err(ExecutionError::UndeclaredReference(Arc::new(
-                "request.body".into(),
-            ))),
+    match ftx.ptx.get_variable("@kuadrant")? {
+        Value::Map(map) => match map.get(&"request.body".into()) {
+            None => Err(ftx.error(
+                "Not supposed to get here! processing request body when it is not available",
+            )),
             Some(Value::String(s)) => {
                 let json_value: JsonResult<JsonValue> = serde_json::from_str(s.as_str());
                 match json_value {
@@ -295,7 +305,7 @@ fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> Resolv
                 v.type_of()
             ))),
         },
-        _ => Err(ftx.error("request variable is not a Map")),
+        _ => Err(ftx.error("Not supposed to get here! @kuadrant internal variable is not a Map")),
     }
 }
 
@@ -867,7 +877,9 @@ impl AttributeResolver for PathCache {
         match self.0.entry(attribute.path.clone()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => match *attribute.path.tokens() {
-                ["request", "body"] => {
+                ["@kuadrant", "request.body"] => {
+                    // Getting here means evaluating CEL expression with requestBodyJSON() function
+                    // at the request headers phase. Need to wait.
                     // signals that the request body is not available
                     Err(PropertyError::RequestBodyNotAvailable)
                 }
@@ -938,7 +950,7 @@ mod tests {
     }
 
     fn build_resolver_with_body(body: String) -> TestResolver {
-        build_resolver(vec![("request.body".into(), body.into())])
+        build_resolver(vec![("@kuadrant.request\\.body".into(), body.into())])
     }
 
     #[test]
@@ -1231,11 +1243,12 @@ mod tests {
 
     #[test]
     fn expression_request_body_json_body_wrong_type() {
-        let mut resolver = build_resolver(vec![("request.body".into(), 1.into())]);
+        let mut resolver = build_resolver(vec![("@kuadrant.request\\.body".into(), 1.into())]);
         let err = Expression::new("requestBodyJSON('/foo')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body has unexpected type!");
+        println!("{err:?}");
         assert!(matches!(
             err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
@@ -1335,7 +1348,7 @@ mod tests {
     #[test]
     fn path_cache_request_body_not_found() {
         let request_body_attr = Attribute {
-            path: "request.body".into(),
+            path: "@kuadrant.request\\.body".into(),
             cel_type: Some(ValueType::String),
         };
 
@@ -1349,10 +1362,13 @@ mod tests {
 
     #[test]
     fn path_cache_request_body_found() {
-        let mut path_cache: PathCache =
-            HashMap::from([("request.body".into(), "This is the request body!".into())]).into();
+        let mut path_cache: PathCache = HashMap::from([(
+            "@kuadrant.request\\.body".into(),
+            "This is the request body!".into(),
+        )])
+        .into();
         let request_body_attr = Attribute {
-            path: "request.body".into(),
+            path: "@kuadrant.request\\.body".into(),
             cel_type: Some(ValueType::String),
         };
 

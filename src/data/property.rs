@@ -162,8 +162,7 @@ impl Path {
     }
 
     pub fn is_request(&self) -> bool {
-        // request.body is not a valid request attribute, so we exclude it
-        self.tokens.len() > 1 && self.tokens[0] == "request" && self.tokens[1] != "body"
+        !self.tokens.is_empty() && self.tokens[0] == "request"
     }
 }
 
