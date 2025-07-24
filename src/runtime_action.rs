@@ -186,12 +186,12 @@ impl RuntimeAction {
         match self {
             RuntimeAction::RateLimit(rl_action) => {
                 let descriptor = rl_action.build_descriptor(resolver)?;
-                let (hits_addend, domain_attr) = rl_action.get_known_attributes(resolver)?;
 
                 if descriptor.entries.is_empty() {
                     debug!("build_message(rl): empty descriptors");
                     Ok(None)
                 } else {
+                    let (hits_addend, domain_attr) = rl_action.get_known_attributes(resolver)?;
                     let domain = if domain_attr.is_empty() {
                         rl_action.scope().to_string()
                     } else {
@@ -237,6 +237,7 @@ mod test {
         Action, DataItem, DataType, ExpressionItem, FailureMode, ServiceType, Timeout,
     };
     use crate::data::PathCache;
+
     fn build_rl_service() -> Service {
         Service {
             service_type: ServiceType::RateLimit,
@@ -435,5 +436,29 @@ mod test {
         let runtime_action = RuntimeAction::new(&action, &services).unwrap();
 
         assert_eq!(runtime_action.request_attributes().len(), 3);
+    }
+
+    #[test]
+    fn build_request_for_rl_action_does_not_eval_data_when_predicates_evaluate_to_false() {
+        let mut services = HashMap::new();
+        services.insert(String::from("service_rl"), build_rl_service());
+
+        let mut action = build_action("service_rl", "scope");
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "ratelimit.hits_addend".into(),
+                // if the expression evaluates, it would fail as it's unknown
+                value: "invalidFunc()".into(),
+            }),
+        }];
+        action.data.extend(data);
+        action.predicates = vec!["false".into()];
+
+        let runtime_action = RuntimeAction::new(&action, &services).unwrap();
+
+        let request = runtime_action
+            .build_request(&mut PathCache::default())
+            .expect("this must not fail building");
+        assert!(request.is_none());
     }
 }
