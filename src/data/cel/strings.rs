@@ -270,97 +270,116 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
 #[cfg(test)]
 mod tests {
     use crate::data::Expression;
+    use crate::data::PathCache;
     use cel_interpreter::Value;
 
     #[test]
     fn extended_string_fn() {
         let e = Expression::new("'abc'.charAt(1)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("b".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("b".into()));
 
         let e = Expression::new("'hello mellow'.indexOf('')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(0.into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok(0.into()));
         let e = Expression::new("'hello mellow'.indexOf('ello')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(1.into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok(1.into()));
         let e = Expression::new("'hello mellow'.indexOf('jello')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok((-1).into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok((-1).into()));
         let e = Expression::new("'hello mellow'.indexOf('', 2)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(2.into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok(2.into()));
         let e =
             Expression::new("'hello mellow'.indexOf('ello', 20)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok((-1).into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok((-1).into()));
 
         let e = Expression::new("'hello mellow'.lastIndexOf('')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(12.into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok(12.into()));
         let e =
             Expression::new("'hello mellow'.lastIndexOf('ello')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(7.into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok(7.into()));
         let e =
             Expression::new("'hello mellow'.lastIndexOf('jello')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok((-1).into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok((-1).into()));
         let e = Expression::new("'hello mellow'.lastIndexOf('ello', 6)")
             .expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(1.into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok(1.into()));
         let e = Expression::new("'hello mellow'.lastIndexOf('ello', 20)")
             .expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok((-1).into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok((-1).into()));
 
         let e = Expression::new("['hello', 'mellow'].join()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("hellomellow".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("hellomellow".into()));
         let e = Expression::new("[].join()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("".into()));
         let e = Expression::new("['hello', 'mellow'].join(' ')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("hello mellow".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("hello mellow".into()));
 
         let e = Expression::new("'TacoCat'.lowerAscii()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("tacocat".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("tacocat".into()));
         let e = Expression::new("'TacoCÆt Xii'.lowerAscii()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("tacocÆt xii".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("tacocÆt xii".into()));
 
         let e = Expression::new("'TacoCat'.upperAscii()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("TACOCAT".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("TACOCAT".into()));
         let e = Expression::new("'TacoCÆt Xii'.upperAscii()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("TACOCÆT XII".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("TACOCÆT XII".into()));
 
         let e = Expression::new("'  \ttrim\n    '.trim()").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("trim".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("trim".into()));
 
         let e =
             Expression::new("'hello hello'.replace('he', 'we')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("wello wello".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("wello wello".into()));
         let e = Expression::new("'hello hello'.replace('he', 'we', -1)")
             .expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("wello wello".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("wello wello".into()));
         let e = Expression::new("'hello hello'.replace('he', 'we', 1)")
             .expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("wello hello".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("wello hello".into()));
         let e = Expression::new("'hello hello'.replace('he', 'we', 0)")
             .expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("hello hello".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("hello hello".into()));
         let e = Expression::new("'hello hello'.replace('', '_')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("_h_e_l_l_o_ _h_e_l_l_o_".into()));
+        assert_eq!(
+            e.eval(&mut PathCache::default()),
+            Ok("_h_e_l_l_o_ _h_e_l_l_o_".into())
+        );
         let e = Expression::new("'hello hello'.replace('h', '')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("ello ello".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("ello ello".into()));
 
         let e = Expression::new("'hello hello hello'.split(' ')").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(vec!["hello", "hello", "hello"].into()));
+        assert_eq!(
+            e.eval(&mut PathCache::default()),
+            Ok(vec!["hello", "hello", "hello"].into())
+        );
         let e =
             Expression::new("'hello hello hello'.split(' ', 0)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(Value::List(vec![].into())));
+        assert_eq!(
+            e.eval(&mut PathCache::default()),
+            Ok(Value::List(vec![].into()))
+        );
         let e =
             Expression::new("'hello hello hello'.split(' ', 1)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(vec!["hello hello hello"].into()));
+        assert_eq!(
+            e.eval(&mut PathCache::default()),
+            Ok(vec!["hello hello hello"].into())
+        );
         let e =
             Expression::new("'hello hello hello'.split(' ', 2)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(vec!["hello", "hello hello"].into()));
+        assert_eq!(
+            e.eval(&mut PathCache::default()),
+            Ok(vec!["hello", "hello hello"].into())
+        );
         let e =
             Expression::new("'hello hello hello'.split(' ', -1)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok(vec!["hello", "hello", "hello"].into()));
+        assert_eq!(
+            e.eval(&mut PathCache::default()),
+            Ok(vec!["hello", "hello", "hello"].into())
+        );
 
         let e = Expression::new("'tacocat'.substring(4)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("cat".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("cat".into()));
         let e = Expression::new("'tacocat'.substring(0, 4)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("taco".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("taco".into()));
         let e = Expression::new("'ta©o©αT'.substring(2, 6)").expect("This must be valid CEL");
-        assert_eq!(e.eval(), Ok("©o©α".into()));
+        assert_eq!(e.eval(&mut PathCache::default()), Ok("©o©α".into()));
     }
 }
