@@ -160,6 +160,10 @@ impl Path {
     pub fn tokens(&self) -> Vec<&str> {
         self.tokens.iter().map(String::as_str).collect()
     }
+
+    pub fn is_request(&self) -> bool {
+        !self.tokens.is_empty() && self.tokens[0] == "request"
+    }
 }
 
 #[cfg(test)]

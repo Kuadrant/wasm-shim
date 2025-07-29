@@ -1,11 +1,11 @@
 use crate::configuration::{Action, DataType, FailureMode, Service};
-use crate::data::{AttributeResolver, PredicateResult};
-use crate::data::{EvaluationError, Expression, Predicate};
+use crate::data::{Attribute, AttributeOwner, AttributeResolver, PredicateResult};
+use crate::data::{CelError, EvaluationError, Expression, Predicate, PropertyError};
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse, RateLimitResponse_Code,
     StatusCode,
 };
-use crate::filter::operations::{EventualOperation, Operation};
+use crate::filter::operations::EventualOperation;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::ResponseResult;
 use crate::service::errors::ProcessGrpcMessageError;
@@ -66,6 +66,14 @@ impl DescriptorEntryBuilder {
                     ));
                 }
             },
+            Err(CelError::Property(PropertyError::RequestBodyNotAvailable)) => {
+                // TODO: EvaluationError is not specific enough to distinguish between errors
+                // consider returning a more specific error type
+                return Err(EvaluationError::new(
+                    self.expression.clone(),
+                    "RequestBodyNotAvailable".into(),
+                ));
+            }
             Err(err) => {
                 error!("Failed to evaluate `{:?}`: {err}", self.expression);
                 return Err(EvaluationError::new(
@@ -136,6 +144,18 @@ impl ConditionalData {
         }
 
         Ok(entries)
+    }
+}
+
+impl AttributeOwner for ConditionalData {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        let mut attrs: Vec<&Attribute> = self
+            .data
+            .iter()
+            .flat_map(|c| c.expression.request_attributes())
+            .collect();
+        attrs.extend(self.predicates.request_attributes().iter());
+        attrs
     }
 }
 
@@ -354,13 +374,21 @@ impl RateLimitAction {
                 ..
             } => {
                 debug!("process_response(rl): received OK response");
-                Ok(Operation::EventualOps(vec![
-                    EventualOperation::AddResponseHeaders(from_envoy_rl_headers(
-                        additional_headers,
-                    )),
-                ]))
+                Ok(vec![EventualOperation::AddResponseHeaders(
+                    from_envoy_rl_headers(additional_headers),
+                )]
+                .into())
             }
         }
+    }
+}
+
+impl AttributeOwner for RateLimitAction {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        self.conditional_data_sets
+            .iter()
+            .flat_map(|c| c.request_attributes())
+            .collect()
     }
 }
 
@@ -373,6 +401,7 @@ mod test {
     };
     use crate::data::PathCache;
     use crate::envoy::HeaderValue;
+    use crate::filter::operations::ProcessGrpcMessageOperation;
     use core::str;
 
     fn build_service() -> Service {
@@ -812,8 +841,8 @@ mod test {
         let result = rl_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::EventualOps(_)));
-        if let Operation::EventualOps(ops) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::EventualOps(_)));
+        if let ProcessGrpcMessageOperation::EventualOps(ops) = op {
             assert_eq!(ops.len(), 1);
             assert!(matches!(ops[0], EventualOperation::AddResponseHeaders(_)));
             if let EventualOperation::AddResponseHeaders(headers) = &ops[0] {
@@ -832,8 +861,8 @@ mod test {
         let result = rl_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::EventualOps(_)));
-        if let Operation::EventualOps(ops) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::EventualOps(_)));
+        if let ProcessGrpcMessageOperation::EventualOps(ops) = op {
             assert_eq!(ops.len(), 1);
             assert!(matches!(ops[0], EventualOperation::AddResponseHeaders(_)));
             if let EventualOperation::AddResponseHeaders(headers) = &ops[0] {
@@ -863,8 +892,8 @@ mod test {
         let result = rl_action.process_response(overlimit_response_empty);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::DirectResponse(_)));
-        if let Operation::DirectResponse(direct_response) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::DirectResponse(_)));
+        if let ProcessGrpcMessageOperation::DirectResponse(direct_response) = op {
             assert_eq!(
                 direct_response.status_code(),
                 StatusCode::TooManyRequests as u32
@@ -880,8 +909,8 @@ mod test {
         let result = rl_action.process_response(denied_response_headers);
         assert!(result.is_ok());
         let op = result.expect("is ok");
-        assert!(matches!(op, Operation::DirectResponse(_)));
-        if let Operation::DirectResponse(direct_response) = op {
+        assert!(matches!(op, ProcessGrpcMessageOperation::DirectResponse(_)));
+        if let ProcessGrpcMessageOperation::DirectResponse(direct_response) = op {
             assert_eq!(
                 direct_response.status_code(),
                 StatusCode::TooManyRequests as u32
@@ -914,5 +943,50 @@ mod test {
             err_response,
             ProcessGrpcMessageError::UnsupportedField
         ));
+    }
+
+    #[test]
+    fn descriptor_entries_with_request_body_fails_unless_provided() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "requestBodyJSON('/foo')".into(),
+            }),
+        }];
+
+        let action = build_action(String::new(), vec![], data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let err = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect_err("should fail");
+        assert!(err.to_string().contains("RequestBodyNotAvailable"));
+    }
+
+    #[test]
+    fn ratelimit_action_request_attributes() {
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "request.host".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_2".into(),
+                    value: "source.address".into(),
+                }),
+            },
+        ];
+
+        let predicates: Vec<String> = vec!["true".into(), "request.method == 'GET'".into()];
+
+        let action = build_action(String::new(), predicates, data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe CEL compilation?");
+        assert_eq!(rl_action.request_attributes().len(), 2);
     }
 }

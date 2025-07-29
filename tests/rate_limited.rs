@@ -564,6 +564,13 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),
         )
+        // retrieving tracing headers
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
+        .returning(None)
         // retrieving properties for conditions
         .expect_log(
             Some(LogLevel::Debug),

@@ -25,11 +25,19 @@ pub(super) mod errors {
         Evaluation(EvaluationError),
         Property(PropertyError),
         Serialization(ProtobufError),
+        RequestBodyNotAvailable,
     }
 
     impl From<EvaluationError> for BuildMessageError {
         fn from(e: EvaluationError) -> Self {
-            BuildMessageError::Evaluation(e)
+            // TODO: EvaluationError is not specific enough to distinguish between errors
+            // consider returning a more specific error type
+            if e.to_string().contains("RequestBodyNotAvailable") {
+                // return error regardless of failure mode
+                BuildMessageError::RequestBodyNotAvailable
+            } else {
+                BuildMessageError::Evaluation(e)
+            }
         }
     }
 
@@ -44,6 +52,9 @@ pub(super) mod errors {
                 }
                 BuildMessageError::Serialization(e) => {
                     write!(f, "BuildMessageError::Serialization {{ {e:?} }}")
+                }
+                BuildMessageError::RequestBodyNotAvailable => {
+                    write!(f, "BuildMessageError::RequestBodyNotAvailable")
                 }
             }
         }

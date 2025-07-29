@@ -3,13 +3,14 @@ use crate::data::property::{host_get_map, Path};
 use crate::data::{get_attribute, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
-use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
+use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
-use log::warn;
+use log::{error, warn};
 use proxy_wasm::types::{Bytes, Status};
+use serde_json::Result as JsonResult;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -141,6 +142,16 @@ impl Expression {
             })
             .collect();
 
+        if expression.references().has_function("requestBodyJSON") {
+            attributes.push(Attribute {
+                // Injects the request body into the CEL context for internal use by the
+                // requestBodyJSON function. The body is intentionally not exposed as a
+                // top-level variable and cannot be directly referenced in the CEL expression.
+                path: "@kuadrant.request\\.body".into(),
+                cel_type: Some(ValueType::String),
+            })
+        }
+
         attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
         Ok(Self {
@@ -170,8 +181,16 @@ impl Expression {
         let Map { map } = self.build_data_map(resolver)?;
 
         ctx.add_function("getHostProperty", get_host_property);
+        ctx.add_function("requestBodyJSON", request_body_json);
 
-        for binding in ["request", "metadata", "source", "destination", "auth"] {
+        for binding in [
+            "request",
+            "metadata",
+            "source",
+            "destination",
+            "auth",
+            "@kuadrant",
+        ] {
             ctx.add_variable_from_value(
                 binding,
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
@@ -259,6 +278,35 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
         }
     }
     Ok(map.into())
+}
+
+fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
+    match ftx.ptx.get_variable("@kuadrant")? {
+        Value::Map(map) => match map.get(&"request.body".into()) {
+            None => Err(ftx.error(
+                "Not supposed to get here! processing request body when it is not available",
+            )),
+            Some(Value::String(s)) => {
+                let json_value: JsonResult<JsonValue> = serde_json::from_str(s.as_str());
+                match json_value {
+                    Err(err) => {
+                        Err(ftx.error(format!("failed to parse request body as JSON: {err}")))
+                    }
+                    Ok(json_value) => match json_value.pointer(json_pointer.as_str()) {
+                        Some(value) => Ok(json_value_to_cel(value.clone())),
+                        None => Err(ftx.error(format!(
+                            "JSON Pointer '{json_pointer}' not found in request body"
+                        ))),
+                    },
+                }
+            }
+            Some(v) => Err(ftx.error(format!(
+                "found request body of type {}, expected String",
+                v.type_of()
+            ))),
+        },
+        _ => Err(ftx.error("Not supposed to get here! @kuadrant internal variable is not a Map")),
+    }
 }
 
 #[cfg(test)]
@@ -349,10 +397,21 @@ impl Predicate {
                     format!("Expected boolean value, got {value:?}"),
                 )),
             },
-            Err(err) => Err(EvaluationError::new(
-                self.expression.clone(),
-                err.to_string(),
-            )),
+            Err(CelError::Property(PropertyError::RequestBodyNotAvailable)) => {
+                // TODO: EvaluationError is not specific enough to distinguish between errors
+                // consider returning a more specific error type
+                Err(EvaluationError::new(
+                    self.expression.clone(),
+                    "RequestBodyNotAvailable".into(),
+                ))
+            }
+            Err(err) => {
+                error!("Failed to evaluate `{:?}`: {err}", self.expression);
+                Err(EvaluationError::new(
+                    self.expression.clone(),
+                    err.to_string(),
+                ))
+            }
         }
     }
 }
@@ -464,25 +523,29 @@ pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
         })
 }
 
+fn json_value_to_cel(json_value: JsonValue) -> Value {
+    match json_value {
+        JsonValue::Null => Value::Null,
+        JsonValue::Bool(b) => b.into(),
+        #[allow(clippy::expect_used)]
+        JsonValue::Number(n) => {
+            if n.is_u64() {
+                n.as_u64().expect("Unreachable: number must be u64").into()
+            } else if n.is_i64() {
+                n.as_i64().expect("Unreachable: number must be i64").into()
+            } else {
+                n.as_f64().expect("Unreachable: number must be f64").into()
+            }
+        }
+        JsonValue::String(str) => str.into(),
+        _ => todo!("Need support for more Json!"),
+    }
+}
+
 fn json_to_cel(json: &str) -> Value {
     let json_value: Result<JsonValue, _> = serde_json::from_str(json);
     match json_value {
-        Ok(json) => match json {
-            JsonValue::Null => Value::Null,
-            JsonValue::Bool(b) => b.into(),
-            #[allow(clippy::expect_used)]
-            JsonValue::Number(n) => {
-                if n.is_u64() {
-                    n.as_u64().expect("Unreachable: number must be u64").into()
-                } else if n.is_i64() {
-                    n.as_i64().expect("Unreachable: number must be i64").into()
-                } else {
-                    n.as_f64().expect("Unreachable: number must be f64").into()
-                }
-            }
-            JsonValue::String(str) => str.into(),
-            _ => todo!("Need support for more Json!"),
-        },
+        Ok(json) => json_value_to_cel(json),
         _ => json.into(),
     }
 }
@@ -741,8 +804,6 @@ pub mod data {
                 &mut resolver,
             );
 
-            println!("{:#?}", map.data);
-
             assert_eq!(3, map.data.len());
             assert!(map.data.contains_key("source"));
             assert!(map.data.contains_key("destination"));
@@ -799,6 +860,12 @@ pub trait AttributeResolver {
 #[derive(Default)]
 pub struct PathCache(std::collections::HashMap<Path, Value>);
 
+impl PathCache {
+    pub fn insert_path(&mut self, path: Path, value: Value) {
+        self.0.insert(path, value);
+    }
+}
+
 impl From<HashMap<Path, Value>> for PathCache {
     fn from(map: HashMap<Path, Value>) -> Self {
         PathCache(map)
@@ -809,23 +876,50 @@ impl AttributeResolver for PathCache {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
         match self.0.entry(attribute.path.clone()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
-            Entry::Vacant(entry) => {
-                let value = attribute.get()?;
-                entry.insert(value.clone());
-                Ok(value)
-            }
+            Entry::Vacant(entry) => match *attribute.path.tokens() {
+                ["@kuadrant", "request.body"] => {
+                    // Getting here means evaluating CEL expression with requestBodyJSON() function
+                    // at the request headers phase. Need to wait.
+                    // signals that the request body is not available
+                    Err(PropertyError::RequestBodyNotAvailable)
+                }
+                _ => {
+                    let value = attribute.get()?;
+                    entry.insert(value.clone());
+                    Ok(value)
+                }
+            },
         }
+    }
+}
+
+pub trait AttributeOwner {
+    fn request_attributes(&self) -> Vec<&Attribute>;
+}
+
+impl AttributeOwner for Expression {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        self.attributes
+            .iter()
+            .filter(|&a| a.path.is_request())
+            .collect()
+    }
+}
+
+impl AttributeOwner for Predicate {
+    fn request_attributes(&self) -> Vec<&Attribute> {
+        self.expression.request_attributes()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::cel::{known_attribute_for, Expression, PathCache, Predicate};
+    use crate::data::cel::{known_attribute_for, CelError, Expression, PathCache, Predicate};
     use crate::data::property::Path;
     use crate::data::{property, PropError};
     use cel_interpreter::objects::ValueType;
-    use cel_interpreter::Value;
+    use cel_interpreter::{ExecutionError, Value};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -853,6 +947,10 @@ mod tests {
         }
 
         map.into()
+    }
+
+    fn build_resolver_with_body(body: String) -> TestResolver {
+        build_resolver(vec![("@kuadrant.request\\.body".into(), body.into())])
     }
 
     #[test]
@@ -1002,7 +1100,7 @@ mod tests {
             .test(&mut resolver)
             .expect("This must evaluate properly!"));
 
-        let mut resolver=
+        let mut resolver =
             build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
         let predicate = Predicate::route_rule(
             "queryMap(request.query, false)['param2'] == 'Exterminate!' && \
@@ -1098,5 +1196,224 @@ mod tests {
         } else {
             unreachable!("Not supposed to get here!");
         }
+    }
+
+    #[test]
+    fn expression_request_body_json_only_string_as_arg() {
+        let mut resolver = build_resolver_with_body("{}".into());
+        let err = Expression::new("requestBodyJSON()")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! func arg is missing!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
+        ));
+
+        let mut resolver = build_resolver_with_body("{}".into());
+        let err = Expression::new("requestBodyJSON(['a', 'b'])")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! arrays not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+
+        let mut resolver = build_resolver_with_body("{}".into());
+        let err = Expression::new("requestBodyJSON(123435)")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! nums not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+
+        let mut resolver = build_resolver_with_body("{}".into());
+        let err = Expression::new("requestBodyJSON(true)")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! bools not allowed as func arg!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::UnexpectedType { .. })
+        ));
+    }
+
+    #[test]
+    fn expression_request_body_json_body_wrong_type() {
+        let mut resolver = build_resolver(vec![("@kuadrant.request\\.body".into(), 1.into())]);
+        let err = Expression::new("requestBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body has unexpected type!");
+        println!("{err:?}");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("requestBodyJSON"));
+            assert!(m.contains("found request body of type int, expected String"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_request_body_json_when_body_is_not_json() {
+        let mut resolver = build_resolver_with_body("some crab".into());
+        let err = Expression::new("requestBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body has unexpected type!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("requestBodyJSON"));
+            assert!(m.contains("failed to parse request body as JSON"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_request_body_json_when_pointer_does_not_exist() {
+        let mut resolver = build_resolver_with_body("{}".into());
+        let err = Expression::new("requestBodyJSON('/foo')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect_err("This must error! body not available!");
+        assert!(matches!(
+            err,
+            CelError::Resolve(ExecutionError::FunctionError { .. })
+        ));
+        if let CelError::Resolve(ExecutionError::FunctionError {
+            function: f,
+            message: m,
+        }) = err
+        {
+            assert_eq!(f, String::from("requestBodyJSON"));
+            assert_eq!(
+                m,
+                String::from("JSON Pointer '/foo' not found in request body")
+            );
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn expression_request_body_json_body_exists() {
+        let body = r#"
+        {
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        }"#;
+        let mut resolver = build_resolver_with_body(body.into());
+        let value = Expression::new("requestBodyJSON('/name')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, "John Doe".into());
+
+        let value = Expression::new("requestBodyJSON('/age')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, 43.into());
+
+        let value = Expression::new("requestBodyJSON('/phones/0')")
+            .expect("This is valid CEL!")
+            .eval(&mut resolver)
+            .expect("This must evaluate!");
+        assert_eq!(value, "+44 1234567".into());
+    }
+
+    #[test]
+    fn path_cache_request_body_not_found() {
+        let request_body_attr = Attribute {
+            path: "@kuadrant.request\\.body".into(),
+            cel_type: Some(ValueType::String),
+        };
+
+        let mut resolver = PathCache::default();
+        let err = resolver
+            .resolve(&request_body_attr)
+            .expect_err("This must error! body not available!");
+
+        assert!(matches!(err, PropertyError::RequestBodyNotAvailable));
+    }
+
+    #[test]
+    fn path_cache_request_body_found() {
+        let mut path_cache: PathCache = HashMap::from([(
+            "@kuadrant.request\\.body".into(),
+            "This is the request body!".into(),
+        )])
+        .into();
+        let request_body_attr = Attribute {
+            path: "@kuadrant.request\\.body".into(),
+            cel_type: Some(ValueType::String),
+        };
+
+        let value = path_cache
+            .resolve(&request_body_attr)
+            .expect("This must resolve! body is available!");
+        assert_eq!(value, "This is the request body!".into());
+    }
+
+    #[test]
+    fn expression_request_attributes() {
+        let expression = Expression::new("source.port == 65432").expect("This is valid CEL!");
+        assert!(
+            expression.request_attributes().is_empty(),
+            "No request attributes expected!"
+        );
+
+        let expression =
+            Expression::new("request.host && request.path == '/path'").expect("This is valid CEL!");
+        assert_eq!(
+            expression.request_attributes().len(),
+            2,
+            "Two requests attributes expected!"
+        );
+
+        let expression = Expression::new("requestBodyJSON('/foo')").expect("This is valid CEL!");
+        assert!(
+            expression.request_attributes().is_empty(),
+            "No request attributes expected when requestBodyJSON func is used!"
+        );
+    }
+
+    #[test]
+    fn predicate_request_attributes() {
+        let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
+        assert!(
+            predicate.request_attributes().is_empty(),
+            "No request attributes expected!"
+        );
+
+        let predicate = Predicate::new("request.host== 'example.com'").expect("This is valid CEL!");
+        assert_eq!(
+            predicate.request_attributes().len(),
+            1,
+            "One request attributes expected!"
+        );
     }
 }
