@@ -20,4 +20,5 @@ pub use cel::PredicateResult;
 pub use cel::PredicateVec;
 
 pub use attribute::errors::{PropError, PropertyError};
+pub use property::wasm_prop;
 pub use property::Path as PropertyPath;

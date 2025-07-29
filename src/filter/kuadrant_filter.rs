@@ -273,6 +273,7 @@ impl HttpContext for KuadrantFilter {
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         self.phase = Phase::ResponseHeaders;
+
         // response headers can only be added at this phase. At the response body time is already
         // too late
         if let Some(response_headers) = self.response_headers_to_add.take() {
@@ -296,6 +297,12 @@ impl HttpContext for KuadrantFilter {
             self.context_id
         );
         self.phase = Phase::ResponseBody;
+
+        // Process token usage from response body if this is the end of stream
+        if end_of_stream {
+            crate::metrics::process_response_body_for_token_usage();
+        }
+
         // Need to check if there is something to do before expending
         // time and resources reading the body
         match self.response_body_receiver.take() {

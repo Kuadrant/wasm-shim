@@ -29,6 +29,9 @@ impl RootContext for FilterRoot {
             "#{} {} {}: VM started",
             self.context_id, WASM_SHIM_HEADER, full_version
         );
+
+        crate::metrics::initialize_metrics();
+
         true
     }
 

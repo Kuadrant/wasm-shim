@@ -72,6 +72,12 @@ impl AuthAction {
             Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
                 debug!("process_response(auth): received OkHttpResponse");
 
+                // Increment authorized calls metric
+                crate::metrics::increment_authorized_calls();
+
+                // Increment user/group specific authorized calls metric
+                crate::metrics::increment_authorized_calls_with_user_group(&self.scope);
+
                 if !ok_response.get_response_headers_to_add().is_empty() {
                     warn!("process_response(auth): Unsupported field 'response_headers_to_add' in OkHttpResponse");
                     Err(ProcessGrpcMessageError::UnsupportedField)
