@@ -95,7 +95,53 @@ It can also be used in predicates:
 
 ```yaml
 predicates:
-- requestBodyJSON('/my/value')
+- requestBodyJSON('/my/value') == 'hello'
+```
+
+#### `responseBodyJSON(json_pointer)`
+
+Parses response body as json and looks up a value by a JSON Pointer.
+JSON Pointer defines a string syntax for identifying a specific value within a JavaScript Object Notation (JSON) document.
+A Pointer is a Unicode string with the reference tokens separated by `/`.
+For more information read [RFC6901](https://datatracker.ietf.org/doc/html/rfc6901).
+
+If the response body is not a valid JSON, the function returns evaluation error.
+If there is no such value, the function returns evaluation error.
+If the value is found, it returns the value as a CEL `Value`.
+
+Example:
+
+when the response body is:
+
+```json
+{
+  "my": {
+    "value": "hello",
+    "list": ["a", "b", "c"]
+  }
+}
+```
+and the expression is:
+
+```yaml
+data:
+- expression:
+    key: my_value
+    value: responseBodyJSON('/my/value')
+```
+
+it evaluates to: `"hello"` CEL value. Similarly,
+
+`responseBodyJSON('/my/list/1')` evaluates to `"b"` CEL value.
+
+`responseBodyJSON('/a/b/c')` evaluates to `Null` CEL value.
+
+
+It can also be used in predicates:
+
+```yaml
+predicates:
+- responseBodyJSON('/my/value') == 'hello'
 ```
 
 ### Well Known Attributes

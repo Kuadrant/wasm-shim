@@ -16,6 +16,7 @@ pub(super) mod errors {
         Get(PropError),
         Parse(PropError),
         RequestBodyNotAvailable,
+        ResponseBodyNotAvailable,
     }
 
     impl Error for PropertyError {
@@ -24,6 +25,7 @@ pub(super) mod errors {
                 PropertyError::Get(err) => Some(err),
                 PropertyError::Parse(err) => Some(err),
                 PropertyError::RequestBodyNotAvailable => None,
+                PropertyError::ResponseBodyNotAvailable => None,
             }
         }
     }
@@ -39,6 +41,9 @@ pub(super) mod errors {
                 }
                 PropertyError::RequestBodyNotAvailable => {
                     write!(f, "PropertyError::RequestBodyNotAvailable")
+                }
+                PropertyError::ResponseBodyNotAvailable => {
+                    write!(f, "PropertyError::ResponseBodyNotAvailable")
                 }
             }
         }
