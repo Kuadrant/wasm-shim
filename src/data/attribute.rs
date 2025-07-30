@@ -24,8 +24,8 @@ pub(super) mod errors {
             match self {
                 PropertyError::Get(err) => Some(err),
                 PropertyError::Parse(err) => Some(err),
-                PropertyError::RequestBodyNotAvailable => None,
-                PropertyError::ResponseBodyNotAvailable => None,
+                Self::RequestBodyNotAvailable => None,
+                Self::ResponseBodyNotAvailable => None,
             }
         }
     }

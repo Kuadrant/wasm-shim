@@ -1,4 +1,4 @@
-use crate::data::cel::errors::{CelError, EvaluationError};
+use crate::data::cel::errors::{EvaluationError, PredicateResultError};
 use crate::data::property::{host_get_map, Path};
 use crate::data::{get_attribute, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
@@ -8,7 +8,7 @@ use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
-use log::{error, warn};
+use log::warn;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Result as JsonResult;
 use serde_json::Value as JsonValue;
@@ -25,29 +25,44 @@ pub(super) mod errors {
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    #[derive(Debug)]
-    pub struct EvaluationError {
-        expression: Expression,
+    #[derive(Debug, PartialEq)]
+    pub struct PredicateResultError {
         message: String,
     }
 
-    impl PartialEq for EvaluationError {
-        fn eq(&self, other: &Self) -> bool {
-            self.message == other.message
+    impl Display for PredicateResultError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "PredicateResultError {{ message: {:?} }}", self.message)
         }
+    }
+
+    impl PredicateResultError {
+        pub fn new(message: String) -> Self {
+            PredicateResultError { message }
+        }
+    }
+
+    impl Error for PredicateResultError {}
+
+    #[derive(Debug)]
+    pub struct EvaluationError {
+        expression: Expression,
+        error: CelError,
     }
 
     #[derive(Debug, PartialEq)]
     pub enum CelError {
         Property(PropertyError),
         Resolve(ExecutionError),
+        Predicate(PredicateResultError),
     }
 
     impl Error for CelError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match self {
-                CelError::Property(err) => Some(err),
-                CelError::Resolve(err) => Some(err),
+                Self::Property(err) => Some(err),
+                Self::Resolve(err) => Some(err),
+                Self::Predicate(err) => Some(err),
             }
         }
     }
@@ -64,6 +79,12 @@ pub(super) mod errors {
         }
     }
 
+    impl From<PredicateResultError> for CelError {
+        fn from(e: PredicateResultError) -> Self {
+            CelError::Predicate(e)
+        }
+    }
+
     impl Display for CelError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
@@ -73,15 +94,31 @@ pub(super) mod errors {
                 CelError::Resolve(e) => {
                     write!(f, "CelError::Resolve {{ {e:?} }}")
                 }
+                CelError::Predicate(e) => {
+                    write!(f, "CelError::Predicate {{ {e:?} }}")
+                }
             }
         }
     }
 
     impl EvaluationError {
-        pub fn new(expression: Expression, message: String) -> EvaluationError {
-            EvaluationError {
-                expression,
-                message,
+        pub fn new(expression: Expression, error: CelError) -> EvaluationError {
+            EvaluationError { expression, error }
+        }
+
+        pub fn is_request_body_not_available(&self) -> bool {
+            if let CelError::Property(PropertyError::RequestBodyNotAvailable) = self.error {
+                true
+            } else {
+                false
+            }
+        }
+
+        pub fn is_response_body_not_available(&self) -> bool {
+            if let CelError::Property(PropertyError::ResponseBodyNotAvailable) = self.error {
+                true
+            } else {
+                false
             }
         }
     }
@@ -91,7 +128,7 @@ pub(super) mod errors {
             write!(
                 f,
                 "EvaluationError {{ expression: {:?}, message: {} }}",
-                self.expression, self.message
+                self.expression, self.error
             )
         }
     }
@@ -180,7 +217,7 @@ impl Expression {
     }
 
     /// Evaluates the given expression using the provided resolver.
-    pub fn eval<T>(&self, resolver: &mut T) -> Result<Value, CelError>
+    pub fn eval<T>(&self, resolver: &mut T) -> Result<Value, EvaluationError>
     where
         T: AttributeResolver,
     {
@@ -188,7 +225,9 @@ impl Expression {
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
         }
-        let Map { map } = self.build_data_map(resolver)?;
+        let Map { map } = self
+            .build_data_map(resolver)
+            .map_err(|e| EvaluationError::new(self.clone(), e.into()))?;
 
         ctx.add_function("getHostProperty", get_host_property);
         ctx.add_function("requestBodyJSON", request_body_json);
@@ -207,7 +246,8 @@ impl Expression {
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
             );
         }
-        Value::resolve(&self.expression, &ctx).map_err(|e| e.into())
+        Value::resolve(&self.expression, &ctx)
+            .map_err(|e| EvaluationError::new(self.clone(), e.into()))
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]
@@ -427,37 +467,13 @@ impl Predicate {
     where
         T: AttributeResolver,
     {
-        match self.expression.eval(resolver) {
-            Ok(value) => match value {
-                Value::Bool(result) => Ok(result),
-                _ => Err(EvaluationError::new(
-                    self.expression.clone(),
-                    format!("Expected boolean value, got {value:?}"),
-                )),
-            },
-            Err(CelError::Property(PropertyError::RequestBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "RequestBodyNotAvailable".into(),
-                ))
-            }
-            Err(CelError::Property(PropertyError::ResponseBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "ResponseBodyNotAvailable".into(),
-                ))
-            }
-            Err(err) => {
-                error!("Failed to evaluate `{:?}`: {err}", self.expression);
-                Err(EvaluationError::new(
-                    self.expression.clone(),
-                    err.to_string(),
-                ))
-            }
+        let value = self.expression.eval(resolver)?;
+        match value {
+            Value::Bool(result) => Ok(result),
+            _ => Err(EvaluationError::new(
+                self.expression.clone(),
+                PredicateResultError::new(format!("Expected boolean value, got {value:?}")).into(),
+            )),
         }
     }
 }
@@ -1181,7 +1197,8 @@ mod tests {
             "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
         )
         .expect("This is valid!");
-        assert_eq!(predicate.test(&mut resolver), Ok(true));
+        let res = predicate.test(&mut resolver).expect("should evaluate!");
+        assert!(res);
     }
 
     #[test]
@@ -1192,7 +1209,7 @@ mod tests {
             build_resolver(vec![("request.headers".into(), headerr_value_map.into())]);
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert_eq!(predicate.test(&mut resolver), Ok(true));
+        assert!(predicate.test(&mut resolver).expect("should evaluate!"));
     }
 
     #[test]
