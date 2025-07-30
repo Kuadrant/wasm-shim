@@ -95,7 +95,7 @@ It can also be used in predicates:
 
 ```yaml
 predicates:
-- requestBodyJSON('/my/value')
+- requestBodyJSON('/my/value') == 'hello'
 ```
 
 #### `responseBodyJSON(json_pointer)`
@@ -141,7 +141,7 @@ It can also be used in predicates:
 
 ```yaml
 predicates:
-- responseBodyJSON('/my/value')
+- responseBodyJSON('/my/value') == 'hello'
 ```
 
 ### Well Known Attributes
