@@ -1,6 +1,6 @@
 use crate::configuration::{Action, DataType, FailureMode, Service};
 use crate::data::{Attribute, AttributeOwner, AttributeResolver, PredicateResult};
-use crate::data::{CelError, EvaluationError, Expression, Predicate, PropertyError};
+use crate::data::{EvaluationError, Expression, Predicate};
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse, RateLimitResponse_Code,
     StatusCode,
@@ -46,46 +46,21 @@ impl DescriptorEntryBuilder {
         T: AttributeResolver,
     {
         let key = self.key.clone();
-        let value = match self.expression.eval(resolver) {
-            Ok(value) => match value {
-                Value::Int(n) => format!("{n}"),
-                Value::UInt(n) => format!("{n}"),
-                Value::Float(n) => format!("{n}"),
-                Value::String(s) => (*s).clone(),
-                Value::Bool(b) => format!("{b}"),
-                Value::Null => "null".to_owned(),
-                _ => {
-                    error!(
-                        "Failed to match type for expression `{:?}`",
-                        self.expression
-                    );
-                    return Err(EvaluationError::new(
-                        self.expression.clone(),
-                        "Only scalar values can be sent as data".to_string(),
-                    ));
-                }
-            },
-            Err(CelError::Property(PropertyError::RequestBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
+        let value = match self.expression.eval(resolver)? {
+            Value::Int(n) => format!("{n}"),
+            Value::UInt(n) => format!("{n}"),
+            Value::Float(n) => format!("{n}"),
+            Value::String(s) => (*s).clone(),
+            Value::Bool(b) => format!("{b}"),
+            Value::Null => "null".to_owned(),
+            _ => {
+                error!(
+                    "Failed to match type for expression `{:?}`",
+                    self.expression
+                );
                 return Err(EvaluationError::new(
                     self.expression.clone(),
-                    "RequestBodyNotAvailable".into(),
-                ));
-            }
-            Err(CelError::Property(PropertyError::ResponseBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                return Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "ResponseBodyNotAvailable".into(),
-                ));
-            }
-            Err(err) => {
-                error!("Failed to evaluate `{:?}`: {err}", self.expression);
-                return Err(EvaluationError::new(
-                    self.expression.clone(),
-                    format!("Evaluation failed: {err}"),
+                    "Only scalar values can be sent as data".to_string(),
                 ));
             }
         };

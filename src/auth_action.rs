@@ -194,14 +194,20 @@ mod test {
     fn empty_predicates_do_apply() {
         let mut resolver = PathCache::default();
         let auth_action = build_auth_action_with_predicates(Vec::default());
-        assert_eq!(auth_action.conditions_apply(&mut resolver), Ok(true));
+        let res = auth_action
+            .conditions_apply(&mut resolver)
+            .expect("this is a valid predicate!");
+        assert!(res);
     }
 
     #[test]
     fn when_all_predicates_are_truthy_action_apply() {
         let mut resolver = PathCache::default();
         let auth_action = build_auth_action_with_predicates(vec!["true".into(), "true".into()]);
-        assert_eq!(auth_action.conditions_apply(&mut resolver), Ok(true));
+        let res = auth_action
+            .conditions_apply(&mut resolver)
+            .expect("this is a valid predicate!");
+        assert!(res);
     }
 
     #[test]
@@ -213,7 +219,10 @@ mod test {
             "true".into(),
             "false".into(),
         ]);
-        assert_eq!(auth_action.conditions_apply(&mut resolver), Ok(false));
+        let res = auth_action
+            .conditions_apply(&mut resolver)
+            .expect("this is a valid predicate!");
+        assert!(!res);
     }
 
     #[test]
