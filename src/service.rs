@@ -5,8 +5,8 @@ use crate::configuration::{FailureMode, Service, ServiceType};
 use crate::envoy::{HeaderValue, HeaderValueOption, StatusCode};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{
-    KUADRANT_RATELIMIT_METHOD_NAME, KUADRANT_RATELIMIT_SERVICE_NAME, RATELIMIT_METHOD_NAME,
-    RATELIMIT_SERVICE_NAME,
+    KUADRANT_CHECK_RATELIMIT_METHOD_NAME, KUADRANT_RATELIMIT_SERVICE_NAME,
+    KUADRANT_REPORT_RATELIMIT_METHOD_NAME, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME,
 };
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
 use protobuf::RepeatedField;
@@ -105,7 +105,12 @@ impl GrpcService {
             ServiceType::RateLimitCheck => Self {
                 service,
                 name: KUADRANT_RATELIMIT_SERVICE_NAME,
-                method: KUADRANT_RATELIMIT_METHOD_NAME,
+                method: KUADRANT_CHECK_RATELIMIT_METHOD_NAME,
+            },
+            ServiceType::RateLimitReport => Self {
+                service,
+                name: KUADRANT_RATELIMIT_SERVICE_NAME,
+                method: KUADRANT_REPORT_RATELIMIT_METHOD_NAME,
             },
         }
     }

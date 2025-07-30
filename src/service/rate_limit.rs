@@ -6,7 +6,8 @@ pub const RATELIMIT_SERVICE_NAME: &str = "envoy.service.ratelimit.v3.RateLimitSe
 pub const RATELIMIT_METHOD_NAME: &str = "ShouldRateLimit";
 
 pub const KUADRANT_RATELIMIT_SERVICE_NAME: &str = "kuadrant.service.ratelimit.v1.RateLimitService";
-pub const KUADRANT_RATELIMIT_METHOD_NAME: &str = "CheckRateLimit";
+pub const KUADRANT_CHECK_RATELIMIT_METHOD_NAME: &str = "CheckRateLimit";
+pub const KUADRANT_REPORT_RATELIMIT_METHOD_NAME: &str = "Report";
 
 pub struct RateLimitService;
 
