@@ -85,7 +85,7 @@ impl RuntimeAction {
             )))?;
 
         match service.service_type {
-            ServiceType::RateLimit | ServiceType::RateLimitCheck => {
+            ServiceType::RateLimit | ServiceType::RateLimitCheck | ServiceType::RateLimitReport => {
                 Ok(Self::RateLimit(RateLimitAction::new(action, service)?))
             }
             ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service)?)),
@@ -264,6 +264,15 @@ mod test {
         }
     }
 
+    fn build_rl_report_service() -> Service {
+        Service {
+            service_type: ServiceType::RateLimitReport,
+            endpoint: "limitador".into(),
+            failure_mode: FailureMode::default(),
+            timeout: Timeout::default(),
+        }
+    }
+
     fn build_action(service: &str, scope: &str) -> Action {
         Action {
             service: service.into(),
@@ -346,22 +355,32 @@ mod test {
     }
 
     #[test]
-    fn rl_actions_do_not_merge_rl_check() {
+    fn rl_actions_do_not_merge_different_rl_actions() {
         let mut services = HashMap::new();
         services.insert(String::from("service_rl"), build_rl_service());
         services.insert(String::from("service_rl_check"), build_rl_check_service());
+        services.insert(String::from("service_rl_report"), build_rl_report_service()); // Add the new service
 
-        let rl_action_0 = build_action("service_rl", "scope");
-        let rl_check_action_0 = build_action("service_rl_check", "scope");
+        let actions = vec![
+            build_action("service_rl", "scope"),
+            build_action("service_rl_check", "scope"),
+            build_action("service_rl_report", "scope"), // Add the new action
+        ];
 
-        let rl_r_action_0 = RuntimeAction::new(&rl_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
+        let runtime_actions: Vec<RuntimeAction> = actions
+            .iter()
+            .map(|a| RuntimeAction::new(a, &services).expect("action building failed"))
+            .collect();
 
-        let mut rl_check_r_action_0 = RuntimeAction::new(&rl_check_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let result = rl_check_r_action_0.merge(rl_r_action_0.clone());
-        assert_eq!(result, Ok(Some(rl_r_action_0)));
+        for a in &runtime_actions {
+            for b in &runtime_actions {
+                if !std::ptr::eq(a, b) {
+                    let mut a_clone = a.clone();
+                    let result = a_clone.merge(b.clone());
+                    assert_eq!(result, Ok(Some(b.clone())));
+                }
+            }
+        }
     }
 
     #[test]

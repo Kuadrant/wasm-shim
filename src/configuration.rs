@@ -92,6 +92,8 @@ pub enum ServiceType {
     RateLimit,
     #[serde(rename = "ratelimit-check")]
     RateLimitCheck,
+    #[serde(rename = "ratelimit-report")]
+    RateLimitReport,
 }
 
 #[derive(Deserialize, Debug, Clone)]
