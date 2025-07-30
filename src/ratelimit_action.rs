@@ -8,7 +8,8 @@ use crate::envoy::{
 use crate::filter::operations::EventualOperation;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::ResponseResult;
-use crate::service::errors::ProcessGrpcMessageError;
+use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
+use crate::service::rate_limit::RateLimitService;
 use crate::service::{from_envoy_rl_headers, DirectResponse, GrpcService};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
@@ -185,10 +186,29 @@ impl RateLimitAction {
         })
     }
 
-    pub fn build_descriptor<T>(
-        &self,
-        resolver: &mut T,
-    ) -> Result<RateLimitDescriptor, EvaluationError>
+    pub fn build_message<T>(&self, resolver: &mut T) -> Result<Option<Vec<u8>>, BuildMessageError>
+    where
+        T: AttributeResolver,
+    {
+        let descriptor = self.build_descriptor(resolver)?;
+
+        if descriptor.entries.is_empty() {
+            debug!("build_message(rl): empty descriptors");
+            Ok(None)
+        } else {
+            let (hits_addend, domain_attr) = self.get_known_attributes(resolver)?;
+            let domain = if domain_attr.is_empty() {
+                self.scope.clone()
+            } else {
+                domain_attr
+            };
+
+            RateLimitService::request_message_as_bytes(domain, vec![descriptor].into(), hits_addend)
+                .map(Some)
+        }
+    }
+
+    fn build_descriptor<T>(&self, resolver: &mut T) -> Result<RateLimitDescriptor, EvaluationError>
     where
         T: AttributeResolver,
     {
@@ -203,10 +223,7 @@ impl RateLimitAction {
         Ok(res)
     }
 
-    pub fn get_known_attributes<T>(
-        &self,
-        resolver: &mut T,
-    ) -> Result<(u32, String), EvaluationError>
+    fn get_known_attributes<T>(&self, resolver: &mut T) -> Result<(u32, String), EvaluationError>
     where
         T: AttributeResolver,
     {
@@ -271,10 +288,6 @@ impl RateLimitAction {
         Rc::clone(&self.grpc_service)
     }
 
-    pub fn scope(&self) -> &str {
-        self.scope.as_str()
-    }
-
     pub fn conditions_apply(&self) -> PredicateResult {
         // For RateLimitAction conditions always apply.
         // It is when building the descriptor that it may be empty because predicates do not
@@ -286,7 +299,7 @@ impl RateLimitAction {
         self.grpc_service.get_failure_mode()
     }
 
-    pub fn validate_ratelimit_action_conditional_data(&self) -> Result<(), ActionCreationError> {
+    fn validate_ratelimit_action_conditional_data(&self) -> Result<(), ActionCreationError> {
         for conditional_data_set in &self.conditional_data_sets {
             let mut seen_key_values: HashMap<String, String> = HashMap::new();
 
@@ -996,5 +1009,65 @@ mod test {
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe CEL compilation?");
         assert_eq!(rl_action.request_attributes().len(), 2);
+    }
+
+    #[test]
+    fn build_message_does_not_eval_data_when_predicates_evaluate_to_false() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "ratelimit.hits_addend".into(),
+                // if the expression evaluates, it would fail as it's unknown
+                value: "invalidFunc()".into(),
+            }),
+        }];
+        let predicates = vec!["false".into()];
+
+        let action = build_action("scope".into(), predicates, data);
+        let service = build_service();
+
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe expression parsing?");
+
+        let message = rl_action
+            .build_message(&mut PathCache::default())
+            .expect("this must not fail building");
+        assert!(message.is_none());
+    }
+
+    #[test]
+    fn test_build_message_uses_known_attributes() {
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "key_1".into(),
+                    value: "'value_1'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.domain".into(),
+                    value: "'test'".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "1+1".into(),
+                }),
+            },
+        ];
+        let predicates = vec![];
+        let action = build_action("scope".into(), predicates, data);
+
+        let service = build_service();
+
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe expression parsing?");
+
+        let (hits_addend, domain) = rl_action
+            .get_known_attributes(&mut PathCache::default())
+            .unwrap();
+        assert_eq!(hits_addend, 2);
+        assert_eq!(domain, "test");
     }
 }

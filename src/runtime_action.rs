@@ -8,7 +8,6 @@ use crate::ratelimit_action::RateLimitAction;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::service::auth::AuthService;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
-use crate::service::rate_limit::RateLimitService;
 use crate::service::{GrpcRequest, GrpcService};
 use log::debug;
 use protobuf::Message;
@@ -184,28 +183,7 @@ impl RuntimeAction {
         T: AttributeResolver,
     {
         match self {
-            RuntimeAction::RateLimit(rl_action) => {
-                let descriptor = rl_action.build_descriptor(resolver)?;
-                let (hits_addend, domain_attr) = rl_action.get_known_attributes(resolver)?;
-
-                if descriptor.entries.is_empty() {
-                    debug!("build_message(rl): empty descriptors");
-                    Ok(None)
-                } else {
-                    let domain = if domain_attr.is_empty() {
-                        rl_action.scope().to_string()
-                    } else {
-                        domain_attr
-                    };
-
-                    RateLimitService::request_message_as_bytes(
-                        domain,
-                        vec![descriptor].into(),
-                        hits_addend,
-                    )
-                    .map(Some)
-                }
-            }
+            RuntimeAction::RateLimit(rl_action) => rl_action.build_message(resolver),
             RuntimeAction::Auth(auth_action) => {
                 AuthService::request_message_as_bytes(String::from(auth_action.scope())).map(Some)
             }
@@ -236,7 +214,7 @@ mod test {
     use crate::configuration::{
         Action, DataItem, DataType, ExpressionItem, FailureMode, ServiceType, Timeout,
     };
-    use crate::data::PathCache;
+
     fn build_rl_service() -> Service {
         Service {
             service_type: ServiceType::RateLimit,
@@ -362,45 +340,6 @@ mod test {
 
         let result = rl_check_r_action_0.merge(rl_r_action_0.clone());
         assert_eq!(result, Ok(Some(rl_r_action_0)));
-    }
-
-    #[test]
-    fn test_build_message_uses_known_attributes() {
-        let mut services = HashMap::new();
-        services.insert(String::from("service_rl"), build_rl_service());
-
-        let mut action = build_action("service_rl", "scope");
-        let data = vec![
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "key_1".into(),
-                    value: "'value_1'".into(),
-                }),
-            },
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "ratelimit.domain".into(),
-                    value: "'test'".into(),
-                }),
-            },
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "ratelimit.hits_addend".into(),
-                    value: "1+1".into(),
-                }),
-            },
-        ];
-        action.data.extend(data);
-
-        let runtime_action = RuntimeAction::new(&action, &services).unwrap();
-
-        if let RuntimeAction::RateLimit(ref rl_action) = runtime_action {
-            let (hits_addend, domain) = rl_action
-                .get_known_attributes(&mut PathCache::default())
-                .unwrap();
-            assert_eq!(hits_addend, 2);
-            assert_eq!(domain, "test");
-        }
     }
 
     #[test]
