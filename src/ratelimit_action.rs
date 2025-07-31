@@ -6,7 +6,6 @@ use crate::envoy::{
     StatusCode,
 };
 use crate::filter::operations::EventualOperation;
-use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::ResponseResult;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
 use crate::service::rate_limit::RateLimitService;
@@ -15,7 +14,6 @@ use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::{debug, error};
 use protobuf::RepeatedField;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -322,74 +320,6 @@ impl RateLimitAction {
 
     pub fn get_failure_mode(&self) -> FailureMode {
         self.grpc_service.get_failure_mode()
-    }
-
-    fn validate_ratelimit_action_conditional_data(&self) -> Result<(), ActionCreationError> {
-        for conditional_data_set in &self.conditional_data_sets {
-            let mut seen_key_values: HashMap<String, String> = HashMap::new();
-
-            for entry_builder in &conditional_data_set.data {
-                let key = entry_builder.key.clone();
-                let current_value = entry_builder.expression.to_string();
-
-                if let Some(existing_value) = seen_key_values.get(&key) {
-                    if *existing_value != current_value {
-                        let error_message = format!(
-                            "Invalid ConditionalDataSet: key '{key}' has conflicting internal values ('{existing_value}' and '{current_value}').",
-                        );
-                        error!("{error_message}");
-                        return Err(ActionCreationError::InvalidAction(error_message));
-                    }
-                } else {
-                    seen_key_values.insert(key, current_value);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn merge(
-        &mut self,
-        other: RateLimitAction,
-    ) -> Result<Option<RateLimitAction>, ActionCreationError> {
-        self.validate_ratelimit_action_conditional_data()?;
-        other.validate_ratelimit_action_conditional_data()?;
-
-        if self.scope != other.scope || self.service_name != other.service_name {
-            return Ok(Some(other));
-        }
-
-        let mut self_key_values: HashMap<String, String> = HashMap::new();
-        for conditional_data_set in &self.conditional_data_sets {
-            for entry_builder in &conditional_data_set.data {
-                self_key_values.insert(
-                    entry_builder.key.clone(),
-                    entry_builder.expression.to_string(),
-                );
-            }
-        }
-
-        for other_conditional_data_set in &other.conditional_data_sets {
-            for other_entry_builder in &other_conditional_data_set.data {
-                let key = &other_entry_builder.key;
-                let other_value = other_entry_builder.expression.to_string();
-
-                if let Some(self_value) = self_key_values.get(key) {
-                    if *self_value != other_value {
-                        let error_message = format!(
-                            "Conflicting values within RateLimitActions for key '{key}': '{self_value}' and '{other_value}'",
-                        );
-                        error!("{}", error_message);
-                        return Err(ActionCreationError::InvalidAction(error_message));
-                    }
-                }
-            }
-        }
-
-        self.conditional_data_sets
-            .extend(other.conditional_data_sets);
-
-        Ok(None)
     }
 
     pub fn process_response(&self, rate_limit_response: RateLimitResponse) -> ResponseResult {
@@ -716,164 +646,6 @@ mod test {
             .build_descriptor(&mut PathCache::default())
             .expect("is ok");
         assert_eq!(descriptor, RateLimitDescriptor::default());
-    }
-
-    #[test]
-    fn merged_actions_generate_descriptor_entries_for_truthy_predicates() {
-        let service = build_service();
-
-        let data_1 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "'value_1'".into(),
-            }),
-        }];
-        let predicates_1 = vec!["true".into()];
-        let action_1 = build_action(String::new(), predicates_1, data_1);
-        let mut rl_action_1 = RateLimitAction::new(&action_1, &service)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let data_2 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_2".into(),
-                value: "'value_2'".into(),
-            }),
-        }];
-        let predicates_2 = vec!["false".into()];
-        let action_2 = build_action(String::new(), predicates_2, data_2);
-        let rl_action_2 = RateLimitAction::new(&action_2, &service)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let data_3 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_3".into(),
-                value: "'value_3'".into(),
-            }),
-        }];
-        let predicates_3 = vec!["true".into()];
-        let action_3 = build_action(String::new(), predicates_3, data_3);
-        let rl_action_3 = RateLimitAction::new(&action_3, &service)
-            .expect("action building failed. Maybe predicates compilation?");
-        assert_eq!(rl_action_1.merge(rl_action_2), Ok(None));
-        assert_eq!(rl_action_1.merge(rl_action_3), Ok(None));
-
-        // it should generate descriptor entries from action 1 and action 3
-        let descriptor = rl_action_1
-            .build_descriptor(&mut PathCache::default())
-            .expect("is ok");
-        assert_eq!(descriptor.get_entries().len(), 2);
-        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
-        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
-        assert_eq!(descriptor.get_entries()[1].key, String::from("key_3"));
-        assert_eq!(descriptor.get_entries()[1].value, String::from("value_3"));
-    }
-
-    #[test]
-    fn merge_fails_on_conflicting_values_with_same_scope() {
-        let service = build_service();
-
-        let data_1 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "1".into(),
-            }),
-        }];
-        let predicates_1 = vec!["true".into()];
-        let action_1 = build_action(String::new(), predicates_1, data_1);
-        let mut rl_action_1 =
-            RateLimitAction::new(&action_1, &service).expect("action building failed");
-
-        let data_2 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "2".into(),
-            }),
-        }];
-        let predicates_2 = vec!["false".into()];
-        let action_2 = build_action(String::new(), predicates_2, data_2);
-        let rl_action_2 =
-            RateLimitAction::new(&action_2, &service).expect("action building failed");
-
-        assert!(rl_action_1.merge(rl_action_2).is_err());
-    }
-
-    #[test]
-    fn merge_fails_if_other_action_has_internal_conflicts() {
-        let service = build_service();
-
-        let data_1 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "1".into(),
-            }),
-        }];
-        let predicates_1 = vec!["true".into()];
-        let action_1 = build_action(String::new(), predicates_1, data_1);
-        let mut rl_action_1 =
-            RateLimitAction::new(&action_1, &service).expect("action building failed");
-
-        let data_3 = vec![
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "key_1".into(),
-                    value: "3".into(),
-                }),
-            },
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "key_1".into(),
-                    value: "2".into(),
-                }),
-            },
-        ];
-        let predicates_3 = vec!["true".into()];
-        let action_3 = build_action("scope_3".to_string(), predicates_3, data_3);
-        let rl_action_3 =
-            RateLimitAction::new(&action_3, &service).expect("action building failed");
-
-        assert!(rl_action_1.merge(rl_action_3).is_err());
-    }
-
-    #[test]
-    fn merge_succeeds_with_identical_duplicate_keys() {
-        let service = build_service();
-
-        let data_1 = vec![DataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "key_1".into(),
-                value: "1".into(),
-            }),
-        }];
-        let predicates_1 = vec!["true".into()];
-        let action_1 = build_action(String::new(), predicates_1, data_1);
-        let mut rl_action_1 =
-            RateLimitAction::new(&action_1, &service).expect("action building failed");
-
-        let data_4 = vec![
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "key_1".into(),
-                    value: "1".into(),
-                }),
-            },
-            DataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "key_1".into(),
-                    value: "1".into(),
-                }),
-            },
-        ];
-        let predicates_4 = vec!["true".into()];
-        let action_4 = build_action(String::new(), predicates_4, data_4);
-        let rl_action_4 =
-            RateLimitAction::new(&action_4, &service).expect("action building failed");
-
-        assert_eq!(rl_action_1.merge(rl_action_4), Ok(None));
-        let (hits_addend, domain) = rl_action_1
-            .get_known_attributes(&mut PathCache::default())
-            .expect("is ok");
-        assert_eq!(hits_addend, 1);
-        assert_eq!(domain, "");
     }
 
     #[test]

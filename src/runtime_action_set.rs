@@ -26,36 +26,16 @@ impl RuntimeActionSet {
         }
 
         // actions
-        let mut all_runtime_actions = Vec::default();
+        let mut runtime_actions = Vec::default();
         for action in action_set.actions.iter() {
-            all_runtime_actions.push(RuntimeAction::new(action, services)?);
+            runtime_actions.push(RuntimeAction::new(action, services)?);
         }
-        let runtime_actions = Self::merge_subsequent_actions_of_a_kind(all_runtime_actions)?;
 
         Ok(Self {
             name: action_set.name.clone(),
             route_rule_predicates,
             runtime_actions: runtime_actions.into_iter().map(Rc::new).collect(),
         })
-    }
-
-    fn merge_subsequent_actions_of_a_kind(
-        runtime_actions: Vec<RuntimeAction>,
-    ) -> Result<Vec<RuntimeAction>, ActionCreationError> {
-        let mut folded_actions: Vec<RuntimeAction> = Vec::default();
-        for r_action in runtime_actions {
-            match folded_actions.last_mut() {
-                Some(existing_action) => match existing_action.merge(r_action) {
-                    Ok(None) => {}
-                    Ok(Some(unmerged_action)) => {
-                        folded_actions.push(unmerged_action);
-                    }
-                    Err(e) => return Err(e),
-                },
-                None => folded_actions.push(r_action),
-            }
-        }
-        Ok(folded_actions)
     }
 
     pub fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
@@ -79,7 +59,7 @@ impl AttributeOwner for RuntimeActionSet {
 mod test {
     use super::*;
     use crate::configuration::{
-        Action, ActionSet, FailureMode, RouteRuleConditions, ServiceType, Timeout,
+         ActionSet, RouteRuleConditions
     };
     use crate::data::PathCache;
 
