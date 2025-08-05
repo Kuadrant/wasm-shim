@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub(super) mod errors {
-    use crate::data::{EvaluationError, PropertyError};
+    use crate::data::{EvaluationError, Expression, PropertyError};
     use protobuf::ProtobufError;
     use std::fmt::{Debug, Display, Formatter};
 
@@ -25,6 +25,11 @@ pub(super) mod errors {
         Evaluation(EvaluationError),
         Property(PropertyError),
         Serialization(ProtobufError),
+        UnsupportedDataType {
+            expression: Expression,
+            got: String,
+            want: String,
+        },
     }
 
     impl From<EvaluationError> for BuildMessageError {

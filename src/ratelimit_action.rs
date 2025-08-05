@@ -12,7 +12,7 @@ use crate::service::rate_limit::RateLimitService;
 use crate::service::{from_envoy_rl_headers, DirectResponse, GrpcService};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
-use log::{debug, error};
+use log::debug;
 use protobuf::RepeatedField;
 use std::rc::Rc;
 
@@ -41,12 +41,13 @@ impl DescriptorEntryBuilder {
     pub fn evaluate<T>(
         &self,
         resolver: &mut T,
-    ) -> Result<RateLimitDescriptor_Entry, EvaluationError>
+    ) -> Result<RateLimitDescriptor_Entry, BuildMessageError>
     where
         T: AttributeResolver,
     {
         let key = self.key.clone();
-        let value = match self.expression.eval(resolver)? {
+        let value = self.expression.eval(resolver)?;
+        let value_str = match value {
             Value::Int(n) => format!("{n}"),
             Value::UInt(n) => format!("{n}"),
             Value::Float(n) => format!("{n}"),
@@ -54,19 +55,16 @@ impl DescriptorEntryBuilder {
             Value::Bool(b) => format!("{b}"),
             Value::Null => "null".to_owned(),
             _ => {
-                error!(
-                    "Failed to match type for expression `{:?}`",
-                    self.expression
-                );
-                return Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "Only scalar values can be sent as data".to_string(),
-                ));
+                return Err(BuildMessageError::UnsupportedDataType {
+                    expression: self.expression.clone(),
+                    got: value.type_of().to_string(),
+                    want: "Only scalar values can be sent as data".to_string(),
+                })
             }
         };
         let mut descriptor_entry = RateLimitDescriptor_Entry::new();
         descriptor_entry.set_key(key);
-        descriptor_entry.set_value(value);
+        descriptor_entry.set_value(value_str);
         Ok(descriptor_entry)
     }
 }
@@ -110,7 +108,7 @@ impl ConditionalData {
     pub fn entries<T>(
         &self,
         resolver: &mut T,
-    ) -> Result<RepeatedField<RateLimitDescriptor_Entry>, EvaluationError>
+    ) -> Result<RepeatedField<RateLimitDescriptor_Entry>, BuildMessageError>
     where
         T: AttributeResolver,
     {
@@ -187,7 +185,10 @@ impl RateLimitAction {
         }
     }
 
-    fn build_descriptor<T>(&self, resolver: &mut T) -> Result<RateLimitDescriptor, EvaluationError>
+    fn build_descriptor<T>(
+        &self,
+        resolver: &mut T,
+    ) -> Result<RateLimitDescriptor, BuildMessageError>
     where
         T: AttributeResolver,
     {
@@ -334,6 +335,7 @@ mod test {
     use crate::data::PathCache;
     use crate::envoy::HeaderValue;
     use crate::filter::operations::ProcessGrpcMessageOperation;
+    use cel_interpreter::objects::ValueType;
     use core::str;
 
     fn build_service() -> Service {
@@ -561,6 +563,37 @@ mod test {
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+    }
+
+    #[test]
+    fn descriptor_entry_from_expression_evaluates_to_non_scalar() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "foo".into(),
+                value: "[]".into(),
+            }),
+        }];
+        let action = build_action(String::new(), Vec::default(), data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let build_err = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect_err("is err");
+        assert!(matches!(
+            build_err,
+            BuildMessageError::UnsupportedDataType { .. }
+        ));
+        if let BuildMessageError::UnsupportedDataType {
+            expression: _,
+            got,
+            want: _,
+        } = build_err
+        {
+            assert_eq!(got, ValueType::List.to_string());
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
