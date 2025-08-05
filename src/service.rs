@@ -50,6 +50,16 @@ pub(super) mod errors {
                 BuildMessageError::Serialization(e) => {
                     write!(f, "BuildMessageError::Serialization {{ {e:?} }}")
                 }
+                BuildMessageError::UnsupportedDataType {
+                    expression,
+                    got,
+                    want,
+                } => {
+                    write!(
+                        f,
+                        "BuildMessageError::UnsupportedDataType {{ expression: {expression:?}; got: {got}; want: {want}}}"
+                    )
+                }
             }
         }
     }
