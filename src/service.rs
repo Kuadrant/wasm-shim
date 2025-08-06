@@ -26,10 +26,21 @@ pub(super) mod errors {
         Property(PropertyError),
         Serialization(ProtobufError),
         UnsupportedDataType {
-            expression: Expression,
+            /// Box the contents of expressoin to avoid large error variants
+            expression: Box<Expression>,
             got: String,
             want: String,
         },
+    }
+
+    impl BuildMessageError {
+        pub fn new_unsupported_data_type_err(e: Expression, got: String, want: String) -> Self {
+            BuildMessageError::UnsupportedDataType {
+                expression: Box::new(e),
+                got,
+                want,
+            }
+        }
     }
 
     impl From<EvaluationError> for BuildMessageError {

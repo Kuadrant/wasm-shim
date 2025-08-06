@@ -55,11 +55,11 @@ impl DescriptorEntryBuilder {
             Value::Bool(b) => format!("{b}"),
             Value::Null => "null".to_owned(),
             _ => {
-                return Err(BuildMessageError::UnsupportedDataType {
-                    expression: self.expression.clone(),
-                    got: value.type_of().to_string(),
-                    want: "Only scalar values can be sent as data".to_string(),
-                })
+                return Err(BuildMessageError::new_unsupported_data_type_err(
+                    self.expression.clone(),
+                    value.type_of().to_string(),
+                    "Only scalar values can be sent as data".to_string(),
+                ));
             }
         };
         let mut descriptor_entry = RateLimitDescriptor_Entry::new();
@@ -218,20 +218,20 @@ impl RateLimitAction {
                         "ratelimit.domain" => match val {
                             Value::String(s) => {
                                 if s.is_empty() {
-                                    return Err(BuildMessageError::UnsupportedDataType {
-                                        expression: entry_builder.expression.clone(),
-                                        got: "empty string".to_string(),
-                                        want: "ratelimit.domain cannot be empty".to_string(),
-                                    });
+                                    return Err(BuildMessageError::new_unsupported_data_type_err(
+                                        entry_builder.expression.clone(),
+                                        "empty string".to_string(),
+                                        "ratelimit.domain cannot be empty".to_string(),
+                                    ));
                                 }
                                 domain = s.to_string();
                             }
                             _ => {
-                                return Err(BuildMessageError::UnsupportedDataType {
-                                    expression: entry_builder.expression.clone(),
-                                    got: val.type_of().to_string(),
-                                    want: "string for ratelimit.domain".to_string(),
-                                });
+                                return Err(BuildMessageError::new_unsupported_data_type_err(
+                                    entry_builder.expression.clone(),
+                                    val.type_of().to_string(),
+                                    "string for ratelimit.domain".to_string(),
+                                ));
                             }
                         },
                         "ratelimit.hits_addend" => match val {
@@ -239,30 +239,32 @@ impl RateLimitAction {
                                 if i >= 0 && i <= u32::MAX as i64 {
                                     hits_addend = i as u32;
                                 } else {
-                                    return Err(BuildMessageError::UnsupportedDataType {
-                                    expression: entry_builder.expression.clone(),
-                                    got: i.to_string(),
-                                    want: "ratelimit.hits_addend must be 0 <= X <= u32::MAX integer".to_string(),
-                                });
+                                    return Err(BuildMessageError::new_unsupported_data_type_err(
+                                        entry_builder.expression.clone(),
+                                        i.to_string(),
+                                        "ratelimit.hits_addend must be 0 <= X <= u32::MAX integer"
+                                            .to_string(),
+                                    ));
                                 }
                             }
                             Value::UInt(u) => {
                                 if u <= u32::MAX as u64 {
                                     hits_addend = u as u32;
                                 } else {
-                                    return Err(BuildMessageError::UnsupportedDataType {
-                                    expression: entry_builder.expression.clone(),
-                                    got: u.to_string(),
-                                    want: "ratelimit.hits_addend must be 0 <= X <= u32::MAX integer".to_string(),
-                                });
+                                    return Err(BuildMessageError::new_unsupported_data_type_err(
+                                        entry_builder.expression.clone(),
+                                        u.to_string(),
+                                        "ratelimit.hits_addend must be 0 <= X <= u32::MAX integer"
+                                            .to_string(),
+                                    ));
                                 }
                             }
                             _ => {
-                                return Err(BuildMessageError::UnsupportedDataType {
-                                    expression: entry_builder.expression.clone(),
-                                    got: val.type_of().to_string(),
-                                    want: "integer for ratelimit.hits_addend".to_string(),
-                                });
+                                return Err(BuildMessageError::new_unsupported_data_type_err(
+                                    entry_builder.expression.clone(),
+                                    val.type_of().to_string(),
+                                    "integer for ratelimit.hits_addend".to_string(),
+                                ));
                             }
                         },
                         _ => {}
