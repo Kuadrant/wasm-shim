@@ -71,7 +71,8 @@ pub(super) mod errors {
     #[derive(Debug)]
     pub struct EvaluationError {
         expression: Expression,
-        source: CelError,
+        /// Box the contents of source to avoid large error variants
+        source: Box<CelError>,
     }
 
     #[derive(Debug, PartialEq)]
@@ -138,15 +139,18 @@ pub(super) mod errors {
 
     impl EvaluationError {
         pub fn new(expression: Expression, source: CelError) -> EvaluationError {
-            EvaluationError { expression, source }
+            EvaluationError {
+                expression,
+                source: Box::new(source),
+            }
         }
 
         pub fn is_transient(&self) -> bool {
-            matches!(self.source, CelError::TransientPropertyMissing(_))
+            matches!(&*self.source, CelError::TransientPropertyMissing(_))
         }
 
         pub fn transient_property(&self) -> Option<&str> {
-            if let CelError::TransientPropertyMissing(err) = &self.source {
+            if let CelError::TransientPropertyMissing(err) = &*self.source {
                 Some(err.attr.as_str())
             } else {
                 None
@@ -166,7 +170,7 @@ pub(super) mod errors {
 
     impl Error for EvaluationError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
-            Some(&self.source)
+            Some(&*self.source)
         }
     }
 }
