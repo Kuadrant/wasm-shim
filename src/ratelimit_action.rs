@@ -118,6 +118,21 @@ impl ConditionalData {
         Ok(ConditionalData { data, predicates })
     }
 
+    pub fn config_conditional_data(
+        config: &crate::configuration::ConditionalData,
+    ) -> Result<Self, ParseError> {
+        let mut predicates = Vec::default();
+        for predicate in &config.predicates {
+            predicates.push(Predicate::new(predicate)?);
+        }
+
+        let mut data = Vec::default();
+        for datum in &config.data {
+            data.push(DescriptorEntryBuilder::new(&datum.item)?);
+        }
+        Ok(ConditionalData { data, predicates })
+    }
+
     fn predicates_apply<T>(&self, resolver: &mut T) -> PredicateResult
     where
         T: AttributeResolver,
@@ -178,11 +193,21 @@ pub struct RateLimitAction {
 
 impl RateLimitAction {
     pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
+        let conditional_data_sets = if !action.conditional_data.is_empty() {
+            action
+                .conditional_data
+                .iter()
+                .map(ConditionalData::config_conditional_data)
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            vec![ConditionalData::new(action)?]
+        };
+
         Ok(Self {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
             scope: action.scope.clone(),
             service_name: action.service.clone(),
-            conditional_data_sets: vec![ConditionalData::new(action)?],
+            conditional_data_sets,
         })
     }
 
@@ -448,6 +473,7 @@ mod test {
             scope,
             predicates,
             data,
+            conditional_data: Vec::default(),
         }
     }
 

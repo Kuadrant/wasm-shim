@@ -9,6 +9,14 @@ use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct ConditionalData {
+    #[serde(default)]
+    pub predicates: Vec<String>,
+    #[serde(default)]
+    pub data: Vec<DataItem>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Action {
     pub service: String,
@@ -17,6 +25,8 @@ pub struct Action {
     pub predicates: Vec<String>,
     #[serde(default)]
     pub data: Vec<DataItem>,
+    #[serde(default)]
+    pub conditional_data: Vec<ConditionalData>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
