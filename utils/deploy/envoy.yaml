@@ -178,14 +178,17 @@ data:
                                         {
                                           "service": "limitador",
                                           "scope": "rlp-ns-A/rlp-name-A",
-                                          "data": [
-                                            {
-                                              "expression": {
-                                                "key": "unknown.path",
-                                                "value": "unknown.path"
+                                          "conditionalData": [
+                                          {
+                                            "data": [
+                                              {
+                                                "expression": {
+                                                  "key": "unknown.path",
+                                                  "value": "unknown.path"
+                                                }
                                               }
-                                            }
-                                          ]
+                                            ]
+                                          }]
                                         }
                                       ]
                                     },
@@ -203,14 +206,17 @@ data:
                                         {
                                           "service": "limitador",
                                           "scope": "rlp-ns-B/rlp-name-B",
-                                          "data": [
-                                            {
-                                              "expression": {
-                                                "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
-                                                "value": "1"
+                                          "conditionalData": [
+                                          {
+                                            "data": [
+                                              {
+                                                "expression": {
+                                                  "key": "rlp-ns-B/rlp-name-B/limit-not-to-be-activated",
+                                                  "value": "1"
+                                                }
                                               }
-                                            }
-                                          ]
+                                            ]
+                                          }]
                                         }
                                       ]
                                     },
@@ -230,32 +236,35 @@ data:
                                         {
                                           "service": "limitador",
                                           "scope": "rlp-ns-C/rlp-name-C",
-                                          "data": [
-                                            {
-                                              "expression": {
-                                                "key": "limit_to_be_activated",
-                                                "value": "1"
+                                          "conditionalData": [
+                                          {
+                                            "data": [
+                                              {
+                                                "expression": {
+                                                  "key": "limit_to_be_activated",
+                                                  "value": "1"
+                                                }
+                                              },
+                                              {
+                                                "expression": {
+                                                  "key": "source.address",
+                                                  "value": "source.address"
+                                                }
+                                              },
+                                              {
+                                                "expression": {
+                                                  "key": "request.headers['my-custom-header-01']",
+                                                  "value": "request.headers['my-custom-header-01']"
+                                                }
+                                              },
+                                              {
+                                                "expression": {
+                                                  "key": "user_id",
+                                                  "value": "string(getHostProperty(['metadata', 'filter_metadata', 'envoy.filters.http.header_to_metadata', 'user_id']))"
+                                                }
                                               }
-                                            },
-                                            {
-                                              "expression": {
-                                                "key": "source.address",
-                                                "value": "source.address"
-                                              }
-                                            },
-                                            {
-                                              "expression": {
-                                                "key": "request.headers['my-custom-header-01']",
-                                                "value": "request.headers['my-custom-header-01']"
-                                              }
-                                            },
-                                            {
-                                              "expression": {
-                                                "key": "user_id",
-                                                "value": "string(getHostProperty(['metadata', 'filter_metadata', 'envoy.filters.http.header_to_metadata', 'user_id']))"
-                                              }
-                                            }
-                                          ]
+                                            ]
+                                          }]
                                         }
                                       ]
                                     },
@@ -310,14 +319,17 @@ data:
                                         {
                                           "service": "limitador",
                                           "scope": "multi-ns-A/multi-name-A",
-                                          "data": [
-                                            {
-                                              "expression": {
-                                                "key": "user_id",
-                                                "value": "auth.identity.userid"
+                                          "conditionalData": [
+                                          {
+                                            "data": [
+                                              {
+                                                "expression": {
+                                                  "key": "user_id",
+                                                  "value": "auth.identity.userid"
+                                                }
                                               }
-                                            }
-                                          ]
+                                            ]
+                                          }]
                                         }
                                       ]
                                     },
@@ -339,17 +351,20 @@ data:
                                         {
                                           "service": "limitador",
                                           "scope": "multi-ns-B/multi-name-B",
-                                          "predicates": [
-                                            "auth.identity.userid == 'alice'"
-                                          ],
-                                          "data": [
-                                            {
-                                              "expression": {
-                                                "key": "user_id",
-                                                "value": "alice"
+                                          "conditionalData": [
+                                          {
+                                            "predicates": [
+                                              "auth.identity.userid == 'alice'"
+                                            ],
+                                            "data": [
+                                              {
+                                                "expression": {
+                                                  "key": "user_id",
+                                                  "value": "alice"
+                                                }
                                               }
-                                            }
-                                          ]
+                                            ]
+                                          }]
                                         }
                                       ]
                                     }

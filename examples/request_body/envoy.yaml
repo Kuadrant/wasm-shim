@@ -62,14 +62,17 @@ static_resources:
                                 {
                                   "service": "rlsbin",
                                   "scope": "domain-a",
-                                  "data": [
-                                    {
-                                      "expression": {
-                                        "key": "model",
-                                        "value": "requestBodyJSON('/model')"
+                                  "conditionalData": [
+                                  {
+                                    "data": [
+                                      {
+                                        "expression": {
+                                          "key": "model",
+                                          "value": "requestBodyJSON('/model')"
+                                        }
                                       }
-                                    }
-                                  ]
+                                    ]
+                                  }]
                                 }
                               ]
                             }

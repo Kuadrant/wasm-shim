@@ -67,26 +67,32 @@ static_resources:
                                 {
                                   "service": "limitadorA",
                                   "scope": "basic",
-                                  "data": [
-                                    {
-                                      "expression": {
-                                        "key": "a",
-                                        "value": "1"
+                                  "conditionalData": [
+                                  {
+                                    "data": [
+                                      {
+                                        "expression": {
+                                          "key": "a",
+                                          "value": "1"
+                                        }
                                       }
-                                    }
-                                  ]
+                                    ]
+                                  }]
                                 },
                                 {
                                   "service": "limitadorB",
                                   "scope": "basic",
-                                  "data": [
-                                    {
-                                      "expression": {
-                                        "key": "a",
-                                        "value": "1"
+                                  "conditionalData": [
+                                  {
+                                    "data": [
+                                      {
+                                        "expression": {
+                                          "key": "a",
+                                          "value": "1"
+                                        }
                                       }
-                                    }
-                                  ]
+                                    ]
+                                  }]
                                 }
                               ]
                             }

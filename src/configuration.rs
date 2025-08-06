@@ -210,21 +210,24 @@ mod test {
             {
                 "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
-                "predicates": [
-                    "auth.metadata.username == 'alice'"
-                ],
-                "data": [
+                "conditionalData": [
                 {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
-                },
-                {
-                    "expression": {
-                        "key": "username",
-                        "value": "auth.metadata.username"
-                    }
+                    "predicates": [
+                        "auth.metadata.username == 'alice'"
+                    ],
+                    "data": [
+                    {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    },
+                    {
+                        "expression": {
+                            "key": "username",
+                            "value": "auth.metadata.username"
+                        }
+                    }]
                 }]
             }]
         }]
@@ -281,20 +284,24 @@ mod test {
         let auth_data_items = &auth_action.data;
         assert_eq!(auth_data_items.len(), 0);
 
-        let rl_data_items = &rl_action.data;
-        assert_eq!(rl_data_items.len(), 2);
+        let rl_conditional_data = &rl_action.conditional_data;
+        assert_eq!(rl_conditional_data.len(), 1);
+
+        let rl_conditional = &rl_conditional_data[0];
+        assert_eq!(rl_conditional.predicates.len(), 1);
+        assert_eq!(rl_conditional.data.len(), 2);
 
         let rl_predicates = &rl_action.predicates;
-        assert_eq!(rl_predicates.len(), 1);
+        assert_eq!(rl_predicates.len(), 0);
 
-        if let DataType::Static(static_item) = &rl_data_items[0].item {
+        if let DataType::Static(static_item) = &rl_conditional.data[0].item {
             assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
             assert_eq!(static_item.value, "1");
         } else {
             unreachable!();
         }
 
-        if let DataType::Expression(exp) = &rl_data_items[1].item {
+        if let DataType::Expression(exp) = &rl_conditional.data[1].item {
             assert_eq!(exp.key, "username");
             assert_eq!(exp.value, "auth.metadata.username");
         } else {
@@ -338,18 +345,21 @@ mod test {
                 {
                     "service": "limitador",
                     "scope": "rlp-ns-A/rlp-name-A",
-                    "data": [
+                    "conditionalData": [
                     {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    },
-                    {
-                        "expression": {
-                            "key": "username",
-                            "value": "auth.metadata.username"
-                        }
+                        "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            }
+                        },
+                        {
+                            "expression": {
+                                "key": "username",
+                                "value": "auth.metadata.username"
+                            }
+                        }]
                     }]
                 }]
             }]
