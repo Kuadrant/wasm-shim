@@ -203,13 +203,11 @@ mod test {
         }
     }
 
-
     fn build_action(service: &str, scope: &str) -> Action {
         Action {
             service: service.into(),
             scope: scope.into(),
             predicates: Vec::default(),
-            data: Vec::default(),
             conditional_data: Vec::default(),
         }
     }
@@ -220,7 +218,7 @@ mod test {
         services.insert(String::from("service_rl"), build_rl_service());
 
         let mut action = build_action("service_rl", "scope");
-        let data = vec![
+        let conditional_data = vec![
             DataItem {
                 item: DataType::Expression(ExpressionItem {
                     key: "key_1".into(),
@@ -241,7 +239,14 @@ mod test {
                 }),
             },
         ];
-        action.data.extend(data);
+        action
+            .conditional_data
+            .extend(conditional_data.into_iter().map(|data_item| {
+                crate::configuration::ConditionalData {
+                    predicates: Vec::default(),
+                    data: vec![data_item],
+                }
+            }));
 
         let runtime_action = RuntimeAction::new(&action, &services).unwrap();
 

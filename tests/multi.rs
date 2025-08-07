@@ -701,11 +701,6 @@ fn authenticated_one_ratelimit_action_matches() {
         )
         .expect_get_property(Some(vec!["source", "address"]))
         .returning(Some("1.2.3.4:80".as_bytes()))
-        // Actions dont merge in wasm shim so first rate limit action predicate fails
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("build_message(rl): empty descriptors"),
-        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),

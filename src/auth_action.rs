@@ -126,7 +126,6 @@ mod test {
             service: "some_service".into(),
             scope: "some_scope".into(),
             predicates,
-            data: Vec::default(),
             conditional_data: Vec::default(),
         };
 

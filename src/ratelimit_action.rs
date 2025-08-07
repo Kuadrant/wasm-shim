@@ -103,22 +103,7 @@ struct ConditionalData {
 }
 
 impl ConditionalData {
-    pub fn new(action: &Action) -> Result<Self, ParseError> {
-        let mut predicates = Vec::default();
-        for predicate in &action.predicates {
-            predicates.push(Predicate::new(predicate)?);
-        }
-
-        let mut data = Vec::default();
-        for datum in &action.data {
-            data.push(DescriptorEntryBuilder::new(&datum.item)?);
-        }
-        Ok(ConditionalData { data, predicates })
-    }
-
-    pub fn config_conditional_data(
-        config: &crate::configuration::ConditionalData,
-    ) -> Result<Self, ParseError> {
+    pub fn new(config: &crate::configuration::ConditionalData) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &config.predicates {
             predicates.push(Predicate::new(predicate)?);
@@ -191,15 +176,11 @@ pub struct RateLimitAction {
 
 impl RateLimitAction {
     pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
-        let conditional_data_sets = if !action.conditional_data.is_empty() {
-            action
-                .conditional_data
-                .iter()
-                .map(ConditionalData::config_conditional_data)
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            vec![ConditionalData::new(action)?]
-        };
+        let conditional_data_sets = action
+            .conditional_data
+            .iter()
+            .map(ConditionalData::new)
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
@@ -401,9 +382,8 @@ mod test {
         Action {
             service: "some_service".into(),
             scope,
-            predicates,
-            data,
-            conditional_data: Vec::default(),
+            predicates: Vec::default(),
+            conditional_data: vec![crate::configuration::ConditionalData { predicates, data }],
         }
     }
 
