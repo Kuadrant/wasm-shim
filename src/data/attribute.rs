@@ -11,7 +11,7 @@ pub(super) mod errors {
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub enum PropertyError {
         Get(PropError),
         Parse(PropError),
@@ -39,7 +39,7 @@ pub(super) mod errors {
         }
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub struct PropError {
         message: String,
     }

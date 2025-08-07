@@ -32,14 +32,6 @@ pub(super) mod errors {
         got: ValueType,
     }
 
-    impl PartialEq for PredicateResultError {
-        fn eq(&self, other: &Self) -> bool {
-            // PartialEq not implemented by ValueType,
-            // thus, comparing out of the Display output 🤷
-            format!("{}", self.got) == format!("{}", other.got)
-        }
-    }
-
     impl Display for PredicateResultError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(
@@ -67,7 +59,7 @@ pub(super) mod errors {
     // TransientError holds transient errors that occurred because evaluation was
     // attempted in a premature phase. These errors are expected to be
     // resolved automatically upon re-evaluation in a subsequent, correct phase.
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub struct TransientError {
         attr: String,
     }
@@ -93,7 +85,7 @@ pub(super) mod errors {
         source: Box<CelError>,
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub enum CelError {
         Property(PropertyError),
         Resolve(ExecutionError),
