@@ -4,7 +4,12 @@ mod action_set_index;
 mod auth_action;
 mod configuration;
 mod data;
-#[allow(renamed_and_removed_lints, clippy::panic, clippy::unwrap_used)]
+#[allow(
+    renamed_and_removed_lints,
+    mismatched_lifetime_syntaxes,
+    clippy::panic,
+    clippy::unwrap_used
+)]
 mod envoy;
 mod filter;
 mod ratelimit_action;
