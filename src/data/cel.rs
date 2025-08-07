@@ -23,24 +23,42 @@ use urlencoding::decode;
 
 pub(super) mod errors {
     use crate::data::{Expression, PropertyError};
+    use cel_interpreter::objects::ValueType;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    #[derive(Debug, PartialEq)]
     pub struct PredicateResultError {
-        message: String,
+        got: ValueType,
+    }
+
+    impl PartialEq for PredicateResultError {
+        fn eq(&self, other: &Self) -> bool {
+            // PartialEq not implemented by ValueType,
+            // thus, comparing out of the Display output 🤷
+            format!("{}", self.got) == format!("{}", other.got)
+        }
     }
 
     impl Display for PredicateResultError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "PredicateResultError {{ message: {:?} }}", self.message)
+            write!(
+                f,
+                "PredicateResultError {{ expected boolean value, got {} }}",
+                self.got
+            )
+        }
+    }
+
+    impl Debug for PredicateResultError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Display::fmt(self, f)
         }
     }
 
     impl PredicateResultError {
-        pub fn new(message: String) -> Self {
-            PredicateResultError { message }
+        pub fn new(value_type: ValueType) -> Self {
+            PredicateResultError { got: value_type }
         }
     }
 
@@ -534,7 +552,7 @@ impl Predicate {
             Value::Bool(result) => Ok(result),
             _ => Err(EvaluationError::new(
                 self.expression.clone(),
-                PredicateResultError::new(format!("Expected boolean value, got {value:?}")).into(),
+                PredicateResultError::new(value.type_of()).into(),
             )),
         }
     }
