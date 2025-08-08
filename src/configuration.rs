@@ -24,8 +24,6 @@ pub struct Action {
     #[serde(default)]
     pub predicates: Vec<String>,
     #[serde(default)]
-    pub data: Vec<DataItem>,
-    #[serde(default)]
     pub conditional_data: Vec<ConditionalData>,
 }
 
@@ -281,9 +279,6 @@ mod test {
         assert_eq!(rl_action.service, "limitador");
         assert_eq!(rl_action.scope, "rlp-ns-A/rlp-name-A");
 
-        let auth_data_items = &auth_action.data;
-        assert_eq!(auth_data_items.len(), 0);
-
         let rl_conditional_data = &rl_action.conditional_data;
         assert_eq!(rl_conditional_data.len(), 1);
 
@@ -415,16 +410,19 @@ mod test {
             {
                 "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
-                "data": [
+                "conditionalData": [
                 {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    },
-                    "expression": {
-                        "key": "username",
-                        "value": "auth.metadata.username"
-                    }
+                    "data": [
+                    {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        },
+                        "expression": {
+                            "key": "username",
+                            "value": "auth.metadata.username"
+                        }
+                    }]
                 }]
             }]
         }]
@@ -451,12 +449,15 @@ mod test {
             {
                 "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
-                "data": [
+                "conditionalData": [
                 {
-                    "unknown": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
+                    "data": [
+                    {
+                        "unknown": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    }]
                 }]
             }]
         }]

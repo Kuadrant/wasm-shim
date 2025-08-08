@@ -28,7 +28,6 @@ pub(super) mod errors {
     pub enum ActionCreationError {
         Parse(ParseError),
         UnknownService(String),
-        InvalidAction(String),
     }
 
     impl From<ParseError> for ActionCreationError {
@@ -58,9 +57,6 @@ pub(super) mod errors {
                 }
                 ActionCreationError::UnknownService(e) => {
                     write!(f, "NewActionError::UnknownService {{ {e:?} }}")
-                }
-                ActionCreationError::InvalidAction(e) => {
-                    write!(f, "NewActionError::InvalidAction {{ {e:?} }}")
                 }
             }
         }
@@ -112,23 +108,6 @@ impl RuntimeAction {
         match self {
             Self::Auth(auth_action) => auth_action.get_failure_mode(),
             Self::RateLimit(rl_action) => rl_action.get_failure_mode(),
-        }
-    }
-
-    pub fn merge(
-        &mut self,
-        other: RuntimeAction,
-    ) -> Result<Option<RuntimeAction>, ActionCreationError> {
-        // only makes sense for rate limiting actions
-        match (self, other) {
-            (Self::RateLimit(self_rl_action), Self::RateLimit(other_rl_action)) => {
-                match self_rl_action.merge(other_rl_action) {
-                    Ok(None) => Ok(None),
-                    Ok(Some(unmerged_action)) => Ok(Some(Self::RateLimit(unmerged_action))),
-                    Err(e) => Err(e),
-                }
-            }
-            (_, unmatched_other) => Ok(Some(unmatched_other)),
         }
     }
 
@@ -224,141 +203,12 @@ mod test {
         }
     }
 
-    fn build_auth_service() -> Service {
-        Service {
-            service_type: ServiceType::Auth,
-            endpoint: "authorino".into(),
-            failure_mode: FailureMode::default(),
-            timeout: Timeout::default(),
-        }
-    }
-
-    fn build_rl_check_service() -> Service {
-        Service {
-            service_type: ServiceType::RateLimitCheck,
-            endpoint: "limitador".into(),
-            failure_mode: FailureMode::default(),
-            timeout: Timeout::default(),
-        }
-    }
-
-    fn build_rl_report_service() -> Service {
-        Service {
-            service_type: ServiceType::RateLimitReport,
-            endpoint: "limitador".into(),
-            failure_mode: FailureMode::default(),
-            timeout: Timeout::default(),
-        }
-    }
-
     fn build_action(service: &str, scope: &str) -> Action {
         Action {
             service: service.into(),
             scope: scope.into(),
             predicates: Vec::default(),
-            data: Vec::default(),
             conditional_data: Vec::default(),
-        }
-    }
-
-    #[test]
-    fn only_rl_actions_are_merged() {
-        let mut services = HashMap::new();
-        services.insert(String::from("service_rl"), build_rl_service());
-
-        let rl_action_0 = build_action("service_rl", "scope");
-        let rl_action_1 = build_action("service_rl", "scope");
-
-        let mut rl_r_action_0 = RuntimeAction::new(&rl_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-        let rl_r_action_1 = RuntimeAction::new(&rl_action_1, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let result = rl_r_action_0.merge(rl_r_action_1.clone());
-        assert_eq!(result, Ok(None));
-    }
-
-    #[test]
-    fn auth_actions_are_not_merged() {
-        let mut services = HashMap::new();
-        services.insert(String::from("service_auth"), build_auth_service());
-
-        let auth_action_0 = build_action("service_auth", "scope");
-        let auth_action_1 = build_action("service_auth", "scope");
-
-        let mut auth_r_action_0 = RuntimeAction::new(&auth_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-        let auth_r_action_1 = RuntimeAction::new(&auth_action_1, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let result = auth_r_action_0.merge(auth_r_action_1.clone());
-        assert_eq!(result, Ok(Some(auth_r_action_1)));
-    }
-
-    #[test]
-    fn auth_actions_do_not_merge_rl() {
-        let mut services = HashMap::new();
-        services.insert(String::from("service_rl"), build_rl_service());
-        services.insert(String::from("service_auth"), build_auth_service());
-
-        let rl_action_0 = build_action("service_rl", "scope");
-        let auth_action_0 = build_action("service_auth", "scope");
-
-        let mut rl_r_action_0 = RuntimeAction::new(&rl_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let auth_r_action_0 = RuntimeAction::new(&auth_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let result = rl_r_action_0.merge(auth_r_action_0.clone());
-        assert_eq!(result, Ok(Some(auth_r_action_0)));
-    }
-
-    #[test]
-    fn rl_actions_do_not_merge_auth() {
-        let mut services = HashMap::new();
-        services.insert(String::from("service_rl"), build_rl_service());
-        services.insert(String::from("service_auth"), build_auth_service());
-
-        let rl_action_0 = build_action("service_rl", "scope");
-        let auth_action_0 = build_action("service_auth", "scope");
-
-        let rl_r_action_0 = RuntimeAction::new(&rl_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let mut auth_r_action_0 = RuntimeAction::new(&auth_action_0, &services)
-            .expect("action building failed. Maybe predicates compilation?");
-
-        let result = auth_r_action_0.merge(rl_r_action_0.clone());
-        assert_eq!(result, Ok(Some(rl_r_action_0)));
-    }
-
-    #[test]
-    fn rl_actions_do_not_merge_different_rl_actions() {
-        let mut services = HashMap::new();
-        services.insert(String::from("service_rl"), build_rl_service());
-        services.insert(String::from("service_rl_check"), build_rl_check_service());
-        services.insert(String::from("service_rl_report"), build_rl_report_service()); // Add the new service
-
-        let actions = vec![
-            build_action("service_rl", "scope"),
-            build_action("service_rl_check", "scope"),
-            build_action("service_rl_report", "scope"), // Add the new action
-        ];
-
-        let runtime_actions: Vec<RuntimeAction> = actions
-            .iter()
-            .map(|a| RuntimeAction::new(a, &services).expect("action building failed"))
-            .collect();
-
-        for a in &runtime_actions {
-            for b in &runtime_actions {
-                if !std::ptr::eq(a, b) {
-                    let mut a_clone = a.clone();
-                    let result = a_clone.merge(b.clone());
-                    assert_eq!(result, Ok(Some(b.clone())));
-                }
-            }
         }
     }
 
@@ -368,7 +218,7 @@ mod test {
         services.insert(String::from("service_rl"), build_rl_service());
 
         let mut action = build_action("service_rl", "scope");
-        let data = vec![
+        let conditional_data = vec![
             DataItem {
                 item: DataType::Expression(ExpressionItem {
                     key: "key_1".into(),
@@ -389,7 +239,14 @@ mod test {
                 }),
             },
         ];
-        action.data.extend(data);
+        action
+            .conditional_data
+            .extend(conditional_data.into_iter().map(|data_item| {
+                crate::configuration::ConditionalData {
+                    predicates: Vec::default(),
+                    data: vec![data_item],
+                }
+            }));
 
         let runtime_action = RuntimeAction::new(&action, &services).unwrap();
 
