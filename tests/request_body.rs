@@ -48,47 +48,56 @@ fn it_waits_for_the_request_body() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain-A",
-                "predicates" : [
-                    "request.method == 'POST'"
-                ],
-                "data": [
-                    {
-                        "expression": {
-                            "key": "request.method",
-                            "value": "request.method"
+                "conditionalData": [
+                {
+                    "predicates": [
+                        "request.method == 'POST'"
+                    ],
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "request.method",
+                                "value": "request.method"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             },
             {
                 "service": "limitador",
                 "scope": "RLS-domain-B",
-                "predicates" : [
-                    "request.method == 'POST'"
-                ],
-                "data": [
-                    {
-                        "expression": {
-                            "key": "model",
-                            "value": "requestBodyJSON('/model')"
+                "conditionalData": [
+                {
+                    "predicates": [
+                        "request.method == 'POST'"
+                    ],
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "model",
+                                "value": "requestBodyJSON('/model')"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             },
             {
                 "service": "limitador",
                 "scope": "RLS-domain-C",
-                "predicates" : [
-                    "request.method == 'POST'"
-                ],
-                "data": [
-                    {
-                        "expression": {
-                            "key": "request.host",
-                            "value": "request.host == 'cars.toystore.com'"
+                "conditionalData": [
+                {
+                    "predicates": [
+                        "request.method == 'POST'"
+                    ],
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "request.host",
+                                "value": "request.host == 'cars.toystore.com'"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }
             ]
         }]
@@ -304,18 +313,21 @@ fn it_reads_request_attr_in_advance_when_request_body() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "predicates" : [
-                    "requestBodyJSON('/model') == 'gpt-4.1'",
-                    "request.url_path.startsWith('/admin/toy')"
-                ],
-                "data": [
-                    {
-                        "expression": {
-                            "key": "request.method",
-                            "value": "request.method"
+                "conditionalData": [
+                {
+                    "predicates": [
+                        "requestBodyJSON('/model') == 'gpt-4.1'",
+                        "request.url_path.startsWith('/admin/toy')"
+                    ],
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "request.method",
+                                "value": "request.method"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }
             ]
         }]

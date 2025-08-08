@@ -26,14 +26,17 @@ The Wasm configuration defines a set of rules for `*.example.com`.
         {
             "service": "limitador",
             "scope": "ratelimit-source",
-            "data": [
-                {
-                    "expression": {
-                        "key": "source.remote_address",
-                        "value": "source.remote_address"
+            "conditionalData": [
+            {
+                "data": [
+                    {
+                        "expression": {
+                            "key": "source.remote_address",
+                            "value": "source.remote_address"
+                        }
                     }
-                }
-            ]
+                ]
+            }]
         }
     ]
 }

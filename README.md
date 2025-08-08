@@ -31,14 +31,17 @@ actionSets:
     actions:
     - service: auth-service
       scope: auth-scope-a
+      predicates:
+        - auth.identity.user_id == "alice"
     - service: ratelimit-service
       scope: ratelimit-scope-a
-      predicates:
-      - auth.identity.anonymous == true
-      data:
-      - expression:
-          key: my_header
-          value: request.headers["my-custom-header"]
+      conditionalData:
+      - predicates:
+        - auth.identity.anonymous == true
+        data:
+        - expression:
+            key: my_header
+            value: request.headers["my-custom-header"]
 ```
 
 ## Features

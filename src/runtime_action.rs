@@ -257,6 +257,7 @@ mod test {
             scope: scope.into(),
             predicates: Vec::default(),
             data: Vec::default(),
+            conditional_data: Vec::default(),
         }
     }
 

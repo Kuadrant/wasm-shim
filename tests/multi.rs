@@ -40,12 +40,15 @@ const CONFIG: &str = r#"{
         {
             "service": "limitador",
             "scope": "RLS-domain",
-            "data": [
+            "conditionalData": [
             {
-                "static": {
-                    "key": "admin",
-                    "value": "1"
-                }
+                "data": [
+                {
+                    "static": {
+                        "key": "admin",
+                        "value": "1"
+                    }
+                }]
             }]
         }]
     }]
@@ -502,32 +505,32 @@ fn authenticated_one_ratelimit_action_matches() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "predicates" : [
-                    "source.address == '127.0.0.1:80'"
-                ],
-                "data": [
+                "conditionalData": [
                 {
-                    "static": {
-                        "key": "me",
-                        "value": "1"
-                    }
-                }]
-            },
-            {
-                "service": "limitador",
-                "scope": "RLS-domain",
-                "predicates" : [
-                    "source.address != '127.0.0.1:80'"
-                ],
-                "data": [
+                    "predicates": [
+                        "source.address == '127.0.0.1:80'"
+                    ],
+                    "data": [
+                    {
+                        "static": {
+                            "key": "me",
+                            "value": "1"
+                        }
+                    }]
+                },
                 {
-                    "static": {
-                        "key": "other",
-                        "value": "1"
-                    }
+                    "predicates": [
+                        "source.address != '127.0.0.1:80'"
+                    ],
+                    "data": [
+                    {
+                        "static": {
+                            "key": "other",
+                            "value": "1"
+                        }
+                    }]
                 }]
-            }
-            ]
+            }]
         }]
     }"#;
 

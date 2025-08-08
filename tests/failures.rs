@@ -42,14 +42,17 @@ fn it_fails_on_first_action_grpc_call() {
             {
                 "service": "mistyped-service",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "limit_to_be_activated",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "limit_to_be_activated",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -165,26 +168,32 @@ fn it_fails_on_second_action_grpc_call() {
             {
                 "service": "limitador",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "limit_to_be_activated",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "limit_to_be_activated",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             },
             {
                 "service": "mistyped-service",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "limit_to_be_activated",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "limit_to_be_activated",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -321,14 +330,17 @@ fn it_fails_on_first_action_grpc_response() {
             {
                 "service": "limitador-unreachable",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "limit_to_be_activated",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "limit_to_be_activated",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -448,26 +460,32 @@ fn it_fails_on_second_action_grpc_response() {
             {
                 "service": "limitador",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "limit_to_be_activated",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "limit_to_be_activated",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             },
             {
                 "service": "limitador-unreachable",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "limit_to_be_activated",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "limit_to_be_activated",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;

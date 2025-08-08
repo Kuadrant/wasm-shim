@@ -46,26 +46,32 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             {
                 "service": "limitador-unreachable",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "l",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "l",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             },
             {
                 "service": "limitador",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "l",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "l",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -216,26 +222,32 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             {
                 "service": "limitador-unreachable",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "l",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "l",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             },
             {
                 "service": "limitador",
                 "scope": "a",
-                "data": [
-                    {
-                        "expression": {
-                            "key": "l",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "l",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;

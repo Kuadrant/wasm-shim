@@ -452,12 +452,12 @@ fn it_does_not_fold_auth_actions() {
             {
                 "service": "auth",
                 "scope": "auth-scope",
-                "predicates" : []
+                "conditionalData" : []
             },
             {
                 "service": "auth",
                 "scope": "auth-scope",
-                "predicates" : []
+                "conditionalData" : []
             }]
         }]
     }"#;

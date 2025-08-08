@@ -127,6 +127,7 @@ mod test {
             scope: "some_scope".into(),
             predicates,
             data: Vec::default(),
+            conditional_data: Vec::default(),
         };
 
         let service = Service {

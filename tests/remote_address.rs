@@ -44,14 +44,17 @@ fn it_limits_based_on_source_address() {
                     {
                         "service": "limitador",
                         "scope": "RLS-domain",
-                        "data": [
-                            {
-                                "expression": {
-                                    "key": "source.remote_address",
-                                    "value": "source.remote_address"
+                        "conditionalData": [
+                        {
+                            "data": [
+                                {
+                                    "expression": {
+                                        "key": "source.remote_address",
+                                        "value": "source.remote_address"
+                                    }
                                 }
-                            }
-                        ]
+                            ]
+                        }]
                     }
                 ]
             }

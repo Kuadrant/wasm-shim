@@ -103,14 +103,17 @@ fn it_limits() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "data": [
-                    {
-                        "static": {
-                            "key": "admin",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "static": {
+                                "key": "admin",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -247,14 +250,17 @@ fn it_passes_additional_headers() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "data": [
-                    {
-                        "static": {
-                            "key": "admin",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "static": {
+                                "key": "admin",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -403,14 +409,17 @@ fn it_rate_limits_with_empty_predicates() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "data": [
-                    {
-                        "static": {
-                            "key": "admin",
-                            "value": "1"
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "static": {
+                                "key": "admin",
+                                "value": "1"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }]
             }]
         }]
     }"#;
@@ -526,9 +535,12 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
             {
                 "service": "limitador",
                 "scope": "RLS-domain",
-                "predicates" : [
-                    "request.url_path.startsWith('/admin/toy')"
-                ]
+                "conditionalData": [
+                {
+                    "predicates" : [
+                        "request.url_path.startsWith('/admin/toy')"
+                    ]
+                }]
             }]
         }]
     }"#;

@@ -32,26 +32,32 @@ Each action should hit the same limitador instance, decrementing the counter twi
         {
             "service": "limitadorA",
             "scope": "a",
-            "data": [
-                {
-                    "expression": {
-                        "key": "a",
-                        "value": "1"
+            "conditionalData": [
+            {
+                "data": [
+                    {
+                        "expression": {
+                            "key": "a",
+                            "value": "1"
+                        }
                     }
-                }
-            ]
+                ]
+            }]
         },
         {
             "service": "limitadorB",
             "scope": "a",
-            "data": [
-                {
-                    "expression": {
-                        "key": "a",
-                        "value": "1"
+            "conditionalData": [
+            {
+                "data": [
+                    {
+                        "expression": {
+                            "key": "a",
+                            "value": "1"
+                        }
                     }
-                }
-            ]
+                ]
+            }]
         }
     ]
 }

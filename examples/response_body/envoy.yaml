@@ -62,14 +62,17 @@ static_resources:
                                 {
                                   "service": "rlsbin",
                                   "scope": "domain-a",
-                                  "data": [
-                                    {
-                                      "expression": {
-                                        "key": "tokens",
-                                        "value": "responseBodyJSON('/usage/total_tokens')"
+                                  "conditionalData": [
+                                  {
+                                    "data": [
+                                      {
+                                        "expression": {
+                                          "key": "tokens",
+                                          "value": "responseBodyJSON('/usage/total_tokens')"
+                                        }
                                       }
-                                    }
-                                  ]
+                                    ]
+                                  }]
                                 }
                               ]
                             }

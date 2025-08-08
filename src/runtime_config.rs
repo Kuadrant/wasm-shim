@@ -64,21 +64,24 @@ mod test {
             {
                 "service": "limitador",
                 "scope": "rlp-ns-A/rlp-name-A",
-                "predicates": [
-                    "auth.metadata.username == 'alice'"
-                ],
-                "data": [
+                "conditionalData": [
                 {
-                    "static": {
-                        "key": "rlp-ns-A/rlp-name-A",
-                        "value": "1"
-                    }
-                },
-                {
-                    "expression": {
-                        "key": "username",
-                        "value": "auth.metadata.username"
-                    }
+                    "predicates": [
+                        "auth.metadata.username == 'alice'"
+                    ],
+                    "data": [
+                    {
+                        "static": {
+                            "key": "rlp-ns-A/rlp-name-A",
+                            "value": "1"
+                        }
+                    },
+                    {
+                        "expression": {
+                            "key": "username",
+                            "value": "auth.metadata.username"
+                        }
+                    }]
                 }]
             }]
         }]
@@ -124,12 +127,15 @@ mod test {
                 {
                     "service": "unknown",
                     "scope": "some-scope",
-                    "data": [
+                    "conditionalData": [
                     {
-                        "expression": {
-                            "key": "a",
-                            "value": "1"
-                        }
+                        "data": [
+                        {
+                            "expression": {
+                                "key": "a",
+                                "value": "1"
+                            }
+                        }]
                     }]
                 }]
             }]
