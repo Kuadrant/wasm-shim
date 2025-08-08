@@ -11,12 +11,10 @@ pub(super) mod errors {
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub enum PropertyError {
         Get(PropError),
         Parse(PropError),
-        RequestBodyNotAvailable,
-        ResponseBodyNotAvailable,
     }
 
     impl Error for PropertyError {
@@ -24,8 +22,6 @@ pub(super) mod errors {
             match self {
                 PropertyError::Get(err) => Some(err),
                 PropertyError::Parse(err) => Some(err),
-                PropertyError::RequestBodyNotAvailable => None,
-                PropertyError::ResponseBodyNotAvailable => None,
             }
         }
     }
@@ -39,17 +35,11 @@ pub(super) mod errors {
                 PropertyError::Parse(e) => {
                     write!(f, "PropertyError::Parse {{ {e:?} }}")
                 }
-                PropertyError::RequestBodyNotAvailable => {
-                    write!(f, "PropertyError::RequestBodyNotAvailable")
-                }
-                PropertyError::ResponseBodyNotAvailable => {
-                    write!(f, "PropertyError::ResponseBodyNotAvailable")
-                }
             }
         }
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub struct PropError {
         message: String,
     }

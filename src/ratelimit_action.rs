@@ -1,6 +1,6 @@
 use crate::configuration::{Action, DataType, FailureMode, Service};
 use crate::data::{Attribute, AttributeOwner, AttributeResolver, PredicateResult};
-use crate::data::{CelError, EvaluationError, Expression, Predicate, PropertyError};
+use crate::data::{Expression, Predicate};
 use crate::envoy::{
     RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse, RateLimitResponse_Code,
     StatusCode,
@@ -12,7 +12,7 @@ use crate::service::rate_limit::RateLimitService;
 use crate::service::{from_envoy_rl_headers, DirectResponse, GrpcService};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
-use log::{debug, error};
+use log::debug;
 use protobuf::RepeatedField;
 use std::rc::Rc;
 
@@ -41,57 +41,30 @@ impl DescriptorEntryBuilder {
     pub fn evaluate<T>(
         &self,
         resolver: &mut T,
-    ) -> Result<RateLimitDescriptor_Entry, EvaluationError>
+    ) -> Result<RateLimitDescriptor_Entry, BuildMessageError>
     where
         T: AttributeResolver,
     {
         let key = self.key.clone();
-        let value = match self.expression.eval(resolver) {
-            Ok(value) => match value {
-                Value::Int(n) => format!("{n}"),
-                Value::UInt(n) => format!("{n}"),
-                Value::Float(n) => format!("{n}"),
-                Value::String(s) => (*s).clone(),
-                Value::Bool(b) => format!("{b}"),
-                Value::Null => "null".to_owned(),
-                _ => {
-                    error!(
-                        "Failed to match type for expression `{:?}`",
-                        self.expression
-                    );
-                    return Err(EvaluationError::new(
-                        self.expression.clone(),
-                        "Only scalar values can be sent as data".to_string(),
-                    ));
-                }
-            },
-            Err(CelError::Property(PropertyError::RequestBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                return Err(EvaluationError::new(
+        let value = self.expression.eval(resolver)?;
+        let value_str = match value {
+            Value::Int(n) => format!("{n}"),
+            Value::UInt(n) => format!("{n}"),
+            Value::Float(n) => format!("{n}"),
+            Value::String(s) => (*s).clone(),
+            Value::Bool(b) => format!("{b}"),
+            Value::Null => "null".to_owned(),
+            _ => {
+                return Err(BuildMessageError::new_unsupported_data_type_err(
                     self.expression.clone(),
-                    "RequestBodyNotAvailable".into(),
-                ));
-            }
-            Err(CelError::Property(PropertyError::ResponseBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                return Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "ResponseBodyNotAvailable".into(),
-                ));
-            }
-            Err(err) => {
-                error!("Failed to evaluate `{:?}`: {err}", self.expression);
-                return Err(EvaluationError::new(
-                    self.expression.clone(),
-                    format!("Evaluation failed: {err}"),
+                    value.type_of().to_string(),
+                    "Only scalar values can be sent as data".to_string(),
                 ));
             }
         };
         let mut descriptor_entry = RateLimitDescriptor_Entry::new();
         descriptor_entry.set_key(key);
-        descriptor_entry.set_value(value);
+        descriptor_entry.set_value(value_str);
         Ok(descriptor_entry)
     }
 }
@@ -135,7 +108,7 @@ impl ConditionalData {
     pub fn entries<T>(
         &self,
         resolver: &mut T,
-    ) -> Result<RepeatedField<RateLimitDescriptor_Entry>, EvaluationError>
+    ) -> Result<RepeatedField<RateLimitDescriptor_Entry>, BuildMessageError>
     where
         T: AttributeResolver,
     {
@@ -212,7 +185,10 @@ impl RateLimitAction {
         }
     }
 
-    fn build_descriptor<T>(&self, resolver: &mut T) -> Result<RateLimitDescriptor, EvaluationError>
+    fn build_descriptor<T>(
+        &self,
+        resolver: &mut T,
+    ) -> Result<RateLimitDescriptor, BuildMessageError>
     where
         T: AttributeResolver,
     {
@@ -227,7 +203,7 @@ impl RateLimitAction {
         Ok(res)
     }
 
-    fn get_known_attributes<T>(&self, resolver: &mut T) -> Result<(u32, String), EvaluationError>
+    fn get_known_attributes<T>(&self, resolver: &mut T) -> Result<(u32, String), BuildMessageError>
     where
         T: AttributeResolver,
     {
@@ -237,27 +213,24 @@ impl RateLimitAction {
         for conditional_data in &self.conditional_data_sets {
             for entry_builder in &conditional_data.data {
                 if KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
-                    let val = entry_builder.expression.eval(resolver).map_err(|err| {
-                        EvaluationError::new(
-                            entry_builder.expression.clone(),
-                            format!("Failed to evaluate expression: {err}"),
-                        )
-                    })?;
+                    let val = entry_builder.expression.eval(resolver)?;
                     match entry_builder.key.as_str() {
                         "ratelimit.domain" => match val {
                             Value::String(s) => {
                                 if s.is_empty() {
-                                    return Err(EvaluationError::new(
+                                    return Err(BuildMessageError::new_unsupported_data_type_err(
                                         entry_builder.expression.clone(),
+                                        "empty string".to_string(),
                                         "ratelimit.domain cannot be empty".to_string(),
                                     ));
                                 }
                                 domain = s.to_string();
                             }
                             _ => {
-                                return Err(EvaluationError::new(
+                                return Err(BuildMessageError::new_unsupported_data_type_err(
                                     entry_builder.expression.clone(),
-                                    format!("Expected string for ratelimit.domain, got: {val:?}"),
+                                    val.type_of().to_string(),
+                                    "string for ratelimit.domain".to_string(),
                                 ));
                             }
                         },
@@ -266,18 +239,32 @@ impl RateLimitAction {
                                 if i >= 0 && i <= u32::MAX as i64 {
                                     hits_addend = i as u32;
                                 } else {
-                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {val:?}")));
+                                    return Err(BuildMessageError::new_unsupported_data_type_err(
+                                        entry_builder.expression.clone(),
+                                        i.to_string(),
+                                        "ratelimit.hits_addend must be 0 <= X <= u32::MAX integer"
+                                            .to_string(),
+                                    ));
                                 }
                             }
                             Value::UInt(u) => {
                                 if u <= u32::MAX as u64 {
                                     hits_addend = u as u32;
                                 } else {
-                                    return Err(EvaluationError::new(entry_builder.expression.clone(), format!("ratelimit.hits_addend must be a non-negative integer, got: {val:?}")));
+                                    return Err(BuildMessageError::new_unsupported_data_type_err(
+                                        entry_builder.expression.clone(),
+                                        u.to_string(),
+                                        "ratelimit.hits_addend must be 0 <= X <= u32::MAX integer"
+                                            .to_string(),
+                                    ));
                                 }
                             }
                             _ => {
-                                return Err(EvaluationError::new(entry_builder.expression.clone(), format!("Only integer values are allowed for known attributes, got: {val:?}")));
+                                return Err(BuildMessageError::new_unsupported_data_type_err(
+                                    entry_builder.expression.clone(),
+                                    val.type_of().to_string(),
+                                    "integer for ratelimit.hits_addend".to_string(),
+                                ));
                             }
                         },
                         _ => {}
@@ -359,6 +346,8 @@ mod test {
     use crate::data::PathCache;
     use crate::envoy::HeaderValue;
     use crate::filter::operations::ProcessGrpcMessageOperation;
+    use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
+    use cel_interpreter::objects::ValueType;
     use core::str;
 
     fn build_service() -> Service {
@@ -432,7 +421,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert_eq!(rl_action.conditions_apply(), Ok(true));
+        assert!(rl_action.conditions_apply().expect("should not fail!"));
     }
 
     #[test]
@@ -441,7 +430,7 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
-        assert_eq!(rl_action.conditions_apply(), Ok(true));
+        assert!(rl_action.conditions_apply().expect("should not fail!"));
     }
 
     #[test]
@@ -451,8 +440,10 @@ mod test {
         let rl_action = RateLimitAction::new(&action, &service)
             .expect("action building failed. Maybe predicates compilation?");
         assert_eq!(
-            rl_action.build_descriptor(&mut PathCache::default()),
-            Ok(RateLimitDescriptor::default())
+            rl_action
+                .build_descriptor(&mut PathCache::default())
+                .expect("should not fail!"),
+            RateLimitDescriptor::default()
         );
     }
 
@@ -464,7 +455,6 @@ mod test {
 
         let result = rl_action.get_known_attributes(&mut PathCache::default());
         assert!(result.is_err());
-        // Assuming EvaluationError implements Debug or Display
         let error_message = format!("{:?}", result.unwrap_err());
         assert!(error_message.contains("ratelimit.domain cannot be empty"));
     }
@@ -475,11 +465,20 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes(&mut PathCache::default());
-        assert!(result.is_err());
-        let error_message = format!("{:?}", result.unwrap_err());
-        assert!(error_message.contains("Expected string for ratelimit.domain"));
-        assert!(error_message.contains("got: Int(123)"));
+        let err = rl_action
+            .get_known_attributes(&mut PathCache::default())
+            .expect_err("should fail!");
+        if let BuildMessageError::UnsupportedDataType {
+            expression: _e,
+            got,
+            want,
+        } = err
+        {
+            assert_eq!(got, "int");
+            assert!(want.contains("string for ratelimit.domain"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
@@ -488,11 +487,20 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes(&mut PathCache::default());
-        assert!(result.is_err());
-        let error_message = format!("{:?}", result.unwrap_err());
-        assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
-        assert!(error_message.contains("got: Int(-1)"));
+        let err = rl_action
+            .get_known_attributes(&mut PathCache::default())
+            .expect_err("should fail!");
+        if let BuildMessageError::UnsupportedDataType {
+            expression: _e,
+            got,
+            want,
+        } = err
+        {
+            assert_eq!(got, "-1");
+            assert!(want.contains("ratelimit.hits_addend must be"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
@@ -502,12 +510,20 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes(&mut PathCache::default());
-        assert!(result.is_err());
-        let error_message = format!("{:?}", result.unwrap_err());
-
-        assert!(error_message.contains("ratelimit.hits_addend must be a non-negative integer"));
-        assert!(error_message.contains(&format!("got: Int({too_large_value})")));
+        let err = rl_action
+            .get_known_attributes(&mut PathCache::default())
+            .expect_err("should fail!");
+        if let BuildMessageError::UnsupportedDataType {
+            expression: _e,
+            got,
+            want,
+        } = err
+        {
+            assert_eq!(got, too_large_value);
+            assert!(want.contains("ratelimit.hits_addend must be"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
@@ -516,11 +532,20 @@ mod test {
         let service = build_service();
         let rl_action = RateLimitAction::new(&action, &service).unwrap();
 
-        let result = rl_action.get_known_attributes(&mut PathCache::default());
-        assert!(result.is_err());
-        let error_message = format!("{:?}", result.unwrap_err());
-        assert!(error_message.contains("Only integer values are allowed for known attributes"));
-        assert!(error_message.contains("got: String"));
+        let err = rl_action
+            .get_known_attributes(&mut PathCache::default())
+            .expect_err("should fail!");
+        if let BuildMessageError::UnsupportedDataType {
+            expression: _e,
+            got,
+            want,
+        } = err
+        {
+            assert_eq!(got, "string");
+            assert!(want.contains("integer for ratelimit.hits_addend"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
@@ -586,6 +611,37 @@ mod test {
         assert_eq!(descriptor.get_entries().len(), 1);
         assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
         assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+    }
+
+    #[test]
+    fn descriptor_entry_from_expression_evaluates_to_non_scalar() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "foo".into(),
+                value: "[]".into(),
+            }),
+        }];
+        let action = build_action(String::new(), Vec::default(), data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let build_err = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect_err("is err");
+        assert!(matches!(
+            build_err,
+            BuildMessageError::UnsupportedDataType { .. }
+        ));
+        if let BuildMessageError::UnsupportedDataType {
+            expression: _,
+            got,
+            want: _,
+        } = build_err
+        {
+            assert_eq!(got, ValueType::List.to_string());
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
@@ -760,7 +816,12 @@ mod test {
         let err = rl_action
             .build_descriptor(&mut PathCache::default())
             .expect_err("should fail");
-        assert!(err.to_string().contains("RequestBodyNotAvailable"));
+        if let BuildMessageError::Evaluation(e) = err {
+            assert!(e.is_transient());
+            assert_eq!(e.transient_property(), Some("request_body"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
     }
 
     #[test]
@@ -847,5 +908,99 @@ mod test {
             .unwrap();
         assert_eq!(hits_addend, 2);
         assert_eq!(domain, "test");
+    }
+
+    #[test]
+    fn descriptor_entries_with_response_body_fails_unless_provided() {
+        let data = vec![DataItem {
+            item: DataType::Expression(ExpressionItem {
+                key: "key_1".into(),
+                value: "responseBodyJSON('/foo')".into(),
+            }),
+        }];
+
+        let action = build_action(String::new(), vec![], data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let err = rl_action
+            .build_descriptor(&mut PathCache::default())
+            .expect_err("should fail");
+        if let BuildMessageError::Evaluation(e) = err {
+            assert!(e.is_transient());
+            assert_eq!(e.transient_property(), Some("response_body"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+    }
+
+    #[test]
+    fn build_message_with_request_body_and_response_body_in_known_attributes() {
+        // simulate:
+        // on request headers phase => no transient available -> fails
+        // on request body phase => req body transients available -> fails (missing response body)
+        // on response body phase => both transients available -> succeeds
+
+        let mut resolver = PathCache::default();
+        let data = vec![
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "model".into(),
+                    value: "requestBodyJSON('/model')".into(),
+                }),
+            },
+            DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".into(),
+                    value: "responseBodyJSON('/usage/total_tokens')".into(),
+                }),
+            },
+        ];
+
+        let action = build_action(String::new(), vec![], data);
+        let service = build_service();
+        let rl_action = RateLimitAction::new(&action, &service)
+            .expect("action building failed. Maybe predicates compilation?");
+        let err = rl_action
+            .build_message(&mut resolver)
+            .expect_err("transients not available, it should fail!");
+        if let BuildMessageError::Evaluation(e) = err {
+            assert!(e.is_transient());
+            assert_eq!(e.transient_property(), Some("request_body"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+
+        // request body phase
+        let request_body = r#"
+        {
+            "model": "meta-llama/Llama-3.1-8B-Instruct",
+            "input": "Tell me a three sentence story about a robot."
+        }"#;
+        resolver.add_transient("request_body", request_body.into());
+        let err = rl_action
+            .build_message(&mut resolver)
+            .expect_err("resp body transient not available, it should fail!");
+        if let BuildMessageError::Evaluation(e) = err {
+            assert!(e.is_transient());
+            assert_eq!(e.transient_property(), Some("response_body"));
+        } else {
+            unreachable!("Not supposed to get here!");
+        }
+
+        // response body phase
+        let response_body = r#"
+        {
+          "id": "chatcmpl-2ee7427f-8b51-4f74-a5df-e6484df42547",
+          "model": "meta-llama/Llama-3.1-8B-Instruct",
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 11,
+            "total_tokens": 11
+          }
+        }"#;
+        resolver.add_transient("response_body", response_body.into());
+        let message = rl_action.build_message(&mut resolver).expect("is ok");
+        assert!(message.is_some());
     }
 }

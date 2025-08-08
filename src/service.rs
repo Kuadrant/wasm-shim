@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub(super) mod errors {
-    use crate::data::{EvaluationError, PropertyError};
+    use crate::data::{EvaluationError, Expression, PropertyError};
     use protobuf::ProtobufError;
     use std::fmt::{Debug, Display, Formatter};
 
@@ -25,23 +25,27 @@ pub(super) mod errors {
         Evaluation(EvaluationError),
         Property(PropertyError),
         Serialization(ProtobufError),
-        RequestBodyNotAvailable,
-        ResponseBodyNotAvailable,
+        UnsupportedDataType {
+            /// Box the contents of expressoin to avoid large error variants
+            expression: Box<Expression>,
+            got: String,
+            want: String,
+        },
+    }
+
+    impl BuildMessageError {
+        pub fn new_unsupported_data_type_err(e: Expression, got: String, want: String) -> Self {
+            BuildMessageError::UnsupportedDataType {
+                expression: Box::new(e),
+                got,
+                want,
+            }
+        }
     }
 
     impl From<EvaluationError> for BuildMessageError {
         fn from(e: EvaluationError) -> Self {
-            // TODO: EvaluationError is not specific enough to distinguish between errors
-            // consider returning a more specific error type
-            if e.to_string().contains("RequestBodyNotAvailable") {
-                // return error regardless of failure mode
-                BuildMessageError::RequestBodyNotAvailable
-            } else if e.to_string().contains("ResponseBodyNotAvailable") {
-                // return error regardless of failure mode
-                BuildMessageError::ResponseBodyNotAvailable
-            } else {
-                BuildMessageError::Evaluation(e)
-            }
+            BuildMessageError::Evaluation(e)
         }
     }
 
@@ -57,11 +61,15 @@ pub(super) mod errors {
                 BuildMessageError::Serialization(e) => {
                     write!(f, "BuildMessageError::Serialization {{ {e:?} }}")
                 }
-                BuildMessageError::RequestBodyNotAvailable => {
-                    write!(f, "BuildMessageError::RequestBodyNotAvailable")
-                }
-                BuildMessageError::ResponseBodyNotAvailable => {
-                    write!(f, "BuildMessageError::ResponseBodyNotAvailable")
+                BuildMessageError::UnsupportedDataType {
+                    expression,
+                    got,
+                    want,
+                } => {
+                    write!(
+                        f,
+                        "BuildMessageError::UnsupportedDataType {{ expression: {expression:?}; got: {got}; want: {want}}}"
+                    )
                 }
             }
         }
