@@ -94,6 +94,13 @@ impl RuntimeAction {
         }
     }
 
+    pub fn scope(&self) -> &str {
+        match self {
+            Self::Auth(auth_action) => auth_action.scope(),
+            Self::RateLimit(rl_action) => rl_action.scope(),
+        }
+    }
+
     fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
     where
         T: AttributeResolver,
