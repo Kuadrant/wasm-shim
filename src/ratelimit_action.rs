@@ -303,6 +303,10 @@ impl RateLimitAction {
         self.grpc_service.get_failure_mode()
     }
 
+    pub fn scope(&self) -> &str {
+        self.scope.as_str()
+    }
+
     pub fn process_response(&self, rate_limit_response: RateLimitResponse) -> ResponseResult {
         match rate_limit_response {
             RateLimitResponse {

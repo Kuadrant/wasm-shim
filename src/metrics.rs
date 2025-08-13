@@ -287,9 +287,9 @@ pub fn increment_token_usage_with_user_group(tokens: i64, scope: &str) {
     }
 }
 
-pub fn process_response_body_for_token_usage() {
+pub fn process_response_body_for_token_usage(scope: &str) {
     if let Some(token_count) = extract_token_count_from_response_body() {
         increment_token_usage(token_count);
-        increment_token_usage_with_user_group(token_count, "default");
+        increment_token_usage_with_user_group(token_count, scope);
     }
 }
