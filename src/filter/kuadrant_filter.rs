@@ -34,6 +34,8 @@ pub(crate) struct KuadrantFilter {
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
     phase: Phase,
+    // Namespace/scope used for metrics
+    scope_for_metrics: String,
 }
 
 impl Context for KuadrantFilter {
@@ -273,6 +275,7 @@ impl HttpContext for KuadrantFilter {
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         self.phase = Phase::ResponseHeaders;
+
         // response headers can only be added at this phase. At the response body time is already
         // too late
         if let Some(response_headers) = self.response_headers_to_add.take() {
@@ -296,6 +299,12 @@ impl HttpContext for KuadrantFilter {
             self.context_id
         );
         self.phase = Phase::ResponseBody;
+
+        // Process token usage from response body if this is the end of stream
+        if end_of_stream {
+            crate::metrics::process_response_body_for_token_usage(&self.scope_for_metrics);
+        }
+
         // Need to check if there is something to do before expending
         // time and resources reading the body
         match self.response_body_receiver.take() {
@@ -364,6 +373,7 @@ impl KuadrantFilter {
                     continue;
                 }
                 Ok(Some(grpc_request)) => {
+                    self.scope_for_metrics = action.scope().to_string();
                     return Ok(IndexedGrpcRequest::new(start + index, grpc_request).into());
                 }
                 Err(BuildMessageError::RequestBodyNotAvailable) => {
@@ -586,6 +596,7 @@ impl KuadrantFilter {
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),
             phase: Phase::RequestHeaders,
+            scope_for_metrics: "default".to_string(),
         }
     }
 }

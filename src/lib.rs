@@ -12,6 +12,7 @@ mod data;
 )]
 mod envoy;
 mod filter;
+mod metrics;
 mod ratelimit_action;
 mod runtime_action;
 mod runtime_action_set;
