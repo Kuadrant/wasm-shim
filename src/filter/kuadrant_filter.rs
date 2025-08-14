@@ -300,11 +300,6 @@ impl HttpContext for KuadrantFilter {
         );
         self.phase = Phase::ResponseBody;
 
-        // Process token usage from response body if this is the end of stream
-        if end_of_stream {
-            crate::metrics::process_response_body_for_token_usage(&self.scope_for_metrics);
-        }
-
         // Need to check if there is something to do before expending
         // time and resources reading the body
         match self.response_body_receiver.take() {
@@ -351,6 +346,10 @@ impl HttpContext for KuadrantFilter {
                             );
                             self.path_store
                                 .insert_path("@kuadrant.response\\.body".into(), body_str.into());
+
+                            // Process token usage from response body if this is the end of stream
+                            crate::metrics::process_response_body_for_token_usage(&self.scope_for_metrics);
+
                             self.run(action_set, index)
                         }
                     },
