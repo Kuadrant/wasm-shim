@@ -324,10 +324,7 @@ impl RateLimitAction {
                 debug!("process_response(rl): received OVER_LIMIT response");
 
                 // Increment limited calls metric
-                crate::metrics::increment_limited_calls();
-
-                // Increment user/group specific limited calls metric
-                crate::metrics::increment_limited_calls_with_user_group(&self.scope);
+                crate::metrics::get_metrics().increment_limited_calls(&self.scope);
 
                 Ok(DirectResponse::new(
                     StatusCode::TooManyRequests as u32,

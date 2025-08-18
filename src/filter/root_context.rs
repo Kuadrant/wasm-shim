@@ -30,7 +30,7 @@ impl RootContext for FilterRoot {
             self.context_id, WASM_SHIM_HEADER, full_version
         );
 
-        crate::metrics::initialize_metrics();
+        // crate::metrics::initialize_metrics(); // this should happen conditionally
 
         true
     }
