@@ -109,6 +109,8 @@ pub enum ServiceType {
 pub struct PluginConfiguration {
     pub services: HashMap<String, Service>,
     pub action_sets: Vec<ActionSet>,
+    #[serde(default)]
+    pub metrics_enabled: bool,
 }
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]

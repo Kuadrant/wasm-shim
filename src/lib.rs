@@ -6,6 +6,7 @@ mod configuration;
 mod data;
 #[allow(
     renamed_and_removed_lints,
+    mismatched_lifetime_syntaxes,
     clippy::panic,
     clippy::unwrap_used
 )]

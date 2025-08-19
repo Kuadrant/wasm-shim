@@ -2,8 +2,8 @@ use log::error;
 use proxy_wasm::hostcalls;
 use std::collections::HashMap;
 use std::string::ToString;
-use std::sync::{OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{OnceLock, RwLock};
 
 pub trait Metrics {
     fn increment_authorized_calls(&self, _scope: &str) {}
@@ -26,7 +26,6 @@ struct HostMetrics {
 }
 
 impl HostMetrics {
-
     const AUTHORIZED_CALLS_METRIC_ID: &'static str = "authorized_calls_total";
     const LIMITED_CALLS_METRIC_ID: &'static str = "limited_calls_total";
     const TOKEN_USAGE_METRIC_ID: &'static str = "token_usage_total";
@@ -34,10 +33,14 @@ impl HostMetrics {
     pub fn new() -> Self {
         let mut metrics = HashMap::new();
 
-        for name in [Self::AUTHORIZED_CALLS_METRIC_ID, Self::LIMITED_CALLS_METRIC_ID, Self::TOKEN_USAGE_METRIC_ID] {
+        for name in [
+            Self::AUTHORIZED_CALLS_METRIC_ID,
+            Self::LIMITED_CALLS_METRIC_ID,
+            Self::TOKEN_USAGE_METRIC_ID,
+        ] {
             match hostcalls::define_metric(proxy_wasm::types::MetricType::Counter, name) {
                 Ok(metric_id) => {
-                    metrics.insert(Self::AUTHORIZED_CALLS_METRIC_ID.to_string(), metric_id);
+                    metrics.insert(name.to_string(), metric_id);
                 }
                 Err(e) => error!("Failed to define {name} metric: {e:?}"),
             }
@@ -89,9 +92,9 @@ impl HostMetrics {
             match hostcalls::increment_metric(metric_id, 1) {
                 Ok(_) => {}
                 Err(e) => error!(
-                "Failed to increment authorized_calls_with_user_and_group: {:?}",
-                e
-            ),
+                    "Failed to increment authorized_calls_with_user_and_group: {:?}",
+                    e
+                ),
             }
         }
     }
@@ -114,9 +117,9 @@ impl HostMetrics {
             match hostcalls::increment_metric(metric_id, 1) {
                 Ok(_) => {}
                 Err(e) => error!(
-                "Failed to increment limited_calls_with_user_and_group: {:?}",
-                e
-            ),
+                    "Failed to increment limited_calls_with_user_and_group: {:?}",
+                    e
+                ),
             }
         }
     }
@@ -139,9 +142,9 @@ impl HostMetrics {
             match hostcalls::increment_metric(metric_id, tokens) {
                 Ok(_) => {}
                 Err(e) => error!(
-                "Failed to increment token_usage_with_user_and_group: {:?}",
-                e
-            ),
+                    "Failed to increment token_usage_with_user_and_group: {:?}",
+                    e
+                ),
             }
         }
     }
@@ -172,9 +175,9 @@ impl HostMetrics {
                 }
                 Err(e) => {
                     error!(
-                    "Failed to define user/group metric {}: {:?}",
-                    metric_name, e
-                );
+                        "Failed to define user/group metric {}: {:?}",
+                        metric_name, e
+                    );
                     None
                 }
             }
@@ -208,9 +211,8 @@ impl Metrics for HostMetrics {
 static METRICS: OnceLock<Box<dyn Metrics + Sync + Send>> = OnceLock::new();
 
 pub fn get_metrics() -> &'static dyn Metrics {
-    METRICS.get_or_init(|| Box::new(NoopMetrics{})).as_ref()
+    METRICS.get_or_init(|| Box::new(NoopMetrics {})).as_ref()
 }
-
 
 // Helper function to extract token count from response body JSON
 fn extract_token_count_from_response_body() -> Option<i64> {

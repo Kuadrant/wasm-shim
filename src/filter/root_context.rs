@@ -30,8 +30,6 @@ impl RootContext for FilterRoot {
             self.context_id, WASM_SHIM_HEADER, full_version
         );
 
-        // crate::metrics::initialize_metrics(); // this should happen conditionally
-
         true
     }
 
@@ -59,6 +57,12 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
+
+                // Initialize metrics if enabled in plugin configuration
+                if config.metrics_enabled {
+                    crate::metrics::initialize_metrics();
+                }
+
                 let action_set_index =
                     match <PluginConfiguration as TryInto<ActionSetIndex>>::try_into(config) {
                         Ok(cfg) => cfg,

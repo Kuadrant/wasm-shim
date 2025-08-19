@@ -348,7 +348,9 @@ impl HttpContext for KuadrantFilter {
                                 .insert_path("@kuadrant.response\\.body".into(), body_str.into());
 
                             // Process token usage from response body if this is the end of stream
-                            crate::metrics::process_response_body_for_token_usage(&self.scope_for_metrics);
+                            crate::metrics::process_response_body_for_token_usage(
+                                &self.scope_for_metrics,
+                            );
 
                             self.run(action_set, index)
                         }
