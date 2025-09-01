@@ -26,8 +26,10 @@ pub enum EventualOperation {
 
 pub enum ProcessNextRequestOperation {
     GrpcRequest(IndexedGrpcRequest),
-    AwaitRequestBody(usize),
-    AwaitResponseBody(usize),
+    // includes next action index and request body attribute name
+    AwaitRequestBody(usize, String),
+    // includes next action index and response body attribute name
+    AwaitResponseBody(usize, String),
     Done,
 }
 

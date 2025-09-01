@@ -29,8 +29,8 @@ pub(crate) struct KuadrantFilter {
     header_resolver: HeaderResolver,
     path_store: PathCache,
     grpc_message_receiver: Option<EventReceiver>,
-    request_body_receiver: Option<EventReceiver>,
-    response_body_receiver: Option<EventReceiver>,
+    request_body_receiver: Option<(EventReceiver, String)>,
+    response_body_receiver: Option<(EventReceiver, String)>,
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
     phase: Phase,
@@ -220,12 +220,12 @@ impl HttpContext for KuadrantFilter {
         // time and resources reading the body
         match self.request_body_receiver.take() {
             None => Action::Continue, // No pending actions, filter can continue normally
-            Some((index, action_set)) => {
+            Some(((index, action_set), transient_attr)) => {
                 if !end_of_stream {
                     // This is not the end of the stream, so the complete request body is not yet available.
                     // Until JSON parsing is supported in streaming mode, the entire request body must be available.
                     // There is nothing to do here at the moment.
-                    self.request_body_receiver = Some((index, action_set));
+                    self.request_body_receiver = Some(((index, action_set), transient_attr));
                     return Action::Pause;
                 }
 
@@ -261,7 +261,7 @@ impl HttpContext for KuadrantFilter {
                                 self.context_id, action_set.name
                             );
                             self.path_store
-                                .insert_path("@kuadrant.request\\.body".into(), body_str.into());
+                                .add_transient(transient_attr.as_str(), body_str.into());
                             self.run(action_set, index)
                         }
                     },
@@ -300,12 +300,12 @@ impl HttpContext for KuadrantFilter {
         // time and resources reading the body
         match self.response_body_receiver.take() {
             None => Action::Continue, // No pending actions, filter can continue normally
-            Some((index, action_set)) => {
+            Some(((index, action_set), transient_attr)) => {
                 if !end_of_stream {
                     // This is not the end of the stream, so the complete request body is not yet available.
                     // Until JSON parsing is supported in streaming mode, the entire request body must be available.
                     // There is nothing to do here at the moment.
-                    self.response_body_receiver = Some((index, action_set));
+                    self.response_body_receiver = Some(((index, action_set), transient_attr));
                     return Action::Pause;
                 }
 
@@ -341,7 +341,7 @@ impl HttpContext for KuadrantFilter {
                                 self.context_id, action_set.name
                             );
                             self.path_store
-                                .insert_path("@kuadrant.response\\.body".into(), body_str.into());
+                                .add_transient(transient_attr.as_str(), body_str.into());
                             self.run(action_set, index)
                         }
                     },
@@ -366,19 +366,33 @@ impl KuadrantFilter {
                 Ok(Some(grpc_request)) => {
                     return Ok(IndexedGrpcRequest::new(start + index, grpc_request).into());
                 }
-                Err(BuildMessageError::RequestBodyNotAvailable) => {
-                    // this error indicates that the request body is not available
-                    // and failure mode does not apply, must wait for the request body to be
-                    // available
-                    return Ok(ProcessNextRequestOperation::AwaitRequestBody(start + index));
-                }
-                Err(BuildMessageError::ResponseBodyNotAvailable) => {
-                    // this error indicates that the response body is not available
-                    // and failure mode does not apply, must wait for the response body to be
-                    // available
-                    return Ok(ProcessNextRequestOperation::AwaitResponseBody(
-                        start + index,
-                    ));
+                Err(BuildMessageError::Evaluation(eval_err)) if eval_err.is_transient() => {
+                    // this error indicates that some transient error happened
+                    // This is dissmissed as an evaluation error and considered as "must wait" signal.
+                    match eval_err.transient_property() {
+                        Some(transient_attr) => {
+                            match transient_attr {
+                                "request_body" => {
+                                    return Ok(ProcessNextRequestOperation::AwaitRequestBody(
+                                        start + index,
+                                        transient_attr.into(),
+                                    ));
+                                }
+                                "response_body" => {
+                                    return Ok(ProcessNextRequestOperation::AwaitResponseBody(
+                                        start + index,
+                                        transient_attr.into(),
+                                    ));
+                                }
+                                _ => return Err(BuildMessageError::Evaluation(eval_err)), // transient
+                                                                                          // property
+                                                                                          // unknown
+                            }
+                        }
+                        None => return Err(BuildMessageError::Evaluation(eval_err)), // transient
+                                                                                     // property
+                                                                                     // unknown
+                    }
                 }
                 Err(e) => match action.get_failure_mode() {
                     FailureMode::Deny => return Err(e),
@@ -426,16 +440,16 @@ impl KuadrantFilter {
                         }
                     }
                 }
-                Ok(ProcessNextRequestOperation::AwaitRequestBody(indexed_req)) => {
+                Ok(ProcessNextRequestOperation::AwaitRequestBody(indexed_req, transient_attr)) => {
                     // this arm indicates that the request body is not available
                     // must wait for the request body to be available
-                    self.request_body_receiver = Some((indexed_req, action_set));
+                    self.request_body_receiver = Some(((indexed_req, action_set), transient_attr));
                     return Action::Continue;
                 }
-                Ok(ProcessNextRequestOperation::AwaitResponseBody(indexed_req)) => {
+                Ok(ProcessNextRequestOperation::AwaitResponseBody(indexed_req, transient_attr)) => {
                     // this arm indicates that the response body is not available
                     // must wait for the response body to be available
-                    self.response_body_receiver = Some((indexed_req, action_set));
+                    self.response_body_receiver = Some(((indexed_req, action_set), transient_attr));
                     return Action::Continue;
                 }
                 Err(err) => {

@@ -1,4 +1,4 @@
-use crate::data::cel::errors::{CelError, EvaluationError};
+use crate::data::cel::errors::{EvaluationError, PredicateResultError};
 use crate::data::property::{host_get_map, Path};
 use crate::data::{get_attribute, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
@@ -6,9 +6,11 @@ use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
+use errors::TransientError;
+use lazy_static::lazy_static;
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
-use log::{error, warn};
+use log::warn;
 use proxy_wasm::types::{Bytes, Status};
 use serde_json::Result as JsonResult;
 use serde_json::Value as JsonValue;
@@ -21,33 +23,83 @@ use urlencoding::decode;
 
 pub(super) mod errors {
     use crate::data::{Expression, PropertyError};
+    use cel_interpreter::objects::ValueType;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    #[derive(Debug)]
-    pub struct EvaluationError {
-        expression: Expression,
-        message: String,
+    pub struct PredicateResultError {
+        got: ValueType,
     }
 
-    impl PartialEq for EvaluationError {
-        fn eq(&self, other: &Self) -> bool {
-            self.message == other.message
+    impl Display for PredicateResultError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "PredicateResultError {{ expected boolean value, got {} }}",
+                self.got
+            )
         }
     }
 
-    #[derive(Debug, PartialEq)]
+    impl Debug for PredicateResultError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Display::fmt(self, f)
+        }
+    }
+
+    impl PredicateResultError {
+        pub fn new(value_type: ValueType) -> Self {
+            PredicateResultError { got: value_type }
+        }
+    }
+
+    impl Error for PredicateResultError {}
+
+    // TransientError holds transient errors that occurred because evaluation was
+    // attempted in a premature phase. These errors are expected to be
+    // resolved automatically upon re-evaluation in a subsequent, correct phase.
+    #[derive(Debug)]
+    pub struct TransientError {
+        attr: String,
+    }
+
+    impl Display for TransientError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "TransientError {{ attr: {:?} }}", self.attr)
+        }
+    }
+
+    impl TransientError {
+        pub fn new(attr: String) -> Self {
+            TransientError { attr }
+        }
+    }
+
+    impl Error for TransientError {}
+
+    #[derive(Debug)]
+    pub struct EvaluationError {
+        expression: Expression,
+        /// Box the contents of source to avoid large error variants
+        source: Box<CelError>,
+    }
+
+    #[derive(Debug)]
     pub enum CelError {
         Property(PropertyError),
         Resolve(ExecutionError),
+        Predicate(PredicateResultError),
+        TransientPropertyMissing(TransientError),
     }
 
     impl Error for CelError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match self {
-                CelError::Property(err) => Some(err),
-                CelError::Resolve(err) => Some(err),
+                Self::Property(err) => Some(err),
+                Self::Resolve(err) => Some(err),
+                Self::Predicate(err) => Some(err),
+                Self::TransientPropertyMissing(err) => Some(err),
             }
         }
     }
@@ -64,6 +116,18 @@ pub(super) mod errors {
         }
     }
 
+    impl From<PredicateResultError> for CelError {
+        fn from(e: PredicateResultError) -> Self {
+            CelError::Predicate(e)
+        }
+    }
+
+    impl From<TransientError> for CelError {
+        fn from(e: TransientError) -> Self {
+            CelError::TransientPropertyMissing(e)
+        }
+    }
+
     impl Display for CelError {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
@@ -73,15 +137,33 @@ pub(super) mod errors {
                 CelError::Resolve(e) => {
                     write!(f, "CelError::Resolve {{ {e:?} }}")
                 }
+                CelError::Predicate(e) => {
+                    write!(f, "CelError::Predicate {{ {e:?} }}")
+                }
+                CelError::TransientPropertyMissing(e) => {
+                    write!(f, "CelError::TransientPropertyMissing {{ {e:?} }}")
+                }
             }
         }
     }
 
     impl EvaluationError {
-        pub fn new(expression: Expression, message: String) -> EvaluationError {
+        pub fn new(expression: Expression, source: CelError) -> EvaluationError {
             EvaluationError {
                 expression,
-                message,
+                source: Box::new(source),
+            }
+        }
+
+        pub fn is_transient(&self) -> bool {
+            matches!(&*self.source, CelError::TransientPropertyMissing(_))
+        }
+
+        pub fn transient_property(&self) -> Option<&str> {
+            if let CelError::TransientPropertyMissing(err) = &*self.source {
+                Some(err.attr.as_str())
+            } else {
+                None
             }
         }
     }
@@ -91,10 +173,29 @@ pub(super) mod errors {
             write!(
                 f,
                 "EvaluationError {{ expression: {:?}, message: {} }}",
-                self.expression, self.message
+                self.expression, self.source
             )
         }
     }
+
+    impl Error for EvaluationError {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&*self.source)
+        }
+    }
+}
+
+lazy_static! {
+    // Each function can be called directly within a CEL expression.
+    // The associated attribute name, however, is kept private and cannot be directly referenced in the expression.
+    // Instead, the attribute name serves as the key for a transient value
+    // that can be referenced later when building the CEL context data map
+    static ref TransientAttributeMap: HashMap<&'static str, &'static str> = vec![
+        ("requestBodyJSON", "request_body"),
+        ("responseBodyJSON", "response_body"),
+    ]
+    .into_iter()
+    .collect();
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +203,7 @@ pub struct Expression {
     attributes: Vec<Attribute>,
     expression: CelExpression,
     extended: bool,
+    transient_attrs: Vec<String>,
 }
 
 impl Display for Expression {
@@ -142,25 +244,13 @@ impl Expression {
             })
             .collect();
 
-        if expression.references().has_function("requestBodyJSON") {
-            attributes.push(Attribute {
-                // Injects the request body into the CEL context for internal use by the
-                // requestBodyJSON function. The body is intentionally not exposed as a
-                // top-level variable and cannot be directly referenced in the CEL expression.
-                path: "@kuadrant.request\\.body".into(),
-                cel_type: Some(ValueType::String),
-            })
+        let mut transient_attrs = Vec::default();
+        for (&transient_func_name, &transient_attr) in TransientAttributeMap.iter() {
+            if expression.references().has_function(transient_func_name) {
+                transient_attrs.push(transient_attr);
+            }
         }
-
-        if expression.references().has_function("responseBodyJSON") {
-            attributes.push(Attribute {
-                // Injects the response body into the CEL context for internal use by the
-                // responseBodyJSON function. The body is intentionally not exposed as a
-                // top-level variable and cannot be directly referenced in the CEL expression.
-                path: "@kuadrant.response\\.body".into(),
-                cel_type: Some(ValueType::String),
-            })
-        }
+        let transient_attrs = transient_attrs.into_iter().map(String::from).collect();
 
         attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
@@ -168,6 +258,7 @@ impl Expression {
             attributes,
             expression,
             extended,
+            transient_attrs,
         })
     }
 
@@ -180,7 +271,7 @@ impl Expression {
     }
 
     /// Evaluates the given expression using the provided resolver.
-    pub fn eval<T>(&self, resolver: &mut T) -> Result<Value, CelError>
+    pub fn eval<T>(&self, resolver: &mut T) -> Result<Value, EvaluationError>
     where
         T: AttributeResolver,
     {
@@ -188,26 +279,31 @@ impl Expression {
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
         }
-        let Map { map } = self.build_data_map(resolver)?;
+        let Map { map } = self
+            .build_data_map(resolver)
+            .map_err(|e| EvaluationError::new(self.clone(), e.into()))?;
 
         ctx.add_function("getHostProperty", get_host_property);
         ctx.add_function("requestBodyJSON", request_body_json);
         ctx.add_function("responseBodyJSON", response_body_json);
 
-        for binding in [
-            "request",
-            "metadata",
-            "source",
-            "destination",
-            "auth",
-            "@kuadrant",
-        ] {
+        for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
                 binding,
                 map.get(&binding.into()).cloned().unwrap_or(Value::Null),
             );
         }
-        Value::resolve(&self.expression, &ctx).map_err(|e| e.into())
+
+        let transient_map = self
+            .build_transient_data_map(resolver)
+            .map_err(|e| EvaluationError::new(self.clone(), e.into()))?;
+
+        // Injects attributes intentionally not exposed as a top-level variables.
+        // They cannot be directly referenced in the CEL expression.
+        ctx.add_variable_from_value("@kuadrant", Value::Map(transient_map));
+
+        Value::resolve(&self.expression, &ctx)
+            .map_err(|e| EvaluationError::new(self.clone(), e.into()))
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]
@@ -220,6 +316,22 @@ impl Expression {
         T: AttributeResolver,
     {
         data::AttributeMap::new(self.attributes.clone(), resolver).into()
+    }
+
+    fn build_transient_data_map<T>(&self, resolver: &mut T) -> Result<Map, TransientError>
+    where
+        T: AttributeResolver,
+    {
+        let mut out: HashMap<Key, Value> = HashMap::default();
+        for transient_attr in self.transient_attrs.iter() {
+            let transient_val = resolver.transient(transient_attr.as_str()).ok_or(
+                // Getting here means evaluating CEL expression in a premature phase.
+                // resolved automatically upon re-evaluation in a correct phase.
+                TransientError::new(transient_attr.clone()),
+            )?;
+            out.insert(transient_attr.as_str().into(), transient_val);
+        }
+        Ok(out.into())
     }
 }
 
@@ -307,8 +419,8 @@ enum BodyRef {
 impl BodyRef {
     pub fn as_str(&self) -> &'static str {
         match self {
-            BodyRef::Request => "request.body",
-            BodyRef::Response => "response.body",
+            BodyRef::Request => "request_body",
+            BodyRef::Response => "response_body",
         }
     }
 }
@@ -427,37 +539,13 @@ impl Predicate {
     where
         T: AttributeResolver,
     {
-        match self.expression.eval(resolver) {
-            Ok(value) => match value {
-                Value::Bool(result) => Ok(result),
-                _ => Err(EvaluationError::new(
-                    self.expression.clone(),
-                    format!("Expected boolean value, got {value:?}"),
-                )),
-            },
-            Err(CelError::Property(PropertyError::RequestBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "RequestBodyNotAvailable".into(),
-                ))
-            }
-            Err(CelError::Property(PropertyError::ResponseBodyNotAvailable)) => {
-                // TODO: EvaluationError is not specific enough to distinguish between errors
-                // consider returning a more specific error type
-                Err(EvaluationError::new(
-                    self.expression.clone(),
-                    "ResponseBodyNotAvailable".into(),
-                ))
-            }
-            Err(err) => {
-                error!("Failed to evaluate `{:?}`: {err}", self.expression);
-                Err(EvaluationError::new(
-                    self.expression.clone(),
-                    err.to_string(),
-                ))
-            }
+        let value = self.expression.eval(resolver)?;
+        match value {
+            Value::Bool(result) => Ok(result),
+            _ => Err(EvaluationError::new(
+                self.expression.clone(),
+                PredicateResultError::new(value.type_of()).into(),
+            )),
         }
     }
 }
@@ -901,47 +989,35 @@ pub type AttributeResolverResult = Result<Value, PropertyError>;
 
 pub trait AttributeResolver {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult;
+    fn transient(&mut self, attr: &str) -> Option<Value>;
 }
 
 #[derive(Default)]
-pub struct PathCache(std::collections::HashMap<Path, Value>);
-
-impl PathCache {
-    pub fn insert_path(&mut self, path: Path, value: Value) {
-        self.0.insert(path, value);
-    }
+pub struct PathCache {
+    value_map: std::collections::HashMap<Path, Value>,
+    transient_map: std::collections::HashMap<String, Value>,
 }
 
-impl From<HashMap<Path, Value>> for PathCache {
-    fn from(map: HashMap<Path, Value>) -> Self {
-        PathCache(map)
+impl PathCache {
+    pub fn add_transient(&mut self, attr: &str, value: Value) {
+        self.transient_map.insert(attr.into(), value);
     }
 }
 
 impl AttributeResolver for PathCache {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
-        match self.0.entry(attribute.path.clone()) {
+        match self.value_map.entry(attribute.path.clone()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
-            Entry::Vacant(entry) => match *attribute.path.tokens() {
-                ["@kuadrant", "request.body"] => {
-                    // Getting here means evaluating CEL expression with requestBodyJSON() function
-                    // at the request headers phase. Need to wait.
-                    // signals that the request body is not available
-                    Err(PropertyError::RequestBodyNotAvailable)
-                }
-                ["@kuadrant", "response.body"] => {
-                    // Getting here means evaluating CEL expression with responseBodyJSON() function
-                    // before the response body phase. Need to wait.
-                    // signals that the response body is not available
-                    Err(PropertyError::ResponseBodyNotAvailable)
-                }
-                _ => {
-                    let value = attribute.get()?;
-                    entry.insert(value.clone());
-                    Ok(value)
-                }
-            },
+            Entry::Vacant(entry) => {
+                let value = attribute.get()?;
+                entry.insert(value.clone());
+                Ok(value)
+            }
         }
+    }
+
+    fn transient(&mut self, attr: &str) -> Option<Value> {
+        self.transient_map.get(attr).cloned()
     }
 }
 
@@ -967,46 +1043,113 @@ impl AttributeOwner for Predicate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::cel::{known_attribute_for, CelError, Expression, PathCache, Predicate};
+    use crate::data::cel::errors::CelError;
     use crate::data::property::Path;
     use crate::data::{property, PropError};
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::{ExecutionError, Value};
     use std::collections::HashMap;
+    use std::error::Error;
     use std::sync::Arc;
 
-    pub struct TestResolver(std::collections::HashMap<Path, Value>);
+    // Always fails to resolve
+    #[derive(Default)]
+    pub struct FailResolver;
 
-    impl From<HashMap<Path, Value>> for TestResolver {
-        fn from(map: HashMap<Path, Value>) -> Self {
-            TestResolver(map)
+    impl AttributeResolver for FailResolver {
+        fn resolve(&mut self, _attribute: &Attribute) -> AttributeResolverResult {
+            Err(PropertyError::Get(PropError::new(
+                "property not found".into(),
+            )))
+        }
+
+        fn transient(&mut self, _attr: &str) -> Option<Value> {
+            unreachable!("Not supposed to get here!")
+        }
+    }
+
+    // Verifies that provided paths perfectly match the requested ones: no extras, no omissions.
+    // It is allowed to request the same path multiple times, though.
+    #[derive(Default)]
+    pub struct TestResolver {
+        expected_map: std::collections::HashMap<Path, Value>,
+        called_paths: Vec<Path>,
+        expected_transient_map: std::collections::HashMap<String, Value>,
+        called_transients: Vec<String>,
+    }
+
+    impl TestResolver {
+        fn with_paths(mut self, map: HashMap<Path, Value>) -> Self {
+            self.expected_map = map;
+            self
+        }
+
+        fn with_transient(mut self, attr: &str, val: Value) -> Self {
+            self.expected_transient_map.insert(attr.into(), val);
+            self
+        }
+
+        fn verify(self) {
+            // Remove duplicated called paths
+            let set: std::collections::HashSet<_> = self.called_paths.into_iter().collect();
+            let uniq_paths: Vec<Path> = set.into_iter().collect();
+            // A previous check guarantees that we only have expected paths.
+            // Therefore, we can verify all paths were called by simply comparing the counts.
+            assert_eq!(uniq_paths.len(), self.expected_map.len());
+
+            // Remove duplicated called transient attrs
+            let set: std::collections::HashSet<_> = self.called_transients.into_iter().collect();
+            let uniq_transients: Vec<String> = set.into_iter().collect();
+            // A previous check guarantees that we only have expected transient attributes.
+            // Therefore, we can verify all paths were called by simply comparing the counts.
+            assert_eq!(uniq_transients.len(), self.expected_transient_map.len())
         }
     }
 
     impl AttributeResolver for TestResolver {
         fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
-            match self.0.get(&attribute.path) {
-                None => Err(PropertyError::Get(PropError::new("NotFound".into()))),
-                Some(val) => Ok(val.clone()),
-            }
+            let path = attribute.path.clone();
+            let res = self.expected_map.get(&path);
+            assert!(
+                res.is_some(),
+                "TestResolver called with unexpected path {path}"
+            );
+            let val = res.unwrap();
+            self.called_paths.push(path);
+            Ok(val.clone())
+        }
+
+        fn transient(&mut self, attr: &str) -> Option<Value> {
+            let res = self.expected_transient_map.get(attr);
+            assert!(
+                res.is_some(),
+                "TestResolver called with unexpected transient attr {attr}"
+            );
+            let val = res.unwrap();
+            self.called_transients.push(attr.into());
+            Some(val.clone())
         }
     }
 
     fn build_resolver(elems: Vec<(Path, Value)>) -> TestResolver {
+        let test_resolver: TestResolver = Default::default();
+
         let mut map: HashMap<Path, Value> = HashMap::default();
         for (path, value) in elems {
             map.insert(path, value);
         }
 
-        map.into()
+        test_resolver.with_paths(map)
     }
 
     fn build_resolver_with_request_body(body: String) -> TestResolver {
-        build_resolver(vec![("@kuadrant.request\\.body".into(), body.into())])
+        let test_resolver = build_resolver(vec![]);
+        test_resolver.with_transient("request_body", body.into())
     }
 
     fn build_resolver_with_response_body(body: String) -> TestResolver {
-        build_resolver(vec![("@kuadrant.response\\.body".into(), body.into())])
+        let test_resolver = build_resolver(vec![]);
+        test_resolver.with_transient("response_body", body.into())
     }
 
     #[test]
@@ -1016,6 +1159,7 @@ mod tests {
         assert!(predicate
             .test(&mut resolver)
             .expect("This must evaluate properly!"));
+        resolver.verify();
     }
 
     #[test]
@@ -1155,6 +1299,7 @@ mod tests {
         assert!(predicate
             .test(&mut resolver)
             .expect("This must evaluate properly!"));
+        resolver.verify();
 
         let mut resolver =
             build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
@@ -1167,6 +1312,7 @@ mod tests {
         assert!(predicate
             .test(&mut resolver)
             .expect("This must evaluate properly!"));
+        resolver.verify();
 
         let mut resolver = build_resolver(vec![("request.query".into(), "%F0%9F%91%BE".into())]);
         let predicate =
@@ -1174,6 +1320,7 @@ mod tests {
         assert!(predicate
             .test(&mut resolver)
             .expect("This must evaluate properly!"));
+        resolver.verify();
 
         let mut resolver =
             build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
@@ -1181,7 +1328,9 @@ mod tests {
             "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
         )
         .expect("This is valid!");
-        assert_eq!(predicate.test(&mut resolver), Ok(true));
+        let res = predicate.test(&mut resolver).expect("should evaluate!");
+        assert!(res);
+        resolver.verify();
     }
 
     #[test]
@@ -1192,7 +1341,8 @@ mod tests {
             build_resolver(vec![("request.headers".into(), headerr_value_map.into())]);
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert_eq!(predicate.test(&mut resolver), Ok(true));
+        assert!(predicate.test(&mut resolver).expect("should evaluate!"));
+        resolver.verify();
     }
 
     #[test]
@@ -1232,26 +1382,29 @@ mod tests {
             property::Path::new(vec!["foo", "bar.baz"]),
             b"\xCA\xFE".to_vec(),
         )));
-        let mut resolver = PathCache::default();
+        let mut resolver = build_resolver(vec![]);
         let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
+        resolver.verify();
     }
 
     #[test]
     fn expression_attribute_does_not_resolve() {
+        let mut resolver = FailResolver;
         let err = Expression::new("unknown.attribute")
             .expect("This is valid CEL!")
-            .eval(&mut build_resolver(vec![]))
+            .eval(&mut resolver)
             .expect_err("This must error! body not available!");
-        assert!(matches!(err, CelError::Property(PropertyError::Get(_))));
-        if let CelError::Property(PropertyError::Get(r)) = err {
-            assert_eq!(r, PropError::new("NotFound".into()));
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
+        assert!(matches!(
+            *cel_err,
+            CelError::Property(PropertyError::Get(_))
+        ));
     }
 
     #[test]
@@ -1261,63 +1414,83 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! func arg is missing!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
         ));
+        resolver.verify();
 
         let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON(['a', 'b'])")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! arrays not allowed as func arg!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
+        resolver.verify();
 
         let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON(123435)")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! nums not allowed as func arg!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
+        resolver.verify();
 
         let mut resolver = build_resolver_with_request_body("{}".into());
         let err = Expression::new("requestBodyJSON(true)")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! bools not allowed as func arg!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
+        resolver.verify();
     }
 
     #[test]
     fn expression_request_body_json_body_wrong_type() {
-        let mut resolver = build_resolver(vec![("@kuadrant.request\\.body".into(), 1.into())]);
+        let mut resolver = build_resolver(vec![]).with_transient("request_body", 1.into());
         let err = Expression::new("requestBodyJSON('/foo')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body has unexpected type!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
         ));
         if let CelError::Resolve(ExecutionError::FunctionError {
             function: f,
             message: m,
-        }) = err
+        }) = cel_err
         {
-            assert_eq!(f, String::from("requestBodyJSON"));
-            assert!(m.contains("found request.body of type int, expected String"));
+            assert_eq!(*f, String::from("requestBodyJSON"));
+            assert!(m.contains("found request_body of type int, expected String"));
         } else {
             unreachable!("Not supposed to get here!");
         }
+        resolver.verify();
     }
 
     #[test]
@@ -1327,20 +1500,24 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body has unexpected type!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
         ));
         if let CelError::Resolve(ExecutionError::FunctionError {
             function: f,
             message: m,
-        }) = err
+        }) = cel_err
         {
-            assert_eq!(f, String::from("requestBodyJSON"));
-            assert!(m.contains("failed to parse request.body as JSON"));
+            assert_eq!(*f, String::from("requestBodyJSON"));
+            assert!(m.contains("failed to parse request_body as JSON"));
         } else {
             unreachable!("Not supposed to get here!");
         }
+        resolver.verify();
     }
 
     #[test]
@@ -1350,23 +1527,27 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body not available!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
         ));
         if let CelError::Resolve(ExecutionError::FunctionError {
             function: f,
             message: m,
-        }) = err
+        }) = cel_err
         {
-            assert_eq!(f, String::from("requestBodyJSON"));
+            assert_eq!(*f, String::from("requestBodyJSON"));
             assert_eq!(
-                m,
-                String::from("JSON Pointer '/foo' not found in request.body")
+                *m,
+                String::from("JSON Pointer '/foo' not found in request_body")
             );
         } else {
             unreachable!("Not supposed to get here!");
         }
+        resolver.verify();
     }
 
     #[test]
@@ -1398,39 +1579,30 @@ mod tests {
             .eval(&mut resolver)
             .expect("This must evaluate!");
         assert_eq!(value, "+44 1234567".into());
+        resolver.verify();
     }
 
     #[test]
-    fn path_cache_request_body_not_found() {
-        let request_body_attr = Attribute {
-            path: "@kuadrant.request\\.body".into(),
-            cel_type: Some(ValueType::String),
-        };
-
+    fn path_cache_resolve_not_existing_attribute() {
+        property::test::TEST_PROPERTY_VALUE
+            .set(Some(("request.method".into(), "GET".bytes().collect())));
         let mut resolver = PathCache::default();
-        let err = resolver
-            .resolve(&request_body_attr)
-            .expect_err("This must error! body not available!");
+        let attribute =
+            known_attribute_for(&"request.method".into()).expect("This is valid attribute");
+        // First time, entry not found,
+        // it should defer to attribute resolution (attribute.get())
+        let value = resolver
+            .resolve(&attribute)
+            .expect("This should not error!");
+        assert_eq!(value, "GET".into());
 
-        assert!(matches!(err, PropertyError::RequestBodyNotAvailable));
-    }
-
-    #[test]
-    fn path_cache_request_body_found() {
-        let mut path_cache: PathCache = HashMap::from([(
-            "@kuadrant.request\\.body".into(),
-            "This is the request body!".into(),
-        )])
-        .into();
-        let request_body_attr = Attribute {
-            path: "@kuadrant.request\\.body".into(),
-            cel_type: Some(ValueType::String),
-        };
-
-        let value = path_cache
-            .resolve(&request_body_attr)
-            .expect("This must resolve! body is available!");
-        assert_eq!(value, "This is the request body!".into());
+        // Second time, finds entry
+        // TEST_PROPERTY_VALUE is not set,
+        // so if attribute.get() would be called, it would fail
+        let value = resolver
+            .resolve(&attribute)
+            .expect("This should not error!");
+        assert_eq!(value, "GET".into());
     }
 
     #[test]
@@ -1479,63 +1651,83 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! func arg is missing!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
         ));
+        resolver.verify();
 
         let mut resolver = build_resolver_with_response_body("{}".into());
         let err = Expression::new("responseBodyJSON(['a', 'b'])")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! arrays not allowed as func arg!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
+        resolver.verify();
 
         let mut resolver = build_resolver_with_response_body("{}".into());
         let err = Expression::new("responseBodyJSON(123435)")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! nums not allowed as func arg!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
+        resolver.verify();
 
         let mut resolver = build_resolver_with_response_body("{}".into());
         let err = Expression::new("responseBodyJSON(true)")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! bools not allowed as func arg!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::UnexpectedType { .. })
         ));
+        resolver.verify();
     }
 
     #[test]
     fn expression_response_body_json_body_wrong_type() {
-        let mut resolver = build_resolver(vec![("@kuadrant.response\\.body".into(), 1.into())]);
+        let mut resolver = build_resolver(vec![]).with_transient("response_body", 1.into());
         let err = Expression::new("responseBodyJSON('/foo')")
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body has unexpected type!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
         ));
         if let CelError::Resolve(ExecutionError::FunctionError {
             function: f,
             message: m,
-        }) = err
+        }) = cel_err
         {
-            assert_eq!(f, String::from("responseBodyJSON"));
-            assert!(m.contains("found response.body of type int, expected String"));
+            assert_eq!(*f, String::from("responseBodyJSON"));
+            assert!(m.contains("found response_body of type int, expected String"));
         } else {
             unreachable!("Not supposed to get here!");
         }
+        resolver.verify();
     }
 
     #[test]
@@ -1545,20 +1737,24 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body has unexpected type!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
         ));
         if let CelError::Resolve(ExecutionError::FunctionError {
             function: f,
             message: m,
-        }) = err
+        }) = cel_err
         {
-            assert_eq!(f, String::from("responseBodyJSON"));
-            assert!(m.contains("failed to parse response.body as JSON"));
+            assert_eq!(*f, String::from("responseBodyJSON"));
+            assert!(m.contains("failed to parse response_body as JSON"));
         } else {
             unreachable!("Not supposed to get here!");
         }
+        resolver.verify();
     }
 
     #[test]
@@ -1568,23 +1764,27 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&mut resolver)
             .expect_err("This must error! body not available!");
+        let e = err.source().expect("there should be a source");
+        assert!(e.is::<CelError>());
+        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
-            err,
+            *cel_err,
             CelError::Resolve(ExecutionError::FunctionError { .. })
         ));
         if let CelError::Resolve(ExecutionError::FunctionError {
             function: f,
             message: m,
-        }) = err
+        }) = cel_err
         {
-            assert_eq!(f, String::from("responseBodyJSON"));
+            assert_eq!(*f, String::from("responseBodyJSON"));
             assert_eq!(
-                m,
-                String::from("JSON Pointer '/foo' not found in response.body")
+                *m,
+                String::from("JSON Pointer '/foo' not found in response_body")
             );
         } else {
             unreachable!("Not supposed to get here!");
         }
+        resolver.verify();
     }
 
     #[test]
@@ -1616,20 +1816,6 @@ mod tests {
             .eval(&mut resolver)
             .expect("This must evaluate!");
         assert_eq!(value, "+44 1234567".into());
-    }
-
-    #[test]
-    fn path_cache_response_body_not_found() {
-        let response_body_attr = Attribute {
-            path: "@kuadrant.response\\.body".into(),
-            cel_type: Some(ValueType::String),
-        };
-
-        let mut resolver = PathCache::default();
-        let err = resolver
-            .resolve(&response_body_attr)
-            .expect_err("This must error! body not available!");
-
-        assert!(matches!(err, PropertyError::ResponseBodyNotAvailable));
+        resolver.verify();
     }
 }
