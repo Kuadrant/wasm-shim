@@ -1,6 +1,8 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::data::{Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult};
+use crate::data::{
+    Attribute, AttributeOwner, AttributeResolver, Expression, Predicate, PredicateResult,
+};
 use crate::filter::operations::{
     EventualOperation, ProcessGrpcMessageOperation, ProcessNextRequestOperation,
 };
@@ -71,6 +73,7 @@ impl RuntimeAction {
     pub fn new(
         action: &Action,
         services: &HashMap<String, Service>,
+        request_data: Vec<(String, Expression)>,
     ) -> Result<Self, ActionCreationError> {
         let service = services
             .get(&action.service)
@@ -81,7 +84,11 @@ impl RuntimeAction {
 
         match service.service_type {
             ServiceType::RateLimit | ServiceType::RateLimitCheck | ServiceType::RateLimitReport => {
-                Ok(Self::RateLimit(RateLimitAction::new(action, service)?))
+                Ok(Self::RateLimit(RateLimitAction::new_with_data(
+                    action,
+                    service,
+                    request_data,
+                )?))
             }
             ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service)?)),
         }
@@ -248,7 +255,7 @@ mod test {
                 }
             }));
 
-        let runtime_action = RuntimeAction::new(&action, &services).unwrap();
+        let runtime_action = RuntimeAction::new(&action, &services, Vec::default()).unwrap();
 
         assert_eq!(runtime_action.request_attributes().len(), 3);
     }

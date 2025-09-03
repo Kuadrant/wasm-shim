@@ -1,5 +1,6 @@
 use crate::action_set_index::ActionSetIndex;
 use crate::configuration::PluginConfiguration;
+use crate::data::Expression;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action_set::RuntimeActionSet;
 use std::rc::Rc;
@@ -10,7 +11,21 @@ impl TryFrom<PluginConfiguration> for ActionSetIndex {
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
         let mut index = ActionSetIndex::new();
         for action_set in config.action_sets.iter() {
-            let runtime_action_set = Rc::new(RuntimeActionSet::new(action_set, &config.services)?);
+            let runtime_action_set = Rc::new(RuntimeActionSet::new(
+                action_set,
+                &config.services,
+                config
+                    .request_data
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if let Ok(expr) = Expression::new(v) {
+                            Some((k.clone(), expr))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            )?);
             for hostname in action_set.route_rule_conditions.hostnames.iter() {
                 index.insert(hostname, Rc::clone(&runtime_action_set));
             }
