@@ -1,12 +1,14 @@
-use crate::data::{get_attribute, PropError, PropertyError};
+use crate::data::{get_attribute, AttributeResolver, Expression, PropError, PropertyError};
 use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
     AttributeContext_Request, CheckRequest, DeniedHttpResponse, Metadata, SocketAddress,
 };
 use crate::service::errors::BuildMessageError;
 use crate::service::DirectResponse;
+use cel_interpreter::Value;
 use chrono::{DateTime, FixedOffset};
-use protobuf::well_known_types::Timestamp;
+use log::debug;
+use protobuf::well_known_types::{Struct, Timestamp};
 use protobuf::Message;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::MapType;
@@ -32,19 +34,42 @@ impl From<DeniedHttpResponse> for DirectResponse {
 
 pub struct AuthService;
 
+const KUADRANT_METADATA_METRICS_LABELS: &str = "io.kuadrant.metrics.labels";
+
 impl AuthService {
-    pub fn request_message(ce_host: String) -> Result<CheckRequest, PropertyError> {
-        AuthService::build_check_req(ce_host)
+    pub fn request_message<T>(
+        ce_host: String,
+        request_data: &[(String, Expression)],
+        resolver: &mut T,
+    ) -> Result<CheckRequest, PropertyError>
+    where
+        T: AttributeResolver,
+    {
+        AuthService::build_check_req(ce_host, request_data, resolver)
     }
 
-    pub fn request_message_as_bytes(ce_host: String) -> Result<Vec<u8>, BuildMessageError> {
-        Self::request_message(ce_host)
+    pub fn request_message_as_bytes<T>(
+        ce_host: String,
+        request_data: &[(String, Expression)],
+        resolver: &mut T,
+    ) -> Result<Vec<u8>, BuildMessageError>
+    where
+        T: AttributeResolver,
+    {
+        Self::request_message(ce_host, request_data, resolver)
             .map_err(BuildMessageError::Property)?
             .write_to_bytes()
             .map_err(BuildMessageError::Serialization)
     }
 
-    fn build_check_req(ce_host: String) -> Result<CheckRequest, PropertyError> {
+    fn build_check_req<T>(
+        ce_host: String,
+        request_data: &[(String, Expression)],
+        resolver: &mut T,
+    ) -> Result<CheckRequest, PropertyError>
+    where
+        T: AttributeResolver,
+    {
         let mut auth_req = CheckRequest::default();
         let mut attr = AttributeContext::default();
         attr.set_request(AuthService::build_request()?);
@@ -59,7 +84,41 @@ impl AuthService {
         // the ce_host is the identifier for authorino to determine which authconfig to use
         let context_extensions = HashMap::from([("host".to_string(), ce_host)]);
         attr.set_context_extensions(context_extensions);
-        attr.set_metadata_context(Metadata::default());
+        let mut metadata = Metadata::default();
+        if !request_data.is_empty() {
+            debug!(
+                "Adding data: {:?}",
+                request_data.iter().map(|(k, _)| k).collect::<Vec<_>>()
+            );
+            let mut labels = Struct::default();
+            request_data
+                .iter()
+                .for_each(|(key, expr)| match expr.eval(resolver) {
+                    Ok(Value::Null) | Err(_) => {
+                        let mut value = protobuf::well_known_types::Value::default();
+                        value.set_string_value(expr.source().to_string());
+                        labels.mut_fields().insert(key.clone(), value);
+                    }
+                    Ok(value) => {
+                        if let Some(label_value) = match value {
+                            Value::Int(i) => Some(i.to_string()),
+                            Value::UInt(u) => Some(format!("{u}u")),
+                            Value::Float(f) => Some(f.to_string()),
+                            Value::String(s) => Some(format!("\"{}\"", *s)),
+                            Value::Bool(b) => Some(b.to_string()),
+                            _ => None,
+                        } {
+                            let mut f_value = protobuf::well_known_types::Value::default();
+                            f_value.set_string_value(label_value);
+                            labels.mut_fields().insert(key.clone(), f_value);
+                        }
+                    }
+                });
+            metadata
+                .filter_metadata
+                .insert(KUADRANT_METADATA_METRICS_LABELS.to_string(), labels);
+        }
+        attr.set_metadata_context(metadata);
         auth_req.set_attributes(attr);
         Ok(auth_req)
     }

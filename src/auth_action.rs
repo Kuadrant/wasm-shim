@@ -1,7 +1,7 @@
 use crate::configuration::{Action, FailureMode, Service};
 use crate::data::{
-    store_metadata, Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult,
-    PredicateVec,
+    store_metadata, Attribute, AttributeOwner, AttributeResolver, Expression, Predicate,
+    PredicateResult, PredicateVec,
 };
 use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response};
 use crate::filter::operations::EventualOperation;
@@ -17,10 +17,15 @@ pub struct AuthAction {
     grpc_service: Rc<GrpcService>,
     scope: String,
     predicates: Vec<Predicate>,
+    request_data: Vec<(String, Expression)>,
 }
 
 impl AuthAction {
-    pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
+    pub fn new(
+        action: &Action,
+        service: &Service,
+        request_data: Vec<(String, Expression)>,
+    ) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &action.predicates {
             predicates.push(Predicate::new(predicate)?);
@@ -30,6 +35,7 @@ impl AuthAction {
             grpc_service: Rc::new(GrpcService::new(Rc::new(service.clone()))),
             scope: action.scope.clone(),
             predicates,
+            request_data,
         })
     }
 
@@ -39,6 +45,10 @@ impl AuthAction {
 
     pub fn scope(&self) -> &str {
         self.scope.as_str()
+    }
+
+    pub fn request_data(&self) -> &Vec<(String, Expression)> {
+        &self.request_data
     }
 
     pub fn conditions_apply<T>(&self, resolver: &mut T) -> PredicateResult
@@ -115,12 +125,17 @@ mod test {
     use protobuf::RepeatedField;
 
     fn build_auth_action_with_predicates(predicates: Vec<String>) -> AuthAction {
-        build_auth_action_with_predicates_and_failure_mode(predicates, FailureMode::default())
+        build_auth_action_with_predicates_and_failure_mode(
+            predicates,
+            FailureMode::default(),
+            Vec::default(),
+        )
     }
 
     fn build_auth_action_with_predicates_and_failure_mode(
         predicates: Vec<String>,
         failure_mode: FailureMode,
+        request_data: Vec<(String, Expression)>,
     ) -> AuthAction {
         let action = Action {
             service: "some_service".into(),
@@ -136,7 +151,7 @@ mod test {
             timeout: Timeout::default(),
         };
 
-        AuthAction::new(&action, &service)
+        AuthAction::new(&action, &service, request_data)
             .expect("action building failed. Maybe predicates compilation?")
     }
 
@@ -320,8 +335,11 @@ mod test {
 
     #[test]
     fn process_error_response() {
-        let auth_action =
-            build_auth_action_with_predicates_and_failure_mode(Vec::default(), FailureMode::Deny);
+        let auth_action = build_auth_action_with_predicates_and_failure_mode(
+            Vec::default(),
+            FailureMode::Deny,
+            Vec::default(),
+        );
         let error_response = build_check_response(StatusCode::InternalServerError, None, None);
         let result = auth_action.process_response(error_response);
         assert!(result.is_err());

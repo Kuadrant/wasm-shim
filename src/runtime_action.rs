@@ -90,7 +90,7 @@ impl RuntimeAction {
                     request_data,
                 )?))
             }
-            ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service)?)),
+            ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service, request_data)?)),
         }
     }
 
@@ -170,9 +170,12 @@ impl RuntimeAction {
     {
         match self {
             RuntimeAction::RateLimit(rl_action) => rl_action.build_message(resolver),
-            RuntimeAction::Auth(auth_action) => {
-                AuthService::request_message_as_bytes(String::from(auth_action.scope())).map(Some)
-            }
+            RuntimeAction::Auth(auth_action) => AuthService::request_message_as_bytes(
+                String::from(auth_action.scope()),
+                auth_action.request_data(),
+                resolver,
+            )
+            .map(Some),
         }
     }
 }
