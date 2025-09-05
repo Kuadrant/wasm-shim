@@ -7,7 +7,7 @@ use crate::service::errors::BuildMessageError;
 use crate::service::DirectResponse;
 use cel_interpreter::Value;
 use chrono::{DateTime, FixedOffset};
-use log::debug;
+use log::{debug, log_enabled};
 use protobuf::well_known_types::{Struct, Timestamp};
 use protobuf::Message;
 use proxy_wasm::hostcalls;
@@ -34,12 +34,12 @@ impl From<DeniedHttpResponse> for DirectResponse {
 
 pub struct AuthService;
 
-const KUADRANT_METADATA_METRICS_LABELS: &str = "io.kuadrant.metrics.labels";
+const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";
 
 impl AuthService {
     pub fn request_message<T>(
         ce_host: String,
-        request_data: &[(String, Expression)],
+        request_data: &[((String, String), Expression)],
         resolver: &mut T,
     ) -> Result<CheckRequest, PropertyError>
     where
@@ -50,7 +50,7 @@ impl AuthService {
 
     pub fn request_message_as_bytes<T>(
         ce_host: String,
-        request_data: &[(String, Expression)],
+        request_data: &[((String, String), Expression)],
         resolver: &mut T,
     ) -> Result<Vec<u8>, BuildMessageError>
     where
@@ -64,7 +64,7 @@ impl AuthService {
 
     fn build_check_req<T>(
         ce_host: String,
-        request_data: &[(String, Expression)],
+        request_data: &[((String, String), Expression)],
         resolver: &mut T,
     ) -> Result<CheckRequest, PropertyError>
     where
@@ -86,37 +86,51 @@ impl AuthService {
         attr.set_context_extensions(context_extensions);
         let mut metadata = Metadata::default();
         if !request_data.is_empty() {
-            debug!(
-                "Adding data: {:?}",
-                request_data.iter().map(|(k, _)| k).collect::<Vec<_>>()
-            );
-            let mut labels = Struct::default();
-            request_data
-                .iter()
-                .for_each(|(key, expr)| match expr.eval(resolver) {
-                    Ok(Value::Null) | Err(_) => {
-                        let mut value = protobuf::well_known_types::Value::default();
-                        value.set_string_value(expr.source().to_string());
-                        labels.mut_fields().insert(key.clone(), value);
-                    }
-                    Ok(value) => {
-                        if let Some(label_value) = match value {
-                            Value::Int(i) => Some(i.to_string()),
-                            Value::UInt(u) => Some(format!("{u}u")),
-                            Value::Float(f) => Some(f.to_string()),
-                            Value::String(s) => Some(format!("\"{}\"", *s)),
-                            Value::Bool(b) => Some(b.to_string()),
-                            _ => None,
-                        } {
-                            let mut f_value = protobuf::well_known_types::Value::default();
-                            f_value.set_string_value(label_value);
-                            labels.mut_fields().insert(key.clone(), f_value);
+            let mut by_domain = HashMap::new();
+            for ((domain, field), exp) in request_data {
+                by_domain
+                    .entry(domain)
+                    .or_insert_with(Vec::new)
+                    .push((field.to_string(), exp));
+            }
+
+            for (domain, entries) in by_domain.into_iter() {
+                let mut fields = Struct::default();
+                entries
+                    .into_iter()
+                    .for_each(|(field, expr)| match expr.eval(resolver) {
+                        Ok(Value::Null) | Err(_) => {
+                            let mut value = protobuf::well_known_types::Value::default();
+                            value.set_string_value(expr.source().to_string());
+                            fields.mut_fields().insert(field.clone(), value);
                         }
-                    }
-                });
-            metadata
-                .filter_metadata
-                .insert(KUADRANT_METADATA_METRICS_LABELS.to_string(), labels);
+                        Ok(value) => {
+                            if let Some(label_value) = match value {
+                                Value::Int(i) => Some(i.to_string()),
+                                Value::UInt(u) => Some(format!("{u}u")),
+                                Value::Float(f) => Some(f.to_string()),
+                                Value::String(s) => Some(format!("\"{}\"", *s)),
+                                Value::Bool(b) => Some(b.to_string()),
+                                _ => None,
+                            } {
+                                let mut f_value = protobuf::well_known_types::Value::default();
+                                f_value.set_string_value(label_value);
+                                fields.mut_fields().insert(field.clone(), f_value);
+                            }
+                        }
+                    });
+                let data_key = if domain.is_empty() {
+                    KUADRANT_METADATA_PREFIX.to_string()
+                } else {
+                    format!("{KUADRANT_METADATA_PREFIX}.{domain}")
+                };
+                if log_enabled!(log::Level::Debug) {
+                    let mut fields = fields.get_fields().keys().collect::<Vec<_>>();
+                    fields.sort();
+                    debug!("Adding data: `{data_key}` with entries: {fields:?}",);
+                }
+                metadata.filter_metadata.insert(data_key, fields);
+            }
         }
         attr.set_metadata_context(metadata);
         auth_req.set_attributes(attr);

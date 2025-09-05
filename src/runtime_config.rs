@@ -19,7 +19,8 @@ impl TryFrom<PluginConfiguration> for ActionSetIndex {
                     .iter()
                     .filter_map(|(k, v)| {
                         if let Ok(expr) = Expression::new(v) {
-                            Some((k.clone(), expr))
+                            let (domain, field) = domain_and_field_name(k);
+                            Some(((domain.to_string(), field.to_string()), expr))
                         } else {
                             None
                         }
@@ -39,6 +40,24 @@ impl Default for ActionSetIndex {
     fn default() -> Self {
         ActionSetIndex::new()
     }
+}
+
+fn domain_and_field_name(name: &str) -> (&str, &str) {
+    let haystack = &name[..name
+        .char_indices()
+        .rfind(|(_, c)| c.is_alphabetic())
+        .map(|(i, _)| i)
+        .unwrap_or_default()];
+    haystack
+        .rfind('.')
+        .map(|i| {
+            if i == 0 || i == name.len() - 1 {
+                ("", name)
+            } else {
+                (&name[..i], &name[i + 1..])
+            }
+        })
+        .unwrap_or(("", name))
 }
 
 #[cfg(test)]
@@ -168,5 +187,24 @@ mod test {
                 "Unknown service: unknown".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn test_prefix_and_field_name() {
+        assert_eq!(domain_and_field_name("test"), ("", "test"));
+        assert_eq!(domain_and_field_name("foo.test"), ("foo", "test"));
+        assert_eq!(domain_and_field_name("foo.bar.test"), ("foo.bar", "test"));
+        assert_eq!(domain_and_field_name(".test"), ("", ".test"));
+        assert_eq!(domain_and_field_name("test."), ("", "test."));
+        assert_eq!(domain_and_field_name("test.."), ("", "test.."));
+        assert_eq!(domain_and_field_name("....."), ("", "....."));
+        assert_eq!(domain_and_field_name("foo.bar.test."), ("foo.bar", "test."));
+        assert_eq!(domain_and_field_name("123.123"), ("", "123.123"));
+        assert_eq!(domain_and_field_name("!@.%$"), ("", "!@.%$"));
+        assert_eq!(domain_and_field_name("!@.%n$"), ("!@", "%n$"));
+        assert_eq!(domain_and_field_name("!n@.%$"), ("", "!n@.%$"));
+        assert_eq!(domain_and_field_name(""), ("", ""));
+        assert_eq!(domain_and_field_name("   "), ("", "   "));
+        assert_eq!(domain_and_field_name("  .  "), ("", "  .  "));
     }
 }

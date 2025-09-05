@@ -17,14 +17,14 @@ pub struct AuthAction {
     grpc_service: Rc<GrpcService>,
     scope: String,
     predicates: Vec<Predicate>,
-    request_data: Vec<(String, Expression)>,
+    request_data: Vec<((String, String), Expression)>,
 }
 
 impl AuthAction {
     pub fn new(
         action: &Action,
         service: &Service,
-        request_data: Vec<(String, Expression)>,
+        request_data: Vec<((String, String), Expression)>,
     ) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &action.predicates {
@@ -47,7 +47,7 @@ impl AuthAction {
         self.scope.as_str()
     }
 
-    pub fn request_data(&self) -> &Vec<(String, Expression)> {
+    pub fn request_data(&self) -> &Vec<((String, String), Expression)> {
         &self.request_data
     }
 
@@ -135,7 +135,7 @@ mod test {
     fn build_auth_action_with_predicates_and_failure_mode(
         predicates: Vec<String>,
         failure_mode: FailureMode,
-        request_data: Vec<(String, Expression)>,
+        request_data: Vec<((String, String), Expression)>,
     ) -> AuthAction {
         let action = Action {
             service: "some_service".into(),
