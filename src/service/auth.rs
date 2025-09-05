@@ -13,6 +13,7 @@ use protobuf::Message;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::MapType;
 use std::collections::HashMap;
+use std::ops::Deref;
 
 pub const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
 pub const AUTH_METHOD_NAME: &str = "Check";
@@ -101,20 +102,41 @@ impl AuthService {
                     .for_each(|(field, expr)| match expr.eval(resolver) {
                         Ok(Value::Null) | Err(_) => {
                             let mut value = protobuf::well_known_types::Value::default();
-                            value.set_string_value(expr.source().to_string());
+                            let mut cel_expr_struct = Struct::default();
+                            let mut cel_expr_field_value =
+                                protobuf::well_known_types::Value::default();
+                            cel_expr_field_value.set_string_value(expr.source().to_string());
+                            cel_expr_struct
+                                .mut_fields()
+                                .insert("cel_expr".to_string(), cel_expr_field_value);
+                            value.set_struct_value(cel_expr_struct);
                             fields.mut_fields().insert(field.clone(), value);
                         }
                         Ok(value) => {
-                            if let Some(label_value) = match value {
-                                Value::Int(i) => Some(i.to_string()),
-                                Value::UInt(u) => Some(format!("{u}u")),
-                                Value::Float(f) => Some(f.to_string()),
-                                Value::String(s) => Some(format!("\"{}\"", *s)),
-                                Value::Bool(b) => Some(b.to_string()),
-                                _ => None,
+                            let mut f_value = protobuf::well_known_types::Value::default();
+                            if match value {
+                                Value::Int(i) => {
+                                    f_value.set_number_value(i as f64);
+                                    true
+                                }
+                                Value::UInt(u) => {
+                                    f_value.set_number_value(u as f64);
+                                    true
+                                }
+                                Value::Float(f) => {
+                                    f_value.set_number_value(f);
+                                    true
+                                }
+                                Value::String(s) => {
+                                    f_value.set_string_value(s.deref().clone());
+                                    true
+                                }
+                                Value::Bool(b) => {
+                                    f_value.set_bool_value(b);
+                                    true
+                                }
+                                _ => false,
                             } {
-                                let mut f_value = protobuf::well_known_types::Value::default();
-                                f_value.set_string_value(label_value);
                                 fields.mut_fields().insert(field.clone(), f_value);
                             }
                         }
