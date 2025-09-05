@@ -80,7 +80,7 @@ pub(super) mod errors {
 
     #[derive(Debug)]
     pub struct EvaluationError {
-        expression: Expression,
+        expression: Box<Expression>,
         /// Box the contents of source to avoid large error variants
         source: Box<CelError>,
     }
@@ -148,9 +148,9 @@ pub(super) mod errors {
     }
 
     impl EvaluationError {
-        pub fn new(expression: Expression, source: CelError) -> EvaluationError {
-            EvaluationError {
-                expression,
+        pub fn new(expression: Expression, source: CelError) -> Self {
+            Self {
+                expression: Box::new(expression),
                 source: Box::new(source),
             }
         }
@@ -200,6 +200,7 @@ lazy_static! {
 
 #[derive(Clone, Debug)]
 pub struct Expression {
+    src: String,
     attributes: Vec<Attribute>,
     expression: CelExpression,
     extended: bool,
@@ -228,6 +229,7 @@ impl PartialEq for Expression {
 
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseError> {
+        let src = expression.to_string();
         let expression = parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
@@ -255,6 +257,7 @@ impl Expression {
         attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
         Ok(Self {
+            src,
             attributes,
             expression,
             extended,
@@ -304,6 +307,10 @@ impl Expression {
 
         Value::resolve(&self.expression, &ctx)
             .map_err(|e| EvaluationError::new(self.clone(), e.into()))
+    }
+
+    pub fn source(&self) -> &str {
+        self.src.as_str()
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]

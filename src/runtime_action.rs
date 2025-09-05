@@ -1,6 +1,8 @@
 use crate::auth_action::AuthAction;
 use crate::configuration::{Action, FailureMode, Service, ServiceType};
-use crate::data::{Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult};
+use crate::data::{
+    Attribute, AttributeOwner, AttributeResolver, Expression, Predicate, PredicateResult,
+};
 use crate::filter::operations::{
     EventualOperation, ProcessGrpcMessageOperation, ProcessNextRequestOperation,
 };
@@ -71,6 +73,7 @@ impl RuntimeAction {
     pub fn new(
         action: &Action,
         services: &HashMap<String, Service>,
+        request_data: Vec<((String, String), Expression)>,
     ) -> Result<Self, ActionCreationError> {
         let service = services
             .get(&action.service)
@@ -81,9 +84,13 @@ impl RuntimeAction {
 
         match service.service_type {
             ServiceType::RateLimit | ServiceType::RateLimitCheck | ServiceType::RateLimitReport => {
-                Ok(Self::RateLimit(RateLimitAction::new(action, service)?))
+                Ok(Self::RateLimit(RateLimitAction::new_with_data(
+                    action,
+                    service,
+                    request_data,
+                )?))
             }
-            ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service)?)),
+            ServiceType::Auth => Ok(Self::Auth(AuthAction::new(action, service, request_data)?)),
         }
     }
 
@@ -163,9 +170,12 @@ impl RuntimeAction {
     {
         match self {
             RuntimeAction::RateLimit(rl_action) => rl_action.build_message(resolver),
-            RuntimeAction::Auth(auth_action) => {
-                AuthService::request_message_as_bytes(String::from(auth_action.scope())).map(Some)
-            }
+            RuntimeAction::Auth(auth_action) => AuthService::request_message_as_bytes(
+                String::from(auth_action.scope()),
+                auth_action.request_data(),
+                resolver,
+            )
+            .map(Some),
         }
     }
 }
@@ -248,7 +258,7 @@ mod test {
                 }
             }));
 
-        let runtime_action = RuntimeAction::new(&action, &services).unwrap();
+        let runtime_action = RuntimeAction::new(&action, &services, Vec::default()).unwrap();
 
         assert_eq!(runtime_action.request_attributes().len(), 3);
     }

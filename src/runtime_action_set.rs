@@ -1,6 +1,7 @@
 use crate::configuration::{ActionSet, Service};
 use crate::data::{
-    Attribute, AttributeOwner, AttributeResolver, Predicate, PredicateResult, PredicateVec,
+    Attribute, AttributeOwner, AttributeResolver, Expression, Predicate, PredicateResult,
+    PredicateVec,
 };
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action::RuntimeAction;
@@ -18,7 +19,9 @@ impl RuntimeActionSet {
     pub fn new(
         action_set: &ActionSet,
         services: &HashMap<String, Service>,
+        mut request_data: Vec<((String, String), Expression)>,
     ) -> Result<Self, ActionCreationError> {
+        request_data.sort_by(|a, b| a.0.cmp(&b.0));
         // route predicates
         let mut route_rule_predicates = Vec::default();
         for predicate in &action_set.route_rule_conditions.predicates {
@@ -28,7 +31,7 @@ impl RuntimeActionSet {
         // actions
         let mut runtime_actions = Vec::default();
         for action in action_set.actions.iter() {
-            runtime_actions.push(RuntimeAction::new(action, services)?);
+            runtime_actions.push(RuntimeAction::new(action, services, request_data.clone())?);
         }
 
         Ok(Self {
@@ -65,8 +68,9 @@ mod test {
     fn empty_route_rule_predicates_do_apply() {
         let action_set = ActionSet::new("some_name".to_owned(), Default::default(), Vec::new());
 
-        let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
-            .expect("should not happen from an empty set of actions");
+        let runtime_action_set =
+            RuntimeActionSet::new(&action_set, &HashMap::default(), Vec::default())
+                .expect("should not happen from an empty set of actions");
         assert!(runtime_action_set
             .conditions_apply(&mut PathCache::default())
             .expect("should not fail!"));
@@ -83,8 +87,9 @@ mod test {
             Vec::new(),
         );
 
-        let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
-            .expect("should not happen from an empty set of actions");
+        let runtime_action_set =
+            RuntimeActionSet::new(&action_set, &HashMap::default(), Vec::default())
+                .expect("should not happen from an empty set of actions");
         assert!(runtime_action_set
             .conditions_apply(&mut PathCache::default())
             .expect("should not fail!"));
@@ -101,8 +106,9 @@ mod test {
             Vec::new(),
         );
 
-        let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
-            .expect("should not happen from an empty set of actions");
+        let runtime_action_set =
+            RuntimeActionSet::new(&action_set, &HashMap::default(), Vec::default())
+                .expect("should not happen from an empty set of actions");
         assert!(!runtime_action_set
             .conditions_apply(&mut PathCache::default())
             .expect("should not fail!"));
@@ -119,8 +125,9 @@ mod test {
             Vec::new(),
         );
 
-        let runtime_action_set = RuntimeActionSet::new(&action_set, &HashMap::default())
-            .expect("should not happen from an empty set of actions");
+        let runtime_action_set =
+            RuntimeActionSet::new(&action_set, &HashMap::default(), Vec::default())
+                .expect("should not happen from an empty set of actions");
         assert!(runtime_action_set
             .conditions_apply(&mut PathCache::default())
             .is_err());

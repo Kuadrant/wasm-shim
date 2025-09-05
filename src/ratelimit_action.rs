@@ -145,10 +145,20 @@ pub struct RateLimitAction {
     scope: String,
     service_name: String,
     conditional_data_sets: Vec<ConditionalData>,
+    request_data: Vec<((String, String), Expression)>,
 }
 
 impl RateLimitAction {
+    #[cfg(test)]
     pub fn new(action: &Action, service: &Service) -> Result<Self, ParseError> {
+        Self::new_with_data(action, service, Vec::default())
+    }
+
+    pub fn new_with_data(
+        action: &Action,
+        service: &Service,
+        request_data: Vec<((String, String), Expression)>,
+    ) -> Result<Self, ParseError> {
         let conditional_data_sets = action
             .conditional_data
             .iter()
@@ -160,6 +170,7 @@ impl RateLimitAction {
             scope: action.scope.clone(),
             service_name: action.service.clone(),
             conditional_data_sets,
+            request_data,
         })
     }
 
@@ -179,8 +190,30 @@ impl RateLimitAction {
             } else {
                 domain_attr
             };
+            let mut descriptors = vec![descriptor];
+            if !self.request_data.is_empty() {
+                let mut entries = RepeatedField::default();
+                self.request_data
+                    .iter()
+                    .for_each(|((domain, field), expr)| {
+                        if let Ok(Value::String(value)) = expr.eval(resolver) {
+                            let key = if domain.is_empty() || domain == "metrics.labels" {
+                                field.clone()
+                            } else {
+                                format!("{}.{}", domain, field)
+                            };
+                            let mut entry = RateLimitDescriptor_Entry::new();
+                            entry.set_key(key);
+                            entry.set_value(value.to_string());
+                            entries.push(entry);
+                        }
+                    });
 
-            RateLimitService::request_message_as_bytes(domain, vec![descriptor].into(), hits_addend)
+                let mut data = RateLimitDescriptor::new();
+                data.set_entries(entries);
+                descriptors.push(data)
+            }
+            RateLimitService::request_message_as_bytes(domain, descriptors.into(), hits_addend)
                 .map(Some)
         }
     }

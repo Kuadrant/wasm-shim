@@ -1,16 +1,19 @@
-use crate::data::{get_attribute, PropError, PropertyError};
+use crate::data::{get_attribute, AttributeResolver, Expression, PropError, PropertyError};
 use crate::envoy::{
     Address, AttributeContext, AttributeContext_HttpRequest, AttributeContext_Peer,
     AttributeContext_Request, CheckRequest, DeniedHttpResponse, Metadata, SocketAddress,
 };
 use crate::service::errors::BuildMessageError;
 use crate::service::DirectResponse;
+use cel_interpreter::Value;
 use chrono::{DateTime, FixedOffset};
-use protobuf::well_known_types::Timestamp;
+use log::{debug, log_enabled};
+use protobuf::well_known_types::{Struct, Timestamp};
 use protobuf::Message;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::MapType;
 use std::collections::HashMap;
+use std::ops::Deref;
 
 pub const AUTH_SERVICE_NAME: &str = "envoy.service.auth.v3.Authorization";
 pub const AUTH_METHOD_NAME: &str = "Check";
@@ -32,19 +35,42 @@ impl From<DeniedHttpResponse> for DirectResponse {
 
 pub struct AuthService;
 
+const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";
+
 impl AuthService {
-    pub fn request_message(ce_host: String) -> Result<CheckRequest, PropertyError> {
-        AuthService::build_check_req(ce_host)
+    pub fn request_message<T>(
+        ce_host: String,
+        request_data: &[((String, String), Expression)],
+        resolver: &mut T,
+    ) -> Result<CheckRequest, PropertyError>
+    where
+        T: AttributeResolver,
+    {
+        AuthService::build_check_req(ce_host, request_data, resolver)
     }
 
-    pub fn request_message_as_bytes(ce_host: String) -> Result<Vec<u8>, BuildMessageError> {
-        Self::request_message(ce_host)
+    pub fn request_message_as_bytes<T>(
+        ce_host: String,
+        request_data: &[((String, String), Expression)],
+        resolver: &mut T,
+    ) -> Result<Vec<u8>, BuildMessageError>
+    where
+        T: AttributeResolver,
+    {
+        Self::request_message(ce_host, request_data, resolver)
             .map_err(BuildMessageError::Property)?
             .write_to_bytes()
             .map_err(BuildMessageError::Serialization)
     }
 
-    fn build_check_req(ce_host: String) -> Result<CheckRequest, PropertyError> {
+    fn build_check_req<T>(
+        ce_host: String,
+        request_data: &[((String, String), Expression)],
+        resolver: &mut T,
+    ) -> Result<CheckRequest, PropertyError>
+    where
+        T: AttributeResolver,
+    {
         let mut auth_req = CheckRequest::default();
         let mut attr = AttributeContext::default();
         attr.set_request(AuthService::build_request()?);
@@ -59,7 +85,76 @@ impl AuthService {
         // the ce_host is the identifier for authorino to determine which authconfig to use
         let context_extensions = HashMap::from([("host".to_string(), ce_host)]);
         attr.set_context_extensions(context_extensions);
-        attr.set_metadata_context(Metadata::default());
+        let mut metadata = Metadata::default();
+        if !request_data.is_empty() {
+            let mut by_domain = HashMap::new();
+            for ((domain, field), exp) in request_data {
+                by_domain
+                    .entry(domain)
+                    .or_insert_with(Vec::new)
+                    .push((field.to_string(), exp));
+            }
+
+            for (domain, entries) in by_domain.into_iter() {
+                let mut fields = Struct::default();
+                entries
+                    .into_iter()
+                    .for_each(|(field, expr)| match expr.eval(resolver) {
+                        Ok(Value::Null) | Err(_) => {
+                            let mut value = protobuf::well_known_types::Value::default();
+                            let mut cel_expr_struct = Struct::default();
+                            let mut cel_expr_field_value =
+                                protobuf::well_known_types::Value::default();
+                            cel_expr_field_value.set_string_value(expr.source().to_string());
+                            cel_expr_struct
+                                .mut_fields()
+                                .insert("cel_expr".to_string(), cel_expr_field_value);
+                            value.set_struct_value(cel_expr_struct);
+                            fields.mut_fields().insert(field.clone(), value);
+                        }
+                        Ok(value) => {
+                            let mut f_value = protobuf::well_known_types::Value::default();
+                            if match value {
+                                Value::Int(i) => {
+                                    f_value.set_number_value(i as f64);
+                                    true
+                                }
+                                Value::UInt(u) => {
+                                    f_value.set_number_value(u as f64);
+                                    true
+                                }
+                                Value::Float(f) => {
+                                    f_value.set_number_value(f);
+                                    true
+                                }
+                                Value::String(s) => {
+                                    f_value.set_string_value(s.deref().clone());
+                                    true
+                                }
+                                Value::Bool(b) => {
+                                    f_value.set_bool_value(b);
+                                    true
+                                }
+                                _ => false,
+                            } {
+                                fields.mut_fields().insert(field.clone(), f_value);
+                            }
+                        }
+                    });
+                let data_key = if domain.is_empty() {
+                    KUADRANT_METADATA_PREFIX.to_string()
+                } else {
+                    format!("{KUADRANT_METADATA_PREFIX}.{domain}")
+                };
+                if log_enabled!(log::Level::Debug) {
+                    let mut fields = fields.get_fields().keys().collect::<Vec<_>>();
+                    fields.sort();
+                    debug!("Adding data: `{data_key}` with entries: {fields:?}",);
+                }
+                metadata.filter_metadata.insert(data_key, fields);
+            }
+        }
+        attr.set_metadata_context(metadata);
         auth_req.set_attributes(attr);
         Ok(auth_req)
     }
