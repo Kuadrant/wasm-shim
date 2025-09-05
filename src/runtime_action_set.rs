@@ -19,8 +19,9 @@ impl RuntimeActionSet {
     pub fn new(
         action_set: &ActionSet,
         services: &HashMap<String, Service>,
-        request_data: Vec<((String, String), Expression)>,
+        mut request_data: Vec<((String, String), Expression)>,
     ) -> Result<Self, ActionCreationError> {
+        request_data.sort_by(|a, b| a.0.cmp(&b.0));
         // route predicates
         let mut route_rule_predicates = Vec::default();
         for predicate in &action_set.route_rule_conditions.predicates {
