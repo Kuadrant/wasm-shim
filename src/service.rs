@@ -22,7 +22,7 @@ pub(super) mod errors {
 
     #[derive(Debug)]
     pub enum BuildMessageError {
-        Evaluation(EvaluationError),
+        Evaluation(Box<EvaluationError>),
         Property(PropertyError),
         Serialization(ProtobufError),
         UnsupportedDataType {
@@ -45,7 +45,7 @@ pub(super) mod errors {
 
     impl From<EvaluationError> for BuildMessageError {
         fn from(e: EvaluationError) -> Self {
-            BuildMessageError::Evaluation(e)
+            BuildMessageError::Evaluation(e.into())
         }
     }
 

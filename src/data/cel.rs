@@ -80,7 +80,7 @@ pub(super) mod errors {
 
     #[derive(Debug)]
     pub struct EvaluationError {
-        expression: Expression,
+        expression: Box<Expression>,
         /// Box the contents of source to avoid large error variants
         source: Box<CelError>,
     }
@@ -148,9 +148,9 @@ pub(super) mod errors {
     }
 
     impl EvaluationError {
-        pub fn new(expression: Expression, source: CelError) -> EvaluationError {
-            EvaluationError {
-                expression,
+        pub fn new(expression: Expression, source: CelError) -> Self {
+            Self {
+                expression: Box::new(expression),
                 source: Box::new(source),
             }
         }
