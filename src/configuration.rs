@@ -107,6 +107,8 @@ pub enum ServiceType {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
+    #[serde(default)]
+    pub request_data: HashMap<String, String>,
     pub services: HashMap<String, Service>,
     pub action_sets: Vec<ActionSet>,
 }
@@ -318,6 +320,63 @@ mod test {
 
         let plugin_config = res.expect("result is ok");
         assert_eq!(plugin_config.action_sets.len(), 0);
+    }
+
+    #[test]
+    fn config_containing_data() {
+        let config = r#"{
+            "requestData": {
+                "metrics.label1": "auth.metadata.username",
+                "metrics.label2": "'id#' + request.id"
+            },
+            "services": {
+                "limitador": {
+                    "type": "ratelimit",
+                    "endpoint": "limitador-cluster",
+                    "failureMode": "deny"
+                }
+            },
+            "actionSets": [
+            {
+                "name": "rlp-ns-A/rlp-name-A",
+                "routeRuleConditions": {
+                    "hostnames": ["*.toystore.com", "example.com"]
+                },
+                "actions": [
+                {
+                    "service": "limitador",
+                    "scope": "rlp-ns-A/rlp-name-A",
+                    "conditionalData": [
+                    {
+                        "data": [
+                        {
+                            "static": {
+                                "key": "rlp-ns-A/rlp-name-A",
+                                "value": "1"
+                            }
+                        },
+                        {
+                            "expression": {
+                                "key": "username",
+                                "value": "auth.metadata.username"
+                            }
+                        }]
+                    }]
+                }]
+            }]
+        }"#;
+
+        let res = serde_json::from_str::<PluginConfiguration>(config).expect("valid config");
+        assert_eq!(
+            res.request_data,
+            HashMap::from([
+                (
+                    "metrics.label1".to_owned(),
+                    "auth.metadata.username".to_owned()
+                ),
+                ("metrics.label2".to_owned(), "'id#' + request.id".to_owned()),
+            ])
+        );
     }
 
     #[test]
