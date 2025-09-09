@@ -7,6 +7,7 @@ use crate::filter::operations::{
 use crate::runtime_action::NextRequestResult;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
+use crate::service::rate_limit::KUADRANT_REPORT_RATELIMIT_METHOD_NAME;
 use crate::service::{DirectResponse, GrpcRequest, HeaderResolver, Headers, IndexedGrpcRequest};
 use log::{debug, error};
 use proxy_wasm::hostcalls;
@@ -34,6 +35,8 @@ pub(crate) struct KuadrantFilter {
     response_headers_to_add: Option<Headers>,
     request_headers_to_add: Option<Headers>,
     phase: Phase,
+    response_content_type: Option<String>,
+    sse_buffer: Option<String>,
 }
 
 impl Context for KuadrantFilter {
@@ -273,6 +276,15 @@ impl HttpContext for KuadrantFilter {
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         self.phase = Phase::ResponseHeaders;
+
+        // Detect Content-Type for SSE streaming support only if we are waiting for response body
+        if self.response_body_receiver.is_some() {
+            if let Ok(Some(content_type)) = self.get_http_response_header("content-type") {
+                debug!("#{} Content-Type: {}", self.context_id, content_type);
+                self.response_content_type = Some(content_type.clone());
+            }
+        }
+
         // response headers can only be added at this phase. At the response body time is already
         // too late
         if let Some(response_headers) = self.response_headers_to_add.take() {
@@ -301,6 +313,28 @@ impl HttpContext for KuadrantFilter {
         match self.response_body_receiver.take() {
             None => Action::Continue, // No pending actions, filter can continue normally
             Some(((index, action_set), transient_attr)) => {
+                // Check if this is an SSE stream and a TRLP action
+                if let Some(ref content_type) = self.response_content_type {
+                    if content_type.contains("text/event-stream")
+                        && action_set.runtime_actions[index].grpc_service().method()
+                            == KUADRANT_REPORT_RATELIMIT_METHOD_NAME
+                    {
+                        debug!(
+                            "#{} Initializing SSE buffer for streaming response",
+                            self.context_id
+                        );
+                        self.sse_buffer = Some(String::new());
+
+                        return self.handle_sse_stream(
+                            body_size,
+                            end_of_stream,
+                            index,
+                            action_set,
+                            transient_attr,
+                        );
+                    }
+                }
+
                 if !end_of_stream {
                     // This is not the end of the stream, so the complete request body is not yet available.
                     // Until JSON parsing is supported in streaming mode, the entire request body must be available.
@@ -600,6 +634,201 @@ impl KuadrantFilter {
             response_headers_to_add: Some(Vec::default()),
             request_headers_to_add: Some(Vec::default()),
             phase: Phase::RequestHeaders,
+            response_content_type: None,
+            sse_buffer: None,
         }
+    }
+
+    fn handle_sse_stream(
+        &mut self,
+        body_size: usize,
+        end_of_stream: bool,
+        index: usize,
+        action_set: Rc<RuntimeActionSet>,
+        transient_attr: String,
+    ) -> Action {
+        debug!(
+            "#{} handle_sse_stream: body_size: {body_size}, end_of_stream: {end_of_stream}",
+            self.context_id
+        );
+
+        let chunk_bytes = match self.get_http_response_body(0, body_size) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                error!(
+                    "#{} handle_sse_stream: no body bytes available",
+                    self.context_id
+                );
+                self.die();
+                return Action::Continue;
+            }
+            Err(e) => {
+                error!(
+                    "#{} handle_sse_stream: failed to read body: {:?}",
+                    self.context_id, e
+                );
+                self.die();
+                return Action::Continue;
+            }
+        };
+
+        let chunk_str = match String::from_utf8(chunk_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                error!(
+                    "#{} handle_sse_stream: failed to convert bytes to string: {:?}",
+                    self.context_id, e
+                );
+                self.die();
+                return Action::Continue;
+            }
+        };
+
+        debug!(
+            "#{} handle_sse_stream: processing chunk: {}",
+            self.context_id, chunk_str
+        );
+
+        if let Some(ref mut buffer) = self.sse_buffer {
+            buffer.push_str(&chunk_str);
+
+            loop {
+                // Find the earliest frame delimiter ("\n\n" or "\r\n\r\n")
+                let nn = buffer.find("\n\n");
+                let rnrn = buffer.find("\r\n\r\n");
+                let delim_index = match (nn, rnrn) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                };
+
+                let Some(end_idx) = delim_index else { break };
+
+                let frame = buffer[..end_idx].to_string();
+
+                let delim_len = if buffer[end_idx..].starts_with("\r\n\r\n") {
+                    4
+                } else {
+                    2
+                };
+                buffer.drain(..end_idx + delim_len);
+
+                let mut data_buf = String::new();
+                for line in frame.lines() {
+                    if let Some(rest) = line.strip_prefix("data:") {
+                        let value = if let Some(stripped) = rest.strip_prefix(' ') {
+                            stripped
+                        } else {
+                            rest
+                        };
+                        if !data_buf.is_empty() {
+                            data_buf.push('\n');
+                        }
+                        data_buf.push_str(value);
+                    }
+                }
+
+                if data_buf.is_empty() {
+                    continue;
+                }
+
+                debug!(
+                    "#{} handle_sse_stream: processing event data: {}",
+                    self.context_id, data_buf
+                );
+
+                if let Some(usage_json) = extract_usage_from_data(&data_buf) {
+                    debug!(
+                        "#{} handle_sse_stream: found usage data: {}",
+                        self.context_id, usage_json
+                    );
+
+                    self.path_store
+                        .add_transient(transient_attr.as_str(), usage_json.into());
+
+                    return self.run(action_set, index);
+                }
+            }
+        }
+
+        if !end_of_stream {
+            self.response_body_receiver = Some(((index, action_set), transient_attr));
+            return Action::Continue;
+        }
+
+        debug!(
+            "#{} handle_sse_stream: stream ended but no usage data found",
+            self.context_id
+        );
+
+        Action::Continue
+    }
+}
+
+fn extract_usage_from_data(data: &str) -> Option<String> {
+    if data.trim() == "[DONE]" {
+        return None;
+    }
+    match serde_json::from_str::<serde_json::Value>(data) {
+        Ok(json) => {
+            if let Some(usage) = json.get("usage") {
+                if usage.is_null() {
+                    return None;
+                }
+                let usage_json = serde_json::json!({"usage": usage});
+                Some(usage_json.to_string())
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_usage_from_data;
+
+    #[test]
+    fn extract_usage_from_data_with_usage() {
+        let data =
+            r#"{"id":"x","usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#;
+        let result = extract_usage_from_data(data);
+        assert_eq!(
+            result,
+            Some(
+                "{\"usage\":{\"completion_tokens\":2,\"prompt_tokens\":1,\"total_tokens\":3}}"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn extract_usage_from_data_without_usage() {
+        let data = r#"{"id":"x","choices":[]}"#;
+        let result = extract_usage_from_data(data);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_usage_from_data_invalid_json() {
+        let data = "not-json";
+        let result = extract_usage_from_data(data);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_usage_from_data_done_event() {
+        let data = "[DONE]";
+        let result = extract_usage_from_data(data);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_usage_from_data_with_null_usage() {
+        let data = r#"{"id":"x","usage":null}"#;
+        let result = extract_usage_from_data(data);
+        assert!(result.is_none());
     }
 }
