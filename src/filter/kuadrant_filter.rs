@@ -36,7 +36,9 @@ pub(crate) struct KuadrantFilter {
     request_headers_to_add: Option<Headers>,
     phase: Phase,
     response_content_type: Option<String>,
-    sse_buffer: Option<String>,
+    streamed_buffer: String,
+    streamed_usage: String,
+    stream_offset: usize,
 }
 
 impl Context for KuadrantFilter {
@@ -277,7 +279,7 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_response_headers", self.context_id);
         self.phase = Phase::ResponseHeaders;
 
-        // Detect Content-Type for SSE streaming support only if we are waiting for response body
+        // Detect Content-Type for streaming support only if we are waiting for response body
         if self.response_body_receiver.is_some() {
             if let Ok(Some(content_type)) = self.get_http_response_header("content-type") {
                 debug!("#{} Content-Type: {}", self.context_id, content_type);
@@ -313,26 +315,21 @@ impl HttpContext for KuadrantFilter {
         match self.response_body_receiver.take() {
             None => Action::Continue, // No pending actions, filter can continue normally
             Some(((index, action_set), transient_attr)) => {
-                // Check if this is an SSE stream and a TRLP action
-                if let Some(ref content_type) = self.response_content_type {
-                    if content_type.contains("text/event-stream")
-                        && action_set.runtime_actions[index].grpc_service().method()
-                            == KUADRANT_REPORT_RATELIMIT_METHOD_NAME
-                    {
-                        debug!(
-                            "#{} Initializing SSE buffer for streaming response",
-                            self.context_id
-                        );
-                        self.sse_buffer = Some(String::new());
-
-                        return self.handle_sse_stream(
-                            body_size,
-                            end_of_stream,
-                            index,
-                            action_set,
-                            transient_attr,
-                        );
-                    }
+                let is_streamed = self
+                    .response_content_type
+                    .as_ref()
+                    .map(|ct| ct.contains("text/event-stream"))
+                    .unwrap_or(false);
+                let is_trlp = action_set.runtime_actions[index].grpc_service().method()
+                    == KUADRANT_REPORT_RATELIMIT_METHOD_NAME;
+                if is_streamed && is_trlp {
+                    return self.handle_stream(
+                        body_size,
+                        end_of_stream,
+                        index,
+                        action_set,
+                        transient_attr,
+                    );
                 }
 
                 if !end_of_stream {
@@ -635,11 +632,13 @@ impl KuadrantFilter {
             request_headers_to_add: Some(Vec::default()),
             phase: Phase::RequestHeaders,
             response_content_type: None,
-            sse_buffer: None,
+            streamed_buffer: String::new(),
+            streamed_usage: String::new(),
+            stream_offset: 0,
         }
     }
 
-    fn handle_sse_stream(
+    fn handle_stream(
         &mut self,
         body_size: usize,
         end_of_stream: bool,
@@ -648,187 +647,212 @@ impl KuadrantFilter {
         transient_attr: String,
     ) -> Action {
         debug!(
-            "#{} handle_sse_stream: body_size: {body_size}, end_of_stream: {end_of_stream}",
-            self.context_id
+            "#{} handle_stream: body_size: {}, end_of_stream: {}, stream_offset: {}",
+            self.context_id, body_size, end_of_stream, self.stream_offset
         );
-
-        let chunk_bytes = match self.get_http_response_body(0, body_size) {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => {
-                error!(
-                    "#{} handle_sse_stream: no body bytes available",
-                    self.context_id
-                );
-                self.die();
-                return Action::Continue;
-            }
-            Err(e) => {
-                error!(
-                    "#{} handle_sse_stream: failed to read body: {:?}",
-                    self.context_id, e
-                );
-                self.die();
-                return Action::Continue;
-            }
-        };
-
-        let chunk_str = match String::from_utf8(chunk_bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(
-                    "#{} handle_sse_stream: failed to convert bytes to string: {:?}",
-                    self.context_id, e
-                );
-                self.die();
-                return Action::Continue;
-            }
-        };
-
-        debug!(
-            "#{} handle_sse_stream: processing chunk: {}",
-            self.context_id, chunk_str
-        );
-
-        if let Some(ref mut buffer) = self.sse_buffer {
-            buffer.push_str(&chunk_str);
-
-            loop {
-                // Find the earliest frame delimiter ("\n\n" or "\r\n\r\n")
-                let nn = buffer.find("\n\n");
-                let rnrn = buffer.find("\r\n\r\n");
-                let delim_index = match (nn, rnrn) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (Some(a), None) => Some(a),
-                    (None, Some(b)) => Some(b),
-                    (None, None) => None,
-                };
-
-                let Some(end_idx) = delim_index else { break };
-
-                let frame = buffer[..end_idx].to_string();
-
-                let delim_len = if buffer[end_idx..].starts_with("\r\n\r\n") {
-                    4
-                } else {
-                    2
-                };
-                buffer.drain(..end_idx + delim_len);
-
-                let mut data_buf = String::new();
-                for line in frame.lines() {
-                    if let Some(rest) = line.strip_prefix("data:") {
-                        let value = if let Some(stripped) = rest.strip_prefix(' ') {
-                            stripped
-                        } else {
-                            rest
-                        };
-                        if !data_buf.is_empty() {
-                            data_buf.push('\n');
-                        }
-                        data_buf.push_str(value);
-                    }
-                }
-
-                if data_buf.is_empty() {
-                    continue;
-                }
-
-                debug!(
-                    "#{} handle_sse_stream: processing event data: {}",
-                    self.context_id, data_buf
-                );
-
-                if let Some(usage_json) = extract_usage_from_data(&data_buf) {
-                    debug!(
-                        "#{} handle_sse_stream: found usage data: {}",
-                        self.context_id, usage_json
+        if body_size != self.stream_offset {
+            let buffer_size = body_size - self.stream_offset;
+            let chunk_bytes = match self.get_http_response_body(self.stream_offset, buffer_size) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => {
+                    error!(
+                        "#{} handle_stream: no body bytes available",
+                        self.context_id
                     );
+                    self.die();
+                    return Action::Continue;
+                }
+                Err(e) => {
+                    error!(
+                        "#{} handle_stream: failed to read body: {:?}",
+                        self.context_id, e
+                    );
+                    self.die();
+                    return Action::Continue;
+                }
+            };
 
-                    self.path_store
-                        .add_transient(transient_attr.as_str(), usage_json.into());
+            let chunk_str = match String::from_utf8(chunk_bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!(
+                        "#{} handle_stream: failed to convert bytes to string: {:?}",
+                        self.context_id, e
+                    );
+                    self.die();
+                    return Action::Continue;
+                }
+            };
 
-                    return self.run(action_set, index);
+            debug!(
+                "#{} handle_stream: processing chunk: {}",
+                self.context_id, chunk_str
+            );
+
+            self.streamed_buffer.push_str(&chunk_str);
+            self.stream_offset += buffer_size;
+
+            // Extract only the last two complete frames as usage should be in last frame
+            let (usage_frame, done_frame) = split_last_two_frames(&mut self.streamed_buffer);
+            let data_usage = usage_frame.as_deref().and_then(collect_data);
+            let data_done = done_frame.as_deref().and_then(collect_data);
+            if let Some(ref data_done_val) = data_done {
+                if data_done_val == "[DONE]" {
+                    if let Some(usage) = data_usage.as_ref() {
+                        self.streamed_usage = usage.to_string()
+                    }
                 }
             }
         }
 
         if !end_of_stream {
             self.response_body_receiver = Some(((index, action_set), transient_attr));
-            return Action::Continue;
+            return Action::Pause;
+        }
+
+        if !self.streamed_usage.is_empty() {
+            self.path_store
+                .add_transient(transient_attr.as_str(), self.streamed_usage.clone().into());
+            return self.run(action_set, index);
         }
 
         debug!(
-            "#{} handle_sse_stream: stream ended but no usage data found",
+            "#{} handle_stream: stream ended but no usage data found",
             self.context_id
         );
-
         Action::Continue
     }
 }
 
-fn extract_usage_from_data(data: &str) -> Option<String> {
-    if data.trim() == "[DONE]" {
-        return None;
-    }
-    match serde_json::from_str::<serde_json::Value>(data) {
-        Ok(json) => {
-            if let Some(usage) = json.get("usage") {
-                if usage.is_null() {
-                    return None;
-                }
-                let usage_json = serde_json::json!({"usage": usage});
-                Some(usage_json.to_string())
+fn collect_data(frame: &str) -> Option<String> {
+    let mut out = String::new();
+    for line in frame.lines() {
+        if let Some(rest) = line.strip_prefix("data:") {
+            let value = if let Some(stripped) = rest.strip_prefix(' ') {
+                stripped
             } else {
-                None
+                rest
+            };
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(value);
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn split_last_two_frames(buffer: &mut String) -> (Option<String>, Option<String>) {
+    let s = buffer.as_str();
+
+    // last delimiter (the last complete delimiter in the current buffer)
+    let Some((last_delimiter_index, _last_delimiter_length)) = find_last_delim(s) else {
+        return (None, None);
+    };
+
+    // 2nd last delimiter
+    let upto_last = &s[..last_delimiter_index];
+    let second_delimiter = find_last_delim(upto_last);
+
+    // done_frame spans from after 2nd last delimiter index + len up to last delimiter index
+    let done_start_index = second_delimiter.map(|(i, l)| i + l).unwrap_or(0);
+    let done_frame = Some(s[done_start_index..last_delimiter_index].to_string());
+
+    // usage frame spans from after 3rd last delimiter index + len up to 2nd last delimiter index
+    let usage_frame =
+        if let Some((second_delimiter_index, _second_delimiter_length)) = second_delimiter {
+            let upto_second = &s[..second_delimiter_index];
+            let third_delimiter = find_last_delim(upto_second);
+            let usage_start_index = third_delimiter.map(|(i, l)| i + l).unwrap_or(0);
+            Some(s[usage_start_index..second_delimiter_index].to_string())
+        } else {
+            None
+        };
+
+    buffer.drain(..done_start_index);
+
+    (usage_frame, done_frame)
+}
+
+fn find_last_delim(s: &str) -> Option<(usize, usize)> {
+    let nn = s.rfind("\n\n");
+    let rnrn = s.rfind("\r\n\r\n");
+    match (nn, rnrn) {
+        (None, None) => None,
+        (Some(a), None) => Some((a, 2)),
+        (None, Some(b)) => Some((b, 4)),
+        (Some(a), Some(b)) => {
+            if a > b {
+                Some((a, 2))
+            } else {
+                Some((b, 4))
             }
         }
-        Err(_) => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::extract_usage_from_data;
+    use super::split_last_two_frames;
 
     #[test]
-    fn extract_usage_from_data_with_usage() {
-        let data =
-            r#"{"id":"x","usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#;
-        let result = extract_usage_from_data(data);
-        assert_eq!(
-            result,
-            Some(
-                "{\"usage\":{\"completion_tokens\":2,\"prompt_tokens\":1,\"total_tokens\":3}}"
-                    .to_string()
-            )
-        );
+    fn split_last_two_frames_only_two_delims() {
+        // Two complete frames: A\n\nB\n\n, buffer should be drained to keep last frame (B) and no leftover
+        let mut buf = String::from("data: A\n\ndata: B\n\n");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert_eq!(usage_frame.unwrap(), "data: A");
+        assert_eq!(done_frame.unwrap(), "data: B");
+        assert_eq!(buf, "data: B\n\n");
     }
 
     #[test]
-    fn extract_usage_from_data_without_usage() {
-        let data = r#"{"id":"x","choices":[]}"#;
-        let result = extract_usage_from_data(data);
-        assert!(result.is_none());
+    fn split_last_two_frames_usage_done_over_two_calls() {
+        // First call: only usage frame complete
+        let mut buf = String::from("data: {\"usage\":1}\n\n");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert!(usage_frame.is_none());
+        assert_eq!(done_frame.unwrap(), "data: {\"usage\":1}");
+        assert_eq!(buf, "data: {\"usage\":1}\n\n");
+
+        buf.push_str("data: [DONE]\n\n");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert_eq!(usage_frame.unwrap(), "data: {\"usage\":1}");
+        assert_eq!(done_frame.unwrap(), "data: [DONE]");
+        assert_eq!(buf, "data: [DONE]\n\n");
     }
 
     #[test]
-    fn extract_usage_from_data_invalid_json() {
-        let data = "not-json";
-        let result = extract_usage_from_data(data);
-        assert!(result.is_none());
+    fn split_last_two_frames_with_partial_trailer_kept() {
+        // Two full frames and a trailing partial that must be kept
+        let mut buf = String::from("data: A\n\ndata: B\n\ndata: PART");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert_eq!(usage_frame.unwrap(), "data: A");
+        assert_eq!(done_frame.unwrap(), "data: B");
+        assert_eq!(buf, "data: B\n\ndata: PART");
     }
 
     #[test]
-    fn extract_usage_from_data_done_event() {
-        let data = "[DONE]";
-        let result = extract_usage_from_data(data);
-        assert!(result.is_none());
-    }
+    fn split_last_two_frames_with_partial_blocks() {
+        let mut buf = String::from("data: {\"id");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert!(usage_frame.is_none());
+        assert!(done_frame.is_none());
+        assert_eq!(buf, "data: {\"id");
 
-    #[test]
-    fn extract_usage_from_data_with_null_usage() {
-        let data = r#"{"id":"x","usage":null}"#;
-        let result = extract_usage_from_data(data);
-        assert!(result.is_none());
+        buf.push_str("\":1}\n\ndata: {");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert!(usage_frame.is_none());
+        assert_eq!(done_frame.unwrap(), "data: {\"id\":1}");
+        assert_eq!(buf, "data: {\"id\":1}\n\ndata: {");
+
+        buf.push_str("\"usage\":1}\n\ndata: [DONE]\n\n");
+        let (usage_frame, done_frame) = split_last_two_frames(&mut buf);
+        assert_eq!(usage_frame.unwrap(), "data: {\"usage\":1}");
+        assert_eq!(done_frame.unwrap(), "data: [DONE]");
+        assert_eq!(buf, "data: [DONE]\n\n");
     }
 }
