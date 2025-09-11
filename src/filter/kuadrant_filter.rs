@@ -7,7 +7,8 @@ use crate::filter::operations::{
 use crate::runtime_action::NextRequestResult;
 use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
-use crate::service::{DirectResponse, GrpcRequest, HeaderResolver, Headers, IndexedGrpcRequest};
+use crate::service::{DirectResponse, HeaderResolver, Headers, IndexedGrpcRequest};
+use crate::v2::temp::GrpcRequest;
 use log::{debug, error};
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};

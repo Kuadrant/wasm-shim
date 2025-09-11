@@ -9,6 +9,7 @@ use crate::service::rate_limit::{
     KUADRANT_REPORT_RATELIMIT_METHOD_NAME, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME,
 };
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
+use crate::v2::temp::GrpcRequest;
 use protobuf::RepeatedField;
 use proxy_wasm::types::Bytes;
 use std::cell::OnceCell;
@@ -16,7 +17,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub(super) mod errors {
-    use crate::data::{EvaluationError, Expression, PropertyError};
+    use crate::data::{EvaluationError, Expression};
+    use crate::v2::data::attribute::PropertyError;
     use protobuf::ProtobufError;
     use std::fmt::{Debug, Display, Formatter};
 
@@ -169,53 +171,6 @@ impl IndexedGrpcRequest {
 
     pub fn request(self) -> GrpcRequest {
         self.request
-    }
-}
-
-// GrpcRequest contains the information required to make a Grpc Call
-pub struct GrpcRequest {
-    upstream_name: String,
-    service_name: String,
-    method_name: String,
-    timeout: Duration,
-    message: Option<Vec<u8>>,
-}
-
-impl GrpcRequest {
-    pub fn new(
-        upstream_name: &str,
-        service_name: &str,
-        method_name: &str,
-        timeout: Duration,
-        message: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            upstream_name: upstream_name.to_owned(),
-            service_name: service_name.to_owned(),
-            method_name: method_name.to_owned(),
-            timeout,
-            message,
-        }
-    }
-
-    pub fn upstream_name(&self) -> &str {
-        &self.upstream_name
-    }
-
-    pub fn service_name(&self) -> &str {
-        &self.service_name
-    }
-
-    pub fn method_name(&self) -> &str {
-        &self.method_name
-    }
-
-    pub fn timeout(&self) -> Duration {
-        self.timeout
-    }
-
-    pub fn message(&self) -> Option<&[u8]> {
-        self.message.as_deref()
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::data::attribute::KUADRANT_NAMESPACE;
+use crate::v2::data::attribute::Path;
 use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
@@ -99,71 +100,6 @@ pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
 
 pub(super) fn set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status> {
     host_set_property(path, value)
-}
-
-#[derive(Clone, Hash, PartialEq, Eq)]
-pub struct Path {
-    tokens: Vec<String>,
-}
-
-impl Display for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.tokens
-                .iter()
-                .map(|t| t.replace('.', "\\."))
-                .collect::<Vec<String>>()
-                .join(".")
-        )
-    }
-}
-
-impl Debug for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "path: {:?}", self.tokens)
-    }
-}
-
-impl From<&str> for Path {
-    fn from(value: &str) -> Self {
-        let mut token = String::new();
-        let mut tokens: Vec<String> = Vec::new();
-        let mut chars = value.chars();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '.' => {
-                    tokens.push(token);
-                    token = String::new();
-                }
-                '\\' => {
-                    if let Some(next) = chars.next() {
-                        token.push(next);
-                    }
-                }
-                _ => token.push(ch),
-            }
-        }
-        tokens.push(token);
-
-        Self { tokens }
-    }
-}
-
-impl Path {
-    pub fn new<T: Into<String>>(tokens: Vec<T>) -> Self {
-        Self {
-            tokens: tokens.into_iter().map(|i| i.into()).collect(),
-        }
-    }
-    pub fn tokens(&self) -> Vec<&str> {
-        self.tokens.iter().map(String::as_str).collect()
-    }
-
-    pub fn is_request(&self) -> bool {
-        !self.tokens.is_empty() && self.tokens[0] == "request"
-    }
 }
 
 #[cfg(test)]

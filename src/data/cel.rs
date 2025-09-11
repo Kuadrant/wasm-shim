@@ -1,6 +1,7 @@
 use crate::data::cel::errors::{EvaluationError, PredicateResultError};
-use crate::data::property::{host_get_map, Path};
-use crate::data::{get_attribute, PropertyError};
+use crate::data::get_attribute;
+use crate::data::property::host_get_map;
+use crate::v2::data::attribute::{Path, PropertyError};
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
@@ -22,7 +23,8 @@ use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
 pub(super) mod errors {
-    use crate::data::{Expression, PropertyError};
+    use crate::data::Expression;
+    use crate::v2::data::attribute::PropertyError;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
@@ -847,7 +849,7 @@ pub fn debug_all_well_known_attributes() {
 
 pub mod data {
     use crate::data::cel::{Attribute, AttributeResolver};
-    use crate::data::PropertyError;
+    use crate::v2::data::attribute::PropertyError;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -1051,8 +1053,10 @@ impl AttributeOwner for Predicate {
 mod tests {
     use super::*;
     use crate::data::cel::errors::CelError;
-    use crate::data::property::Path;
-    use crate::data::{property, PropError};
+    use crate::data::property;
+    use crate::v2::data::attribute;
+    use crate::v2::data::attribute::Path;
+    use crate::v2::data::attribute::PropError;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::{ExecutionError, Value};
     use std::collections::HashMap;
@@ -1191,7 +1195,7 @@ mod tests {
     #[test]
     fn attribute_to_json_resolve() {
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec![
+            attribute::Path::new(vec![
                 "filter_state",
                 "wasm.kuadrant.auth.identity.anonymous",
             ]),
@@ -1206,7 +1210,7 @@ mod tests {
         assert_eq!(value, true.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            attribute::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42".bytes().collect(),
         )));
         let value = Attribute {
@@ -1218,7 +1222,7 @@ mod tests {
         assert_eq!(value, 42.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            attribute::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42.3".bytes().collect(),
         )));
         let value = Attribute {
@@ -1230,7 +1234,7 @@ mod tests {
         assert_eq!(value, 42.3.into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
+            attribute::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
             "\"John\"".bytes().collect(),
         )));
         let value = Attribute {
@@ -1242,7 +1246,7 @@ mod tests {
         assert_eq!(value, "John".into());
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            attribute::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "-42".bytes().collect(),
         )));
         let value = Attribute {
@@ -1255,7 +1259,7 @@ mod tests {
 
         // let's fall back to strings, as that's what we read and set in store_metadata
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            attribute::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "some random crap".bytes().collect(),
         )));
         let value = Attribute {
@@ -1386,7 +1390,7 @@ mod tests {
     #[test]
     fn expression_access_host() {
         property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["foo", "bar.baz"]),
+            attribute::Path::new(vec!["foo", "bar.baz"]),
             b"\xCA\xFE".to_vec(),
         )));
         let mut resolver = build_resolver(vec![]);
