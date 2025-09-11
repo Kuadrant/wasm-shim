@@ -1,4 +1,4 @@
-mod kuadrant;
+pub mod kuadrant;
 
 mod services;
 
