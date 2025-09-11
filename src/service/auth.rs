@@ -1,10 +1,11 @@
-use crate::data::{get_attribute, AttributeResolver, Expression, PropError, PropertyError};
+use crate::data::{get_attribute, AttributeResolver, Expression};
 use crate::envoy::{
     address, attribute_context, socket_address, Address, AttributeContext, CheckRequest,
     DeniedHttpResponse, Metadata, SocketAddress, StatusCode,
 };
 use crate::service::errors::BuildMessageError;
 use crate::service::DirectResponse;
+use crate::v2::data::attribute::{PropError, PropertyError};
 use cel_interpreter::Value;
 use chrono::{DateTime, FixedOffset};
 use log::{debug, log_enabled};
