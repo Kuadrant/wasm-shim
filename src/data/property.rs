@@ -1,11 +1,12 @@
-use crate::data::attribute::KUADRANT_NAMESPACE;
 use crate::v2::data::attribute::Path;
+use crate::v2::kuadrant;
 use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 
+#[deprecated]
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
     // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
     // Envoy sets source.address to the trusted client address AND port.
@@ -25,12 +26,6 @@ fn remote_address() -> Result<Option<Vec<u8>>, Status> {
             }
         },
     }
-}
-
-fn wasm_prop(tokens: &[&str]) -> Path {
-    let mut flat_attr = format!("filter_state.wasm\\.{KUADRANT_NAMESPACE}\\.");
-    flat_attr.push_str(tokens.join("\\.").as_str());
-    flat_attr.as_str().into()
 }
 
 #[cfg(test)]
@@ -93,7 +88,7 @@ pub(super) fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), 
 pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
-        ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
+        ["auth", ..] => host_get_property(&kuadrant::wasm_prop(path.tokens().as_slice())),
         _ => host_get_property(path),
     }
 }
@@ -105,6 +100,7 @@ pub(super) fn set_property(path: Path, value: Option<&[u8]>) -> Result<(), Statu
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use crate::v2::kuadrant::wasm_prop;
     use std::cell::Cell;
 
     thread_local!(
