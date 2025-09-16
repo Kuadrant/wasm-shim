@@ -553,9 +553,23 @@ impl KuadrantFilter {
             req.method_name(),
             req.timeout(),
         );
-        let headers = self
+
+        let mut extended_headers = self
             .header_resolver
             .get_with_ctx(self)
+            .clone();
+
+        // Istio generates cluster names of the form 'outbound|8081||limitador-limitador.kuadrant-system.svc.cluster.local'
+        // Ensure :authority is set correctly for the upstream using only the host name part
+        let authority = req
+            .upstream_name()
+            .rsplit('|')
+            .next()
+            .unwrap_or(req.upstream_name());
+        extended_headers.retain(|(header, _)| *header != ":authority");
+        extended_headers.push((":authority", authority.to_string().into()));
+
+        let headers = extended_headers
             .iter()
             .map(|(header, value)| (*header, value.as_slice()))
             .collect();

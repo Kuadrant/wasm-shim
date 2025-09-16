@@ -164,7 +164,7 @@ fn it_waits_for_the_request_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -220,7 +220,7 @@ fn it_waits_for_the_request_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -245,7 +245,7 @@ fn it_waits_for_the_request_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -418,7 +418,7 @@ fn it_reads_request_attr_in_advance_when_request_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )

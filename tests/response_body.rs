@@ -164,7 +164,7 @@ fn it_waits_for_the_response_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -229,7 +229,7 @@ fn it_waits_for_the_response_body() {
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: true", 
+                    "#2 on_http_response_body: body_size: {}, end_of_stream: true",
                     response_body.len()
                     ).as_str()
                 ),
@@ -249,7 +249,7 @@ fn it_waits_for_the_response_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -274,7 +274,7 @@ fn it_waits_for_the_response_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -450,7 +450,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: true", 
+                    "#2 on_http_response_body: body_size: {}, end_of_stream: true",
                     response_body.len()
                     ).as_str()
                 ),
@@ -470,7 +470,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
@@ -685,7 +685,7 @@ fn it_calls_action_with_request_and_response_body() {
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: true", 
+                    "#2 on_http_response_body: body_size: {}, end_of_stream: true",
                     response_body.len()
                     ).as_str()
                 ),
@@ -705,7 +705,7 @@ fn it_calls_action_with_request_and_response_body() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            Some(&[1, 0, 0, 0, 10, 0, 0, 0, 17, 0, 0, 0, 58, 97, 117, 116, 104, 111, 114, 105, 116, 121, 0, 108, 105, 109, 105, 116, 97, 100, 111, 114, 45, 99, 108, 117, 115, 116, 101, 114, 0]),
             None,
             Some(5000),
         )
