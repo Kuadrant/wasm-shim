@@ -23,6 +23,8 @@ data: {"id":"chatcmpl-c7a55b1e-4f33-4304-87f1-b1e3b0872b10","created":1758102619
 data: {"id":"chatcmpl-2a501eee-9ee2-4e1d-b275-3ab9686b21ed","created":1758102619,"model":"meta-llama/Llama-3.1-8B-Instruct","usage":null,"choices":[{"index":0,"finish_reason":null,"delta":{"content":" question."}}]}
 data: {"id":"chatcmpl-68209c62-4bbb-4d67-a063-0c4896f1ba17","created":1758102619,"model":"meta-llama/Llama-3.1-8B-Instruct","usage":null,"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}
 
+
+data: {"id":"chatcmpl-fda5e419-5449-4cb1-9537-07523fe3b1a7","created":1758102619,"model":"meta-llama/Llama-3.1-8B-Instruct","usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4},"choices":[]}
 data: [DONE]
 ```
 
@@ -44,7 +46,9 @@ curl --resolve sse-streaming.example.com:18000:127.0.0.1 "http://sse-streaming.e
     "model": "meta-llama/Llama-3.1-8B-Instruct",
     "max_tokens": 100,
     "stream": true,
-    "usage": true,
+    "stream_options": {
+        "include_usage": true
+    },
     "message": [
       {
         "role": "user",
