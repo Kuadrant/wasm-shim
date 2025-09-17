@@ -1,0 +1,8 @@
+---
+- namespace: domain_a
+  name: name_a
+  max_value: 10
+  seconds: 60
+  conditions:
+    - "descriptors[0]['a'] == '1'"
+  variables: []
