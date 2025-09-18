@@ -4,7 +4,6 @@ use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
 use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter};
 
 #[deprecated]
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
