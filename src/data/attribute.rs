@@ -1,16 +1,11 @@
 use crate::data::PropertyPath;
 use crate::v2::data::attribute::{AttributeValue, PropError, PropertyError};
-use chrono::{DateTime, FixedOffset};
 use log::{debug, error, warn};
 use prost_types::value::Kind;
 use prost_types::Struct;
 use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
-
-pub(super) mod errors {
-    use std::fmt::{Debug, Display};
-}
 
 pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, PropertyError>
 where

@@ -2,6 +2,7 @@ use crate::data::cel::errors::{EvaluationError, PredicateResultError};
 use crate::data::get_attribute;
 use crate::data::property::host_get_map;
 use crate::v2::data::attribute::{Path, PropertyError};
+use crate::v2::data::cel::strings;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
@@ -518,8 +519,6 @@ fn create_context<'a>() -> Context<'a> {
     ctx.add_function("substring", strings::substring);
     ctx
 }
-
-mod strings;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Predicate {
