@@ -1,6 +1,7 @@
-use crate::data::cel::errors::{CelError, EvaluationError};
-use crate::data::property::{host_get_map, Path};
-use crate::data::{get_attribute, PropertyError};
+use crate::v2::data::attribute::Path;
+use crate::v2::data::attribute::PropertyError;
+use crate::v2::data::cel::errors::{CelError, EvaluationError};
+use crate::v2::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
@@ -9,7 +10,6 @@ use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
 use log::warn;
-use proxy_wasm::types::{Bytes, Status};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -19,7 +19,8 @@ use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
 pub(super) mod errors {
-    use crate::data::{Expression, PropertyError};
+    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::Expression;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
@@ -158,14 +159,21 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
-    pub fn eval(&self) -> Result<Value, CelError> {
+    pub fn eval(&self, req_ctx: &ReqRespCtx) -> Result<Value, CelError> {
         let mut ctx = create_context();
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
         }
-        let Map { map } = self.build_data_map()?;
 
-        ctx.add_function("getHostProperty", get_host_property);
+        let Map { map } = self.build_data_map(req_ctx)?;
+
+        let req_ctx_clone = req_ctx.clone();
+        ctx.add_function(
+            "getHostProperty",
+            move |This(this): This<Value>| -> ResolveResult {
+                get_host_property(this, &req_ctx_clone)
+            },
+        );
 
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
@@ -181,8 +189,8 @@ impl Expression {
         ctx.add_function("queryMap", decode_query_string);
     }
 
-    fn build_data_map(&self) -> Result<Map, PropertyError> {
-        data::AttributeMap::new(self.attributes.clone()).into()
+    fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<Map, PropertyError> {
+        data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
 }
 
@@ -254,17 +262,7 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
     Ok(map.into())
 }
 
-#[cfg(test)]
-pub fn inner_host_get_property(path: Vec<&str>) -> Result<Option<Bytes>, Status> {
-    super::property::host_get_property(&Path::new(path))
-}
-
-#[cfg(not(test))]
-pub fn inner_host_get_property(path: Vec<&str>) -> Result<Option<Bytes>, Status> {
-    proxy_wasm::hostcalls::get_property(path)
-}
-
-fn get_host_property(This(this): This<Value>) -> ResolveResult {
+fn get_host_property(this: Value, req_ctx: &ReqRespCtx) -> ResolveResult {
     match this {
         Value::List(ref items) => {
             let mut tokens = Vec::with_capacity(items.len());
@@ -274,15 +272,15 @@ fn get_host_property(This(this): This<Value>) -> ResolveResult {
                     _ => return Err(this.error_expected_type(ValueType::String)),
                 }
             }
-
-            match inner_host_get_property(tokens) {
+            let path = Path::new(tokens);
+            match req_ctx.get_attribute::<Vec<u8>>(&path.to_string()) {
                 Ok(data) => match data {
                     None => Ok(Value::Null),
                     Some(bytes) => Ok(Value::Bytes(bytes.into())),
                 },
                 Err(err) => Err(ExecutionError::FunctionError {
-                    function: "hostcalls::get_property".to_string(),
-                    message: format!("Status: {err:?}"),
+                    function: "get_attribute".to_string(),
+                    message: format!("PropertyError: {err:?}"),
                 }),
             }
         }
@@ -305,7 +303,7 @@ fn create_context<'a>() -> Context<'a> {
     ctx
 }
 
-mod strings;
+pub mod strings;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Predicate {
@@ -330,8 +328,8 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self) -> PredicateResult {
-        match self.expression.eval() {
+    pub fn test(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
+        match self.expression.eval(req_ctx) {
             Ok(value) => match value {
                 Value::Bool(result) => Ok(result),
                 _ => Err(EvaluationError::new(
@@ -348,17 +346,17 @@ impl Predicate {
 }
 
 pub trait PredicateVec {
-    fn apply(&self) -> PredicateResult;
+    fn apply(&self, req_ctx: &ReqRespCtx) -> PredicateResult;
 }
 
 impl PredicateVec for Vec<Predicate> {
-    fn apply(&self) -> PredicateResult {
+    fn apply(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
         if self.is_empty() {
             return Ok(true);
         }
         for predicate in self.iter() {
             // if it does not apply or errors exit early
-            if !predicate.test()? {
+            if !predicate.test(req_ctx)? {
                 return Ok(false);
             }
         }
@@ -400,37 +398,45 @@ impl PartialEq for Attribute {
 }
 
 impl Attribute {
-    pub fn get(&self) -> Result<Value, PropertyError> {
+    pub fn get(&self, ctx: &ReqRespCtx) -> Result<Value, PropertyError> {
         match &self.cel_type {
             Some(t) => match t {
-                ValueType::String => Ok(get_attribute::<String>(&self.path)?
+                ValueType::String => Ok(ctx
+                    .get_attribute::<String>(&self.path.to_string())?
                     .map(|v| Value::String(v.into()))
                     .unwrap_or(Value::Null)),
-                ValueType::Int => Ok(get_attribute::<i64>(&self.path)?
+                ValueType::Int => Ok(ctx
+                    .get_attribute::<i64>(&self.path.to_string())?
                     .map(Value::Int)
                     .unwrap_or(Value::Null)),
-                ValueType::UInt => Ok(get_attribute::<u64>(&self.path)?
+                ValueType::UInt => Ok(ctx
+                    .get_attribute::<u64>(&self.path.to_string())?
                     .map(Value::UInt)
                     .unwrap_or(Value::Null)),
-                ValueType::Float => Ok(get_attribute::<f64>(&self.path)?
+                ValueType::Float => Ok(ctx
+                    .get_attribute::<f64>(&self.path.to_string())?
                     .map(Value::Float)
                     .unwrap_or(Value::Null)),
-                ValueType::Bool => Ok(get_attribute::<bool>(&self.path)?
+                ValueType::Bool => Ok(ctx
+                    .get_attribute::<bool>(&self.path.to_string())?
                     .map(Value::Bool)
                     .unwrap_or(Value::Null)),
-                ValueType::Bytes => Ok(get_attribute::<Vec<u8>>(&self.path)?
+                ValueType::Bytes => Ok(ctx
+                    .get_attribute::<Vec<u8>>(&self.path.to_string())?
                     .map(|v| Value::Bytes(v.into()))
                     .unwrap_or(Value::Null)),
-                ValueType::Timestamp => Ok(get_attribute::<DateTime<FixedOffset>>(&self.path)?
+                ValueType::Timestamp => Ok(ctx
+                    .get_attribute::<DateTime<FixedOffset>>(&self.path.to_string())?
                     .map(Value::Timestamp)
                     .unwrap_or(Value::Null)),
-                ValueType::Map => Ok(host_get_map(&self.path)
+                ValueType::Map => Ok(ctx
+                    .get_attribute_map(&self.path.to_string())
                     .map(cel_interpreter::objects::Map::from)
                     .map(Value::Map)
                     .unwrap_or(Value::Null)),
                 _ => todo!("Need support for `{t}`s!"),
             },
-            None => match get_attribute::<String>(&self.path)? {
+            None => match ctx.get_attribute::<String>(&self.path.to_string())? {
                 None => Ok(Value::Null),
                 Some(json) => Ok(json_to_cel(&json)),
             },
@@ -627,8 +633,9 @@ pub fn debug_all_well_known_attributes() {
 }
 
 pub mod data {
-    use crate::data::cel::Attribute;
-    use crate::data::PropertyError;
+    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::cel::Attribute;
+    use crate::v2::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -670,19 +677,22 @@ pub mod data {
         }
     }
 
-    impl From<AttributeMap> for Result<Map, PropertyError> {
-        fn from(value: AttributeMap) -> Self {
-            map_to_value(value.data)
+    impl AttributeMap {
+        pub fn into(self, req_ctx: &ReqRespCtx) -> Result<Map, PropertyError> {
+            map_to_value(self.data, req_ctx)
         }
     }
 
-    fn map_to_value(map: HashMap<String, Token>) -> Result<Map, PropertyError> {
+    fn map_to_value(
+        map: HashMap<String, Token>,
+        req_ctx: &ReqRespCtx,
+    ) -> Result<Map, PropertyError> {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
             let k = key.into();
             let v = match value {
-                Token::Value(v) => v.get()?,
-                Token::Node(map) => Value::Map(map_to_value(map)?),
+                Token::Value(v) => v.get(req_ctx)?,
+                Token::Node(map) => Value::Map(map_to_value(map, req_ctx)?),
             };
             out.insert(k, v);
         }
@@ -691,8 +701,8 @@ pub mod data {
 
     #[cfg(test)]
     mod tests {
-        use crate::data::cel::data::{AttributeMap, Token};
-        use crate::data::cel::known_attribute_for;
+        use crate::v2::data::cel::data::{AttributeMap, Token};
+        use crate::v2::data::cel::known_attribute_for;
 
         #[test]
         fn it_works() {
@@ -761,18 +771,21 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::cel::{known_attribute_for, Expression, Predicate};
-    use crate::data::property;
+    use crate::v2::data::attribute::Path;
+    use crate::v2::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::v2::kuadrant::tests::MockWasmHost;
+    use crate::v2::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
     use std::sync::Arc;
 
     #[test]
     fn predicates() {
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("source.port".into(), 65432_i64.to_le_bytes().into())));
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        assert!(predicate.test(&ctx).expect("This must evaluate properly!"));
     }
 
     #[test]
@@ -796,79 +809,86 @@ mod tests {
 
     #[test]
     fn expressions_to_json_resolve() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec![
+        // Test boolean value
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec![
                 "filter_state",
                 "wasm.kuadrant.auth.identity.anonymous",
             ]),
             "true".bytes().collect(),
-        )));
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("auth.identity.anonymous")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, true.into());
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+        // Test integer value
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42".bytes().collect(),
-        )));
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, 42.into());
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+        // Test float value
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42.3".bytes().collect(),
-        )));
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, 42.3.into());
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "\"John\"".bytes().collect(),
-        )));
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, "John".into());
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
+        // Test negative integer
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
             "-42".bytes().collect(),
-        )));
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("auth.identity.name")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, (-42).into());
 
-        // let's fall back to strings, as that's what we read and set in store_metadata
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+        // Test fallback to string for non-JSON
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "some random crap".bytes().collect(),
-        )));
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, "some random crap".into());
     }
 
     #[test]
     fn decodes_query_string() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
-                .bytes()
-                .collect(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::route_rule(
             "queryMap(request.query, true)['param1'] == '👾 ' && \
             queryMap(request.query, true)['param2'] == 'Exterminate!' && \
@@ -878,66 +898,65 @@ mod tests {
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        assert!(predicate.test(&ctx).expect("This must evaluate properly!"));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
-                .bytes()
-                .collect(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::route_rule(
             "queryMap(request.query, false)['param2'] == 'Exterminate!' && \
             queryMap(request.query, false)['👾'] == '123' \
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        assert!(predicate.test(&ctx).expect("This must evaluate properly!"));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "%F0%9F%91%BE".bytes().collect(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =
             Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
-        assert!(predicate.test().expect("This must evaluate properly!"));
+        assert!(predicate.test(&ctx).expect("This must evaluate properly!"));
     }
 
     #[test]
     fn kuadrant_generated_predicates() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "request.query".into(),
-            "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE"
-                .bytes()
-                .collect(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::route_rule(
             "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
         )
         .expect("This is valid!");
-        assert_eq!(predicate.test(), Ok(true));
+        assert_eq!(predicate.test(&ctx), Ok(true));
 
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Auth".to_string(), "kuadrant".to_string());
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert_eq!(predicate.test(), Ok(true));
+        assert_eq!(predicate.test(&ctx), Ok(true));
     }
 
     #[test]
     fn attribute_resolve() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "destination.port".into(),
-            80_i64.to_le_bytes().into(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = known_attribute_for(&"destination.port".into())
             .expect("destination.port known attribute exists")
-            .get()
+            .get(&ctx)
             .expect("There is no property error!");
         assert_eq!(value, 80.into());
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("request.method".into(), "GET".bytes().collect())));
+
+        let mock_host =
+            MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = known_attribute_for(&"request.method".into())
             .expect("request.method known attribute exists")
-            .get()
+            .get(&ctx)
             .expect("There is no property error!");
         assert_eq!(value, "GET".into());
     }
@@ -955,13 +974,12 @@ mod tests {
 
     #[test]
     fn expression_access_host() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["foo", "bar.baz"]),
-            b"\xCA\xFE".to_vec(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property(Path::new(vec!["foo", "bar.baz"]), b"\xCA\xFE".to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
             .expect("This is valid CEL!")
-            .eval()
+            .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
     }
