@@ -2,7 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PropError {
     message: String,
 }
@@ -18,6 +18,34 @@ impl Error for PropError {}
 impl PropError {
     pub fn new(message: String) -> PropError {
         PropError { message }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum PropertyError {
+    Get(PropError),
+    Parse(PropError),
+}
+
+impl Error for PropertyError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            PropertyError::Get(err) => Some(err),
+            PropertyError::Parse(err) => Some(err),
+        }
+    }
+}
+
+impl Display for PropertyError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PropertyError::Get(e) => {
+                write!(f, "PropertyError::Get {{ {e:?} }}")
+            }
+            PropertyError::Parse(e) => {
+                write!(f, "PropertyError::Parse {{ {e:?} }}")
+            }
+        }
     }
 }
 
@@ -168,33 +196,5 @@ impl Path {
 
     pub fn is_request(&self) -> bool {
         !self.tokens.is_empty() && self.tokens[0] == "request"
-    }
-}
-
-#[derive(Debug)]
-pub enum PropertyError {
-    Get(PropError),
-    Parse(PropError),
-}
-
-impl Error for PropertyError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            PropertyError::Get(err) => Some(err),
-            PropertyError::Parse(err) => Some(err),
-        }
-    }
-}
-
-impl Display for PropertyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PropertyError::Get(e) => {
-                write!(f, "PropertyError::Get {{ {e:?} }}")
-            }
-            PropertyError::Parse(e) => {
-                write!(f, "PropertyError::Parse {{ {e:?} }}")
-            }
-        }
     }
 }
