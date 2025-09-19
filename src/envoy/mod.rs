@@ -1,4 +1,12 @@
 // Generated protobuf modules
+#[allow(
+    dead_code,
+    clippy::module_inception,
+    clippy::enum_variant_names,
+    clippy::doc_overindented_list_items,
+    clippy::doc_lazy_continuation,
+    clippy::large_enum_variant
+)]
 pub mod envoy {
     pub mod config {
         pub mod common {
@@ -62,18 +70,21 @@ pub mod envoy {
     }
 }
 
+#[allow(dead_code)]
 pub mod google {
     pub mod rpc {
         include!("google.rpc.rs");
     }
 }
 
+#[allow(dead_code)]
 pub mod udpa {
     pub mod annotations {
         include!("udpa.annotations.rs");
     }
 }
 
+#[allow(dead_code)]
 pub mod xds {
     pub mod annotations {
         pub mod v3 {
@@ -94,6 +105,7 @@ pub mod xds {
     }
 }
 
+#[allow(dead_code, clippy::enum_variant_names)]
 pub mod validate {
     include!("validate.rs");
 }
