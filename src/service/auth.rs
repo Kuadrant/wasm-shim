@@ -1,11 +1,11 @@
 use crate::data::{get_attribute, AttributeResolver, Expression};
 use crate::envoy::{
-    address, attribute_context, socket_address, Address, AttributeContext, CheckRequest,
-    DeniedHttpResponse, Metadata, SocketAddress, StatusCode,
+    attribute_context, AttributeContext, CheckRequest, DeniedHttpResponse, Metadata, StatusCode,
 };
 use crate::service::errors::BuildMessageError;
 use crate::service::DirectResponse;
 use crate::v2::data::attribute::{PropError, PropertyError};
+use crate::v2::services::auth;
 use cel_interpreter::Value;
 use chrono::{DateTime, FixedOffset};
 use log::{debug, log_enabled};
@@ -77,12 +77,12 @@ impl AuthService {
     where
         T: AttributeResolver,
     {
-        let request = AuthService::build_request()?;
-        let destination = AuthService::build_peer(
+        let request = build_request()?;
+        let destination = auth::build_peer(
             get_attribute::<String>(&"destination.address".into())?.unwrap_or_default(),
             get_attribute::<i64>(&"destination.port".into())?.unwrap_or_default() as u32,
         );
-        let source = AuthService::build_peer(
+        let source = auth::build_peer(
             get_attribute::<String>(&"source.address".into())?.unwrap_or_default(),
             get_attribute::<i64>(&"source.port".into())?.unwrap_or_default() as u32,
         );
@@ -162,67 +162,53 @@ impl AuthService {
             }),
         })
     }
+}
 
-    fn build_request() -> Result<attribute_context::Request, PropertyError> {
-        let headers: HashMap<String, String> = match hostcalls::get_map(MapType::HttpRequestHeaders)
-        {
-            Ok(header_map) => header_map.into_iter().collect(),
-            Err(_) => {
-                return Err(PropertyError::Get(PropError::new(
-                    "Failed to retrieve headers".to_string(),
-                )))
-            }
-        };
-
-        let host = get_attribute::<String>(&"request.host".into())?.ok_or(PropertyError::Get(
-            PropError::new("request.host not set".to_string()),
-        ))?;
-        let method = get_attribute::<String>(&"request.method".into())?.ok_or(
-            PropertyError::Get(PropError::new("request.method not set".to_string())),
-        )?;
-        let scheme = get_attribute::<String>(&"request.scheme".into())?.ok_or(
-            PropertyError::Get(PropError::new("request.scheme not set".to_string())),
-        )?;
-        let path = get_attribute::<String>(&"request.path".into())?.ok_or(PropertyError::Get(
-            PropError::new("request.path not set".to_string()),
-        ))?;
-        let protocol = get_attribute::<String>(&"request.protocol".into())?.ok_or(
-            PropertyError::Get(PropError::new("request.protocol not set".to_string())),
-        )?;
-
-        let time = get_attribute(&"request.time".into())?
-            .map(|date_time: DateTime<FixedOffset>| Timestamp {
-                nanos: date_time.timestamp_subsec_nanos() as i32,
-                seconds: date_time.timestamp(),
-            })
-            .ok_or(PropertyError::Get(PropError::new(
-                "request.time not set".to_string(),
-            )))?;
-
-        Ok(attribute_context::Request {
-            time: Some(time),
-            http: Some(attribute_context::HttpRequest {
-                host,
-                method,
-                scheme,
-                path,
-                protocol,
-                headers,
-                ..Default::default()
-            }),
-        })
-    }
-
-    fn build_peer(host: String, port: u32) -> attribute_context::Peer {
-        attribute_context::Peer {
-            address: Some(Address {
-                address: Some(address::Address::SocketAddress(SocketAddress {
-                    address: host,
-                    port_specifier: Some(socket_address::PortSpecifier::PortValue(port)),
-                    ..Default::default()
-                })),
-            }),
-            ..Default::default()
+fn build_request() -> Result<attribute_context::Request, PropertyError> {
+    let headers: HashMap<String, String> = match hostcalls::get_map(MapType::HttpRequestHeaders) {
+        Ok(header_map) => header_map.into_iter().collect(),
+        Err(_) => {
+            return Err(PropertyError::Get(PropError::new(
+                "Failed to retrieve headers".to_string(),
+            )))
         }
-    }
+    };
+
+    let host = get_attribute::<String>(&"request.host".into())?.ok_or(PropertyError::Get(
+        PropError::new("request.host not set".to_string()),
+    ))?;
+    let method = get_attribute::<String>(&"request.method".into())?.ok_or(PropertyError::Get(
+        PropError::new("request.method not set".to_string()),
+    ))?;
+    let scheme = get_attribute::<String>(&"request.scheme".into())?.ok_or(PropertyError::Get(
+        PropError::new("request.scheme not set".to_string()),
+    ))?;
+    let path = get_attribute::<String>(&"request.path".into())?.ok_or(PropertyError::Get(
+        PropError::new("request.path not set".to_string()),
+    ))?;
+    let protocol = get_attribute::<String>(&"request.protocol".into())?.ok_or(
+        PropertyError::Get(PropError::new("request.protocol not set".to_string())),
+    )?;
+
+    let time = get_attribute(&"request.time".into())?
+        .map(|date_time: DateTime<FixedOffset>| Timestamp {
+            nanos: date_time.timestamp_subsec_nanos() as i32,
+            seconds: date_time.timestamp(),
+        })
+        .ok_or(PropertyError::Get(PropError::new(
+            "request.time not set".to_string(),
+        )))?;
+
+    Ok(attribute_context::Request {
+        time: Some(time),
+        http: Some(attribute_context::HttpRequest {
+            host,
+            method,
+            scheme,
+            path,
+            protocol,
+            headers,
+            ..Default::default()
+        }),
+    })
 }
