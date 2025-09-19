@@ -28,14 +28,20 @@ impl ReqRespCtx {
 
     pub fn get_attribute<T: AttributeValue>(
         &self,
-        attribute_name: &str,
+        path: impl Into<Path>,
     ) -> Result<Option<T>, PropertyError> {
-        let path: Path = attribute_name.into();
+        self.get_attribute_ref(&path.into())
+    }
+
+    pub fn get_attribute_ref<T: AttributeValue>(
+        &self,
+        path: &Path,
+    ) -> Result<Option<T>, PropertyError> {
         let value = match *path.tokens() {
             ["source", "remote_address"] => self
                 .remote_address()
                 .map(|o| o.map(|s| s.as_bytes().to_vec())),
-            ["auth", ..] => self.backend.get_attribute(wasm_prop(&path.tokens())),
+            ["auth", ..] => self.backend.get_attribute(&wasm_prop(&path.tokens())),
             _ => self.backend.get_attribute(path),
         };
         match value {
@@ -45,11 +51,7 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn get_attribute_map(
-        &self,
-        attribute_name: &str,
-    ) -> Result<HashMap<String, String>, PropertyError> {
-        let path: Path = attribute_name.into();
+    pub fn get_attribute_map(&self, path: &Path) -> Result<HashMap<String, String>, PropertyError> {
         match *path.tokens() {
             ["request", "headers"] => {
                 match self
@@ -62,7 +64,7 @@ impl ReqRespCtx {
             }
             _ => Err(PropertyError::Get(PropError::new(format!(
                 "Unknown map requested: {}",
-                attribute_name
+                path
             )))),
         }
     }
@@ -70,7 +72,7 @@ impl ReqRespCtx {
     fn remote_address(&self) -> Result<Option<String>, PropError> {
         // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
         // Envoy sets source.address to the trusted client address AND port.
-        match self.backend.get_attribute("source.address".into())? {
+        match self.backend.get_attribute(&"source.address".into())? {
             None => {
                 warn!("source.address property not found");
                 Err(PropError::new("source.address not found".to_string()))
@@ -85,7 +87,7 @@ impl ReqRespCtx {
 }
 
 pub trait AttributeResolver: Send + Sync {
-    fn get_attribute(&self, path: Path) -> Result<Option<Vec<u8>>, PropError>;
+    fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, PropError>;
     fn get_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
@@ -95,7 +97,7 @@ pub trait AttributeResolver: Send + Sync {
 struct ProxyWasmHost;
 
 impl AttributeResolver for ProxyWasmHost {
-    fn get_attribute(&self, path: Path) -> Result<Option<Vec<u8>>, PropError> {
+    fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, PropError> {
         match hostcalls::get_property(path.tokens()) {
             Ok(data) => Ok(data),
             // Err(Status::BadArgument) => Ok(PendingValue),
@@ -160,7 +162,7 @@ pub mod tests {
     }
 
     impl AttributeResolver for MockWasmHost {
-        fn get_attribute(&self, path: Path) -> Result<Option<Vec<u8>>, PropError> {
+        fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, PropError> {
             match self.properties.get(&path) {
                 Some(value) => Ok(Some(value.clone())),
                 None => Ok(None),
