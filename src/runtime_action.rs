@@ -3,6 +3,7 @@ use crate::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::data::{
     Attribute, AttributeOwner, AttributeResolver, Expression, Predicate, PredicateResult,
 };
+use crate::envoy::{CheckResponse, RateLimitResponse};
 use crate::filter::operations::{
     EventualOperation, ProcessGrpcMessageOperation, ProcessNextRequestOperation,
 };
@@ -12,7 +13,7 @@ use crate::service::auth::AuthService;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
 use crate::service::{GrpcRequest, GrpcService};
 use log::debug;
-use protobuf::Message;
+use prost::Message;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -135,11 +136,11 @@ impl RuntimeAction {
     pub fn process_response(&self, msg: &[u8]) -> ResponseResult {
         let res = match self {
             Self::Auth(auth_action) => {
-                let check_response = Message::parse_from_bytes(msg)?;
+                let check_response = CheckResponse::decode(msg)?;
                 auth_action.process_response(check_response)
             }
             Self::RateLimit(rl_action) => {
-                let rate_limit_response = Message::parse_from_bytes(msg)?;
+                let rate_limit_response = RateLimitResponse::decode(msg)?;
                 rl_action.process_response(rate_limit_response)
             }
         };

@@ -3,7 +3,8 @@ use crate::data::{
     store_metadata, Attribute, AttributeOwner, AttributeResolver, Expression, Predicate,
     PredicateResult, PredicateVec,
 };
-use crate::envoy::{CheckResponse, CheckResponse_oneof_http_response};
+use crate::envoy::check_response::HttpResponse;
+use crate::envoy::CheckResponse;
 use crate::filter::operations::EventualOperation;
 use crate::runtime_action::ResponseResult;
 use crate::service::errors::ProcessGrpcMessageError;
@@ -66,38 +67,42 @@ impl AuthAction {
         //todo(adam-cattermole):hostvar resolver?
         // store dynamic metadata in filter state
         debug!("process_response(auth): store_metadata");
-        store_metadata(check_response.get_dynamic_metadata())
-            .map_err(ProcessGrpcMessageError::Property)?;
+        if let Some(metadata) = &check_response.dynamic_metadata {
+            store_metadata(metadata)
+        } else {
+            Ok(())
+        }
+        .map_err(ProcessGrpcMessageError::Property)?;
 
         match check_response.http_response {
             None => {
                 debug!("process_response(auth): received no http_response");
                 Err(ProcessGrpcMessageError::EmptyResponse)
             }
-            Some(CheckResponse_oneof_http_response::denied_response(denied_response)) => {
+            Some(HttpResponse::DeniedResponse(denied_response)) => {
                 debug!("process_response(auth): received DeniedHttpResponse");
                 let direct_response: DirectResponse = denied_response.into();
                 Ok(direct_response.into())
             }
-            Some(CheckResponse_oneof_http_response::ok_response(ok_response)) => {
+            Some(HttpResponse::OkResponse(ok_response)) => {
                 debug!("process_response(auth): received OkHttpResponse");
 
-                if !ok_response.get_response_headers_to_add().is_empty() {
+                if !ok_response.response_headers_to_add.is_empty() {
                     warn!("process_response(auth): Unsupported field 'response_headers_to_add' in OkHttpResponse");
                     Err(ProcessGrpcMessageError::UnsupportedField)
-                } else if !ok_response.get_headers_to_remove().is_empty() {
+                } else if !ok_response.headers_to_remove.is_empty() {
                     warn!("process_response(auth): Unsupported field 'headers_to_remove' in OkHttpResponse");
                     Err(ProcessGrpcMessageError::UnsupportedField)
-                } else if !ok_response.get_query_parameters_to_set().is_empty() {
+                } else if !ok_response.query_parameters_to_set.is_empty() {
                     warn!("process_response(auth): Unsupported field 'query_parameters_to_set' in OkHttpResponse");
                     Err(ProcessGrpcMessageError::UnsupportedField)
-                } else if !ok_response.get_query_parameters_to_remove().is_empty() {
+                } else if !ok_response.query_parameters_to_remove.is_empty() {
                     warn!("process_response(auth): Unsupported field 'query_parameters_to_remove' in OkHttpResponse");
                     Err(ProcessGrpcMessageError::UnsupportedField)
                 } else {
                     Ok(
                         vec![EventualOperation::AddRequestHeaders(from_envoy_headers(
-                            ok_response.get_headers(),
+                            &ok_response.headers,
                         ))]
                         .into(),
                     )
@@ -119,10 +124,9 @@ mod test {
     use crate::configuration::{Action, FailureMode, Service, ServiceType, Timeout};
     use crate::data::PathCache;
     use crate::envoy::{
-        DeniedHttpResponse, HeaderValue, HeaderValueOption, HttpStatus, OkHttpResponse, StatusCode,
+        DeniedHttpResponse, HeaderValueOption, HttpStatus, OkHttpResponse, StatusCode,
     };
     use crate::filter::operations::ProcessGrpcMessageOperation;
-    use protobuf::RepeatedField;
 
     fn build_auth_action_with_predicates(predicates: Vec<String>) -> AuthAction {
         build_auth_action_with_predicates_and_failure_mode(
@@ -160,49 +164,44 @@ mod test {
         headers: Option<Vec<(&str, &str)>>,
         body: Option<String>,
     ) -> CheckResponse {
-        let mut response = CheckResponse::new();
-        match status {
-            StatusCode::OK => {
-                let mut ok_http_response = OkHttpResponse::new();
-                if let Some(header_list) = headers {
-                    ok_http_response.set_headers(build_headers(header_list))
-                }
-                response.set_ok_response(ok_http_response);
+        let http_response = match status {
+            StatusCode::Ok => {
+                let headers = headers.map(build_headers).unwrap_or_default();
+                Some(HttpResponse::OkResponse(OkHttpResponse {
+                    headers,
+                    ..Default::default()
+                }))
             }
             StatusCode::Forbidden => {
-                let mut http_status = HttpStatus::new();
-                http_status.set_code(status);
-
-                let mut denied_http_response = DeniedHttpResponse::new();
-                denied_http_response.set_status(http_status);
-                if let Some(header_list) = headers {
-                    denied_http_response.set_headers(build_headers(header_list));
-                }
-                denied_http_response.set_body(body.unwrap_or_default());
-                response.set_denied_response(denied_http_response);
+                let headers = headers.map(build_headers).unwrap_or_default();
+                Some(HttpResponse::DeniedResponse(DeniedHttpResponse {
+                    status: Some(HttpStatus {
+                        code: status as i32,
+                    }),
+                    headers,
+                    body: body.unwrap_or_default(),
+                }))
             }
-            _ => {
-                // assume any other code is for error state
-            }
+            _ => None,
         };
-        response
+        CheckResponse {
+            status: None,
+            dynamic_metadata: None,
+            http_response,
+        }
     }
 
-    fn build_headers(headers: Vec<(&str, &str)>) -> RepeatedField<HeaderValueOption> {
+    fn build_headers(headers: Vec<(&str, &str)>) -> Vec<HeaderValueOption> {
         headers
             .into_iter()
-            .map(|(key, value)| {
-                let header_value = {
-                    let mut hv = HeaderValue::new();
-                    hv.set_key(key.to_string());
-                    hv.set_value(value.to_string());
-                    hv
-                };
-                let mut header_option = HeaderValueOption::new();
-                header_option.set_header(header_value);
-                header_option
+            .map(|(key, value)| HeaderValueOption {
+                header: Some(crate::envoy::envoy::config::core::v3::HeaderValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                }),
+                ..Default::default()
             })
-            .collect::<RepeatedField<HeaderValueOption>>()
+            .collect()
     }
 
     #[test]
@@ -255,7 +254,7 @@ mod test {
     #[test]
     fn process_ok_response() {
         let auth_action = build_auth_action_with_predicates(Vec::default());
-        let ok_response_without_headers = build_check_response(StatusCode::OK, None, None);
+        let ok_response_without_headers = build_check_response(StatusCode::Ok, None, None);
         let result = auth_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
         let op = result.expect("is ok");
@@ -273,7 +272,7 @@ mod test {
         }
 
         let ok_response_with_header =
-            build_check_response(StatusCode::OK, Some(vec![("my_header", "my_value")]), None);
+            build_check_response(StatusCode::Ok, Some(vec![("my_header", "my_value")]), None);
         let result = auth_action.process_response(ok_response_with_header);
         assert!(result.is_ok());
         let op = result.expect("is ok");
@@ -319,7 +318,10 @@ mod test {
         let op = result.expect("is ok");
         assert!(matches!(op, ProcessGrpcMessageOperation::DirectResponse(_)));
         if let ProcessGrpcMessageOperation::DirectResponse(direct_response) = op {
-            assert_eq!(direct_response.status_code(), StatusCode::Forbidden as u32);
+            assert_eq!(
+                direct_response.status_code(),
+                crate::envoy::envoy::r#type::v3::StatusCode::Forbidden as u32
+            );
             let response_headers = direct_response.headers();
             headers.iter().zip(response_headers.iter()).for_each(
                 |((header_one, value_one), (header_two, value_two))| {
