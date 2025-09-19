@@ -9,11 +9,11 @@ use proxy_wasm::hostcalls;
 
 pub trait Service {
     type Response;
-    fn dispatch(&self, ctx: &mut ReqRespCtx) -> usize;
+    fn dispatch(&self, ctx: &mut ReqRespCtx, scope: String) -> usize;
     fn parse_message(&self, message: Vec<u8>) -> Self::Response;
 
     #[deprecated]
-    fn request_message(&self, ctx: &mut ReqRespCtx) -> GrpcRequest;
+    fn request_message(&self, ctx: &mut ReqRespCtx, scope: String) -> GrpcRequest;
 }
 
 #[derive(Clone)]

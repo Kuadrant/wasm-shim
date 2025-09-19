@@ -1,6 +1,6 @@
 pub mod kuadrant;
 
-mod services;
+pub mod services;
 
 pub mod data;
 
