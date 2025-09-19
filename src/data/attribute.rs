@@ -2,7 +2,8 @@ use crate::data::attribute::errors::PropError;
 use crate::data::{PropertyError, PropertyPath};
 use chrono::{DateTime, FixedOffset};
 use log::{debug, error, warn};
-use protobuf::well_known_types::Struct;
+use prost_types::value::Kind;
+use prost_types::Struct;
 use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
@@ -179,38 +180,42 @@ pub fn store_metadata(metastruct: &Struct) -> Result<(), PropertyError> {
 
 fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
     let mut result = Vec::new();
-    for (key, value) in s.get_fields() {
+    for (key, value) in &s.fields {
         let current_prefix = if prefix.is_empty() {
             key.clone()
         } else {
             format!("{prefix}\\.{key}")
         };
 
-        let json: Option<Value> = if value.has_string_value() {
-            Some(value.get_string_value().into())
-        } else if value.has_bool_value() {
-            Some(value.get_bool_value().into())
-        } else if value.has_null_value() {
-            Some(Value::Null)
-        } else if value.has_number_value() {
-            Some(value.get_number_value().into())
-        } else {
-            if !value.has_struct_value() {
-                warn!(
-                    "Don't know how to store Struct field `{}` of kind {:?}",
-                    key, value.kind
-                );
+        match &value.kind {
+            Some(Kind::StructValue(nested_struct)) => {
+                result.extend(process_metadata(nested_struct, current_prefix));
             }
-            None
-        };
+            Some(kind) => {
+                let json = match kind {
+                    Kind::StringValue(s) => Some(s.clone().into()),
+                    Kind::BoolValue(b) => Some((*b).into()),
+                    Kind::NullValue(_) => Some(Value::Null),
+                    Kind::NumberValue(n) => Some((*n).into()),
+                    Kind::StructValue(_) => unreachable!(), // handled above
+                    _ => {
+                        warn!(
+                            "Don't know how to store Struct field `{}` of kind {:?}",
+                            key, kind
+                        );
+                        None
+                    }
+                };
 
-        if value.has_struct_value() {
-            let nested_struct = value.get_struct_value();
-            result.extend(process_metadata(nested_struct, current_prefix));
-        } else if let Some(v) = json {
-            match serde_json::to_string(&v) {
-                Ok(ser) => result.push((current_prefix, ser)),
-                Err(e) => error!("failed to serialize json Value: {e:?}"),
+                if let Some(v) = json {
+                    match serde_json::to_string(&v) {
+                        Ok(ser) => result.push((current_prefix, ser)),
+                        Err(e) => error!("failed to serialize json Value: {e:?}"),
+                    }
+                }
+            }
+            None => {
+                warn!("Struct field `{}` has no kind", key);
             }
         }
     }
@@ -220,34 +225,26 @@ fn process_metadata(s: &Struct, prefix: String) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::process_metadata;
-    use protobuf::well_known_types::{Struct, Value, Value_oneof_kind};
-    use std::collections::HashMap;
+    use prost_types::{Struct, Value};
+    use std::collections::BTreeMap;
 
     pub fn struct_from(values: Vec<(String, Value)>) -> Struct {
-        let mut hm = HashMap::new();
+        let mut hm = BTreeMap::new();
         for (key, value) in values {
             hm.insert(key, value);
         }
-        Struct {
-            fields: hm,
-            unknown_fields: Default::default(),
-            cached_size: Default::default(),
-        }
+        Struct { fields: hm }
     }
 
     pub fn string_value_from(value: String) -> Value {
         Value {
-            kind: Some(Value_oneof_kind::string_value(value)),
-            unknown_fields: Default::default(),
-            cached_size: Default::default(),
+            kind: Some(prost_types::value::Kind::StringValue(value)),
         }
     }
 
     pub fn struct_value_from(value: Struct) -> Value {
         Value {
-            kind: Some(Value_oneof_kind::struct_value(value)),
-            unknown_fields: Default::default(),
-            cached_size: Default::default(),
+            kind: Some(prost_types::value::Kind::StructValue(value)),
         }
     }
     #[test]
