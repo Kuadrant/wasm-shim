@@ -2,7 +2,7 @@
 pub mod kuadrant;
 
 #[allow(dead_code)]
-mod services;
+pub mod services;
 
 #[allow(dead_code)]
 pub mod data;
