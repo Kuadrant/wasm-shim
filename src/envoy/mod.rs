@@ -99,21 +99,17 @@ pub mod validate {
 }
 
 pub use envoy::config::core::v3::{
-    Address, HeaderValue, HeaderValueOption, Metadata, SocketAddress,
+    address, socket_address, Address, HeaderValue, HeaderValueOption, Metadata, SocketAddress,
 };
-pub use envoy::extensions::common::ratelimit::v3::{
-    rate_limit_descriptor::Entry as RateLimitDescriptor_Entry, RateLimitDescriptor,
-};
+pub use envoy::extensions::common::ratelimit::v3::{rate_limit_descriptor, RateLimitDescriptor};
+pub use envoy::r#type::v3::StatusCode;
 pub use envoy::service::auth::v3::{
-    attribute_context::{
-        HttpRequest as AttributeContext_HttpRequest, Peer as AttributeContext_Peer,
-        Request as AttributeContext_Request,
-    },
-    AttributeContext, CheckRequest, CheckResponse, DeniedHttpResponse,
+    attribute_context, check_response, AttributeContext, CheckRequest, CheckResponse,
+    DeniedHttpResponse,
 };
-pub use envoy::service::ratelimit::v3::{
-    rate_limit_response::Code as RateLimitResponse_Code, RateLimitRequest, RateLimitResponse,
-};
-pub use google::rpc::Status;
+pub use envoy::service::ratelimit::v3::{rate_limit_response, RateLimitRequest, RateLimitResponse};
 
-pub type StatusCode = i32;
+#[cfg(test)]
+pub use envoy::r#type::v3::HttpStatus;
+#[cfg(test)]
+pub use envoy::service::auth::v3::OkHttpResponse;
