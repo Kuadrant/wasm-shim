@@ -14,7 +14,7 @@ struct AuthService {
 impl Service for AuthService {
     type Response = String;
 
-    fn dispatch(&self, _ctx: &mut ReqRespCtx) -> usize {
+    fn dispatch(&self, _ctx: &mut ReqRespCtx, _scope: String) -> usize {
         // build message
         // let _msg = self.request_message(ctx);
 
@@ -27,7 +27,7 @@ impl Service for AuthService {
         todo!()
     }
 
-    fn request_message(&self, _ctx: &mut ReqRespCtx) -> GrpcRequest {
+    fn request_message(&self, _ctx: &mut ReqRespCtx, _scope: String) -> GrpcRequest {
         todo!()
     }
 }
