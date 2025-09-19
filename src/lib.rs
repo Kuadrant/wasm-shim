@@ -4,13 +4,6 @@ mod action_set_index;
 mod auth_action;
 mod configuration;
 mod data;
-#[allow(
-    renamed_and_removed_lints,
-    mismatched_lifetime_syntaxes,
-    clippy::panic,
-    clippy::unwrap_used,
-    unused_parens
-)]
 mod envoy;
 mod filter;
 mod ratelimit_action;
@@ -57,20 +50,24 @@ extern "C" fn start() {
 
 #[cfg(test)]
 mod tests {
-    use crate::envoy::{HeaderValue, RateLimitResponse, RateLimitResponse_Code};
-    use protobuf::Message;
+    use crate::envoy::{rate_limit_response, HeaderValue, RateLimitResponse};
+    use prost::Message;
 
     #[test]
     fn grpc() {
-        let mut resp = RateLimitResponse::new();
-        resp.overall_code = RateLimitResponse_Code::OK;
-        resp.response_headers_to_add
-            .push(header("test", "some value"));
-        resp.response_headers_to_add
-            .push(header("other", "header value"));
-        let buffer = resp
-            .write_to_bytes()
-            .expect("must be able to write RateLimitResponse to bytes");
+        let resp = RateLimitResponse {
+            overall_code: rate_limit_response::Code::Ok as i32,
+            statuses: Vec::new(),
+            response_headers_to_add: vec![
+                header("test", "some value"),
+                header("other", "header value"),
+            ],
+            request_headers_to_add: Vec::new(),
+            raw_body: Vec::new(),
+            dynamic_metadata: None,
+            quota: None,
+        };
+        let buffer = resp.encode_to_vec();
         let expected: [u8; 45] = [
             8, 1, 26, 18, 10, 4, 116, 101, 115, 116, 18, 10, 115, 111, 109, 101, 32, 118, 97, 108,
             117, 101, 26, 21, 10, 5, 111, 116, 104, 101, 114, 18, 12, 104, 101, 97, 100, 101, 114,
@@ -80,9 +77,9 @@ mod tests {
     }
 
     fn header(key: &str, value: &str) -> HeaderValue {
-        let mut header = HeaderValue::new();
-        header.key = key.to_string();
-        header.value = value.to_string();
-        header
+        HeaderValue {
+            key: key.to_string(),
+            value: value.to_string(),
+        }
     }
 }
