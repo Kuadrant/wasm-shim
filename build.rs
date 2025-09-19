@@ -56,7 +56,6 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
 
     let mut prost_build = prost_build::Config::new();
     prost_build.out_dir("src/envoy");
-    prost_build.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
 
     println!("cargo:warning=Compiling protos...");
     let result = prost_build.compile_protos(
