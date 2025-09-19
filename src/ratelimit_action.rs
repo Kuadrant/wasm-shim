@@ -2,8 +2,7 @@ use crate::configuration::{Action, DataType, FailureMode, Service};
 use crate::data::{Attribute, AttributeOwner, AttributeResolver, PredicateResult};
 use crate::data::{Expression, Predicate};
 use crate::envoy::{
-    RateLimitDescriptor, RateLimitDescriptor_Entry, RateLimitResponse, RateLimitResponse_Code,
-    StatusCode,
+    rate_limit_descriptor, rate_limit_response, RateLimitDescriptor, RateLimitResponse,
 };
 use crate::filter::operations::EventualOperation;
 use crate::runtime_action::ResponseResult;
@@ -13,7 +12,7 @@ use crate::service::{from_envoy_rl_headers, DirectResponse, GrpcService};
 use cel_interpreter::Value;
 use cel_parser::ParseError;
 use log::debug;
-use protobuf::RepeatedField;
+
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -41,7 +40,7 @@ impl DescriptorEntryBuilder {
     pub fn evaluate<T>(
         &self,
         resolver: &mut T,
-    ) -> Result<RateLimitDescriptor_Entry, BuildMessageError>
+    ) -> Result<rate_limit_descriptor::Entry, BuildMessageError>
     where
         T: AttributeResolver,
     {
@@ -62,9 +61,10 @@ impl DescriptorEntryBuilder {
                 ));
             }
         };
-        let mut descriptor_entry = RateLimitDescriptor_Entry::new();
-        descriptor_entry.set_key(key);
-        descriptor_entry.set_value(value_str);
+        let descriptor_entry = rate_limit_descriptor::Entry {
+            key,
+            value: value_str,
+        };
         Ok(descriptor_entry)
     }
 }
@@ -108,15 +108,15 @@ impl ConditionalData {
     pub fn entries<T>(
         &self,
         resolver: &mut T,
-    ) -> Result<RepeatedField<RateLimitDescriptor_Entry>, BuildMessageError>
+    ) -> Result<Vec<rate_limit_descriptor::Entry>, BuildMessageError>
     where
         T: AttributeResolver,
     {
         if !self.predicates_apply(resolver)? {
-            return Ok(RepeatedField::default());
+            return Ok(Vec::default());
         }
 
-        let mut entries = RepeatedField::default();
+        let mut entries = Vec::default();
         for entry_builder in self.data.iter() {
             if !KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
                 entries.push(entry_builder.evaluate(resolver)?);
@@ -192,7 +192,7 @@ impl RateLimitAction {
             };
             let mut descriptors = vec![descriptor];
             if !self.request_data.is_empty() {
-                let mut entries = RepeatedField::default();
+                let mut entries = Vec::default();
                 self.request_data
                     .iter()
                     .for_each(|((domain, field), expr)| {
@@ -202,19 +202,21 @@ impl RateLimitAction {
                             } else {
                                 format!("{}.{}", domain, field)
                             };
-                            let mut entry = RateLimitDescriptor_Entry::new();
-                            entry.set_key(key);
-                            entry.set_value(value.to_string());
+                            let entry = rate_limit_descriptor::Entry {
+                                key,
+                                value: value.to_string(),
+                            };
                             entries.push(entry);
                         }
                     });
 
-                let mut data = RateLimitDescriptor::new();
-                data.set_entries(entries);
+                let data = RateLimitDescriptor {
+                    entries,
+                    limit: None,
+                };
                 descriptors.push(data)
             }
-            RateLimitService::request_message_as_bytes(domain, descriptors.into(), hits_addend)
-                .map(Some)
+            RateLimitService::request_message_as_bytes(domain, descriptors, hits_addend).map(Some)
         }
     }
 
@@ -225,14 +227,16 @@ impl RateLimitAction {
     where
         T: AttributeResolver,
     {
-        let mut entries = RepeatedField::default();
+        let mut entries = Vec::default();
 
         for conditional_data in self.conditional_data_sets.iter() {
             entries.extend(conditional_data.entries(resolver)?);
         }
 
-        let mut res = RateLimitDescriptor::new();
-        res.set_entries(entries);
+        let res = RateLimitDescriptor {
+            entries,
+            limit: None,
+        };
         Ok(res)
     }
 
@@ -326,35 +330,38 @@ impl RateLimitAction {
     pub fn process_response(&self, rate_limit_response: RateLimitResponse) -> ResponseResult {
         match rate_limit_response {
             RateLimitResponse {
-                overall_code: RateLimitResponse_Code::UNKNOWN,
-                ..
-            } => {
+                overall_code: code, ..
+            } if code == rate_limit_response::Code::Unknown as i32 => {
                 debug!("process_response(rl): received UNKNOWN response");
                 Err(ProcessGrpcMessageError::UnsupportedField)
             }
             RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OVER_LIMIT,
+                overall_code: code,
                 response_headers_to_add: rl_headers,
                 ..
-            } => {
+            } if code == rate_limit_response::Code::OverLimit as i32 => {
                 debug!("process_response(rl): received OVER_LIMIT response");
                 Ok(DirectResponse::new(
-                    StatusCode::TooManyRequests as u32,
+                    crate::envoy::StatusCode::TooManyRequests as u32,
                     from_envoy_rl_headers(rl_headers),
                     "Too Many Requests\n".to_string(),
                 )
                 .into())
             }
             RateLimitResponse {
-                overall_code: RateLimitResponse_Code::OK,
+                overall_code: code,
                 response_headers_to_add: additional_headers,
                 ..
-            } => {
+            } if code == rate_limit_response::Code::Ok as i32 => {
                 debug!("process_response(rl): received OK response");
                 Ok(vec![EventualOperation::AddResponseHeaders(
                     from_envoy_rl_headers(additional_headers),
                 )]
                 .into())
+            }
+            _ => {
+                debug!("process_response(rl): received unknown response code");
+                Err(ProcessGrpcMessageError::UnsupportedField)
             }
         }
     }
@@ -410,32 +417,30 @@ mod test {
     }
 
     fn build_ratelimit_response(
-        status: RateLimitResponse_Code,
+        status: rate_limit_response::Code,
         headers: Option<Vec<(&str, &str)>>,
     ) -> RateLimitResponse {
-        let mut response = RateLimitResponse::new();
-        response.set_overall_code(status);
-        match status {
-            RateLimitResponse_Code::UNKNOWN => {}
-            RateLimitResponse_Code::OVER_LIMIT | RateLimitResponse_Code::OK => {
-                if let Some(header_list) = headers {
-                    response.set_response_headers_to_add(build_headers(header_list))
-                }
+        let response_headers_to_add = match status {
+            rate_limit_response::Code::Unknown => Vec::new(),
+            rate_limit_response::Code::OverLimit | rate_limit_response::Code::Ok => {
+                headers.map(build_headers).unwrap_or_default()
             }
+        };
+        RateLimitResponse {
+            overall_code: status as i32,
+            response_headers_to_add,
+            ..Default::default()
         }
-        response
     }
 
-    fn build_headers(headers: Vec<(&str, &str)>) -> RepeatedField<HeaderValue> {
+    fn build_headers(headers: Vec<(&str, &str)>) -> Vec<HeaderValue> {
         headers
             .into_iter()
-            .map(|(key, value)| {
-                let mut hv = HeaderValue::new();
-                hv.set_key(key.to_string());
-                hv.set_value(value.to_string());
-                hv
+            .map(|(key, value)| HeaderValue {
+                key: key.to_string(),
+                value: value.to_string(),
             })
-            .collect::<RepeatedField<HeaderValue>>()
+            .collect()
     }
 
     fn build_action_for_known_attribute(key: &str, value: &str) -> Action {
@@ -606,7 +611,7 @@ mod test {
         let known_attributes = rl_action
             .get_known_attributes(&mut resolver)
             .expect("is ok");
-        assert_eq!(descriptor.get_entries().len(), 0);
+        assert_eq!(descriptor.entries.len(), 0);
         let (hits_addend, domain) = known_attributes;
         assert_eq!(hits_addend, 3);
         assert_eq!(domain, "test");
@@ -641,9 +646,9 @@ mod test {
         let descriptor = rl_action
             .build_descriptor(&mut PathCache::default())
             .expect("is ok");
-        assert_eq!(descriptor.get_entries().len(), 1);
-        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
-        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+        assert_eq!(descriptor.entries.len(), 1);
+        assert_eq!(descriptor.entries[0].key, String::from("key_1"));
+        assert_eq!(descriptor.entries[0].value, String::from("value_1"));
     }
 
     #[test]
@@ -692,9 +697,9 @@ mod test {
         let descriptor = rl_action
             .build_descriptor(&mut PathCache::default())
             .expect("is ok");
-        assert_eq!(descriptor.get_entries().len(), 1);
-        assert_eq!(descriptor.get_entries()[0].key, String::from("key_1"));
-        assert_eq!(descriptor.get_entries()[0].value, String::from("value_1"));
+        assert_eq!(descriptor.entries.len(), 1);
+        assert_eq!(descriptor.entries[0].key, String::from("key_1"));
+        assert_eq!(descriptor.entries[0].value, String::from("value_1"));
     }
 
     #[test]
@@ -725,7 +730,7 @@ mod test {
             .expect("action building failed. Maybe predicates compilation?");
 
         let ok_response_without_headers =
-            build_ratelimit_response(RateLimitResponse_Code::OK, None);
+            build_ratelimit_response(rate_limit_response::Code::Ok, None);
         let result = rl_action.process_response(ok_response_without_headers);
         assert!(result.is_ok());
         let op = result.expect("is ok");
@@ -743,7 +748,7 @@ mod test {
         }
 
         let ok_response_with_header = build_ratelimit_response(
-            RateLimitResponse_Code::OK,
+            rate_limit_response::Code::Ok,
             Some(vec![("my_header", "my_value")]),
         );
         let result = rl_action.process_response(ok_response_with_header);
@@ -776,7 +781,7 @@ mod test {
             .expect("action building failed. Maybe predicates compilation?");
 
         let overlimit_response_empty =
-            build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, None);
+            build_ratelimit_response(rate_limit_response::Code::OverLimit, None);
         let result = rl_action.process_response(overlimit_response_empty);
         assert!(result.is_ok());
         let op = result.expect("is ok");
@@ -784,7 +789,7 @@ mod test {
         if let ProcessGrpcMessageOperation::DirectResponse(direct_response) = op {
             assert_eq!(
                 direct_response.status_code(),
-                StatusCode::TooManyRequests as u32
+                crate::envoy::envoy::r#type::v3::StatusCode::TooManyRequests as u32
             );
             assert!(direct_response.headers().is_empty());
             assert_eq!(direct_response.body(), "Too Many Requests\n");
@@ -793,7 +798,7 @@ mod test {
         }
 
         let denied_response_headers =
-            build_ratelimit_response(RateLimitResponse_Code::OVER_LIMIT, Some(headers.clone()));
+            build_ratelimit_response(rate_limit_response::Code::OverLimit, Some(headers.clone()));
         let result = rl_action.process_response(denied_response_headers);
         assert!(result.is_ok());
         let op = result.expect("is ok");
@@ -801,7 +806,7 @@ mod test {
         if let ProcessGrpcMessageOperation::DirectResponse(direct_response) = op {
             assert_eq!(
                 direct_response.status_code(),
-                StatusCode::TooManyRequests as u32
+                crate::envoy::envoy::r#type::v3::StatusCode::TooManyRequests as u32
             );
             let response_headers = direct_response.headers();
             headers.iter().zip(response_headers.iter()).for_each(
@@ -823,7 +828,7 @@ mod test {
         let rl_action = RateLimitAction::new(&action, &deny_service)
             .expect("action building failed. Maybe predicates compilation?");
 
-        let error_response = build_ratelimit_response(RateLimitResponse_Code::UNKNOWN, None);
+        let error_response = build_ratelimit_response(rate_limit_response::Code::Unknown, None);
         let result = rl_action.process_response(error_response.clone());
         assert!(result.is_err());
         let err_response = result.expect_err("is err");
