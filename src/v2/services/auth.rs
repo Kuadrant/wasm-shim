@@ -28,7 +28,6 @@ impl Service for AuthService {
     }
 
     fn request_message(&self, ctx: &mut ReqRespCtx) -> GrpcRequest {
-        ctx.get_attribute::<String>("request.path".into());
         todo!()
     }
 }

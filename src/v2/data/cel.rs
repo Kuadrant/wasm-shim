@@ -273,7 +273,7 @@ fn get_host_property(this: Value, req_ctx: &ReqRespCtx) -> ResolveResult {
                 }
             }
             let path = Path::new(tokens);
-            match req_ctx.get_attribute::<Vec<u8>>(&path.to_string()) {
+            match req_ctx.get_attribute_ref::<Vec<u8>>(&path) {
                 Ok(data) => match data {
                     None => Ok(Value::Null),
                     Some(bytes) => Ok(Value::Bytes(bytes.into())),
@@ -402,41 +402,41 @@ impl Attribute {
         match &self.cel_type {
             Some(t) => match t {
                 ValueType::String => Ok(ctx
-                    .get_attribute::<String>(&self.path.to_string())?
+                    .get_attribute_ref::<String>(&self.path)?
                     .map(|v| Value::String(v.into()))
                     .unwrap_or(Value::Null)),
                 ValueType::Int => Ok(ctx
-                    .get_attribute::<i64>(&self.path.to_string())?
+                    .get_attribute_ref::<i64>(&self.path)?
                     .map(Value::Int)
                     .unwrap_or(Value::Null)),
                 ValueType::UInt => Ok(ctx
-                    .get_attribute::<u64>(&self.path.to_string())?
+                    .get_attribute_ref::<u64>(&self.path)?
                     .map(Value::UInt)
                     .unwrap_or(Value::Null)),
                 ValueType::Float => Ok(ctx
-                    .get_attribute::<f64>(&self.path.to_string())?
+                    .get_attribute_ref::<f64>(&self.path)?
                     .map(Value::Float)
                     .unwrap_or(Value::Null)),
                 ValueType::Bool => Ok(ctx
-                    .get_attribute::<bool>(&self.path.to_string())?
+                    .get_attribute_ref::<bool>(&self.path)?
                     .map(Value::Bool)
                     .unwrap_or(Value::Null)),
                 ValueType::Bytes => Ok(ctx
-                    .get_attribute::<Vec<u8>>(&self.path.to_string())?
+                    .get_attribute_ref::<Vec<u8>>(&self.path)?
                     .map(|v| Value::Bytes(v.into()))
                     .unwrap_or(Value::Null)),
                 ValueType::Timestamp => Ok(ctx
-                    .get_attribute::<DateTime<FixedOffset>>(&self.path.to_string())?
+                    .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(Value::Timestamp)
                     .unwrap_or(Value::Null)),
                 ValueType::Map => Ok(ctx
-                    .get_attribute_map(&self.path.to_string())
+                    .get_attribute_map(&self.path)
                     .map(cel_interpreter::objects::Map::from)
                     .map(Value::Map)
                     .unwrap_or(Value::Null)),
                 _ => todo!("Need support for `{t}`s!"),
             },
-            None => match ctx.get_attribute::<String>(&self.path.to_string())? {
+            None => match ctx.get_attribute_ref::<String>(&self.path)? {
                 None => Ok(Value::Null),
                 Some(json) => Ok(json_to_cel(&json)),
             },
