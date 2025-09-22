@@ -95,10 +95,10 @@ impl Context for KuadrantFilter {
                                         self.send_direct_response(direct_response);
                                     }
                                 }
-                                Err(ProcessGrpcMessageError::Protobuf(e)) => {
+                                Err(ProcessGrpcMessageError::Decode(e)) => {
                                     // processing the response failed
                                     // The action failure mode is set to deny, so we log the error and die
-                                    debug!("ProtobufError while processing grpc response: {e:?}");
+                                    debug!("DecodeError while processing grpc response: {e:?}");
                                     self.die();
                                 }
                                 Err(ProcessGrpcMessageError::Property(e)) => {
