@@ -8,7 +8,8 @@ mod data;
     renamed_and_removed_lints,
     mismatched_lifetime_syntaxes,
     clippy::panic,
-    clippy::unwrap_used
+    clippy::unwrap_used,
+    unused_parens
 )]
 mod envoy;
 mod filter;
