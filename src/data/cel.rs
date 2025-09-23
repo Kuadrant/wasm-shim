@@ -1013,10 +1013,7 @@ impl PathCache {
 impl AttributeResolver for PathCache {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
         match self.value_map.entry(attribute.path.clone()) {
-            Entry::Occupied(entry) => {
-                let val = entry.get().clone();
-                Ok(val)
-            }
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let value = attribute.get()?;
 
