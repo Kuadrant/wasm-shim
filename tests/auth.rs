@@ -391,6 +391,10 @@ fn it_passes_request_data() {
         .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
+            Some("PathCache resolve attribute Attribute { path: [\"auth\", \"identity\", \"name\"] }: auth attributes resolved to null are not cached")
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
             Some("Adding data: `io.kuadrant` with entries: [\"bar\", \"foo\"]")
         )
         .expect_log(

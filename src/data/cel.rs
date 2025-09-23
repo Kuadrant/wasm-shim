@@ -1012,17 +1012,13 @@ impl PathCache {
 
 impl AttributeResolver for PathCache {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
-        debug!("PathCache resolve attribute {attribute:?}");
         match self.value_map.entry(attribute.path.clone()) {
             Entry::Occupied(entry) => {
                 let val = entry.get().clone();
-                debug!("PathCache resolve attribute {attribute:?}: found value {val:?}");
                 Ok(val)
             }
             Entry::Vacant(entry) => {
-                debug!("PathCache resolve attribute {attribute:?}: not found. Resolving");
                 let value = attribute.get()?;
-                debug!("PathCache resolve attribute {attribute:?}: resolved to {value:?}");
 
                 // auth.* attributes can be null before the authentication action
                 // and non-null afterward.
