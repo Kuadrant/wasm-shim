@@ -39,7 +39,7 @@ pub(super) fn host_get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> 
         None => Err(Status::NotFound),
         Some((expected_path, data)) => {
             assert_eq!(&expected_path, path);
-            Ok(Some(data))
+            Ok(data)
         }
     }
 }
@@ -59,7 +59,7 @@ pub fn host_get_map(path: &Path) -> Result<HashMap<String, String>, String> {
 #[cfg(test)]
 pub fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), Status> {
     debug!("set_property: {:?}", path);
-    let data = value.map(|bytes| bytes.to_vec()).unwrap_or_default();
+    let data = value.map(|bytes| bytes.to_vec());
     test::TEST_PROPERTY_VALUE.set(Some((path, data)));
     Ok(())
 }
@@ -164,6 +164,10 @@ impl Path {
     pub fn is_request(&self) -> bool {
         !self.tokens.is_empty() && self.tokens[0] == "request"
     }
+
+    pub fn is_auth(&self) -> bool {
+        !self.tokens.is_empty() && self.tokens[0] == "auth"
+    }
 }
 
 #[cfg(test)]
@@ -172,7 +176,8 @@ pub mod test {
     use std::cell::Cell;
 
     thread_local!(
-        pub static TEST_PROPERTY_VALUE: Cell<Option<(Path, Vec<u8>)>> = const { Cell::new(None) };
+        pub static TEST_PROPERTY_VALUE: Cell<Option<(Path, Option<Vec<u8>>)>> =
+            const { Cell::new(None) };
         pub static TEST_MAP_VALUE: Cell<Option<(Path, HashMap<String, String>)>> =
             const { Cell::new(None) };
     );

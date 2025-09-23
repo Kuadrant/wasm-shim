@@ -8,7 +8,6 @@ use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 use errors::TransientError;
 use lazy_static::lazy_static;
-#[cfg(feature = "debug-host-behaviour")]
 use log::debug;
 use log::warn;
 use proxy_wasm::types::{Bytes, Status};
@@ -1013,11 +1012,27 @@ impl PathCache {
 
 impl AttributeResolver for PathCache {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
+        debug!("PathCache resolve attribute {attribute:?}");
         match self.value_map.entry(attribute.path.clone()) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Occupied(entry) => {
+                let val = entry.get().clone();
+                debug!("PathCache resolve attribute {attribute:?}: found value {val:?}");
+                Ok(val)
+            }
             Entry::Vacant(entry) => {
+                debug!("PathCache resolve attribute {attribute:?}: not found. Resolving");
                 let value = attribute.get()?;
-                entry.insert(value.clone());
+                debug!("PathCache resolve attribute {attribute:?}: resolved to {value:?}");
+
+                // auth.* attributes can be null before the authentication action
+                // and non-null afterward.
+                // Therefore, null values for those authentication attributes (stored in the filter_state)
+                // are not cached.
+                if attribute.path.is_auth() && matches!(value, Value::Null) {
+                    debug!("PathCache resolve attribute {attribute:?}: auth attributes resolved to null are not cached");
+                } else {
+                    entry.insert(value.clone());
+                }
                 Ok(value)
             }
         }
@@ -1195,7 +1210,7 @@ mod tests {
                 "filter_state",
                 "wasm.kuadrant.auth.identity.anonymous",
             ]),
-            "true".bytes().collect(),
+            Some("true".bytes().collect()),
         )));
         let value = Attribute {
             path: "auth.identity.anonymous".into(),
@@ -1207,7 +1222,7 @@ mod tests {
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "42".bytes().collect(),
+            Some("42".bytes().collect()),
         )));
         let value = Attribute {
             path: "auth.identity.age".into(),
@@ -1219,7 +1234,7 @@ mod tests {
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "42.3".bytes().collect(),
+            Some("42.3".bytes().collect()),
         )));
         let value = Attribute {
             path: "auth.identity.age".into(),
@@ -1231,7 +1246,7 @@ mod tests {
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
-            "\"John\"".bytes().collect(),
+            Some("\"John\"".bytes().collect()),
         )));
         let value = Attribute {
             path: "auth.identity.name".into(),
@@ -1243,7 +1258,7 @@ mod tests {
 
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "-42".bytes().collect(),
+            Some("-42".bytes().collect()),
         )));
         let value = Attribute {
             path: "auth.identity.age".into(),
@@ -1256,7 +1271,7 @@ mod tests {
         // let's fall back to strings, as that's what we read and set in store_metadata
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "some random crap".bytes().collect(),
+            Some("some random crap".bytes().collect()),
         )));
         let value = Attribute {
             path: "auth.identity.age".into(),
@@ -1356,15 +1371,17 @@ mod tests {
     fn attribute_resolve() {
         property::test::TEST_PROPERTY_VALUE.set(Some((
             "destination.port".into(),
-            80_i64.to_le_bytes().into(),
+            Some(80_i64.to_le_bytes().into()),
         )));
         let value = known_attribute_for(&"destination.port".into())
             .expect("destination.port known attribute exists")
             .get()
             .expect("There is no property error!");
         assert_eq!(value, 80.into());
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("request.method".into(), "GET".bytes().collect())));
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.method".into(),
+            Some("GET".bytes().collect()),
+        )));
         let value = known_attribute_for(&"request.method".into())
             .expect("request.method known attribute exists")
             .get()
@@ -1387,7 +1404,7 @@ mod tests {
     fn expression_access_host() {
         property::test::TEST_PROPERTY_VALUE.set(Some((
             property::Path::new(vec!["foo", "bar.baz"]),
-            b"\xCA\xFE".to_vec(),
+            Some(b"\xCA\xFE".to_vec()),
         )));
         let mut resolver = build_resolver(vec![]);
         let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
@@ -1591,8 +1608,10 @@ mod tests {
 
     #[test]
     fn path_cache_resolve_not_existing_attribute() {
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("request.method".into(), "GET".bytes().collect())));
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            "request.method".into(),
+            Some("GET".bytes().collect()),
+        )));
         let mut resolver = PathCache::default();
         let attribute =
             known_attribute_for(&"request.method".into()).expect("This is valid attribute");
@@ -1824,5 +1843,35 @@ mod tests {
             .expect("This must evaluate!");
         assert_eq!(value, "+44 1234567".into());
         resolver.verify();
+    }
+
+    #[test]
+    fn path_cache_resolve_does_not_cache_auth_nulls() {
+        let mut resolver = PathCache::default();
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.item1.item2"]),
+            None,
+        )));
+
+        let attribute = Attribute {
+            path: "auth.item1.item2".into(),
+            cel_type: None,
+        };
+
+        let value = resolver
+            .resolve(&attribute)
+            .expect("This should not error!");
+        assert!(matches!(value, Value::Null));
+
+        property::test::TEST_PROPERTY_VALUE.set(Some((
+            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.item1.item2"]),
+            Some("some-value".bytes().collect()),
+        )));
+
+        let value = resolver
+            .resolve(&attribute)
+            .expect("This should not error!");
+        assert_eq!(value, "some-value".into());
     }
 }
