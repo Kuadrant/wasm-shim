@@ -1017,7 +1017,9 @@ impl AttributeResolver for PathCache {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let value = attribute.get()?;
-                entry.insert(value.clone());
+                if !matches!(value, Value::Null) {
+                    entry.insert(value.clone());
+                }
                 Ok(value)
             }
         }
