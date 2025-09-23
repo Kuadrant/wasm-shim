@@ -137,7 +137,7 @@ impl GrpcService {
     fn name(&self) -> &str {
         self.name
     }
-    fn method(&self) -> &str {
+    pub fn method(&self) -> &str {
         self.method
     }
     pub fn build_request(&self, message: Option<Vec<u8>>) -> Option<GrpcRequest> {

@@ -200,6 +200,8 @@ fn it_waits_for_the_response_body() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpResponseHeaders), Some("content-type"))
+        .returning(None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -421,6 +423,8 @@ fn it_reads_request_attr_in_advance_when_response_body() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpResponseHeaders), Some("content-type"))
+        .returning(None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -656,6 +660,8 @@ fn it_calls_action_with_request_and_response_body() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpResponseHeaders), Some("content-type"))
+        .returning(None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
