@@ -1615,6 +1615,21 @@ mod tests {
     }
 
     #[test]
+    fn path_cache_does_not_cache_null() {
+        let mut resolver = PathCache::default();
+        let attr = Attribute {
+            path: "auth.identity.userid".into(),
+            cel_type: Some(ValueType::String),
+        };
+
+        property::test::TEST_PROPERTY_MISS.set(Some(()));
+
+        let result = resolver.resolve(&attr).expect("should resolve to Null");
+        assert_eq!(result, Value::Null);
+        assert!(!resolver.value_map.contains_key(&attr.path));
+    }
+
+    #[test]
     fn expression_request_attributes() {
         let expression = Expression::new("source.port == 65432").expect("This is valid CEL!");
         assert!(
