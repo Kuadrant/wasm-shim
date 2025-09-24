@@ -1017,7 +1017,9 @@ impl AttributeResolver for PathCache {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let value = attribute.get()?;
-                entry.insert(value.clone());
+                if !matches!(value, Value::Null) {
+                    entry.insert(value.clone());
+                }
                 Ok(value)
             }
         }
@@ -1610,6 +1612,21 @@ mod tests {
             .resolve(&attribute)
             .expect("This should not error!");
         assert_eq!(value, "GET".into());
+    }
+
+    #[test]
+    fn path_cache_does_not_cache_null() {
+        let mut resolver = PathCache::default();
+        let attr = Attribute {
+            path: "auth.identity.userid".into(),
+            cel_type: Some(ValueType::String),
+        };
+
+        property::test::TEST_PROPERTY_MISS.set(Some(()));
+
+        let result = resolver.resolve(&attr).expect("should resolve to Null");
+        assert_eq!(result, Value::Null);
+        assert!(!resolver.value_map.contains_key(&attr.path));
     }
 
     #[test]
