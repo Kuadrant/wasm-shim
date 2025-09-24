@@ -9,7 +9,7 @@ use crate::service::rate_limit::{
     KUADRANT_REPORT_RATELIMIT_METHOD_NAME, RATELIMIT_METHOD_NAME, RATELIMIT_SERVICE_NAME,
 };
 use crate::service::TracingHeader::{Baggage, Traceparent, Tracestate};
-use protobuf::RepeatedField;
+
 use proxy_wasm::types::Bytes;
 use std::cell::OnceCell;
 use std::rc::Rc;
@@ -17,14 +17,13 @@ use std::time::Duration;
 
 pub(super) mod errors {
     use crate::data::{EvaluationError, Expression, PropertyError};
-    use protobuf::ProtobufError;
+
     use std::fmt::{Debug, Display, Formatter};
 
     #[derive(Debug)]
     pub enum BuildMessageError {
         Evaluation(Box<EvaluationError>),
         Property(PropertyError),
-        Serialization(ProtobufError),
         UnsupportedDataType {
             /// Box the contents of expressoin to avoid large error variants
             expression: Box<Expression>,
@@ -58,9 +57,6 @@ pub(super) mod errors {
                 BuildMessageError::Property(e) => {
                     write!(f, "BuildMessageError::Property {{ {e:?} }}")
                 }
-                BuildMessageError::Serialization(e) => {
-                    write!(f, "BuildMessageError::Serialization {{ {e:?} }}")
-                }
                 BuildMessageError::UnsupportedDataType {
                     expression,
                     got,
@@ -77,15 +73,15 @@ pub(super) mod errors {
 
     #[derive(Debug)]
     pub enum ProcessGrpcMessageError {
-        Protobuf(ProtobufError),
+        Decode(prost::DecodeError),
         Property(PropertyError),
         EmptyResponse,
         UnsupportedField,
     }
 
-    impl From<ProtobufError> for ProcessGrpcMessageError {
-        fn from(e: ProtobufError) -> Self {
-            ProcessGrpcMessageError::Protobuf(e)
+    impl From<prost::DecodeError> for ProcessGrpcMessageError {
+        fn from(e: prost::DecodeError) -> Self {
+            ProcessGrpcMessageError::Decode(e)
         }
     }
 }
@@ -221,7 +217,7 @@ impl GrpcRequest {
 
 pub type Headers = Vec<(String, String)>;
 
-pub fn from_envoy_rl_headers(headers: RepeatedField<HeaderValue>) -> Headers {
+pub fn from_envoy_rl_headers(headers: Vec<HeaderValue>) -> Headers {
     headers
         .into_iter()
         .map(|header| (header.key, header.value))
@@ -231,9 +227,11 @@ pub fn from_envoy_rl_headers(headers: RepeatedField<HeaderValue>) -> Headers {
 pub fn from_envoy_headers(headers: &[HeaderValueOption]) -> Headers {
     headers
         .iter()
-        .map(|header| {
-            let hv = header.get_header();
-            (hv.key.to_owned(), hv.value.to_owned())
+        .filter_map(|header| {
+            header
+                .header
+                .as_ref()
+                .map(|hv| (hv.key.to_owned(), hv.value.to_owned()))
         })
         .collect()
 }

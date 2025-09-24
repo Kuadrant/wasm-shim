@@ -15,10 +15,7 @@ fn set_profile(env: &str) {
 }
 
 fn set_features(env: &str) {
-    let mut features = vec![];
-    if cfg!(feature = "with-serde") {
-        features.push("+with-serde");
-    }
+    let features: Vec<&str> = vec![];
     println!("cargo:rustc-env={env}={features:?}");
 }
 
@@ -55,14 +52,14 @@ fn set_git_hash(env: &str) {
 
 #[allow(clippy::expect_used)]
 fn generate_protobuf() -> Result<(), Box<dyn Error>> {
-    let custom = protoc_rust::Customize {
-        serde_derive: Some(true),
-        ..Default::default()
-    };
-    protoc_rust::Codegen::new()
-        .out_dir("src/envoy")
-        .customize(custom)
-        .inputs([
+    println!("cargo:warning=Starting protobuf generation...");
+
+    let mut prost_build = prost_build::Config::new();
+    prost_build.out_dir("src/envoy");
+
+    println!("cargo:warning=Compiling protos...");
+    let result = prost_build.compile_protos(
+        &[
             "vendor-protobufs/data-plane-api/envoy/service/auth/v3/external_auth.proto",
             "vendor-protobufs/data-plane-api/envoy/service/ratelimit/v3/rls.proto",
             "vendor-protobufs/data-plane-api/envoy/service/auth/v3/attribute_context.proto",
@@ -94,15 +91,21 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
             "vendor-protobufs/data-plane-api/envoy/config/core/v3/proxy_protocol.proto",
             "vendor-protobufs/udpa/xds/core/v3/authority.proto",
             "vendor-protobufs/data-plane-api/envoy/type/tracing/v3/custom_tag.proto",
-        ])
-        .includes([
+        ],
+        &[
             "vendor-protobufs/data-plane-api/",
             "vendor-protobufs/protoc-gen-validate/",
             "vendor-protobufs/udpa/",
             "vendor-protobufs/xds/",
             "vendor-protobufs/googleapis/",
-        ])
-        .run()
-        .expect("running protoc failed");
+        ],
+    );
+
+    match &result {
+        Ok(_) => println!("cargo:warning=Protobuf generation completed successfully!"),
+        Err(e) => println!("cargo:warning=Protobuf generation failed: {}", e),
+    }
+
+    result?;
     Ok(())
 }
