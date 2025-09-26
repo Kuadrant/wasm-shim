@@ -49,7 +49,7 @@ curl --resolve sse-streaming.example.com:18000:127.0.0.1 "http://sse-streaming.e
     "stream_options": {
         "include_usage": true
     },
-    "message": [
+    "messages": [
       {
         "role": "user",
         "content": "Tell me a three sentence bedtime story about a unicorn."

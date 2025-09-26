@@ -1,5 +1,5 @@
 ---
-- namespace: domain_a
+- namespace: domain-a
   name: name_a
   max_value: 10
   seconds: 60
