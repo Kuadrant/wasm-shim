@@ -31,7 +31,11 @@ data: [DONE]
 ### Run Manually
 
 It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
-Check *Makefile* at the root of the project to build the module.
+Check *Makefile* at the root of the project to build the module. Usually running `make build`
+at the root of the project.
+
+
+Then run the system
 
 ```sh
 make run
