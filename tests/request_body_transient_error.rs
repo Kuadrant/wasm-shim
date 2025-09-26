@@ -23,11 +23,15 @@ fn it_handles_transient_errors_for_request_body_json() {
 
     let root_context = 1;
     // Configuration with one action that requires requestBodyJSON evaluation
+    // The requestData section contains CEL expressions that should return transient errors
+    // So, the evaluation should be postponed until request body is available
+    // Additionally, the requestData contains request attributes that should be
+    // pre-fetched to be evaluated at the request body stage
     let cfg = r#"{
         "requestData": {
             "metrics.labels.model": "requestBodyJSON('/model')",
             "metrics.labels.max_tokens": "requestBodyJSON('/max_tokens')",
-            "metrics.labels.method": "request.method"
+            "metrics.labels.scheme": "request.scheme"
         },
         "services": {
             "limitador": {

@@ -114,7 +114,14 @@ impl AuthAction {
 
 impl AttributeOwner for AuthAction {
     fn request_attributes(&self) -> Vec<&Attribute> {
-        self.predicates.request_attributes()
+        let mut attrs = self.predicates.request_attributes();
+        let request_data_attrs: Vec<&Attribute> = self
+            .request_data
+            .iter()
+            .flat_map(|((_, _), exp)| exp.request_attributes())
+            .collect();
+        attrs.extend(request_data_attrs.iter());
+        attrs
     }
 }
 
