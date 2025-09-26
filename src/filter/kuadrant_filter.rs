@@ -9,7 +9,7 @@ use crate::runtime_action_set::RuntimeActionSet;
 use crate::service::errors::{BuildMessageError, ProcessGrpcMessageError};
 use crate::service::rate_limit::KUADRANT_REPORT_RATELIMIT_METHOD_NAME;
 use crate::service::{DirectResponse, GrpcRequest, HeaderResolver, Headers, IndexedGrpcRequest};
-use log::{debug, error};
+use log::{debug, error, info};
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::{Action, BufferType, MapType, Status};
@@ -404,6 +404,7 @@ impl KuadrantFilter {
                         Some(transient_attr) => {
                             match transient_attr {
                                 "request_body" => {
+                                    info!("waiting for request body to be available");
                                     return Ok(ProcessNextRequestOperation::AwaitRequestBody(
                                         start + index,
                                         transient_attr.into(),
