@@ -114,7 +114,13 @@ impl AuthAction {
 
 impl AttributeOwner for AuthAction {
     fn request_attributes(&self) -> Vec<&Attribute> {
-        self.predicates.request_attributes()
+        let request_data_attrs = self
+            .request_data
+            .iter()
+            .flat_map(|((_, _), exp)| exp.request_attributes());
+        request_data_attrs
+            .chain(self.predicates.request_attributes())
+            .collect()
     }
 }
 
@@ -351,5 +357,27 @@ mod test {
             err_response,
             ProcessGrpcMessageError::EmptyResponse
         ));
+    }
+
+    #[test]
+    fn auth_action_request_attributes() {
+        let predicates: Vec<String> = vec!["true".into(), "request.method == 'GET'".into()];
+        let request_data: Vec<((String, String), Expression)> = vec![
+            (
+                ("metrics.labels".into(), "foo".into()),
+                Expression::new("request.path").expect("should compile"),
+            ),
+            (
+                ("metrics.labels".into(), "bar".into()),
+                Expression::new("source.port").expect("should compile"),
+            ),
+        ];
+        let action = build_auth_action_with_predicates_and_failure_mode(
+            predicates,
+            FailureMode::Deny,
+            request_data,
+        );
+
+        assert_eq!(action.request_attributes().len(), 2);
     }
 }

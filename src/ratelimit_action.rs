@@ -129,13 +129,13 @@ impl ConditionalData {
 
 impl AttributeOwner for ConditionalData {
     fn request_attributes(&self) -> Vec<&Attribute> {
-        let mut attrs: Vec<&Attribute> = self
+        let data_attrs = self
             .data
             .iter()
-            .flat_map(|c| c.expression.request_attributes())
-            .collect();
-        attrs.extend(self.predicates.request_attributes().iter());
-        attrs
+            .flat_map(|c| c.expression.request_attributes());
+        data_attrs
+            .chain(self.predicates.request_attributes())
+            .collect()
     }
 }
 
@@ -369,10 +369,15 @@ impl RateLimitAction {
 
 impl AttributeOwner for RateLimitAction {
     fn request_attributes(&self) -> Vec<&Attribute> {
-        self.conditional_data_sets
+        let cond_attrs = self
+            .conditional_data_sets
             .iter()
-            .flat_map(|c| c.request_attributes())
-            .collect()
+            .flat_map(|c| c.request_attributes());
+        let request_data_attrs = self
+            .request_data
+            .iter()
+            .flat_map(|((_, _), exp)| exp.request_attributes());
+        cond_attrs.chain(request_data_attrs).collect()
     }
 }
 
@@ -881,11 +886,22 @@ mod test {
 
         let predicates: Vec<String> = vec!["true".into(), "request.method == 'GET'".into()];
 
+        let request_data: Vec<((String, String), Expression)> = vec![
+            (
+                ("metrics.labels".into(), "foo".into()),
+                Expression::new("request.path").expect("should compile"),
+            ),
+            (
+                ("metrics.labels".into(), "bar".into()),
+                Expression::new("source.port").expect("should compile"),
+            ),
+        ];
+
         let action = build_action(String::new(), predicates, data);
         let service = build_service();
-        let rl_action = RateLimitAction::new(&action, &service)
+        let rl_action = RateLimitAction::new_with_data(&action, &service, request_data)
             .expect("action building failed. Maybe CEL compilation?");
-        assert_eq!(rl_action.request_attributes().len(), 2);
+        assert_eq!(rl_action.request_attributes().len(), 3);
     }
 
     #[test]
