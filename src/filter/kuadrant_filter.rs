@@ -404,6 +404,7 @@ impl KuadrantFilter {
                         Some(transient_attr) => {
                             match transient_attr {
                                 "request_body" => {
+                                    debug!("waiting for request body to be available");
                                     return Ok(ProcessNextRequestOperation::AwaitRequestBody(
                                         start + index,
                                         transient_attr.into(),

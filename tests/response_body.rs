@@ -610,6 +610,10 @@ fn it_calls_action_with_request_and_response_body() {
             Some(LogLevel::Debug),
             Some("get_property: path: [\"request\", \"method\"]"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("waiting for request body to be available"),
+        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
         .execute_and_expect(ReturnType::Action(Action::Continue))

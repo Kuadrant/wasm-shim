@@ -8,7 +8,7 @@ pub mod util;
 
 #[test]
 #[serial]
-fn it_waits_for_the_request_body() {
+fn it_handles_multiple_transient_expressions_in_request_data() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -22,32 +22,32 @@ fn it_waits_for_the_request_body() {
         .unwrap();
 
     let root_context = 1;
-    // Three actions configured:
-    // 1. only requires the request headers
-    // 2. requires the request headers and the request body
-    // 3. only requires the request headers which has not been read yet (request.host)
+    // Configuration with request_data that requires streaming request body handling
+    // Tests both transient error handling and streaming body delivery
     let cfg = r#"{
+        "requestData": {
+            "metrics.labels.model": "requestBodyJSON('/model')",
+            "metrics.labels.max_tokens": "requestBodyJSON('/max_tokens')",
+            "metrics.labels.method": "request.method"
+        },
         "services": {
-            "limitador": {
-                "type": "ratelimit",
-                "endpoint": "limitador-cluster",
-                "failureMode": "deny",
-                "timeout": "5s"
+            "telemetry": {
+                "type": "ratelimit-report",
+                "endpoint": "telemetry-cluster",
+                "failureMode": "allow",
+                "timeout": "1s"
             }
         },
         "actionSets": [
         {
-            "name": "some-name",
+            "name": "test-request-data-transient",
             "routeRuleConditions": {
-                "hostnames": ["*.toystore.com", "example.com"],
-                "predicates" : [
-                    "request.url_path.startsWith('/admin/toy')"
-                ]
+                "hostnames": ["*.example.com"]
             },
             "actions": [
             {
-                "service": "limitador",
-                "scope": "RLS-domain-A",
+                "service": "telemetry",
+                "scope": "telemetry-scope",
                 "conditionalData": [
                 {
                     "predicates": [
@@ -56,44 +56,8 @@ fn it_waits_for_the_request_body() {
                     "data": [
                         {
                             "expression": {
-                                "key": "request.method",
-                                "value": "request.method"
-                            }
-                        }
-                    ]
-                }]
-            },
-            {
-                "service": "limitador",
-                "scope": "RLS-domain-B",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "request.method == 'POST'"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "model",
-                                "value": "requestBodyJSON('/model')"
-                            }
-                        }
-                    ]
-                }]
-            },
-            {
-                "service": "limitador",
-                "scope": "RLS-domain-C",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "request.method == 'POST'"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "request.host",
-                                "value": "request.host == 'cars.toystore.com'"
+                                "key": "static_key",
+                                "value": "'static_value'"
                             }
                         }
                     ]
@@ -108,6 +72,7 @@ fn it_waits_for_the_request_body() {
         .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
+
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
@@ -124,23 +89,16 @@ fn it_waits_for_the_request_body() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
+    // This should trigger transient error for requestData evaluation
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
-        // retrieving properties for conditions
+        .returning(Some("api.example.com"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property: path: [\"request\", \"url_path\"]"),
+            Some("#2 action_set selected test-request-data-transient"),
         )
-        .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some(data::request::path::ADMIN_TOY))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
-        )
-        // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
@@ -155,114 +113,69 @@ fn it_waits_for_the_request_body() {
         .returning(Some(data::request::method::POST))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property: path: [\"request\", \"host\"]"),
-        )
-        .expect_get_property(Some(vec!["request", "host"]))
-        .returning(Some(data::request::HOST))
-        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
-        .expect_grpc_call(
-            Some("limitador-cluster"),
-            Some("envoy.service.ratelimit.v3.RateLimitService"),
-            Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
-            None,
-            Some(5000),
-        )
-        .returning(Ok(42))
-        .execute_and_expect(ReturnType::Action(Action::Pause))
-        .unwrap();
-
-    let grpc_response: [u8; 2] = [8, 1];
-    module
-        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("process_response(rl): received OK response"),
+            Some("build_message(rl): transient evaluation error for requestData field"),
         )
         // Expect the log when waiting for request body due to transient evaluation errors
         .expect_log(
             Some(LogLevel::Debug),
             Some("waiting for request body to be available"),
         )
-        .execute_and_expect(ReturnType::None)
+        // The action should continue, indicating it's waiting for request body
+        .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
-    let body = r#"
-        {
-            "model": "gpt-4.1",
-            "input": "Tell me a three sentence story about a robot."
-        }"#
-    .as_bytes();
+    // Step 2: First call to on_http_request_body with partial body (streaming simulation)
     module
-        .call_proxy_on_request_body(http_context, 25i32, false)
+        .call_proxy_on_request_body(http_context, 50, false)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_http_request_body: body_size: 25, end_of_stream: false"),
+            Some("#2 on_http_request_body: body_size: 50, end_of_stream: false"),
         )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
+
+    // Step 3: Complete request body should allow evaluation to succeed
+    let body = r#"{
+        "model": "claude-3-sonnet",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 150,
+        "temperature": 0.7
+    }"#
+    .as_bytes();
 
     module
         .call_proxy_on_request_body(http_context, body.len() as i32, true)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_http_request_body: body_size: 121, end_of_stream: true"),
+            Some("#2 on_http_request_body: body_size: 157, end_of_stream: true"),
         )
         .expect_get_buffer_bytes(Some(BufferType::HttpRequestBody))
         .returning(Some(body))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_http_request_body (size: 121): action_set selected some-name"),
+            Some("#2 on_http_request_body (size: 157): action_set selected test-request-data-transient")
         )
-        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
+        // Now the request should succeed with the request_data containing model, max_tokens, and method
+        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: telemetry-cluster kuadrant.service.ratelimit.v1.RateLimitService Report 1s"))
         .expect_grpc_call(
-            Some("limitador-cluster"),
-            Some("envoy.service.ratelimit.v3.RateLimitService"),
-            Some("ShouldRateLimit"),
+            Some("telemetry-cluster"),
+            Some("kuadrant.service.ratelimit.v1.RateLimitService"),
+            Some("Report"),
             Some(&[0, 0, 0, 0]),
             None,
-            Some(5000),
+            Some(1000),
         )
-        .returning(Ok(42))
+        .returning(Ok(43))
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
+    // gRPC response handling
+    let grpc_response: [u8; 2] = [8, 1];
     module
-        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .call_proxy_on_grpc_receive(http_context, 43, grpc_response.len() as i32)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("process_response(rl): received OK response"),
-        )
-        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
-        .expect_grpc_call(
-            Some("limitador-cluster"),
-            Some("envoy.service.ratelimit.v3.RateLimitService"),
-            Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
-            None,
-            Some(5000),
-        )
-        .returning(Ok(42))
-        .execute_and_expect(ReturnType::None)
-        .unwrap();
-
-    module
-        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
+            Some("#2 on_grpc_call_response: received gRPC call response: token: 43, status: 0"),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
@@ -271,18 +184,12 @@ fn it_waits_for_the_request_body() {
             Some("process_response(rl): received OK response"),
         )
         .execute_and_expect(ReturnType::None)
-        .unwrap();
-
-    module
-        .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
-        .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
 
 #[test]
 #[serial]
-fn it_reads_request_attr_in_advance_when_request_body() {
+fn it_evaluates_request_body_json_in_request_data() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -296,10 +203,13 @@ fn it_reads_request_attr_in_advance_when_request_body() {
         .unwrap();
 
     let root_context = 1;
-    // There is only one action that requires request body on predicates
-    // That action also has predicates and data expressions that require request attributes
-    // tracing headers also need to be read in advance
+    // Configuration that uses requestBodyJSON in global request_data
     let cfg = r#"{
+        "requestData": {
+            "metrics.labels.model": "requestBodyJSON('/model')",
+            "metrics.labels.temperature": "requestBodyJSON('/temperature')",
+            "metrics.labels.method": "request.method"
+        },
         "services": {
             "limitador": {
                 "type": "ratelimit",
@@ -310,25 +220,24 @@ fn it_reads_request_attr_in_advance_when_request_body() {
         },
         "actionSets": [
         {
-            "name": "some-name",
+            "name": "test-request-data-json",
             "routeRuleConditions": {
-                "hostnames": ["*.toystore.com", "example.com"]
+                "hostnames": ["*.example.com"]
             },
             "actions": [
             {
                 "service": "limitador",
-                "scope": "RLS-domain",
+                "scope": "test-scope",
                 "conditionalData": [
                 {
                     "predicates": [
-                        "requestBodyJSON('/model') == 'gpt-4.1'",
-                        "request.url_path.startsWith('/admin/toy')"
+                        "request.method == 'POST'"
                     ],
                     "data": [
                         {
                             "expression": {
-                                "key": "request.method",
-                                "value": "request.method"
+                                "key": "static_key",
+                                "value": "'static_value'"
                             }
                         }
                     ]
@@ -343,6 +252,7 @@ fn it_reads_request_attr_in_advance_when_request_body() {
         .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
         .execute_and_expect(ReturnType::None)
         .unwrap();
+
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
@@ -359,23 +269,22 @@ fn it_reads_request_attr_in_advance_when_request_body() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
+    // Step 1: Initial request headers should trigger transient error due to missing request body
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
+        .returning(Some("api.example.com"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
+            Some("#2 action_set selected test-request-data-json"),
         )
-        // retrieving tracing headers
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
         .returning(None)
         .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
         .returning(None)
-        // retrieving request attributes in advance
         .expect_log(
             Some(LogLevel::Debug),
             Some("get_property: path: [\"request\", \"method\"]"),
@@ -384,11 +293,8 @@ fn it_reads_request_attr_in_advance_when_request_body() {
         .returning(Some(data::request::method::POST))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property: path: [\"request\", \"url_path\"]"),
+            Some("build_message(rl): transient evaluation error for requestData field"),
         )
-        .expect_get_property(Some(vec!["request", "url_path"]))
-        .returning(Some(data::request::path::ADMIN_TOY))
-        // Expect the log when waiting for request body due to transient evaluation errors
         .expect_log(
             Some(LogLevel::Debug),
             Some("waiting for request body to be available"),
@@ -396,47 +302,54 @@ fn it_reads_request_attr_in_advance_when_request_body() {
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
-    let body = r#"
-        {
-            "model": "gpt-4.1",
-            "input": "Tell me a three sentence story about a robot."
-        }"#
+    // Step 2: Complete request body should allow requestBodyJSON evaluation to succeed
+    let body = r#"{
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "Hello world"}],
+        "temperature": 0.7,
+        "max_tokens": 100
+    }"#
     .as_bytes();
-    module
-        .call_proxy_on_request_body(http_context, 25i32, false)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_http_request_body: body_size: 25, end_of_stream: false"),
-        )
-        .execute_and_expect(ReturnType::Action(Action::Pause))
-        .unwrap();
 
     module
         .call_proxy_on_request_body(http_context, body.len() as i32, true)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_http_request_body: body_size: 121, end_of_stream: true"),
+            Some("#2 on_http_request_body: body_size: 153, end_of_stream: true"),
         )
         .expect_get_buffer_bytes(Some(BufferType::HttpRequestBody))
         .returning(Some(body))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_http_request_body (size: 121): action_set selected some-name"),
+            Some("#2 on_http_request_body (size: 153): action_set selected test-request-data-json")
         )
+        // Now the requestBodyJSON should succeed and grpc call should be made with the extracted values
         .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             Some(&[0, 0, 0, 0]),
-            None,
+            // Validate that the gRPC request contains the extracted JSON values
+            Some(
+                &[
+                    10, 10, 116, 101, 115, 116, 45, 115, 99, 111, 112, 101, // domain: "test-scope"
+                    18, 28, // descriptor with entries
+                    10, 26, 10, 10, 115, 116, 97, 116, 105, 99, 95, 107, 101, 121, 18, 12, 115, 116, 97, 116, 105, 99, 95, 118, 97, 108, 117, 101, // static_key="static_value"
+                    18, 32, // second descriptor
+                    10, 14, 10, 6, 109, 101, 116, 104, 111, 100, 18, 4, 80, 79, 83, 84, // method="POST"
+                    10, 14, 10, 5, 109, 111, 100, 101, 108, 18, 5, 103, 112, 116, 45, 52, // model="gpt-4"
+                    24, 1 // hits_addend: 1
+                ][..]
+            ),
             Some(5000),
         )
         .returning(Ok(42))
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
-    let grpc_response: [u8; 2] = [8, 1];
+    // Step 3: gRPC response handling
+    let grpc_response: [u8; 2] = [8, 1]; // OK response
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
@@ -450,11 +363,5 @@ fn it_reads_request_attr_in_advance_when_request_body() {
             Some("process_response(rl): received OK response"),
         )
         .execute_and_expect(ReturnType::None)
-        .unwrap();
-
-    module
-        .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
-        .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }

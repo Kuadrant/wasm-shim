@@ -193,10 +193,9 @@ impl RateLimitAction {
             let mut descriptors = vec![descriptor];
             if !self.request_data.is_empty() {
                 let mut entries = Vec::default();
-                self.request_data
-                    .iter()
-                    .for_each(|((domain, field), expr)| {
-                        if let Ok(Value::String(value)) = expr.eval(resolver) {
+                for ((domain, field), expr) in self.request_data.iter() {
+                    match expr.eval(resolver) {
+                        Ok(Value::String(value)) => {
                             let key = if domain.is_empty() || domain == "metrics.labels" {
                                 field.clone()
                             } else {
@@ -208,7 +207,14 @@ impl RateLimitAction {
                             };
                             entries.push(entry);
                         }
-                    });
+                        Err(e) if e.is_transient() => {
+                            //only interested in returning transient errors for so we can evaluate again later
+                            debug!("build_message(rl): transient evaluation error for requestData field");
+                            return Err(BuildMessageError::Evaluation(Box::new(e)));
+                        }
+                        _ => {}
+                    }
+                }
 
                 let data = RateLimitDescriptor {
                     entries,
