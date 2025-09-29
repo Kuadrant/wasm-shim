@@ -488,7 +488,19 @@ impl KuadrantFilter {
                     // The action failure mode is set to deny, so we log the error and die
                     debug!("Error while building request: {err:?}");
                     self.die();
-                    return Action::Pause;
+                    match self.phase {
+                        Phase::RequestHeaders | Phase::RequestBody => {
+                            // we died.
+                            // Do not iterate on any of the remaining filters in the chain.
+                            return Action::Pause;
+                        }
+                        Phase::ResponseHeaders | Phase::ResponseBody => {
+                            // we died and the response has already been constructed.
+                            // Nothing else to be done.
+                            // Resume processing of the remaining filters in the chain.
+                            return Action::Continue;
+                        }
+                    }
                 }
             }
         }
