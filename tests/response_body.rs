@@ -735,3 +735,163 @@ fn it_calls_action_with_request_and_response_body() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 }
+
+#[test]
+#[serial]
+fn it_handles_errors_on_response_body() {
+    // The error will be body that cannot be parsed as JSON object
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "ratelimit",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
+            {
+                "service": "limitador",
+                "scope": "RLS-domain",
+                "conditionalData": [
+                {
+                    "data": [
+                        {
+                            "expression": {
+                                "key": "a",
+                                "value": "'1'"
+                            }
+                        },
+                        {
+                            "expression": {
+                                "key": "ratelimit.hits_addend",
+                                "value": "responseBodyJSON('/usage/total_tokens')"
+                            }
+                        }
+                    ]
+                }]
+            }
+            ]
+        }]
+    }"#;
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_log(Some(LogLevel::Info), None)
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
+        .returning(Some("cars.toystore.com"))
+        // retrieving properties for conditions
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 action_set selected some-name"),
+        )
+        // retrieving tracing headers
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
+        .returning(None)
+        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
+        .returning(None)
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_request_body(http_context, 25i32, false)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 on_http_request_body: body_size: 25, end_of_stream: false"),
+        )
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_get_header_map_value(Some(MapType::HttpResponseHeaders), Some("content-type"))
+        .returning(None)
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    let response_body = "some crap that cannot be JSON parsed".as_bytes();
+    module
+        .call_proxy_on_response_body(http_context, 25i32, false)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 on_http_response_body: body_size: 25, end_of_stream: false"),
+        )
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_body(http_context, response_body.len() as i32, true)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some(
+                format!(
+                    "#2 on_http_response_body: body_size: {}, end_of_stream: true",
+                    response_body.len()
+                )
+                .as_str(),
+            ),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(response_body))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some(
+                format!(
+                    "#2 on_http_response_body (size: {}): action_set selected some-name",
+                    response_body.len()
+                )
+                .as_str(),
+            ),
+        )
+        .expect_log(Some(LogLevel::Debug), None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Ignoring trying to send direct response after phase has ended!"),
+        )
+        // on response headers/body, expected action is Continue
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+}
