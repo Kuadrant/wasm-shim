@@ -80,10 +80,17 @@ impl AuthService {
         let destination = AuthService::build_peer(
             get_attribute::<String>(&"destination.address".into())?.unwrap_or_default(),
             get_attribute::<i64>(&"destination.port".into())?.unwrap_or_default() as u32,
+            None,
+        );
+        let certificate = get_attribute::<String>(&"connection.peer_certificate".into())?;
+        debug!(
+            "certificate from dynamic metadata: {:?}",
+            certificate.as_ref().map(|c| format!("{} bytes", c.len()))
         );
         let source = AuthService::build_peer(
             get_attribute::<String>(&"source.address".into())?.unwrap_or_default(),
             get_attribute::<i64>(&"source.port".into())?.unwrap_or_default() as u32,
+            certificate,
         );
         // the ce_host is the identifier for authorino to determine which authconfig to use
         let context_extensions = HashMap::from([("host".to_string(), ce_host)]);
@@ -212,7 +219,7 @@ impl AuthService {
         })
     }
 
-    fn build_peer(host: String, port: u32) -> attribute_context::Peer {
+    fn build_peer(host: String, port: u32, certificate: Option<String>) -> attribute_context::Peer {
         attribute_context::Peer {
             address: Some(Address {
                 address: Some(address::Address::SocketAddress(SocketAddress {
@@ -221,6 +228,7 @@ impl AuthService {
                     ..Default::default()
                 })),
             }),
+            certificate: certificate.unwrap_or_default(),
             ..Default::default()
         }
     }

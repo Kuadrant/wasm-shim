@@ -95,6 +95,15 @@ pub(super) fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), 
 pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
         ["source", "remote_address"] => remote_address(),
+        ["connection", "peer_certificate"] => {
+            let metadata_path = Path::new(vec![
+                "metadata",
+                "filter_metadata",
+                "connection",
+                "peer_certificate",
+            ]);
+            host_get_property(&metadata_path)
+        }
         ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
         _ => host_get_property(path),
     }
