@@ -38,7 +38,6 @@ pub(crate) struct KuadrantFilter {
     response_content_type: Option<String>,
     streamed_buffer: String,
     streamed_usage: String,
-    stream_offset: usize,
 }
 
 impl Context for KuadrantFilter {
@@ -646,7 +645,6 @@ impl KuadrantFilter {
             response_content_type: None,
             streamed_buffer: String::new(),
             streamed_usage: String::new(),
-            stream_offset: 0,
         }
     }
 
@@ -658,13 +656,8 @@ impl KuadrantFilter {
         action_set: Rc<RuntimeActionSet>,
         transient_attr: String,
     ) -> Action {
-        debug!(
-            "#{} handle_stream: body_size: {}, end_of_stream: {}, stream_offset: {}",
-            self.context_id, body_size, end_of_stream, self.stream_offset
-        );
-        if body_size != self.stream_offset {
-            let buffer_size = body_size - self.stream_offset;
-            let chunk_bytes = match self.get_http_response_body(self.stream_offset, buffer_size) {
+        if self.streamed_usage.is_empty() {
+            let chunk_bytes = match self.get_http_response_body(0, body_size) {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => {
                     error!(
@@ -702,7 +695,6 @@ impl KuadrantFilter {
             );
 
             self.streamed_buffer.push_str(&chunk_str);
-            self.stream_offset += buffer_size;
 
             // Extract only the last two complete frames as usage should be in last frame
             let (usage_frame, done_frame) = split_last_two_frames(&mut self.streamed_buffer);
@@ -719,7 +711,7 @@ impl KuadrantFilter {
 
         if !end_of_stream {
             self.response_body_receiver = Some(((index, action_set), transient_attr));
-            return Action::Pause;
+            return Action::Continue;
         }
 
         if !self.streamed_usage.is_empty() {
