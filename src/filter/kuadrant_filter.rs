@@ -290,7 +290,8 @@ impl HttpContext for KuadrantFilter {
         // too late
         if let Some(response_headers) = self.response_headers_to_add.take() {
             for (header, value) in response_headers {
-                if let Err(status) = self.add_http_response_header(header.as_str(), value.as_str())
+                if let Err(status) =
+                    self.set_http_response_header(header.as_str(), Some(value.as_str()))
                 {
                     log::error!(
                         "#{} on_http_response_headers: failed to add headers: {:?}",
@@ -615,7 +616,9 @@ impl KuadrantFilter {
     fn add_request_headers(&mut self) {
         if let Some(request_headers) = self.request_headers_to_add.take() {
             for (header, value) in request_headers {
-                if let Err(status) = self.add_http_request_header(header.as_str(), value.as_str()) {
+                if let Err(status) =
+                    self.set_http_request_header(header.as_str(), Some(value.as_str()))
+                {
                     log::error!(
                         "add_http_request_headers failed for {}: {:?}",
                         &header,
