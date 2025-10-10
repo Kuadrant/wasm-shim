@@ -202,3 +202,9 @@ impl Path {
         !self.tokens.is_empty() && self.tokens[0] == "request"
     }
 }
+
+pub fn wasm_prop(tokens: &[&str]) -> Path {
+    let mut flat_attr = "filter_state.wasm\\.kuadrant\\.".to_string();
+    flat_attr.push_str(tokens.join("\\.").as_str());
+    flat_attr.as_str().into()
+}

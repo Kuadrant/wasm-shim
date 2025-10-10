@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
+use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::resolver::AttributeResolver;
 use log::warn;
 
@@ -151,12 +151,6 @@ impl ReqRespCtx {
             Err(e) => Err(e),
         }
     }
-}
-
-pub fn wasm_prop(tokens: &[&str]) -> Path {
-    let mut flat_attr = "filter_state.wasm\\.kuadrant\\.".to_string();
-    flat_attr.push_str(tokens.join("\\.").as_str());
-    flat_attr.as_str().into()
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use crate::v2::data::attribute::Path;
-use crate::v2::kuadrant;
+use crate::v2::data::wasm_prop;
 use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
@@ -94,7 +94,7 @@ pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
             #[allow(deprecated)]
             remote_address()
         }
-        ["auth", ..] => host_get_property(&kuadrant::wasm_prop(path.tokens().as_slice())),
+        ["auth", ..] => host_get_property(&wasm_prop(path.tokens().as_slice())),
         _ => host_get_property(path),
     }
 }
@@ -106,7 +106,7 @@ pub(super) fn set_property(path: Path, value: Option<&[u8]>) -> Result<(), Statu
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::v2::kuadrant::wasm_prop;
+    use crate::v2::data::wasm_prop;
     use std::cell::Cell;
 
     thread_local!(
