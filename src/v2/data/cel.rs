@@ -1,5 +1,5 @@
+use crate::v2::data::attribute::AttributeError;
 use crate::v2::data::attribute::Path;
-use crate::v2::data::attribute::PropertyError;
 use crate::v2::data::cel::errors::{CelError, EvaluationError};
 use crate::v2::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
 pub(super) mod errors {
-    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::attribute::AttributeError;
     use crate::v2::data::Expression;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
@@ -39,7 +39,7 @@ pub(super) mod errors {
 
     #[derive(Debug, PartialEq)]
     pub enum CelError {
-        Property(PropertyError),
+        Property(AttributeError),
         Resolve(ExecutionError),
     }
 
@@ -52,8 +52,8 @@ pub(super) mod errors {
         }
     }
 
-    impl From<PropertyError> for CelError {
-        fn from(e: PropertyError) -> Self {
+    impl From<AttributeError> for CelError {
+        fn from(e: AttributeError) -> Self {
             CelError::Property(e)
         }
     }
@@ -189,7 +189,7 @@ impl Expression {
         ctx.add_function("queryMap", decode_query_string);
     }
 
-    fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<Map, PropertyError> {
+    fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<Map, AttributeError> {
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
 }
@@ -398,7 +398,7 @@ impl PartialEq for Attribute {
 }
 
 impl Attribute {
-    pub fn get(&self, ctx: &ReqRespCtx) -> Result<Value, PropertyError> {
+    pub fn get(&self, ctx: &ReqRespCtx) -> Result<Value, AttributeError> {
         match &self.cel_type {
             Some(t) => match t {
                 ValueType::String => Ok(ctx
@@ -633,7 +633,7 @@ pub fn debug_all_well_known_attributes() {
 }
 
 pub mod data {
-    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::attribute::AttributeError;
     use crate::v2::data::cel::Attribute;
     use crate::v2::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::{Key, Map};
@@ -678,7 +678,7 @@ pub mod data {
     }
 
     impl AttributeMap {
-        pub fn into(self, req_ctx: &ReqRespCtx) -> Result<Map, PropertyError> {
+        pub fn into(self, req_ctx: &ReqRespCtx) -> Result<Map, AttributeError> {
             map_to_value(self.data, req_ctx)
         }
     }
@@ -686,7 +686,7 @@ pub mod data {
     fn map_to_value(
         map: HashMap<String, Token>,
         req_ctx: &ReqRespCtx,
-    ) -> Result<Map, PropertyError> {
+    ) -> Result<Map, AttributeError> {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
             let k = key.into();

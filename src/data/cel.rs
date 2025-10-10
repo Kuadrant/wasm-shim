@@ -1,7 +1,7 @@
 use crate::data::cel::errors::{EvaluationError, PredicateResultError};
 use crate::data::get_attribute;
 use crate::data::property::host_get_map;
-use crate::v2::data::attribute::{Path, PropertyError};
+use crate::v2::data::attribute::{AttributeError, Path};
 use crate::v2::data::cel::strings;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
@@ -25,7 +25,7 @@ use urlencoding::decode;
 
 pub(super) mod errors {
     use crate::data::Expression;
-    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::attribute::AttributeError;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
@@ -90,7 +90,7 @@ pub(super) mod errors {
 
     #[derive(Debug)]
     pub enum CelError {
-        Property(PropertyError),
+        Property(AttributeError),
         Resolve(ExecutionError),
         Predicate(PredicateResultError),
         TransientPropertyMissing(TransientError),
@@ -107,8 +107,8 @@ pub(super) mod errors {
         }
     }
 
-    impl From<PropertyError> for CelError {
-        fn from(e: PropertyError) -> Self {
+    impl From<AttributeError> for CelError {
+        fn from(e: AttributeError) -> Self {
             CelError::Property(e)
         }
     }
@@ -321,7 +321,7 @@ impl Expression {
         ctx.add_function("queryMap", decode_query_string);
     }
 
-    fn build_data_map<T>(&self, resolver: &mut T) -> Result<Map, PropertyError>
+    fn build_data_map<T>(&self, resolver: &mut T) -> Result<Map, AttributeError>
     where
         T: AttributeResolver,
     {
@@ -616,7 +616,7 @@ impl PartialEq for Attribute {
 }
 
 impl Attribute {
-    pub fn get(&self) -> Result<Value, PropertyError> {
+    pub fn get(&self) -> Result<Value, AttributeError> {
         match &self.cel_type {
             Some(t) => match t {
                 ValueType::String => Ok(get_attribute::<String>(&self.path)?
@@ -848,7 +848,7 @@ pub fn debug_all_well_known_attributes() {
 
 pub mod data {
     use crate::data::cel::{Attribute, AttributeResolver};
-    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::attribute::AttributeError;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -897,7 +897,7 @@ pub mod data {
         }
     }
 
-    impl<'a, T> From<AttributeMap<'a, T>> for Result<Map, PropertyError>
+    impl<'a, T> From<AttributeMap<'a, T>> for Result<Map, AttributeError>
     where
         T: AttributeResolver,
     {
@@ -906,7 +906,7 @@ pub mod data {
         }
     }
 
-    fn map_to_value<T>(map: HashMap<String, Token>, resolver: &mut T) -> Result<Map, PropertyError>
+    fn map_to_value<T>(map: HashMap<String, Token>, resolver: &mut T) -> Result<Map, AttributeError>
     where
         T: AttributeResolver,
     {
@@ -993,7 +993,7 @@ pub mod data {
     }
 }
 
-pub type AttributeResolverResult = Result<Value, PropertyError>;
+pub type AttributeResolverResult = Result<Value, AttributeError>;
 
 pub trait AttributeResolver {
     fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult;
@@ -1056,8 +1056,8 @@ mod tests {
     use crate::data::cel::errors::CelError;
     use crate::data::property;
     use crate::v2::data::attribute;
+    use crate::v2::data::attribute::AttributeError;
     use crate::v2::data::attribute::Path;
-    use crate::v2::data::attribute::PropError;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::{ExecutionError, Value};
     use std::collections::HashMap;
@@ -1070,9 +1070,7 @@ mod tests {
 
     impl AttributeResolver for FailResolver {
         fn resolve(&mut self, _attribute: &Attribute) -> AttributeResolverResult {
-            Err(PropertyError::Get(PropError::new(
-                "property not found".into(),
-            )))
+            Err(AttributeError::Retrieval("property not found".into()))
         }
 
         fn transient(&mut self, _attr: &str) -> Option<Value> {
@@ -1415,7 +1413,7 @@ mod tests {
         let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
         assert!(matches!(
             *cel_err,
-            CelError::Property(PropertyError::Get(_))
+            CelError::Property(AttributeError::Retrieval(_))
         ));
     }
 
