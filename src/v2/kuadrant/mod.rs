@@ -3,17 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::resolver::AttributeResolver;
-use crate::v2::temp::GrpcRequest;
 use log::warn;
-
-pub trait Service {
-    type Response;
-    fn dispatch(&self, ctx: &mut ReqRespCtx, scope: String) -> usize;
-    fn parse_message(&self, message: Vec<u8>) -> Self::Response;
-
-    #[deprecated]
-    fn request_message(&self, ctx: &mut ReqRespCtx, scope: String) -> GrpcRequest;
-}
 
 #[derive(Clone)]
 struct AttributeCache {

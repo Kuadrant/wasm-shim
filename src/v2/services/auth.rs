@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use super::Service;
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::kuadrant::Service;
 use crate::v2::temp::GrpcRequest;
 
 struct AuthService {
