@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::v2::data::attribute::AttributeError;
-use crate::v2::data::attribute::{AttributeValue, Path};
+use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::temp::GrpcRequest;
 use log::warn;
 use proxy_wasm::hostcalls;
@@ -29,24 +28,26 @@ impl ReqRespCtx {
     pub fn get_attribute<T: AttributeValue>(
         &self,
         path: impl Into<Path>,
-    ) -> Result<Option<T>, AttributeError> {
+    ) -> Result<AttributeState<T>, AttributeError> {
         self.get_attribute_ref(&path.into())
     }
 
     pub fn get_attribute_ref<T: AttributeValue>(
         &self,
         path: &Path,
-    ) -> Result<Option<T>, AttributeError> {
+    ) -> Result<AttributeState<T>, AttributeError> {
         let value = match *path.tokens() {
-            ["source", "remote_address"] => self
-                .remote_address()
-                .map(|o| o.map(|s| s.as_bytes().to_vec())),
+            ["source", "remote_address"] => self.remote_address(),
             ["auth", ..] => self.backend.get_attribute(&wasm_prop(&path.tokens())),
             _ => self.backend.get_attribute(path),
         };
         match value {
-            Ok(Some(value)) => Ok(Some(T::parse(value)?)),
-            Ok(None) => Ok(None),
+            Ok(Some(raw_bytes)) => match T::parse(raw_bytes) {
+                Ok(parsed) => Ok(AttributeState::Available(Some(parsed))),
+                Err(parse_err) => Err(parse_err),
+            },
+            Ok(None) => Ok(AttributeState::Available(None)),
+            Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
         }
     }
@@ -72,21 +73,24 @@ impl ReqRespCtx {
         }
     }
 
-    fn remote_address(&self) -> Result<Option<String>, AttributeError> {
+    fn remote_address(&self) -> Result<Option<Vec<u8>>, AttributeError> {
         // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
         // Envoy sets source.address to the trusted client address AND port.
-        match self.backend.get_attribute(&"source.address".into())? {
-            None => {
+        match self.backend.get_attribute(&"source.address".into()) {
+            Ok(Some(host_vec)) => match String::from_utf8(host_vec) {
+                Ok(source_address) => {
+                    let split_address = source_address.split(':').collect::<Vec<_>>();
+                    Ok(Some(split_address[0].as_bytes().to_vec()))
+                }
+                Err(_) => Err(AttributeError::Parse(
+                    "source.address not valid UTF-8".to_string(),
+                )),
+            },
+            Ok(None) => {
                 warn!("source.address property not found");
-                Err(AttributeError::Retrieval(
-                    "source.address not found".to_string(),
-                ))
+                Ok(None)
             }
-            Some(host_vec) => {
-                let source_address: String = AttributeValue::parse(host_vec)?;
-                let split_address = source_address.split(':').collect::<Vec<_>>();
-                Ok(Some(split_address[0].to_string()))
-            }
+            Err(e) => Err(e),
         }
     }
 }

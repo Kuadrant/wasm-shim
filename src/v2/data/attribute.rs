@@ -2,6 +2,32 @@ use chrono::{DateTime, FixedOffset};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AttributeState<T> {
+    Pending,
+    Available(Option<T>),
+}
+
+impl<T> AttributeState<T> {
+    pub fn map<U, F>(self, f: F) -> AttributeState<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self {
+            AttributeState::Pending => AttributeState::Pending,
+            AttributeState::Available(Some(val)) => AttributeState::Available(Some(f(val))),
+            AttributeState::Available(None) => AttributeState::Available(None),
+        }
+    }
+
+    pub fn into_option(self) -> Option<T> {
+        match self {
+            AttributeState::Pending => None,
+            AttributeState::Available(opt) => opt,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum AttributeError {
     NotAvailable(String),
