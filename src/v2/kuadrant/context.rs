@@ -31,7 +31,7 @@ impl ReqRespCtx {
         &self,
         path: &Path,
     ) -> Result<AttributeState<T>, AttributeError> {
-        if let Some(cached_option) = self.cache.get(path) {
+        if let Ok(Some(cached_option)) = self.cache.get(path) {
             return match cached_option {
                 Some(bytes) => match T::parse(bytes.clone()) {
                     Ok(parsed) => Ok(AttributeState::Available(Some(parsed))),
@@ -44,7 +44,9 @@ impl ReqRespCtx {
         let raw_result = self.fetch_attribute(path);
         match raw_result {
             Ok(option_bytes) => {
-                self.cache.insert(path.clone(), option_bytes.clone());
+                if let Err(e) = self.cache.insert(path.clone(), option_bytes.clone()) {
+                    warn!("Failed to cache attribute {}: {}", path, e);
+                }
                 match option_bytes {
                     Some(bytes) => match T::parse(bytes) {
                         Ok(parsed) => Ok(AttributeState::Available(Some(parsed))),
@@ -81,9 +83,11 @@ impl ReqRespCtx {
 
     pub fn ensure_attributes(&self, paths: &[Path]) {
         for path in paths {
-            if !self.cache.contains_key(path) {
+            if !self.cache.contains_key(path).unwrap_or(false) {
                 if let Ok(option_bytes) = self.fetch_attribute(path) {
-                    self.cache.insert(path.clone(), option_bytes);
+                    if let Err(e) = self.cache.insert(path.clone(), option_bytes) {
+                        warn!("Failed to cache attribute {}: {}", path, e);
+                    }
                 }
             }
         }
@@ -132,24 +136,21 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
 
         let result1: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
-        assert!(result1.is_ok());
-        if let Ok(AttributeState::Available(Some(method))) = result1 {
-            assert_eq!(method, "GET");
-        } else {
-            panic!("Expected Available(Some(GET))");
-        }
+        assert!(
+            matches!(result1, Ok(AttributeState::Available(Some(ref method))) if method == "GET")
+        );
 
         // check it is cached
-        assert!(ctx.cache.contains_key(&"request.method".into()));
+        assert!(ctx
+            .cache
+            .contains_key(&"request.method".into())
+            .unwrap_or(false));
 
         // second access uses cache
         let result2: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
-        assert!(result2.is_ok());
-        if let Ok(AttributeState::Available(Some(method))) = result2 {
-            assert_eq!(method, "GET");
-        } else {
-            panic!("Expected Available(Some(GET)) from cache");
-        }
+        assert!(
+            matches!(result2, Ok(AttributeState::Available(Some(ref method))) if method == "GET")
+        );
     }
 
     #[test]
@@ -163,8 +164,14 @@ mod tests {
         ctx.ensure_attributes(&paths);
 
         // both are cached
-        assert!(ctx.cache.contains_key(&"request.method".into()));
-        assert!(ctx.cache.contains_key(&"request.path".into()));
+        assert!(ctx
+            .cache
+            .contains_key(&"request.method".into())
+            .unwrap_or(false));
+        assert!(ctx
+            .cache
+            .contains_key(&"request.path".into())
+            .unwrap_or(false));
 
         // accessing uses cache
         let method: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
