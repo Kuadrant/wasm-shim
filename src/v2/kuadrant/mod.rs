@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
+use crate::v2::resolver::AttributeResolver;
 use crate::v2::temp::GrpcRequest;
 use log::warn;
-use proxy_wasm::hostcalls;
 
 pub trait Service {
     type Response;
@@ -163,42 +163,6 @@ impl ReqRespCtx {
     }
 }
 
-pub trait AttributeResolver: Send + Sync {
-    fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError>;
-    fn get_attribute_map(
-        &self,
-        map_type: proxy_wasm::types::MapType,
-    ) -> Result<HashMap<String, String>, AttributeError>;
-}
-
-struct ProxyWasmHost;
-
-impl AttributeResolver for ProxyWasmHost {
-    fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
-        match hostcalls::get_property(path.tokens()) {
-            Ok(data) => Ok(data),
-            Err(proxy_wasm::types::Status::BadArgument) => Err(AttributeError::NotAvailable(
-                format!("Property {path} not available in current request phase"),
-            )),
-            Err(e) => Err(AttributeError::Retrieval(format!(
-                "failed to get property: {path}: {e:?}"
-            ))),
-        }
-    }
-
-    fn get_attribute_map(
-        &self,
-        map_type: proxy_wasm::types::MapType,
-    ) -> Result<HashMap<String, String>, AttributeError> {
-        match hostcalls::get_map(map_type) {
-            Ok(map) => Ok(map.into_iter().collect()),
-            Err(err) => Err(AttributeError::Retrieval(format!(
-                "Error getting host map: {err:?}"
-            ))),
-        }
-    }
-}
-
 pub fn wasm_prop(tokens: &[&str]) -> Path {
     let mut flat_attr = "filter_state.wasm\\.kuadrant\\.".to_string();
     flat_attr.push_str(tokens.join("\\.").as_str());
@@ -207,75 +171,10 @@ pub fn wasm_prop(tokens: &[&str]) -> Path {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashMap;
-
     use crate::v2::{
-        data::attribute::{AttributeError, AttributeState, Path},
-        kuadrant::AttributeResolver,
-        kuadrant::ReqRespCtx,
+        data::attribute::AttributeState, kuadrant::ReqRespCtx, resolver::MockWasmHost,
     };
     use std::sync::Arc;
-
-    #[derive(Default)]
-    pub struct MockWasmHost {
-        properties: HashMap<Path, Vec<u8>>,
-        maps: HashMap<String, HashMap<String, String>>,
-    }
-
-    impl MockWasmHost {
-        pub fn new() -> Self {
-            Self {
-                properties: HashMap::new(),
-                maps: HashMap::new(),
-            }
-        }
-
-        pub fn with_property(mut self, path: Path, value: Vec<u8>) -> Self {
-            self.properties.insert(path, value);
-            self
-        }
-
-        pub fn with_map(
-            mut self,
-            map_name: String,
-            map: std::collections::HashMap<String, String>,
-        ) -> Self {
-            self.maps.insert(map_name, map);
-            self
-        }
-    }
-
-    impl AttributeResolver for MockWasmHost {
-        fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
-            match self.properties.get(path) {
-                Some(value) => Ok(Some(value.clone())),
-                None => Ok(None),
-            }
-        }
-
-        fn get_attribute_map(
-            &self,
-            map_type: proxy_wasm::types::MapType,
-        ) -> Result<HashMap<String, String>, AttributeError> {
-            let map_key = match map_type {
-                proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
-                _ => {
-                    return Err(AttributeError::Retrieval(format!(
-                        "MockWasmHost does not support map type: {:?}",
-                        map_type
-                    )))
-                }
-            };
-
-            match self.maps.get(map_key) {
-                Some(map) => Ok(map.clone()),
-                None => Err(AttributeError::Retrieval(format!(
-                    "MockWasmHost does not have map: {}",
-                    map_key
-                ))),
-            }
-        }
-    }
 
     #[cfg(test)]
     mod cache_tests {
