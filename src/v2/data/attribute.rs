@@ -1,6 +1,9 @@
 use chrono::{DateTime, FixedOffset};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+
+use crate::v2::kuadrant::cache::CachedValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttributeState<T> {
@@ -57,6 +60,19 @@ pub trait AttributeValue {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError>
     where
         Self: Sized;
+
+    fn from_cached(cached: &CachedValue) -> Result<Option<Self>, AttributeError>
+    where
+        Self: Sized,
+    {
+        match cached {
+            CachedValue::Bytes(Some(bytes)) => Ok(Some(Self::parse(bytes.clone())?)),
+            CachedValue::Bytes(None) => Ok(None),
+            CachedValue::Map(_) => Err(AttributeError::Parse(
+                "Expected bytes, found map".to_string(),
+            )),
+        }
+    }
 }
 
 impl AttributeValue for String {
@@ -134,6 +150,23 @@ impl AttributeValue for DateTime<FixedOffset> {
             Err(_) => Err(AttributeError::Parse(format!(
                 "parse: Timestamp expected to be 8 bytes, but got {ra_len}",
             ))),
+        }
+    }
+}
+
+impl AttributeValue for HashMap<String, String> {
+    fn parse(_raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
+        Err(AttributeError::Parse(
+            "Maps do not support parse".to_string(),
+        ))
+    }
+
+    fn from_cached(cached: &CachedValue) -> Result<Option<Self>, AttributeError> {
+        match cached {
+            CachedValue::Map(map) => Ok(Some(map.clone())),
+            CachedValue::Bytes(_) => Err(AttributeError::Parse(
+                "Expected map, found bytes".to_string(),
+            )),
         }
     }
 }

@@ -437,9 +437,10 @@ impl Attribute {
                     .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Map => Ok(ctx
-                    .get_attribute_map(&self.path)
+                    .get_attribute_ref::<HashMap<String, String>>(&self.path)?
                     .map(cel_interpreter::objects::Map::from)
                     .map(Value::Map)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 _ => todo!("Need support for `{t}`s!"),
             },

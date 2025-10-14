@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
+use crate::v2::kuadrant::cache::CachedValue;
 use crate::v2::kuadrant::AttributeCache;
 use crate::v2::resolver::AttributeResolver;
 use log::warn;
@@ -31,73 +31,59 @@ impl ReqRespCtx {
         &self,
         path: &Path,
     ) -> Result<AttributeState<T>, AttributeError> {
-        if let Ok(Some(cached_option)) = self.cache.get(path) {
-            return match cached_option {
-                Some(bytes) => match T::parse(bytes.clone()) {
-                    Ok(parsed) => Ok(AttributeState::Available(Some(parsed))),
-                    Err(parse_err) => Err(parse_err),
-                },
+        if let Ok(Some(cached)) = self.cache.get(path) {
+            return match T::from_cached(&cached)? {
+                Some(value) => Ok(AttributeState::Available(Some(value))),
                 None => Ok(AttributeState::Available(None)),
             };
         }
 
-        let raw_result = self.fetch_attribute(path);
-        match raw_result {
-            Ok(option_bytes) => {
-                if let Err(e) = self.cache.insert(path.clone(), option_bytes.clone()) {
-                    warn!("Failed to cache attribute {}: {}", path, e);
-                }
-                match option_bytes {
-                    Some(bytes) => match T::parse(bytes) {
-                        Ok(parsed) => Ok(AttributeState::Available(Some(parsed))),
-                        Err(parse_err) => Err(parse_err),
-                    },
-                    None => Ok(AttributeState::Available(None)),
-                }
-            }
+        match self.fetch_attribute(path) {
+            Ok(cached_value) => match T::from_cached(&cached_value)? {
+                Some(value) => Ok(AttributeState::Available(Some(value))),
+                None => Ok(AttributeState::Available(None)),
+            },
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
         }
     }
 
-    pub fn get_attribute_map(
-        &self,
-        path: &Path,
-    ) -> Result<HashMap<String, String>, AttributeError> {
-        match *path.tokens() {
+    fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
+        let cached_value = match *path.tokens() {
             ["request", "headers"] => {
-                match self
+                let map = self
                     .backend
-                    .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)
-                {
-                    Ok(map) => Ok(map),
-                    Err(err) => Err(err),
-                }
+                    .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
+                CachedValue::Map(map)
             }
-            _ => Err(AttributeError::Retrieval(format!(
-                "Unknown map requested: {}",
-                path
-            ))),
+            _ => {
+                let bytes = self.fetch_raw_attribute(path)?;
+                CachedValue::Bytes(bytes)
+            }
+        };
+
+        if let Err(e) = self.cache.insert(path.clone(), cached_value.clone()) {
+            warn!("Failed to cache attribute {}: {}", path, e);
+        }
+
+        Ok(cached_value)
+    }
+
+    fn fetch_raw_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
+        match *path.tokens() {
+            ["source", "remote_address"] => self.remote_address(),
+            ["auth", ..] => self.backend.get_attribute(&wasm_prop(&path.tokens())),
+            _ => self.backend.get_attribute(path),
         }
     }
 
     pub fn ensure_attributes(&self, paths: &[Path]) {
         for path in paths {
             if !self.cache.contains_key(path).unwrap_or(false) {
-                if let Ok(option_bytes) = self.fetch_attribute(path) {
-                    if let Err(e) = self.cache.insert(path.clone(), option_bytes) {
-                        warn!("Failed to cache attribute {}: {}", path, e);
-                    }
+                if let Err(e) = self.fetch_attribute(path) {
+                    warn!("Failed to ensure attribute {}: {}", path, e);
                 }
             }
-        }
-    }
-
-    fn fetch_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
-        match *path.tokens() {
-            ["source", "remote_address"] => self.remote_address(),
-            ["auth", ..] => self.backend.get_attribute(&wasm_prop(&path.tokens())),
-            _ => self.backend.get_attribute(path),
         }
     }
 
