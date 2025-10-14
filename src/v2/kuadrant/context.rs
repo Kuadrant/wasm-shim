@@ -31,21 +31,8 @@ impl ReqRespCtx {
         &self,
         path: &Path,
     ) -> Result<AttributeState<T>, AttributeError> {
-        if let Ok(Some(cached)) = self.cache.get(path) {
-            return match T::from_cached(&cached)? {
-                Some(value) => Ok(AttributeState::Available(Some(value))),
-                None => Ok(AttributeState::Available(None)),
-            };
-        }
-
-        match self.fetch_attribute(path) {
-            Ok(cached_value) => match T::from_cached(&cached_value)? {
-                Some(value) => Ok(AttributeState::Available(Some(value))),
-                None => Ok(AttributeState::Available(None)),
-            },
-            Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
-            Err(e) => Err(e),
-        }
+        self.cache
+            .get_or_insert_with(path, || self.fetch_attribute(path))
     }
 
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
@@ -56,8 +43,16 @@ impl ReqRespCtx {
                     .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
                 CachedValue::Map(map)
             }
+            ["source", "remote_address"] => {
+                let bytes = self.remote_address()?;
+                CachedValue::Bytes(bytes)
+            }
+            ["auth", ..] => {
+                let bytes = self.backend.get_attribute(&wasm_prop(&path.tokens()))?;
+                CachedValue::Bytes(bytes)
+            }
             _ => {
-                let bytes = self.fetch_raw_attribute(path)?;
+                let bytes = self.backend.get_attribute(path)?;
                 CachedValue::Bytes(bytes)
             }
         };
@@ -67,14 +62,6 @@ impl ReqRespCtx {
         }
 
         Ok(cached_value)
-    }
-
-    fn fetch_raw_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
-        match *path.tokens() {
-            ["source", "remote_address"] => self.remote_address(),
-            ["auth", ..] => self.backend.get_attribute(&wasm_prop(&path.tokens())),
-            _ => self.backend.get_attribute(path),
-        }
     }
 
     pub fn ensure_attributes(&self, paths: &[Path]) {
