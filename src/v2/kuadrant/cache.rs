@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CachedValue {
     Bytes(Option<Vec<u8>>),
     Map(HashMap<String, String>),
@@ -77,5 +77,79 @@ impl AttributeCache {
             .lock()
             .map_err(|_| AttributeError::Retrieval("cache mutex poisoned".to_string()))?;
         Ok(guard.get(&path.to_string()).is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_insert_and_get_bytes() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.bytes".into();
+        let value = CachedValue::Bytes(Some(b"test data".to_vec()));
+
+        cache.insert(path.clone(), value.clone()).unwrap();
+
+        assert_eq!(cache.get(&path).unwrap(), Some(value));
+        assert!(cache.contains_key(&path).unwrap());
+    }
+
+    #[test]
+    fn test_insert_and_get_map() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.map".into();
+        let mut map = HashMap::new();
+        map.insert("key1".to_string(), "value1".to_string());
+        map.insert("key2".to_string(), "value2".to_string());
+        let value = CachedValue::Map(map);
+
+        cache.insert(path.clone(), value.clone()).unwrap();
+
+        assert_eq!(cache.get(&path).unwrap(), Some(value));
+        assert!(cache.contains_key(&path).unwrap());
+    }
+
+    #[test]
+    fn test_get_or_insert_with_cache_miss() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.miss".into();
+
+        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
+            Ok(CachedValue::Bytes(Some(b"new value".to_vec())))
+        });
+
+        assert!(matches!(result, Ok(AttributeState::Available(Some(ref s))) if s == "new value"));
+        assert!(cache.contains_key(&path).unwrap());
+    }
+
+    #[test]
+    fn test_get_or_insert_with_cache_hit() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.hit".into();
+        let cached_value = CachedValue::Bytes(Some(b"cached".to_vec()));
+
+        cache.insert(path.clone(), cached_value).unwrap();
+
+        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
+            Ok(CachedValue::Bytes(Some(b"should not be called".to_vec())))
+        });
+
+        assert!(matches!(result, Ok(AttributeState::Available(Some(ref s))) if s == "cached"));
+    }
+
+    #[test]
+    fn test_get_or_insert_with_not_available() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.unavailable".into();
+
+        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
+            Err(AttributeError::NotAvailable("not ready".to_string()))
+        });
+
+        assert!(matches!(result, Ok(AttributeState::Pending)));
+        assert!(!cache.contains_key(&path).unwrap());
     }
 }
