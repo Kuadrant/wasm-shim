@@ -1,7 +1,7 @@
 use log::warn;
 use radix_trie::Trie;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
 
@@ -11,15 +11,14 @@ pub enum CachedValue {
     Map(HashMap<String, String>),
 }
 
-#[derive(Clone)]
 pub struct AttributeCache {
-    inner: Arc<Mutex<Trie<String, CachedValue>>>,
+    inner: Mutex<Trie<String, CachedValue>>,
 }
 
 impl AttributeCache {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(Trie::new())),
+            inner: Mutex::new(Trie::new()),
         }
     }
 

@@ -9,14 +9,14 @@ use log::warn;
 #[derive(Clone)]
 pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
-    cache: AttributeCache,
+    cache: Arc<AttributeCache>,
 }
 
 impl ReqRespCtx {
     pub fn new(backend: Arc<dyn AttributeResolver + 'static>) -> Self {
         Self {
             backend,
-            cache: AttributeCache::new(),
+            cache: Arc::new(AttributeCache::new()),
         }
     }
 
