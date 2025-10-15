@@ -782,8 +782,8 @@ pub mod data {
 mod tests {
     use crate::v2::data::attribute::Path;
     use crate::v2::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::v2::kuadrant::MockWasmHost;
     use crate::v2::kuadrant::ReqRespCtx;
-    use crate::v2::resolver::MockWasmHost;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
     use std::sync::Arc;

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::v2::data::attribute::{AttributeError, Path};
 
-pub mod wasm_host;
+mod wasm_host;
 
 #[cfg(test)]
-pub mod mock;
+mod mock;
 
 #[cfg(test)]
 pub use mock::MockWasmHost;

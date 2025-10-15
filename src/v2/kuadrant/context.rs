@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::kuadrant::cache::CachedValue;
+use crate::v2::kuadrant::resolver::AttributeResolver;
 use crate::v2::kuadrant::AttributeCache;
-use crate::v2::resolver::AttributeResolver;
 use log::warn;
 
 #[derive(Clone)]
@@ -99,7 +99,7 @@ impl ReqRespCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::{data::attribute::AttributeState, resolver::MockWasmHost};
+    use crate::v2::{data::attribute::AttributeState, kuadrant::resolver::MockWasmHost};
     use std::sync::Arc;
 
     #[test]
