@@ -1,5 +1,5 @@
 use crate::action_set_index::ActionSetIndex;
-use crate::configuration::PluginConfiguration;
+use crate::v2::configuration::PluginConfiguration;
 use crate::filter::kuadrant_filter::KuadrantFilter;
 use crate::service::HeaderResolver;
 use const_format::formatcp;

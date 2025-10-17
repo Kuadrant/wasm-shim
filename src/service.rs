@@ -1,7 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod rate_limit;
 
-use crate::configuration::{FailureMode, Service, ServiceType};
+use crate::v2::configuration::{FailureMode, Service, ServiceType};
 use crate::envoy::{HeaderValue, HeaderValueOption, StatusCode};
 use crate::service::auth::{AUTH_METHOD_NAME, AUTH_SERVICE_NAME};
 use crate::service::rate_limit::{

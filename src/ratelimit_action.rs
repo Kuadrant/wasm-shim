@@ -1,4 +1,4 @@
-use crate::configuration::{Action, DataType, FailureMode, Service};
+use crate::v2::configuration::{Action, DataType, FailureMode, Service};
 use crate::data::{Attribute, AttributeOwner, AttributeResolver, PredicateResult};
 use crate::data::{Expression, Predicate};
 use crate::envoy::{
@@ -76,7 +76,7 @@ struct ConditionalData {
 }
 
 impl ConditionalData {
-    pub fn new(config: &crate::configuration::ConditionalData) -> Result<Self, ParseError> {
+    pub fn new(config: &crate::v2::configuration::ConditionalData) -> Result<Self, ParseError> {
         let mut predicates = Vec::default();
         for predicate in &config.predicates {
             predicates.push(Predicate::new(predicate)?);
@@ -379,7 +379,7 @@ impl AttributeOwner for RateLimitAction {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::configuration::{
+    use crate::v2::configuration::{
         Action, DataItem, DataType, ExpressionItem, FailureMode, Service, ServiceType, StaticItem,
         Timeout,
     };
@@ -412,7 +412,7 @@ mod test {
             service: "some_service".into(),
             scope,
             predicates: Vec::default(),
-            conditional_data: vec![crate::configuration::ConditionalData { predicates, data }],
+            conditional_data: vec![crate::v2::configuration::ConditionalData { predicates, data }],
         }
     }
 

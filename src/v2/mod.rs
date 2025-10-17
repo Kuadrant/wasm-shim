@@ -10,3 +10,4 @@ pub mod data;
 mod tasks;
 #[allow(dead_code)]
 pub mod temp;
+pub mod configuration;

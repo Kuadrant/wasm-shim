@@ -1,5 +1,5 @@
 use crate::action_set_index::ActionSetIndex;
-use crate::configuration::PluginConfiguration;
+use crate::v2::configuration::PluginConfiguration;
 use crate::data::Expression;
 use crate::runtime_action::errors::ActionCreationError;
 use crate::runtime_action_set::RuntimeActionSet;

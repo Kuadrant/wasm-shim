@@ -2,7 +2,6 @@ extern crate core;
 
 mod action_set_index;
 mod auth_action;
-mod configuration;
 mod data;
 mod envoy;
 mod filter;

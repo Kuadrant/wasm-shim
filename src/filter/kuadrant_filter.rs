@@ -1,5 +1,5 @@
 use crate::action_set_index::ActionSetIndex;
-use crate::configuration::FailureMode;
+use crate::v2::configuration::FailureMode;
 use crate::data::{AttributeOwner, AttributeResolver, PathCache};
 use crate::filter::operations::{
     EventualOperation, ProcessGrpcMessageOperation, ProcessNextRequestOperation,
