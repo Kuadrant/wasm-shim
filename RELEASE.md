@@ -24,4 +24,5 @@ git push origin vX.Y.Z
    release ([example](https://github.com/Kuadrant/wasm-shim/releases/tag/v0.8.0)).
 
 5. Now that the release has been created, create a PR to update to the next development (`-dev`)
-   version ([example](https://github.com/Kuadrant/wasm-shim/pull/150))
+   version ([example](https://github.com/Kuadrant/wasm-shim/pull/150)). You can use the Claude Code
+   command `/bump-dev` to automate this step
