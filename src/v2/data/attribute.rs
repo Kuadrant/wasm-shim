@@ -1,6 +1,35 @@
 use chrono::{DateTime, FixedOffset};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+
+use crate::v2::kuadrant::cache::CachedValue;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AttributeState<T> {
+    Pending,
+    Available(Option<T>),
+}
+
+impl<T> AttributeState<T> {
+    pub fn map<U, F>(self, f: F) -> AttributeState<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self {
+            AttributeState::Pending => AttributeState::Pending,
+            AttributeState::Available(Some(val)) => AttributeState::Available(Some(f(val))),
+            AttributeState::Available(None) => AttributeState::Available(None),
+        }
+    }
+
+    pub fn into_option(self) -> Option<T> {
+        match self {
+            AttributeState::Pending => None,
+            AttributeState::Available(opt) => opt,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum AttributeError {
@@ -31,6 +60,19 @@ pub trait AttributeValue {
     fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError>
     where
         Self: Sized;
+
+    fn from_cached(cached: &CachedValue) -> Result<Option<Self>, AttributeError>
+    where
+        Self: Sized,
+    {
+        match cached {
+            CachedValue::Bytes(Some(bytes)) => Ok(Some(Self::parse(bytes.clone())?)),
+            CachedValue::Bytes(None) => Ok(None),
+            CachedValue::Map(_) => Err(AttributeError::Parse(
+                "Expected bytes, found map".to_string(),
+            )),
+        }
+    }
 }
 
 impl AttributeValue for String {
@@ -112,6 +154,23 @@ impl AttributeValue for DateTime<FixedOffset> {
     }
 }
 
+impl AttributeValue for HashMap<String, String> {
+    fn parse(_raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
+        Err(AttributeError::Parse(
+            "Maps do not support parse".to_string(),
+        ))
+    }
+
+    fn from_cached(cached: &CachedValue) -> Result<Option<Self>, AttributeError> {
+        match cached {
+            CachedValue::Map(map) => Ok(Some(map.clone())),
+            CachedValue::Bytes(_) => Err(AttributeError::Parse(
+                "Expected map, found bytes".to_string(),
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Path {
     tokens: Vec<String>,
@@ -175,4 +234,10 @@ impl Path {
     pub fn is_request(&self) -> bool {
         !self.tokens.is_empty() && self.tokens[0] == "request"
     }
+}
+
+pub fn wasm_prop(tokens: &[&str]) -> Path {
+    let mut flat_attr = "filter_state.wasm\\.kuadrant\\.".to_string();
+    flat_attr.push_str(tokens.join("\\.").as_str());
+    flat_attr.as_str().into()
 }

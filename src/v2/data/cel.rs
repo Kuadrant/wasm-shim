@@ -1,5 +1,4 @@
-use crate::v2::data::attribute::AttributeError;
-use crate::v2::data::attribute::Path;
+use crate::v2::data::attribute::{AttributeError, AttributeState, Path};
 use crate::v2::data::cel::errors::{CelError, EvaluationError};
 use crate::v2::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
@@ -275,8 +274,9 @@ fn get_host_property(this: Value, req_ctx: &ReqRespCtx) -> ResolveResult {
             let path = Path::new(tokens);
             match req_ctx.get_attribute_ref::<Vec<u8>>(&path) {
                 Ok(data) => match data {
-                    None => Ok(Value::Null),
-                    Some(bytes) => Ok(Value::Bytes(bytes.into())),
+                    AttributeState::Pending => Ok(Value::Null),
+                    AttributeState::Available(None) => Ok(Value::Null),
+                    AttributeState::Available(Some(bytes)) => Ok(Value::Bytes(bytes.into())),
                 },
                 Err(err) => Err(ExecutionError::FunctionError {
                     function: "get_attribute".to_string(),
@@ -404,41 +404,50 @@ impl Attribute {
                 ValueType::String => Ok(ctx
                     .get_attribute_ref::<String>(&self.path)?
                     .map(|v| Value::String(v.into()))
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Int => Ok(ctx
                     .get_attribute_ref::<i64>(&self.path)?
                     .map(Value::Int)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::UInt => Ok(ctx
                     .get_attribute_ref::<u64>(&self.path)?
                     .map(Value::UInt)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Float => Ok(ctx
                     .get_attribute_ref::<f64>(&self.path)?
                     .map(Value::Float)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Bool => Ok(ctx
                     .get_attribute_ref::<bool>(&self.path)?
                     .map(Value::Bool)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Bytes => Ok(ctx
                     .get_attribute_ref::<Vec<u8>>(&self.path)?
                     .map(|v| Value::Bytes(v.into()))
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Timestamp => Ok(ctx
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(Value::Timestamp)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 ValueType::Map => Ok(ctx
-                    .get_attribute_map(&self.path)
+                    .get_attribute_ref::<HashMap<String, String>>(&self.path)?
                     .map(cel_interpreter::objects::Map::from)
                     .map(Value::Map)
+                    .into_option()
                     .unwrap_or(Value::Null)),
                 _ => todo!("Need support for `{t}`s!"),
             },
             None => match ctx.get_attribute_ref::<String>(&self.path)? {
-                None => Ok(Value::Null),
-                Some(json) => Ok(json_to_cel(&json)),
+                AttributeState::Pending => Ok(Value::Null),
+                AttributeState::Available(None) => Ok(Value::Null),
+                AttributeState::Available(Some(json)) => Ok(json_to_cel(&json)),
             },
         }
     }
@@ -773,7 +782,7 @@ pub mod data {
 mod tests {
     use crate::v2::data::attribute::Path;
     use crate::v2::data::cel::{known_attribute_for, Expression, Predicate};
-    use crate::v2::kuadrant::tests::MockWasmHost;
+    use crate::v2::kuadrant::MockWasmHost;
     use crate::v2::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
