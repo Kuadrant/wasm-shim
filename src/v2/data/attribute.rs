@@ -23,10 +23,14 @@ impl<T> AttributeState<T> {
         }
     }
 
-    pub fn into_option(self) -> Option<T> {
+    pub fn map_or<U, F>(self, f: F, default: U) -> AttributeState<U>
+    where
+        F: FnOnce(T) -> U,
+    {
         match self {
-            AttributeState::Pending => None,
-            AttributeState::Available(opt) => opt,
+            AttributeState::Pending => AttributeState::Pending,
+            AttributeState::Available(Some(val)) => AttributeState::Available(Some(f(val))),
+            AttributeState::Available(None) => AttributeState::Available(Some(default)),
         }
     }
 }

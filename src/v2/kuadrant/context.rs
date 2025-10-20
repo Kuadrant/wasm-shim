@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
-use crate::v2::data::{CelError, Expression};
+use crate::v2::data::cel::EvalResult;
+use crate::v2::data::Expression;
 use crate::v2::kuadrant::cache::CachedValue;
 use crate::v2::kuadrant::resolver::AttributeResolver;
 use crate::v2::kuadrant::AttributeCache;
-use cel_interpreter::Value;
 use log::warn;
 
 type RequestData = ((String, String), Expression);
@@ -106,7 +106,7 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn eval_request_data(&self) -> Vec<((String, String), Result<Value, CelError>)> {
+    pub fn eval_request_data(&self) -> Vec<((String, String), EvalResult)> {
         let Some(ref expressions) = self.request_data else {
             return Vec::new();
         };
@@ -214,7 +214,7 @@ mod tests {
         assert!(user_result.is_some());
         let (_, result) = user_result.unwrap();
         assert!(result.is_ok());
-        if let Ok(cel_interpreter::Value::String(user)) = result {
+        if let Ok(AttributeState::Available(Some(cel_interpreter::Value::String(user)))) = result {
             assert_eq!(user.as_ref(), "alice");
         }
 
@@ -225,7 +225,7 @@ mod tests {
         assert!(group_result.is_some());
         let (_, result) = group_result.unwrap();
         assert!(result.is_ok());
-        if let Ok(cel_interpreter::Value::String(group)) = result {
+        if let Ok(AttributeState::Available(Some(cel_interpreter::Value::String(group)))) = result {
             assert_eq!(group.as_ref(), "admin");
         }
     }
