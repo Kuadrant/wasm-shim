@@ -1,50 +1,86 @@
-use crate::data::{PropError, PropertyError};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::v2::data::attribute::AttributeError;
 use crate::v2::data::attribute::{AttributeValue, Path};
 use crate::v2::temp::GrpcRequest;
 use log::warn;
 use proxy_wasm::hostcalls;
-use proxy_wasm::types::{Bytes, Status};
 
 pub trait Service {
     type Response;
-    fn dispatch(&self, ctx: &mut ReqRespCtx) -> usize;
+    fn dispatch(&self, ctx: &mut ReqRespCtx, scope: String) -> usize;
     fn parse_message(&self, message: Vec<u8>) -> Self::Response;
 
     #[deprecated]
-    fn request_message(&self, ctx: &mut ReqRespCtx) -> GrpcRequest;
+    fn request_message(&self, ctx: &mut ReqRespCtx, scope: String) -> GrpcRequest;
 }
 
+#[derive(Clone)]
 pub struct ReqRespCtx {
-    backend: Box<dyn AttributeResolver>,
+    backend: Arc<dyn AttributeResolver>,
 }
 
 impl ReqRespCtx {
+    pub fn new(backend: Arc<dyn AttributeResolver + 'static>) -> Self {
+        Self { backend }
+    }
+
     pub fn get_attribute<T: AttributeValue>(
         &self,
-        attribute_name: &str,
-    ) -> Result<Option<T>, PropertyError> {
-        let path: Path = attribute_name.into();
+        path: impl Into<Path>,
+    ) -> Result<Option<T>, AttributeError> {
+        self.get_attribute_ref(&path.into())
+    }
+
+    pub fn get_attribute_ref<T: AttributeValue>(
+        &self,
+        path: &Path,
+    ) -> Result<Option<T>, AttributeError> {
         let value = match *path.tokens() {
             ["source", "remote_address"] => self
                 .remote_address()
                 .map(|o| o.map(|s| s.as_bytes().to_vec())),
-            ["auth", ..] => self.backend.get_attribute(wasm_prop(&path.tokens())),
+            ["auth", ..] => self.backend.get_attribute(&wasm_prop(&path.tokens())),
             _ => self.backend.get_attribute(path),
         };
         match value {
-            Ok(Some(value)) => Ok(Some(T::parse(value).map_err(PropertyError::Parse)?)),
+            Ok(Some(value)) => Ok(Some(T::parse(value)?)),
             Ok(None) => Ok(None),
-            Err(e) => Err(PropertyError::Get(e)),
+            Err(e) => Err(e),
         }
     }
 
-    fn remote_address(&self) -> Result<Option<String>, PropError> {
+    pub fn get_attribute_map(
+        &self,
+        path: &Path,
+    ) -> Result<HashMap<String, String>, AttributeError> {
+        match *path.tokens() {
+            ["request", "headers"] => {
+                match self
+                    .backend
+                    .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)
+                {
+                    Ok(map) => Ok(map),
+                    Err(err) => Err(err),
+                }
+            }
+            _ => Err(AttributeError::Retrieval(format!(
+                "Unknown map requested: {}",
+                path
+            ))),
+        }
+    }
+
+    fn remote_address(&self) -> Result<Option<String>, AttributeError> {
         // Ref https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for
         // Envoy sets source.address to the trusted client address AND port.
-        match self.backend.get_attribute("source.address".into())? {
+        match self.backend.get_attribute(&"source.address".into())? {
             None => {
                 warn!("source.address property not found");
-                Err(PropError::new("source.address not found".to_string()))
+                Err(AttributeError::Retrieval(
+                    "source.address not found".to_string(),
+                ))
             }
             Some(host_vec) => {
                 let source_address: String = AttributeValue::parse(host_vec)?;
@@ -55,19 +91,37 @@ impl ReqRespCtx {
     }
 }
 
-trait AttributeResolver {
-    fn get_attribute(&self, path: Path) -> Result<Option<Vec<u8>>, PropError>;
+pub trait AttributeResolver: Send + Sync {
+    fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError>;
+    fn get_attribute_map(
+        &self,
+        map_type: proxy_wasm::types::MapType,
+    ) -> Result<HashMap<String, String>, AttributeError>;
 }
 
 struct ProxyWasmHost;
 
 impl AttributeResolver for ProxyWasmHost {
-    fn get_attribute(&self, path: Path) -> Result<Option<Vec<u8>>, PropError> {
+    fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
         match hostcalls::get_property(path.tokens()) {
             Ok(data) => Ok(data),
-            // Err(Status::BadArgument) => Ok(PendingValue),
-            Err(e) => Err(PropError::new(format!(
+            Err(proxy_wasm::types::Status::BadArgument) => Err(AttributeError::NotAvailable(
+                format!("Property {path} not available in current request phase"),
+            )),
+            Err(e) => Err(AttributeError::Retrieval(format!(
                 "failed to get property: {path}: {e:?}"
+            ))),
+        }
+    }
+
+    fn get_attribute_map(
+        &self,
+        map_type: proxy_wasm::types::MapType,
+    ) -> Result<HashMap<String, String>, AttributeError> {
+        match hostcalls::get_map(map_type) {
+            Ok(map) => Ok(map.into_iter().collect()),
+            Err(err) => Err(AttributeError::Retrieval(format!(
+                "Error getting host map: {err:?}"
             ))),
         }
     }
@@ -77,4 +131,74 @@ pub fn wasm_prop(tokens: &[&str]) -> Path {
     let mut flat_attr = "filter_state.wasm\\.kuadrant\\.".to_string();
     flat_attr.push_str(tokens.join("\\.").as_str());
     flat_attr.as_str().into()
+}
+
+#[cfg(test)]
+pub mod tests {
+    use std::collections::HashMap;
+
+    use crate::v2::{
+        data::attribute::AttributeError, data::attribute::Path, kuadrant::AttributeResolver,
+    };
+
+    #[derive(Default)]
+    pub struct MockWasmHost {
+        properties: HashMap<Path, Vec<u8>>,
+        maps: HashMap<String, HashMap<String, String>>,
+    }
+
+    impl MockWasmHost {
+        pub fn new() -> Self {
+            Self {
+                properties: HashMap::new(),
+                maps: HashMap::new(),
+            }
+        }
+
+        pub fn with_property(mut self, path: Path, value: Vec<u8>) -> Self {
+            self.properties.insert(path, value);
+            self
+        }
+
+        pub fn with_map(
+            mut self,
+            map_name: String,
+            map: std::collections::HashMap<String, String>,
+        ) -> Self {
+            self.maps.insert(map_name, map);
+            self
+        }
+    }
+
+    impl AttributeResolver for MockWasmHost {
+        fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
+            match self.properties.get(path) {
+                Some(value) => Ok(Some(value.clone())),
+                None => Ok(None),
+            }
+        }
+
+        fn get_attribute_map(
+            &self,
+            map_type: proxy_wasm::types::MapType,
+        ) -> Result<HashMap<String, String>, AttributeError> {
+            let map_key = match map_type {
+                proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
+                _ => {
+                    return Err(AttributeError::Retrieval(format!(
+                        "MockWasmHost does not support map type: {:?}",
+                        map_type
+                    )))
+                }
+            };
+
+            match self.maps.get(map_key) {
+                Some(map) => Ok(map.clone()),
+                None => Err(AttributeError::Retrieval(format!(
+                    "MockWasmHost does not have map: {}",
+                    map_key
+                ))),
+            }
+        }
+    }
 }

@@ -2,35 +2,41 @@ use chrono::{DateTime, FixedOffset};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Debug)]
-pub struct PropError {
-    message: String,
+#[derive(Debug, PartialEq)]
+pub enum AttributeError {
+    NotAvailable(String),
+    Retrieval(String),
+    Parse(String),
 }
 
-impl Display for PropError {
+impl Error for AttributeError {}
+
+impl Display for AttributeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PropError {{ message: {:?} }}", self.message)
-    }
-}
-
-impl Error for PropError {}
-
-impl PropError {
-    pub fn new(message: String) -> PropError {
-        PropError { message }
+        match self {
+            AttributeError::NotAvailable(msg) => {
+                write!(f, "AttributeError::NotAvailable {{ {msg:?} }}")
+            }
+            AttributeError::Retrieval(msg) => {
+                write!(f, "AttributeError::Retrieval {{ {msg:?} }}")
+            }
+            AttributeError::Parse(msg) => {
+                write!(f, "AttributeError::Parse {{ {msg:?} }}")
+            }
+        }
     }
 }
 
 pub trait AttributeValue {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError>
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError>
     where
         Self: Sized;
 }
 
 impl AttributeValue for String {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         String::from_utf8(raw_attribute).map_err(|err| {
-            PropError::new(format!(
+            AttributeError::Parse(format!(
                 "parse: failed to parse selector String value, error: {err}"
             ))
         })
@@ -38,11 +44,11 @@ impl AttributeValue for String {
 }
 
 impl AttributeValue for i64 {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         let ra_len = raw_attribute.len();
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => Ok(i64::from_le_bytes(bytes)),
-            Err(_) => Err(PropError::new(format!(
+            Err(_) => Err(AttributeError::Parse(format!(
                 "parse: Int value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
@@ -50,11 +56,11 @@ impl AttributeValue for i64 {
 }
 
 impl AttributeValue for u64 {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         let ra_len = raw_attribute.len();
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => Ok(u64::from_le_bytes(bytes)),
-            Err(_) => Err(PropError::new(format!(
+            Err(_) => Err(AttributeError::Parse(format!(
                 "parse: UInt value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
@@ -62,11 +68,11 @@ impl AttributeValue for u64 {
 }
 
 impl AttributeValue for f64 {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         let ra_len = raw_attribute.len();
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => Ok(f64::from_le_bytes(bytes)),
-            Err(_) => Err(PropError::new(format!(
+            Err(_) => Err(AttributeError::Parse(format!(
                 "parse: Float value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
@@ -74,17 +80,17 @@ impl AttributeValue for f64 {
 }
 
 impl AttributeValue for Vec<u8> {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         Ok(raw_attribute)
     }
 }
 
 impl AttributeValue for bool {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         if raw_attribute.len() == 1 {
             return Ok(raw_attribute[0] & 1 == 1);
         }
-        Err(PropError::new(format!(
+        Err(AttributeError::Parse(format!(
             "parse: Bool value expected to be 1 byte, but got {}",
             raw_attribute.len()
         )))
@@ -92,14 +98,14 @@ impl AttributeValue for bool {
 }
 
 impl AttributeValue for DateTime<FixedOffset> {
-    fn parse(raw_attribute: Vec<u8>) -> Result<Self, PropError> {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         let ra_len = raw_attribute.len();
         match <[u8; 8]>::try_from(raw_attribute) {
             Ok(bytes) => {
                 let nanos = i64::from_le_bytes(bytes);
                 Ok(DateTime::from_timestamp_nanos(nanos).into())
             }
-            Err(_) => Err(PropError::new(format!(
+            Err(_) => Err(AttributeError::Parse(format!(
                 "parse: Timestamp expected to be 8 bytes, but got {ra_len}",
             ))),
         }
@@ -168,33 +174,5 @@ impl Path {
 
     pub fn is_request(&self) -> bool {
         !self.tokens.is_empty() && self.tokens[0] == "request"
-    }
-}
-
-#[derive(Debug)]
-pub enum PropertyError {
-    Get(PropError),
-    Parse(PropError),
-}
-
-impl Error for PropertyError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            PropertyError::Get(err) => Some(err),
-            PropertyError::Parse(err) => Some(err),
-        }
-    }
-}
-
-impl Display for PropertyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PropertyError::Get(e) => {
-                write!(f, "PropertyError::Get {{ {e:?} }}")
-            }
-            PropertyError::Parse(e) => {
-                write!(f, "PropertyError::Parse {{ {e:?} }}")
-            }
-        }
     }
 }

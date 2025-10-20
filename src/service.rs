@@ -17,13 +17,13 @@ use std::time::Duration;
 
 pub(super) mod errors {
     use crate::data::{EvaluationError, Expression};
-    use crate::v2::data::attribute::PropertyError;
+    use crate::v2::data::attribute::AttributeError;
     use std::fmt::{Debug, Display, Formatter};
 
     #[derive(Debug)]
     pub enum BuildMessageError {
         Evaluation(Box<EvaluationError>),
-        Property(PropertyError),
+        Property(AttributeError),
         UnsupportedDataType {
             /// Box the contents of expressoin to avoid large error variants
             expression: Box<Expression>,
@@ -74,7 +74,7 @@ pub(super) mod errors {
     #[derive(Debug)]
     pub enum ProcessGrpcMessageError {
         Decode(prost::DecodeError),
-        Property(PropertyError),
+        Property(AttributeError),
         EmptyResponse,
         UnsupportedField,
     }

@@ -1,6 +1,5 @@
 use crate::data::PropertyPath;
-use crate::v2::data::attribute::{AttributeValue, PropError, PropertyError};
-use chrono::{DateTime, FixedOffset};
+use crate::v2::data::attribute::{AttributeError, AttributeValue};
 use log::{debug, error, warn};
 use prost_types::value::Kind;
 use prost_types::Struct;
@@ -8,31 +7,25 @@ use serde_json::Value;
 
 pub const KUADRANT_NAMESPACE: &str = "kuadrant";
 
-pub(super) mod errors {
-    use std::fmt::{Debug, Display};
-}
-
-pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, PropertyError>
+pub fn get_attribute<T>(path: &PropertyPath) -> Result<Option<T>, AttributeError>
 where
     T: AttributeValue,
 {
     match crate::data::property::get_property(path) {
-        Ok(Some(attribute_bytes)) => Ok(Some(
-            T::parse(attribute_bytes).map_err(PropertyError::Parse)?,
-        )),
+        Ok(Some(attribute_bytes)) => Ok(Some(T::parse(attribute_bytes)?)),
         Ok(None) => Ok(None),
-        Err(e) => Err(PropertyError::Get(PropError::new(format!(
+        Err(e) => Err(AttributeError::Retrieval(format!(
             "get_attribute: error: {e:?}"
-        )))),
+        ))),
     }
 }
 
-pub fn set_attribute(attr: &str, value: &[u8]) -> Result<(), PropertyError> {
+pub fn set_attribute(attr: &str, value: &[u8]) -> Result<(), AttributeError> {
     crate::data::property::set_property(PropertyPath::from(attr), Some(value))
-        .map_err(|e| PropertyError::Get(PropError::new(format!("set_attribute: error: {e:?}"))))
+        .map_err(|e| AttributeError::Retrieval(format!("set_attribute: error: {e:?}")))
 }
 
-pub fn store_metadata(metastruct: &Struct) -> Result<(), PropertyError> {
+pub fn store_metadata(metastruct: &Struct) -> Result<(), AttributeError> {
     let metadata = process_metadata(metastruct, String::new());
     for (key, value) in metadata {
         let attr = format!("{KUADRANT_NAMESPACE}\\.auth\\.{key}");

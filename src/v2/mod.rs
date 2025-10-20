@@ -1,7 +1,11 @@
+#[allow(dead_code)]
 pub mod kuadrant;
 
-mod services;
+#[allow(dead_code)]
+pub mod services;
 
+#[allow(dead_code)]
 pub mod data;
 
+#[allow(dead_code)]
 pub mod temp;

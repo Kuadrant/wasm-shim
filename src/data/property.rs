@@ -4,7 +4,6 @@ use log::debug;
 use log::warn;
 use proxy_wasm::types::Status;
 use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter};
 
 #[deprecated]
 fn remote_address() -> Result<Option<Vec<u8>>, Status> {
@@ -90,7 +89,11 @@ pub(super) fn host_set_property(path: Path, value: Option<&[u8]>) -> Result<(), 
 
 pub(super) fn get_property(path: &Path) -> Result<Option<Vec<u8>>, Status> {
     match *path.tokens() {
-        ["source", "remote_address"] => remote_address(),
+        ["source", "remote_address"] =>
+        {
+            #[allow(deprecated)]
+            remote_address()
+        }
         ["auth", ..] => host_get_property(&kuadrant::wasm_prop(path.tokens().as_slice())),
         _ => host_get_property(path),
     }

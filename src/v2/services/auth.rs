@@ -14,21 +14,20 @@ struct AuthService {
 impl Service for AuthService {
     type Response = String;
 
-    fn dispatch(&self, ctx: &mut ReqRespCtx) -> usize {
+    fn dispatch(&self, _ctx: &mut ReqRespCtx, _scope: String) -> usize {
         // build message
-        let _msg = self.request_message(ctx);
+        // let _msg = self.request_message(ctx);
 
         // send message
 
         todo!()
     }
 
-    fn parse_message(&self, message: Vec<u8>) -> Self::Response {
+    fn parse_message(&self, _message: Vec<u8>) -> Self::Response {
         todo!()
     }
 
-    fn request_message(&self, ctx: &mut ReqRespCtx) -> GrpcRequest {
-        ctx.get_attribute::<String>("request.path".into());
+    fn request_message(&self, _ctx: &mut ReqRespCtx, _scope: String) -> GrpcRequest {
         todo!()
     }
 }
