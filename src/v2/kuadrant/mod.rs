@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod context;
+mod pipeline;
 mod resolver;
 
 #[cfg(test)]
