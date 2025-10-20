@@ -1,3 +1,5 @@
+mod common;
+
 use std::rc::Rc;
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::Service;
