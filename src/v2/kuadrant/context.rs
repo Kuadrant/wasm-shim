@@ -5,7 +5,7 @@ use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, Attr
 use crate::v2::data::cel::EvalResult;
 use crate::v2::data::Expression;
 use crate::v2::kuadrant::cache::CachedValue;
-use crate::v2::kuadrant::resolver::AttributeResolver;
+use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::v2::kuadrant::AttributeCache;
 use log::warn;
 
@@ -16,6 +16,12 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Arc<Vec<RequestData>>>,
+}
+
+impl Default for ReqRespCtx {
+    fn default() -> Self {
+        Self::new(Arc::new(ProxyWasmHost))
+    }
 }
 
 impl ReqRespCtx {
