@@ -30,7 +30,7 @@ mod v2;
 )]
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
-    use crate::filter::root_context::FilterRoot;
+    use crate::v2::kuadrant::FilterRoot;
     use log::info;
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
@@ -41,10 +41,7 @@ extern "C" fn start() {
     }));
     proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
         info!("#{} set_root_context", context_id);
-        Box::new(FilterRoot {
-            context_id,
-            action_set_index: Default::default(),
-        })
+        Box::new(FilterRoot::new(context_id))
     });
 }
 

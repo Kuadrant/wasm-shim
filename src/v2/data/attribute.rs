@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-use crate::v2::kuadrant::cache::CachedValue;
+use crate::v2::kuadrant::CachedValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttributeState<T> {

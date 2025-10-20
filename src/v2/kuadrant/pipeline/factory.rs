@@ -67,6 +67,16 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     }
 }
 
+impl Default for PipelineFactory {
+    fn default() -> Self {
+        Self {
+            index: Trie::new(),
+            services: HashMap::new(),
+            request_data: Arc::new(Vec::new()),
+        }
+    }
+}
+
 impl PipelineFactory {
     pub fn build(&self, ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
         let ctx = ctx.with_request_data(Arc::clone(&self.request_data));
