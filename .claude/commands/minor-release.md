@@ -25,5 +25,6 @@ Important notes:
 - Remove the -dev suffix, don't bump the version number
 - Update BOTH Cargo.toml and Cargo.lock (via cargo check)
 - Include "Signed-off-by" in commit message following project conventions
+- Include a comment in the commit message explicitly stating it was driven by an AI tool
 - Create a SIGNED annotated tag (-a -s flags)
 - This creates a "floating" commit as described in RELEASE.md step 2
