@@ -18,3 +18,4 @@ Important notes:
 - Bump the MINOR version (0.11.0-dev -> 0.12.0-dev, not 0.11.1-dev)
 - Update BOTH Cargo.toml and Cargo.lock (via cargo check)
 - Include "Signed-off-by" in commit message following project conventions
+- Include a comment in the commit message explicitly stating it was driven by an AI tool
