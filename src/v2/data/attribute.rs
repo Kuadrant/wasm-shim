@@ -28,6 +28,7 @@ pub enum AttributeError {
     NotAvailable(String),
     Retrieval(String),
     Parse(String),
+    Set(String),
 }
 
 impl Error for AttributeError {}
@@ -43,6 +44,9 @@ impl Display for AttributeError {
             }
             AttributeError::Parse(msg) => {
                 write!(f, "AttributeError::Parse {{ {msg:?} }}")
+            }
+            AttributeError::Set(msg) => {
+                write!(f, "AttributeError::Set {{ {msg:?} }}")
             }
         }
     }

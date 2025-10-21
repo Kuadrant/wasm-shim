@@ -30,4 +30,22 @@ impl AttributeResolver for ProxyWasmHost {
             ))),
         }
     }
+
+    fn set_attribute_map(
+        &self,
+        map_type: proxy_wasm::types::MapType,
+        value: HashMap<String, String>,
+    ) -> Result<(), AttributeError> {
+        //TODO: review the abomination of converting to Vec<(&str, &str)>
+        match hostcalls::set_map(
+            map_type,
+            value
+                .iter()
+                .map(|(s1, s2)| (s1.as_str(), s2.as_str()))
+                .collect(),
+        ) {
+            Ok(map) => Ok(()),
+            Err(err) => Err(AttributeError::Set(format!("Error setting map: {err:?}"))),
+        }
+    }
 }
