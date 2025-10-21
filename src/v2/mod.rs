@@ -7,6 +7,6 @@ pub mod services;
 #[allow(dead_code)]
 pub mod data;
 
+mod tasks;
 #[allow(dead_code)]
 pub mod temp;
-mod tasks;

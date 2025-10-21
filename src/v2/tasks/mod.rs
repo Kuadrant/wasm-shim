@@ -35,4 +35,5 @@ enum TaskOutcome {
     Done,
     Deferred((usize, PendingTask)),
     Pending(Box<dyn Task>),
+    Failed, // Possibly wrapping an error
 }
