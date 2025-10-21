@@ -179,14 +179,6 @@ impl Expression {
             AttributeState::Available(m) => m,
         };
 
-        let req_ctx_clone = req_ctx.clone();
-        ctx.add_function(
-            "getHostProperty",
-            move |This(this): This<Value>| -> ResolveResult {
-                get_host_property(this, &req_ctx_clone)
-            },
-        );
-
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
                 binding,
@@ -274,36 +266,6 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
         }
     }
     Ok(map.into())
-}
-
-fn get_host_property(this: Value, req_ctx: &ReqRespCtx) -> ResolveResult {
-    match this {
-        Value::List(ref items) => {
-            let mut tokens = Vec::with_capacity(items.len());
-            for item in items.iter() {
-                match item {
-                    Value::String(token) => tokens.push(token.as_str()),
-                    _ => return Err(this.error_expected_type(ValueType::String)),
-                }
-            }
-            let path = Path::new(tokens);
-            match req_ctx.get_attribute_ref::<Vec<u8>>(&path) {
-                Ok(data) => match data {
-                    AttributeState::Pending => Err(ExecutionError::FunctionError {
-                        function: "getHostProperty".to_string(),
-                        message: format!("PropertyError: Pending"),
-                    }),
-                    AttributeState::Available(None) => Ok(Value::Null),
-                    AttributeState::Available(Some(bytes)) => Ok(Value::Bytes(bytes.into())),
-                },
-                Err(err) => Err(ExecutionError::FunctionError {
-                    function: "getHostProperty".to_string(),
-                    message: format!("PropertyError: {err:?}"),
-                }),
-            }
-        }
-        _ => Err(this.error_expected_type(ValueType::List)),
-    }
 }
 
 fn create_context<'a>() -> Context<'a> {
@@ -1025,20 +987,5 @@ mod tests {
             Some(ValueType::String) => {}
             _ => unreachable!("Not supposed to get here!"),
         }
-    }
-
-    #[test]
-    fn expression_access_host() {
-        let mock_host = MockWasmHost::new()
-            .with_property(Path::new(vec!["foo", "bar.baz"]), b"\xCA\xFE".to_vec());
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
-        let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
-            .expect("This is valid CEL!")
-            .eval(&ctx)
-            .expect("This must evaluate!");
-        assert_eq!(
-            value,
-            AttributeState::Available(Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())))
-        );
     }
 }
