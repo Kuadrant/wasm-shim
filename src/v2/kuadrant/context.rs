@@ -47,40 +47,32 @@ impl ReqRespCtx {
     }
 
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
-        let cached_value = match *path.tokens() {
+        match *path.tokens() {
             ["request", "headers"] => {
                 let map = self
                     .backend
                     .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
-                CachedValue::Map(map)
+                Ok(CachedValue::Map(map))
             }
             ["source", "remote_address"] => {
                 let bytes = self.remote_address()?;
-                CachedValue::Bytes(bytes)
+                Ok(CachedValue::Bytes(bytes))
             }
             ["auth", ..] => {
                 let bytes = self.backend.get_attribute(&wasm_prop(&path.tokens()))?;
-                CachedValue::Bytes(bytes)
+                Ok(CachedValue::Bytes(bytes))
             }
             _ => {
                 let bytes = self.backend.get_attribute(path)?;
-                CachedValue::Bytes(bytes)
+                Ok(CachedValue::Bytes(bytes))
             }
-        };
-
-        if let Err(e) = self.cache.insert(path.clone(), cached_value.clone()) {
-            warn!("Failed to cache attribute {}: {}", path, e);
         }
-
-        Ok(cached_value)
     }
 
     pub fn ensure_attributes(&self, paths: &[Path]) {
         for path in paths {
-            if !self.cache.contains_key(path).unwrap_or(false) {
-                if let Err(e) = self.fetch_attribute(path) {
-                    warn!("Failed to ensure attribute {}: {}", path, e);
-                }
+            if let Err(e) = self.cache.populate(path, || self.fetch_attribute(path)) {
+                warn!("Failed to ensure attribute {}: {}", path, e);
             }
         }
     }
