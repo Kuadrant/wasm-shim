@@ -1,5 +1,4 @@
-use crate::v2::kuadrant::pipeline::{Pipeline, PipelineFactory};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::v2::kuadrant::{Pipeline, PipelineFactory, ReqRespCtx};
 use log::{debug, error};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;

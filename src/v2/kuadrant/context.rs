@@ -4,9 +4,8 @@ use std::sync::Arc;
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::data::cel::EvalResult;
 use crate::v2::data::Expression;
-use crate::v2::kuadrant::cache::CachedValue;
+use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
-use crate::v2::kuadrant::AttributeCache;
 use log::warn;
 
 type RequestData = ((String, String), Expression);

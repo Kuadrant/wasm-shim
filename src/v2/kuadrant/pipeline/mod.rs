@@ -2,4 +2,5 @@ mod blueprint;
 mod executor;
 mod factory;
 
-pub(super) use factory::PipelineFactory;
+pub(crate) use executor::Pipeline;
+pub(crate) use factory::PipelineFactory;
