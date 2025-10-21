@@ -1,6 +1,6 @@
+use super::KuadrantFilter;
 use crate::v2::configuration::PluginConfiguration;
 use crate::v2::kuadrant::pipeline::PipelineFactory;
-use super::KuadrantFilter;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -87,3 +87,43 @@ impl RootContext for FilterRoot {
 }
 
 impl Context for FilterRoot {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::v2::configuration::PluginConfiguration;
+
+    #[test]
+    fn invalid_json_fails_to_parse() {
+        let invalid_json = "{ invalid json }";
+        let result = serde_json::from_slice::<PluginConfiguration>(invalid_json.as_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_with_invalid_predicate_fails_factory_creation() {
+        let config_str = serde_json::json!({
+            "services": {
+                "test-service": {
+                    "type": "auth",
+                    "endpoint": "test-cluster",
+                    "failureMode": "deny",
+                    "timeout": "5s"
+                }
+            },
+            "actionSets": [{
+                "name": "test-action-set",
+                "routeRuleConditions": {
+                    "hostnames": ["example.com"],
+                    "predicates": ["invalid syntax !!!"]
+                },
+                "actions": []
+            }]
+        })
+        .to_string();
+
+        let config = serde_json::from_slice::<PluginConfiguration>(config_str.as_bytes()).unwrap();
+        let result = PipelineFactory::try_from(config);
+        assert!(result.is_err());
+    }
+}
