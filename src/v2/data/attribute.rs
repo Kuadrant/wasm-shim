@@ -8,7 +8,7 @@ use crate::v2::kuadrant::cache::CachedValue;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttributeState<T> {
     Pending,
-    Available(Option<T>),
+    Available(T),
 }
 
 impl<T> AttributeState<T> {
@@ -18,19 +18,7 @@ impl<T> AttributeState<T> {
     {
         match self {
             AttributeState::Pending => AttributeState::Pending,
-            AttributeState::Available(Some(val)) => AttributeState::Available(Some(f(val))),
-            AttributeState::Available(None) => AttributeState::Available(None),
-        }
-    }
-
-    pub fn map_or<U, F>(self, f: F, default: U) -> AttributeState<U>
-    where
-        F: FnOnce(T) -> U,
-    {
-        match self {
-            AttributeState::Pending => AttributeState::Pending,
-            AttributeState::Available(Some(val)) => AttributeState::Available(Some(f(val))),
-            AttributeState::Available(None) => AttributeState::Available(Some(default)),
+            AttributeState::Available(val) => AttributeState::Available(f(val)),
         }
     }
 }

@@ -176,10 +176,7 @@ impl Expression {
 
         let Map { map } = match self.build_data_map(req_ctx)? {
             AttributeState::Pending => return Ok(AttributeState::Pending),
-            AttributeState::Available(Some(m)) => m,
-            AttributeState::Available(None) => {
-                unreachable!("build_data_map never returns Available(None)")
-            }
+            AttributeState::Available(m) => m,
         };
 
         let req_ctx_clone = req_ctx.clone();
@@ -198,7 +195,7 @@ impl Expression {
         }
 
         let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
-        Ok(AttributeState::Available(Some(result)))
+        Ok(AttributeState::Available(result))
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]
@@ -292,12 +289,15 @@ fn get_host_property(this: Value, req_ctx: &ReqRespCtx) -> ResolveResult {
             let path = Path::new(tokens);
             match req_ctx.get_attribute_ref::<Vec<u8>>(&path) {
                 Ok(data) => match data {
-                    AttributeState::Pending => Ok(Value::Null),
+                    AttributeState::Pending => Err(ExecutionError::FunctionError {
+                        function: "getHostProperty".to_string(),
+                        message: format!("PropertyError: Pending"),
+                    }),
                     AttributeState::Available(None) => Ok(Value::Null),
                     AttributeState::Available(Some(bytes)) => Ok(Value::Bytes(bytes.into())),
                 },
                 Err(err) => Err(ExecutionError::FunctionError {
-                    function: "get_attribute".to_string(),
+                    function: "getHostProperty".to_string(),
                     message: format!("PropertyError: {err:?}"),
                 }),
             }
@@ -349,17 +349,13 @@ impl Predicate {
     pub fn test(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
         match self.expression.eval(req_ctx) {
             Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
-            Ok(AttributeState::Available(Some(value))) => match value {
-                Value::Bool(result) => Ok(AttributeState::Available(Some(result))),
+            Ok(AttributeState::Available(value)) => match value {
+                Value::Bool(result) => Ok(AttributeState::Available(result)),
                 _ => Err(EvaluationError::new(
                     self.expression.clone(),
                     format!("Expected boolean value, got {value:?}"),
                 )),
             },
-            Ok(AttributeState::Available(None)) => Err(EvaluationError::new(
-                self.expression.clone(),
-                "Expression evaluated to None".to_string(),
-            )),
             Err(err) => Err(EvaluationError::new(
                 self.expression.clone(),
                 err.to_string(),
@@ -375,7 +371,7 @@ pub trait PredicateVec {
 impl PredicateVec for Vec<Predicate> {
     fn apply(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
         if self.is_empty() {
-            return Ok(AttributeState::Available(Some(true)));
+            return Ok(AttributeState::Available(true));
         }
 
         let paths: Vec<Path> = self
@@ -390,17 +386,14 @@ impl PredicateVec for Vec<Predicate> {
                 AttributeState::Pending => {
                     return Ok(AttributeState::Pending);
                 }
-                AttributeState::Available(Some(false)) => {
-                    return Ok(AttributeState::Available(Some(false)));
+                AttributeState::Available(false) => {
+                    return Ok(AttributeState::Available(false));
                 }
-                AttributeState::Available(Some(true)) => continue,
-                AttributeState::Available(None) => {
-                    unreachable!("Predicate::test() returns Err for Available(None)")
-                }
+                AttributeState::Available(true) => continue,
             }
         }
 
-        Ok(AttributeState::Available(Some(true)))
+        Ok(AttributeState::Available(true))
     }
 }
 
@@ -443,40 +436,36 @@ impl Attribute {
             Some(t) => match t {
                 ValueType::String => Ok(ctx
                     .get_attribute_ref::<String>(&self.path)?
-                    .map_or(|s| Value::String(s.into()), Value::Null)),
+                    .map(|opt| opt.map(|s| Value::String(s.into())).unwrap_or(Value::Null))),
                 ValueType::Int => Ok(ctx
                     .get_attribute_ref::<i64>(&self.path)?
-                    .map_or(Value::Int, Value::Null)),
+                    .map(|opt| opt.map(Value::Int).unwrap_or(Value::Null))),
                 ValueType::UInt => Ok(ctx
                     .get_attribute_ref::<u64>(&self.path)?
-                    .map_or(Value::UInt, Value::Null)),
+                    .map(|opt| opt.map(Value::UInt).unwrap_or(Value::Null))),
                 ValueType::Float => Ok(ctx
                     .get_attribute_ref::<f64>(&self.path)?
-                    .map_or(Value::Float, Value::Null)),
+                    .map(|opt| opt.map(Value::Float).unwrap_or(Value::Null))),
                 ValueType::Bool => Ok(ctx
                     .get_attribute_ref::<bool>(&self.path)?
-                    .map_or(Value::Bool, Value::Null)),
+                    .map(|opt| opt.map(Value::Bool).unwrap_or(Value::Null))),
                 ValueType::Bytes => Ok(ctx
                     .get_attribute_ref::<Vec<u8>>(&self.path)?
-                    .map_or(|v| Value::Bytes(v.into()), Value::Null)),
+                    .map(|opt| opt.map(|v| Value::Bytes(v.into())).unwrap_or(Value::Null))),
                 ValueType::Timestamp => Ok(ctx
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
-                    .map_or(Value::Timestamp, Value::Null)),
+                    .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
                 ValueType::Map => Ok(ctx
                     .get_attribute_ref::<HashMap<String, String>>(&self.path)?
-                    .map_or(
-                        |m| Value::Map(cel_interpreter::objects::Map::from(m)),
-                        Value::Null,
-                    )),
+                    .map(|opt| {
+                        opt.map(|m| Value::Map(cel_interpreter::objects::Map::from(m)))
+                            .unwrap_or(Value::Null)
+                    })),
                 _ => todo!("Need support for `{t}`s!"),
             },
-            None => Ok(match ctx.get_attribute_ref::<String>(&self.path)? {
-                AttributeState::Pending => AttributeState::Pending,
-                AttributeState::Available(None) => AttributeState::Available(Some(Value::Null)),
-                AttributeState::Available(Some(json)) => {
-                    AttributeState::Available(Some(json_to_cel(&json)))
-                }
-            }),
+            None => Ok(ctx
+                .get_attribute_ref::<String>(&self.path)?
+                .map(|opt| opt.map(|s| json_to_cel(&s)).unwrap_or(Value::Null))),
         }
     }
 }
@@ -729,17 +718,13 @@ pub mod data {
             let k = key.into();
             let v = match value {
                 Token::Value(attr) => match attr.get(req_ctx)? {
-                    AttributeState::Available(Some(val)) => val,
-                    AttributeState::Available(None) => Value::Null,
+                    AttributeState::Available(val) => val,
                     AttributeState::Pending => {
                         return Ok(AttributeState::Pending);
                     }
                 },
                 Token::Node(nested_map) => match map_to_value(nested_map, req_ctx)? {
-                    AttributeState::Available(Some(m)) => Value::Map(m),
-                    AttributeState::Available(None) => {
-                        unreachable!("map_to_value never returns Available(None)")
-                    }
+                    AttributeState::Available(m) => Value::Map(m),
                     AttributeState::Pending => {
                         return Ok(AttributeState::Pending);
                     }
@@ -748,7 +733,7 @@ pub mod data {
             out.insert(k, v);
         }
 
-        Ok(AttributeState::Available(Some(Map { map: Arc::new(out) })))
+        Ok(AttributeState::Available(Map { map: Arc::new(out) }))
     }
 
     #[cfg(test)]
@@ -839,7 +824,7 @@ mod tests {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
         assert_eq!(
             predicate.test(&ctx).expect("This must evaluate properly!"),
-            AttributeState::Available(Some(true))
+            AttributeState::Available(true)
         );
     }
 
@@ -877,7 +862,7 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
-        assert_eq!(value, AttributeState::Available(Some(true.into())));
+        assert_eq!(value, AttributeState::Available(true.into()));
 
         // Test integer value
         let mock_host = MockWasmHost::new().with_property(
@@ -889,7 +874,7 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
-        assert_eq!(value, AttributeState::Available(Some(42.into())));
+        assert_eq!(value, AttributeState::Available(Value::UInt(42)));
 
         // Test float value
         let mock_host = MockWasmHost::new().with_property(
@@ -901,7 +886,7 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
-        assert_eq!(value, AttributeState::Available(Some(42.3.into())));
+        assert_eq!(value, AttributeState::Available(Value::Float(42.3)));
 
         let mock_host = MockWasmHost::new().with_property(
             Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
@@ -912,7 +897,10 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
-        assert_eq!(value, AttributeState::Available(Some("John".into())));
+        assert_eq!(
+            value,
+            AttributeState::Available(Value::String("John".to_string().into()))
+        );
 
         // Test negative integer
         let mock_host = MockWasmHost::new().with_property(
@@ -924,7 +912,7 @@ mod tests {
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
-        assert_eq!(value, AttributeState::Available(Some((-42).into())));
+        assert_eq!(value, AttributeState::Available(Value::Int(-42)));
 
         // Test fallback to string for non-JSON
         let mock_host = MockWasmHost::new().with_property(
@@ -938,7 +926,7 @@ mod tests {
             .expect("This must evaluate!");
         assert_eq!(
             value,
-            AttributeState::Available(Some("some random crap".into()))
+            AttributeState::Available(Value::String("some random crap".to_string().into()))
         );
     }
 
@@ -958,7 +946,7 @@ mod tests {
         .expect("This is valid!");
         assert_eq!(
             predicate.test(&ctx).expect("This must evaluate properly!"),
-            AttributeState::Available(Some(true))
+            AttributeState::Available(true)
         );
 
         let mock_host = MockWasmHost::new()
@@ -972,7 +960,7 @@ mod tests {
         .expect("This is valid!");
         assert_eq!(
             predicate.test(&ctx).expect("This must evaluate properly!"),
-            AttributeState::Available(Some(true))
+            AttributeState::Available(true)
         );
 
         let mock_host = MockWasmHost::new()
@@ -982,7 +970,7 @@ mod tests {
             Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
         assert_eq!(
             predicate.test(&ctx).expect("This must evaluate properly!"),
-            AttributeState::Available(Some(true))
+            AttributeState::Available(true)
         );
     }
 
@@ -995,10 +983,7 @@ mod tests {
             "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
         )
         .expect("This is valid!");
-        assert_eq!(
-            predicate.test(&ctx),
-            Ok(AttributeState::Available(Some(true)))
-        );
+        assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
 
         let mut headers = std::collections::HashMap::new();
         headers.insert("X-Auth".to_string(), "kuadrant".to_string());
@@ -1007,10 +992,7 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert_eq!(
-            predicate.test(&ctx),
-            Ok(AttributeState::Available(Some(true)))
-        );
+        assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
     }
 
     #[test]
@@ -1022,7 +1004,7 @@ mod tests {
             .expect("destination.port known attribute exists")
             .get(&ctx)
             .expect("There is no property error!");
-        assert_eq!(value, AttributeState::Available(Some(80.into())));
+        assert_eq!(value, AttributeState::Available(80.into()));
 
         let mock_host =
             MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
@@ -1031,7 +1013,7 @@ mod tests {
             .expect("request.method known attribute exists")
             .get(&ctx)
             .expect("There is no property error!");
-        assert_eq!(value, AttributeState::Available(Some("GET".into())));
+        assert_eq!(value, AttributeState::Available("GET".into()));
     }
 
     #[test]
@@ -1056,7 +1038,7 @@ mod tests {
             .expect("This must evaluate!");
         assert_eq!(
             value,
-            AttributeState::Available(Some(Value::Bytes(Arc::new(b"\xCA\xFE".to_vec()))))
+            AttributeState::Available(Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())))
         );
     }
 }

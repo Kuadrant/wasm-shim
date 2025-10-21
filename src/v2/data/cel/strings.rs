@@ -283,180 +283,149 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
 
         let e = Expression::new("'abc'.charAt(1)").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some("b".into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("b".into())));
 
         let e = Expression::new("'hello mellow'.indexOf('')").expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some(0.into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(0.into())));
         let e = Expression::new("'hello mellow'.indexOf('ello')").expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some(1.into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(1.into())));
         let e = Expression::new("'hello mellow'.indexOf('jello')").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some((-1).into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available((-1).into())));
         let e = Expression::new("'hello mellow'.indexOf('', 2)").expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some(2.into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(2.into())));
         let e =
             Expression::new("'hello mellow'.indexOf('ello', 20)").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some((-1).into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available((-1).into())));
 
         let e = Expression::new("'hello mellow'.lastIndexOf('')").expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some(12.into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(12.into())));
         let e =
             Expression::new("'hello mellow'.lastIndexOf('ello')").expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some(7.into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(7.into())));
         let e =
             Expression::new("'hello mellow'.lastIndexOf('jello')").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some((-1).into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available((-1).into())));
         let e = Expression::new("'hello mellow'.lastIndexOf('ello', 6)")
             .expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some(1.into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(1.into())));
         let e = Expression::new("'hello mellow'.lastIndexOf('ello', 20)")
             .expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some((-1).into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available((-1).into())));
 
         let e = Expression::new("['hello', 'mellow'].join()").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("hellomellow".into())))
+            Ok(AttributeState::Available("hellomellow".into()))
         );
         let e = Expression::new("[].join()").expect("This must be valid CEL");
-        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available(Some("".into()))));
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("".into())));
         let e = Expression::new("['hello', 'mellow'].join(' ')").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("hello mellow".into())))
+            Ok(AttributeState::Available("hello mellow".into()))
         );
 
         let e = Expression::new("'TacoCat'.lowerAscii()").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("tacocat".into())))
+            Ok(AttributeState::Available("tacocat".into()))
         );
         let e = Expression::new("'TacoCÆt Xii'.lowerAscii()").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("tacocÆt xii".into())))
+            Ok(AttributeState::Available("tacocÆt xii".into()))
         );
 
         let e = Expression::new("'TacoCat'.upperAscii()").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("TACOCAT".into())))
+            Ok(AttributeState::Available("TACOCAT".into()))
         );
         let e = Expression::new("'TacoCÆt Xii'.upperAscii()").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("TACOCÆT XII".into())))
+            Ok(AttributeState::Available("TACOCÆT XII".into()))
         );
 
         let e = Expression::new("'  \ttrim\n    '.trim()").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some("trim".into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("trim".into())));
 
         let e =
             Expression::new("'hello hello'.replace('he', 'we')").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("wello wello".into())))
+            Ok(AttributeState::Available("wello wello".into()))
         );
         let e = Expression::new("'hello hello'.replace('he', 'we', -1)")
             .expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("wello wello".into())))
+            Ok(AttributeState::Available("wello wello".into()))
         );
         let e = Expression::new("'hello hello'.replace('he', 'we', 1)")
             .expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("wello hello".into())))
+            Ok(AttributeState::Available("wello hello".into()))
         );
         let e = Expression::new("'hello hello'.replace('he', 'we', 0)")
             .expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("hello hello".into())))
+            Ok(AttributeState::Available("hello hello".into()))
         );
         let e = Expression::new("'hello hello'.replace('', '_')").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some(
-                "_h_e_l_l_o_ _h_e_l_l_o_".into()
-            )))
+            Ok(AttributeState::Available("_h_e_l_l_o_ _h_e_l_l_o_".into()))
         );
         let e = Expression::new("'hello hello'.replace('h', '')").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some("ello ello".into())))
+            Ok(AttributeState::Available("ello ello".into()))
         );
 
         let e = Expression::new("'hello hello hello'.split(' ')").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some(
+            Ok(AttributeState::Available(
                 vec!["hello", "hello", "hello"].into()
-            )))
+            ))
         );
         let e =
             Expression::new("'hello hello hello'.split(' ', 0)").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some(Value::List(vec![].into()))))
+            Ok(AttributeState::Available(Value::List(vec![].into())))
         );
         let e =
             Expression::new("'hello hello hello'.split(' ', 1)").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some(
-                vec!["hello hello hello"].into()
-            )))
+            Ok(AttributeState::Available(vec!["hello hello hello"].into()))
         );
         let e =
             Expression::new("'hello hello hello'.split(' ', 2)").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some(
+            Ok(AttributeState::Available(
                 vec!["hello", "hello hello"].into()
-            )))
+            ))
         );
         let e =
             Expression::new("'hello hello hello'.split(' ', -1)").expect("This must be valid CEL");
         assert_eq!(
             e.eval(&ctx),
-            Ok(AttributeState::Available(Some(
+            Ok(AttributeState::Available(
                 vec!["hello", "hello", "hello"].into()
-            )))
+            ))
         );
 
         let e = Expression::new("'tacocat'.substring(4)").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some("cat".into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("cat".into())));
         let e = Expression::new("'tacocat'.substring(0, 4)").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some("taco".into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("taco".into())));
         let e = Expression::new("'ta©o©αT'.substring(2, 6)").expect("This must be valid CEL");
-        assert_eq!(
-            e.eval(&ctx),
-            Ok(AttributeState::Available(Some("©o©α".into())))
-        );
+        assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("©o©α".into())));
     }
 }

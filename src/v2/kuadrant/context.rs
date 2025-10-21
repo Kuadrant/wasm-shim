@@ -34,14 +34,14 @@ impl ReqRespCtx {
     pub fn get_attribute<T: AttributeValue>(
         &self,
         path: impl Into<Path>,
-    ) -> Result<AttributeState<T>, AttributeError> {
+    ) -> Result<AttributeState<Option<T>>, AttributeError> {
         self.get_attribute_ref(&path.into())
     }
 
     pub fn get_attribute_ref<T: AttributeValue>(
         &self,
         path: &Path,
-    ) -> Result<AttributeState<T>, AttributeError> {
+    ) -> Result<AttributeState<Option<T>>, AttributeError> {
         self.cache
             .get_or_insert_with(path, || self.fetch_attribute(path))
     }
@@ -125,7 +125,8 @@ mod tests {
             MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
 
-        let result1: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
+        let result1: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("request.method");
         assert!(
             matches!(result1, Ok(AttributeState::Available(Some(ref method))) if method == "GET")
         );
@@ -137,7 +138,8 @@ mod tests {
             .unwrap_or(false));
 
         // second access uses cache
-        let result2: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
+        let result2: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("request.method");
         assert!(
             matches!(result2, Ok(AttributeState::Available(Some(ref method))) if method == "GET")
         );
@@ -164,8 +166,8 @@ mod tests {
             .unwrap_or(false));
 
         // accessing uses cache
-        let method: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
-        let path: Result<AttributeState<String>, _> = ctx.get_attribute("request.path");
+        let method: Result<AttributeState<Option<String>>, _> = ctx.get_attribute("request.method");
+        let path: Result<AttributeState<Option<String>>, _> = ctx.get_attribute("request.path");
 
         assert!(method.is_ok());
         assert!(path.is_ok());
@@ -206,7 +208,7 @@ mod tests {
         assert!(user_result.is_some());
         let (_, result) = user_result.unwrap();
         assert!(result.is_ok());
-        if let Ok(AttributeState::Available(Some(cel_interpreter::Value::String(user)))) = result {
+        if let Ok(AttributeState::Available(cel_interpreter::Value::String(user))) = result {
             assert_eq!(user.as_ref(), "alice");
         }
 
@@ -217,7 +219,7 @@ mod tests {
         assert!(group_result.is_some());
         let (_, result) = group_result.unwrap();
         assert!(result.is_ok());
-        if let Ok(AttributeState::Available(Some(cel_interpreter::Value::String(group)))) = result {
+        if let Ok(AttributeState::Available(cel_interpreter::Value::String(group))) = result {
             assert_eq!(group.as_ref(), "admin");
         }
     }

@@ -34,15 +34,12 @@ impl AttributeCache {
         &self,
         path: &Path,
         f: F,
-    ) -> Result<AttributeState<T>, AttributeError>
+    ) -> Result<AttributeState<Option<T>>, AttributeError>
     where
         F: FnOnce() -> Result<CachedValue, AttributeError>,
     {
         if let Ok(Some(cached)) = self.get(path) {
-            return match T::from_cached(&cached)? {
-                Some(value) => Ok(AttributeState::Available(Some(value))),
-                None => Ok(AttributeState::Available(None)),
-            };
+            return Ok(AttributeState::Available(T::from_cached(&cached)?));
         }
 
         match f() {
@@ -50,11 +47,7 @@ impl AttributeCache {
                 if let Err(e) = self.insert(path.clone(), cached_value.clone()) {
                     warn!("Failed to cache attribute {}: {}", path, e);
                 }
-
-                match T::from_cached(&cached_value)? {
-                    Some(value) => Ok(AttributeState::Available(Some(value))),
-                    None => Ok(AttributeState::Available(None)),
-                }
+                Ok(AttributeState::Available(T::from_cached(&cached_value)?))
             }
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
@@ -131,9 +124,10 @@ mod tests {
         let cache = AttributeCache::new();
         let path: Path = "test.miss".into();
 
-        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
-            Ok(CachedValue::Bytes(Some(b"new value".to_vec())))
-        });
+        let result: Result<AttributeState<Option<String>>, _> = cache
+            .get_or_insert_with(&path, || {
+                Ok(CachedValue::Bytes(Some(b"new value".to_vec())))
+            });
 
         assert!(matches!(result, Ok(AttributeState::Available(Some(ref s))) if s == "new value"));
         assert!(cache.contains_key(&path).unwrap());
@@ -147,9 +141,10 @@ mod tests {
 
         cache.insert(path.clone(), cached_value).unwrap();
 
-        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
-            Ok(CachedValue::Bytes(Some(b"should not be called".to_vec())))
-        });
+        let result: Result<AttributeState<Option<String>>, _> = cache
+            .get_or_insert_with(&path, || {
+                Ok(CachedValue::Bytes(Some(b"should not be called".to_vec())))
+            });
 
         assert!(matches!(result, Ok(AttributeState::Available(Some(ref s))) if s == "cached"));
     }
@@ -159,9 +154,10 @@ mod tests {
         let cache = AttributeCache::new();
         let path: Path = "test.unavailable".into();
 
-        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
-            Err(AttributeError::NotAvailable("not ready".to_string()))
-        });
+        let result: Result<AttributeState<Option<String>>, _> = cache
+            .get_or_insert_with(&path, || {
+                Err(AttributeError::NotAvailable("not ready".to_string()))
+            });
 
         assert!(matches!(result, Ok(AttributeState::Pending)));
         assert!(!cache.contains_key(&path).unwrap());
