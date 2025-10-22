@@ -1,8 +1,5 @@
 use crate::v2::data::attribute::{AttributeError, Path};
-use proxy_wasm::hostcalls;
 use std::collections::HashMap;
-use std::format;
-use std::hash::Hash;
 
 mod wasm_host;
 

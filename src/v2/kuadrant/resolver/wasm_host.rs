@@ -44,7 +44,7 @@ impl AttributeResolver for ProxyWasmHost {
                 .map(|(s1, s2)| (s1.as_str(), s2.as_str()))
                 .collect(),
         ) {
-            Ok(map) => Ok(()),
+            Ok(_) => Ok(()),
             Err(err) => Err(AttributeError::Set(format!("Error setting map: {err:?}"))),
         }
     }

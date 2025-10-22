@@ -1,4 +1,5 @@
-use crate::v2::data::attribute::{AttributeError, AttributeState, Path};
+#[allow(dead_code)]
+use crate::v2::data::attribute::{AttributeState, Path};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::tasks::{Task, TaskOutcome};
 use std::collections::HashMap;
@@ -107,7 +108,7 @@ mod tests {
 
         match task.apply(&mut ctx) {
             TaskOutcome::Done => (),
-            _ => panic!("Expected TaskOutcome::Done"),
+            _ => assert!(false, "Expected TaskOutcome::Done"),
         }
 
         let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
@@ -118,7 +119,7 @@ mod tests {
                 assert_eq!(headers["API-Key"], "API-Value");
                 assert_eq!(headers["New-Key"], "New-Value");
             }
-            _ => panic!("Expected AttributeState::Available(Some(headers))"),
+            _ => assert!(false, "Expected AttributeState::Available(Some(headers))"),
         }
     }
 
@@ -141,8 +142,8 @@ mod tests {
         ));
 
         match task.apply(&mut ctx) {
-            TaskOutcome::Done => (),
-            _ => panic!("Expected TaskOutcome::Done"),
+            TaskOutcome::Done => assert!(true),
+            _ => assert!(false, "Expected TaskOutcome::Done"),
         }
 
         let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
@@ -152,7 +153,7 @@ mod tests {
                 assert_eq!(headers.len(), 1);
                 assert_eq!(headers["API-Key"], "New-Value");
             }
-            _ => panic!("Expected AttributeState::Available(Some(headers))"),
+            _ => assert!(false, "Expected AttributeState::Available(Some(headers))"),
         }
     }
 
@@ -177,7 +178,7 @@ mod tests {
 
         match task.apply(&mut ctx) {
             TaskOutcome::Done => (),
-            _ => panic!("Expected TaskOutcome::Done"),
+            _ => assert!(false, "Expected TaskOutcome::Done"),
         }
 
         let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
@@ -187,7 +188,7 @@ mod tests {
                 assert_eq!(headers.len(), 1);
                 assert_eq!(headers["X-Origin"], "Kuadrant");
             }
-            _ => panic!("Expected AttributeState::Available(Some(headers))"),
+            _ => assert!(false, "Expected AttributeState::Available(Some(headers))"),
         }
     }
 }

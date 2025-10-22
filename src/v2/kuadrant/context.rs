@@ -8,7 +8,6 @@ use crate::v2::kuadrant::cache::CachedValue;
 use crate::v2::kuadrant::resolver::AttributeResolver;
 use crate::v2::kuadrant::AttributeCache;
 use log::warn;
-use proxy_wasm::types::{MapType, Status};
 
 type RequestData = ((String, String), Expression);
 

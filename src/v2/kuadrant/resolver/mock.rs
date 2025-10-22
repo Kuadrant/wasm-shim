@@ -1,6 +1,5 @@
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
-use proxy_wasm::types::MapType;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -66,8 +65,8 @@ impl AttributeResolver for MockWasmHost {
 
     fn set_attribute_map(
         &self,
-        map_type: proxy_wasm::types::MapType,
-        value: HashMap<String, String>,
+        _map_type: proxy_wasm::types::MapType,
+        _value: HashMap<String, String>,
     ) -> Result<(), AttributeError> {
         Ok(())
     }

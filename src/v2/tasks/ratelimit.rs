@@ -1,9 +1,11 @@
+#[allow(dead_code)]
 use crate::v2::data::cel::Predicate;
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::Service;
 use crate::v2::tasks::{Task, TaskOutcome};
 use std::rc::Rc;
 
+#[allow(dead_code)]
 struct RateLimitTask {
     scope: String,
     predicate: Predicate,
@@ -13,7 +15,7 @@ struct RateLimitTask {
 }
 
 impl Task for RateLimitTask {
-    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+    fn apply(self: Box<Self>, _: &mut ReqRespCtx) -> TaskOutcome {
         // match self.predicate.eval(ctx) taht returns Result<AttributeState<Value>, CelError>
         // if AttributeState(ok) --> self.service.dispatch, TaskOutcome::Deferred
         // else TaskOutcome::Done
@@ -23,10 +25,11 @@ impl Task for RateLimitTask {
     }
 }
 
+#[allow(dead_code)]
 struct TooManyRequestsTask {}
 
 impl Task for TooManyRequestsTask {
-    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+    fn apply(self: Box<Self>, _: &mut ReqRespCtx) -> TaskOutcome {
         // ctx.send_message 429
         TaskOutcome::Done
     }
