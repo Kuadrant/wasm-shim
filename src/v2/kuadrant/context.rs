@@ -27,8 +27,8 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn with_request_data(mut self, request_data: &[RequestData]) -> Self {
-        self.request_data = Some(Arc::new(request_data.to_vec()));
+    pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
+        self.request_data = Some(request_data);
         self
     }
 
@@ -242,7 +242,7 @@ mod tests {
         assert!(results_empty.is_empty());
 
         // With request_data
-        let ctx = ReqRespCtx::new(backend).with_request_data(&request_data);
+        let ctx = ReqRespCtx::new(backend).with_request_data(Arc::new(request_data));
         let results = ctx.eval_request_data();
         assert_eq!(results.len(), 2);
 
