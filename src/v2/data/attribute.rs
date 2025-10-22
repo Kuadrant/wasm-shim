@@ -8,7 +8,7 @@ use crate::v2::kuadrant::cache::CachedValue;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttributeState<T> {
     Pending,
-    Available(Option<T>),
+    Available(T),
 }
 
 impl<T> AttributeState<T> {
@@ -18,15 +18,7 @@ impl<T> AttributeState<T> {
     {
         match self {
             AttributeState::Pending => AttributeState::Pending,
-            AttributeState::Available(Some(val)) => AttributeState::Available(Some(f(val))),
-            AttributeState::Available(None) => AttributeState::Available(None),
-        }
-    }
-
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            AttributeState::Pending => None,
-            AttributeState::Available(opt) => opt,
+            AttributeState::Available(val) => AttributeState::Available(f(val)),
         }
     }
 }

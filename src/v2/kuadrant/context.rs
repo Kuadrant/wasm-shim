@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
-use crate::v2::data::{CelError, Expression};
+use crate::v2::data::cel::EvalResult;
+use crate::v2::data::Expression;
 use crate::v2::kuadrant::cache::CachedValue;
 use crate::v2::kuadrant::resolver::AttributeResolver;
 use crate::v2::kuadrant::AttributeCache;
-use cel_interpreter::Value;
 use log::warn;
 
 type RequestData = ((String, String), Expression);
@@ -34,53 +34,45 @@ impl ReqRespCtx {
     pub fn get_attribute<T: AttributeValue>(
         &self,
         path: impl Into<Path>,
-    ) -> Result<AttributeState<T>, AttributeError> {
+    ) -> Result<AttributeState<Option<T>>, AttributeError> {
         self.get_attribute_ref(&path.into())
     }
 
     pub fn get_attribute_ref<T: AttributeValue>(
         &self,
         path: &Path,
-    ) -> Result<AttributeState<T>, AttributeError> {
+    ) -> Result<AttributeState<Option<T>>, AttributeError> {
         self.cache
             .get_or_insert_with(path, || self.fetch_attribute(path))
     }
 
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
-        let cached_value = match *path.tokens() {
+        match *path.tokens() {
             ["request", "headers"] => {
                 let map = self
                     .backend
                     .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
-                CachedValue::Map(map)
+                Ok(CachedValue::Map(map))
             }
             ["source", "remote_address"] => {
                 let bytes = self.remote_address()?;
-                CachedValue::Bytes(bytes)
+                Ok(CachedValue::Bytes(bytes))
             }
             ["auth", ..] => {
                 let bytes = self.backend.get_attribute(&wasm_prop(&path.tokens()))?;
-                CachedValue::Bytes(bytes)
+                Ok(CachedValue::Bytes(bytes))
             }
             _ => {
                 let bytes = self.backend.get_attribute(path)?;
-                CachedValue::Bytes(bytes)
+                Ok(CachedValue::Bytes(bytes))
             }
-        };
-
-        if let Err(e) = self.cache.insert(path.clone(), cached_value.clone()) {
-            warn!("Failed to cache attribute {}: {}", path, e);
         }
-
-        Ok(cached_value)
     }
 
     pub fn ensure_attributes(&self, paths: &[Path]) {
         for path in paths {
-            if !self.cache.contains_key(path).unwrap_or(false) {
-                if let Err(e) = self.fetch_attribute(path) {
-                    warn!("Failed to ensure attribute {}: {}", path, e);
-                }
+            if let Err(e) = self.cache.populate(path, || self.fetch_attribute(path)) {
+                warn!("Failed to ensure attribute {}: {}", path, e);
             }
         }
     }
@@ -106,7 +98,7 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn eval_request_data(&self) -> Vec<((String, String), Result<Value, CelError>)> {
+    pub fn eval_request_data(&self) -> Vec<((String, String), EvalResult)> {
         let Some(ref expressions) = self.request_data else {
             return Vec::new();
         };
@@ -133,7 +125,8 @@ mod tests {
             MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
 
-        let result1: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
+        let result1: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("request.method");
         assert!(
             matches!(result1, Ok(AttributeState::Available(Some(ref method))) if method == "GET")
         );
@@ -145,7 +138,8 @@ mod tests {
             .unwrap_or(false));
 
         // second access uses cache
-        let result2: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
+        let result2: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("request.method");
         assert!(
             matches!(result2, Ok(AttributeState::Available(Some(ref method))) if method == "GET")
         );
@@ -172,8 +166,8 @@ mod tests {
             .unwrap_or(false));
 
         // accessing uses cache
-        let method: Result<AttributeState<String>, _> = ctx.get_attribute("request.method");
-        let path: Result<AttributeState<String>, _> = ctx.get_attribute("request.path");
+        let method: Result<AttributeState<Option<String>>, _> = ctx.get_attribute("request.method");
+        let path: Result<AttributeState<Option<String>>, _> = ctx.get_attribute("request.path");
 
         assert!(method.is_ok());
         assert!(path.is_ok());
@@ -214,7 +208,7 @@ mod tests {
         assert!(user_result.is_some());
         let (_, result) = user_result.unwrap();
         assert!(result.is_ok());
-        if let Ok(cel_interpreter::Value::String(user)) = result {
+        if let Ok(AttributeState::Available(cel_interpreter::Value::String(user))) = result {
             assert_eq!(user.as_ref(), "alice");
         }
 
@@ -225,7 +219,7 @@ mod tests {
         assert!(group_result.is_some());
         let (_, result) = group_result.unwrap();
         assert!(result.is_ok());
-        if let Ok(cel_interpreter::Value::String(group)) = result {
+        if let Ok(AttributeState::Available(cel_interpreter::Value::String(group))) = result {
             assert_eq!(group.as_ref(), "admin");
         }
     }

@@ -34,15 +34,12 @@ impl AttributeCache {
         &self,
         path: &Path,
         f: F,
-    ) -> Result<AttributeState<T>, AttributeError>
+    ) -> Result<AttributeState<Option<T>>, AttributeError>
     where
         F: FnOnce() -> Result<CachedValue, AttributeError>,
     {
         if let Ok(Some(cached)) = self.get(path) {
-            return match T::from_cached(&cached)? {
-                Some(value) => Ok(AttributeState::Available(Some(value))),
-                None => Ok(AttributeState::Available(None)),
-            };
+            return Ok(AttributeState::Available(T::from_cached(&cached)?));
         }
 
         match f() {
@@ -50,11 +47,7 @@ impl AttributeCache {
                 if let Err(e) = self.insert(path.clone(), cached_value.clone()) {
                     warn!("Failed to cache attribute {}: {}", path, e);
                 }
-
-                match T::from_cached(&cached_value)? {
-                    Some(value) => Ok(AttributeState::Available(Some(value))),
-                    None => Ok(AttributeState::Available(None)),
-                }
+                Ok(AttributeState::Available(T::from_cached(&cached_value)?))
             }
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
@@ -76,6 +69,21 @@ impl AttributeCache {
             .lock()
             .map_err(|_| AttributeError::Retrieval("cache mutex poisoned".to_string()))?;
         Ok(guard.get(&path.to_string()).is_some())
+    }
+
+    pub fn populate<F>(&self, path: &Path, f: F) -> Result<(), AttributeError>
+    where
+        F: FnOnce() -> Result<CachedValue, AttributeError>,
+    {
+        if self.get(path)?.is_some() {
+            return Ok(());
+        }
+
+        match f() {
+            Ok(cached_value) => self.insert(path.clone(), cached_value),
+            Err(AttributeError::NotAvailable(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -116,9 +124,10 @@ mod tests {
         let cache = AttributeCache::new();
         let path: Path = "test.miss".into();
 
-        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
-            Ok(CachedValue::Bytes(Some(b"new value".to_vec())))
-        });
+        let result: Result<AttributeState<Option<String>>, _> = cache
+            .get_or_insert_with(&path, || {
+                Ok(CachedValue::Bytes(Some(b"new value".to_vec())))
+            });
 
         assert!(matches!(result, Ok(AttributeState::Available(Some(ref s))) if s == "new value"));
         assert!(cache.contains_key(&path).unwrap());
@@ -132,9 +141,10 @@ mod tests {
 
         cache.insert(path.clone(), cached_value).unwrap();
 
-        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
-            Ok(CachedValue::Bytes(Some(b"should not be called".to_vec())))
-        });
+        let result: Result<AttributeState<Option<String>>, _> = cache
+            .get_or_insert_with(&path, || {
+                Ok(CachedValue::Bytes(Some(b"should not be called".to_vec())))
+            });
 
         assert!(matches!(result, Ok(AttributeState::Available(Some(ref s))) if s == "cached"));
     }
@@ -144,11 +154,71 @@ mod tests {
         let cache = AttributeCache::new();
         let path: Path = "test.unavailable".into();
 
-        let result: Result<AttributeState<String>, _> = cache.get_or_insert_with(&path, || {
+        let result: Result<AttributeState<Option<String>>, _> = cache
+            .get_or_insert_with(&path, || {
+                Err(AttributeError::NotAvailable("not ready".to_string()))
+            });
+
+        assert!(matches!(result, Ok(AttributeState::Pending)));
+        assert!(!cache.contains_key(&path).unwrap());
+    }
+
+    #[test]
+    fn test_populate_cache_miss() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.populate.miss".into();
+
+        let result = cache.populate(&path, || {
+            Ok(CachedValue::Bytes(Some(b"populated".to_vec())))
+        });
+
+        assert!(result.is_ok());
+        assert!(cache.contains_key(&path).unwrap());
+        assert_eq!(
+            cache.get(&path).unwrap(),
+            Some(CachedValue::Bytes(Some(b"populated".to_vec())))
+        );
+    }
+
+    #[test]
+    fn test_populate_cache_hit() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.populate.hit".into();
+        let original_value = CachedValue::Bytes(Some(b"original".to_vec()));
+
+        cache.insert(path.clone(), original_value.clone()).unwrap();
+
+        let result = cache.populate(&path, || {
+            Ok(CachedValue::Bytes(Some(b"should not be inserted".to_vec())))
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(cache.get(&path).unwrap(), Some(original_value));
+    }
+
+    #[test]
+    fn test_populate_not_available() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.populate.unavailable".into();
+
+        let result = cache.populate(&path, || {
             Err(AttributeError::NotAvailable("not ready".to_string()))
         });
 
-        assert!(matches!(result, Ok(AttributeState::Pending)));
+        assert!(result.is_ok());
+        assert!(!cache.contains_key(&path).unwrap());
+    }
+
+    #[test]
+    fn test_populate_error() {
+        let cache = AttributeCache::new();
+        let path: Path = "test.populate.error".into();
+
+        let result = cache.populate(&path, || {
+            Err(AttributeError::Retrieval("some error".to_string()))
+        });
+
+        assert!(matches!(result, Err(AttributeError::Retrieval(_))));
         assert!(!cache.contains_key(&path).unwrap());
     }
 }
