@@ -70,14 +70,124 @@ impl Task for HandleHeadersTask {
                     TaskOutcome::Pending(self)
                 }
             }
-
-            if ctx.set_attribute_map(&path, new_headers).is_ok() {
-                TaskOutcome::Done
-            } else {
-                TaskOutcome::Pending(self)
+            Ok(AttributeState::Available(None)) => {
+                unreachable!("get_attribute_ref can't return AttributeState::Available(None)")
             }
-        } else {
-            TaskOutcome::Pending(self)
+            Ok(AttributeState::Pending) => TaskOutcome::Pending(self),
+            Err(_) => {
+                // TODO: Error handling since this was a major failure.
+                TaskOutcome::Failed
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::v2::kuadrant::MockWasmHost;
+    use std::sync::Arc;
+    #[test]
+    fn add_headers_task() {
+        let mut existing_headers = HashMap::new();
+        existing_headers.insert("API-Key".to_string(), "API-Value".to_string());
+        let mock_host =
+            MockWasmHost::new().with_map("request.headers".to_string(), existing_headers);
+        let backend = Arc::new(mock_host);
+        let mut ctx = ReqRespCtx::new(backend);
+
+        let mut new_headers = HashMap::new();
+        new_headers.insert("New-Key".to_string(), "New-Value".to_string());
+
+        let task = Box::new(HandleHeadersTask::new(
+            new_headers,
+            HeadersType::HttpRequestHeaders,
+            HeadersAction::Add,
+        ));
+
+        match task.apply(&mut ctx) {
+            TaskOutcome::Done => (),
+            _ => panic!("Expected TaskOutcome::Done"),
+        }
+
+        let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
+            ctx.get_attribute_ref(&Path::from(HeadersType::HttpRequestHeaders));
+        match result {
+            Ok(AttributeState::Available(Some(headers))) => {
+                assert_eq!(headers.len(), 2);
+                assert_eq!(headers["API-Key"], "API-Value");
+                assert_eq!(headers["New-Key"], "New-Value");
+            }
+            _ => panic!("Expected AttributeState::Available(Some(headers))"),
+        }
+    }
+
+    #[test]
+    fn update_headers_task() {
+        let mut existing_headers = HashMap::new();
+        existing_headers.insert("API-Key".to_string(), "API-Value".to_string());
+        let mock_host =
+            MockWasmHost::new().with_map("request.headers".to_string(), existing_headers);
+        let backend = Arc::new(mock_host);
+        let mut ctx = ReqRespCtx::new(backend);
+
+        let mut new_headers = HashMap::new();
+        new_headers.insert("API-Key".to_string(), "New-Value".to_string());
+
+        let task = Box::new(HandleHeadersTask::new(
+            new_headers,
+            HeadersType::HttpRequestHeaders,
+            HeadersAction::Update,
+        ));
+
+        match task.apply(&mut ctx) {
+            TaskOutcome::Done => (),
+            _ => panic!("Expected TaskOutcome::Done"),
+        }
+
+        let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
+            ctx.get_attribute_ref(&Path::from(HeadersType::HttpRequestHeaders));
+        match result {
+            Ok(AttributeState::Available(Some(headers))) => {
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers["API-Key"], "New-Value");
+            }
+            _ => panic!("Expected AttributeState::Available(Some(headers))"),
+        }
+    }
+
+    #[test]
+    fn remove_headers_task() {
+        let mut existing_headers = HashMap::new();
+        existing_headers.insert("API-Key-To-Remove".to_string(), "API-Value".to_string());
+        existing_headers.insert("X-Origin".to_string(), "Kuadrant".to_string());
+        let mock_host =
+            MockWasmHost::new().with_map("response.headers".to_string(), existing_headers);
+        let backend = Arc::new(mock_host);
+        let mut ctx = ReqRespCtx::new(backend);
+
+        let mut headers_to_remove = HashMap::new();
+        headers_to_remove.insert("API-Key-To-Remove".to_string(), "".to_string());
+
+        let task = Box::new(HandleHeadersTask::new(
+            headers_to_remove,
+            HeadersType::HttpResponseHeaders,
+            HeadersAction::Remove,
+        ));
+
+        match task.apply(&mut ctx) {
+            TaskOutcome::Done => (),
+            _ => panic!("Expected TaskOutcome::Done"),
+        }
+
+        let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
+            ctx.get_attribute_ref(&Path::from(HeadersType::HttpResponseHeaders));
+        match result {
+            Ok(AttributeState::Available(Some(headers))) => {
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers["X-Origin"], "Kuadrant");
+            }
+            _ => panic!("Expected AttributeState::Available(Some(headers))"),
         }
     }
 }

@@ -46,6 +46,7 @@ impl AttributeResolver for MockWasmHost {
     ) -> Result<HashMap<String, String>, AttributeError> {
         let map_key = match map_type {
             proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
+            proxy_wasm::types::MapType::HttpResponseHeaders => "response.headers",
             _ => {
                 return Err(AttributeError::Retrieval(format!(
                     "MockWasmHost does not support map type: {:?}",
@@ -68,6 +69,6 @@ impl AttributeResolver for MockWasmHost {
         map_type: proxy_wasm::types::MapType,
         value: HashMap<String, String>,
     ) -> Result<(), AttributeError> {
-        todo!()
+        Ok(())
     }
 }
