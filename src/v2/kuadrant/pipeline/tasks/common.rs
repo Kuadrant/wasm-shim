@@ -1,7 +1,7 @@
 #[allow(dead_code)]
 use crate::v2::data::attribute::{AttributeState, Path};
+use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::tasks::{Task, TaskOutcome};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -68,13 +68,13 @@ impl Task for HandleHeadersTask {
                 if ctx.set_attribute_map(&path, new_headers).is_ok() {
                     TaskOutcome::Done
                 } else {
-                    TaskOutcome::Pending(self)
+                    TaskOutcome::Requeued(self)
                 }
             }
             Ok(AttributeState::Available(None)) => {
                 unreachable!("get_attribute_ref can't return AttributeState::Available(None)")
             }
-            Ok(AttributeState::Pending) => TaskOutcome::Pending(self),
+            Ok(AttributeState::Pending) => TaskOutcome::Requeued(self),
             Err(_) => {
                 // TODO: Error handling since this was a major failure.
                 TaskOutcome::Failed
