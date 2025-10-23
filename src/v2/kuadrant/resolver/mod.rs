@@ -18,6 +18,6 @@ pub trait AttributeResolver: Send + Sync {
     fn set_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
-        value: Vec<(String, String)>,
+        value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError>;
 }

@@ -148,19 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn test_from_vec() {
-        let vec = vec![
-            ("Content-Type".to_string(), "application/json".to_string()),
-            ("X-Custom".to_string(), "value".to_string()),
-        ];
-        let headers: Headers = vec.into();
-
-        assert_eq!(headers.len(), 2);
-        assert_eq!(headers.get("Content-Type"), Some("application/json"));
-        assert_eq!(headers.get("X-Custom"), Some("value"));
-    }
-
-    #[test]
     fn test_extend() {
         let mut headers1: Headers = vec![("X-First".to_string(), "value1".to_string())].into();
 
@@ -175,10 +162,12 @@ mod tests {
 
     #[test]
     fn test_multi_value_headers() {
-        let mut headers = Headers::new();
-        headers.append("Set-Cookie".to_string(), "session=abc".to_string());
-        headers.append("Set-Cookie".to_string(), "token=xyz".to_string());
-        headers.append("Set-Cookie".to_string(), "user=123".to_string());
+        let headers: Headers = vec![
+            ("Set-Cookie".to_string(), "session=abc".to_string()),
+            ("Set-Cookie".to_string(), "token=xyz".to_string()),
+            ("Set-Cookie".to_string(), "user=123".to_string()),
+        ]
+        .into();
 
         let cookies = headers.get_all("Set-Cookie");
         assert_eq!(cookies, vec!["session=abc", "token=xyz", "user=123"]);
