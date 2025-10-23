@@ -420,9 +420,7 @@ impl Attribute {
                     .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
                 ValueType::Map => Ok(ctx.get_attribute_ref::<Headers>(&self.path)?.map(|opt| {
                     opt.map(|headers| {
-                        // todo(adam-cattermole): This conversion drops duplicate headers
-                        let map: HashMap<String, String> =
-                            headers.into_inner().into_iter().collect();
+                        let map: HashMap<String, String> = headers.into();
                         Value::Map(cel_interpreter::objects::Map::from(map))
                     })
                     .unwrap_or(Value::Null)

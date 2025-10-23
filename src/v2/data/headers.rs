@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Clone, Debug, PartialEq)]
 
 pub struct Headers(Vec<(String, String)>);
@@ -81,8 +83,25 @@ impl From<Headers> for Vec<(String, String)> {
     }
 }
 
+impl From<Headers> for HashMap<String, String> {
+    fn from(headers: Headers) -> Self {
+        let mut map: HashMap<String, String> = HashMap::new();
+        for (key, value) in headers.0 {
+            map.entry(key)
+                .and_modify(|existing: &mut String| {
+                    existing.push(',');
+                    existing.push_str(&value);
+                })
+                .or_insert(value);
+        }
+        map
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -172,5 +191,24 @@ mod tests {
         let cookies = headers.get_all("Set-Cookie");
         assert_eq!(cookies, vec!["session=abc", "token=xyz", "user=123"]);
         assert_eq!(headers.get("Set-Cookie"), Some("session=abc"));
+    }
+
+    #[test]
+    fn test_from_headers_to_hashmap_joins_duplicates() {
+        let headers: Headers = vec![
+            ("Accept".to_string(), "text/html".to_string()),
+            ("Accept".to_string(), "application/json".to_string()),
+            ("X-Single".to_string(), "value".to_string()),
+        ]
+        .into();
+
+        let map: HashMap<String, String> = headers.into();
+
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get("Accept"),
+            Some(&"text/html,application/json".to_string())
+        );
+        assert_eq!(map.get("X-Single"), Some(&"value".to_string()));
     }
 }
