@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct MockWasmHost {
@@ -46,6 +45,7 @@ impl AttributeResolver for MockWasmHost {
     ) -> Result<HashMap<String, String>, AttributeError> {
         let map_key = match map_type {
             proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
+            proxy_wasm::types::MapType::HttpResponseHeaders => "response.headers",
             _ => {
                 return Err(AttributeError::Retrieval(format!(
                     "MockWasmHost does not support map type: {:?}",
@@ -61,5 +61,13 @@ impl AttributeResolver for MockWasmHost {
                 map_key
             ))),
         }
+    }
+
+    fn set_attribute_map(
+        &self,
+        _map_type: proxy_wasm::types::MapType,
+        _value: HashMap<String, String>,
+    ) -> Result<(), AttributeError> {
+        Ok(())
     }
 }

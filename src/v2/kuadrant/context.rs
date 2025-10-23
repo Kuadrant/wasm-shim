@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -54,6 +55,12 @@ impl ReqRespCtx {
                     .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
                 Ok(CachedValue::Map(map))
             }
+            ["response", "headers"] => {
+                let map = self
+                    .backend
+                    .get_attribute_map(proxy_wasm::types::MapType::HttpResponseHeaders)?;
+                Ok(CachedValue::Map(map))
+            }
             ["source", "remote_address"] => {
                 let bytes = self.remote_address()?;
                 Ok(CachedValue::Bytes(bytes))
@@ -65,6 +72,35 @@ impl ReqRespCtx {
             _ => {
                 let bytes = self.backend.get_attribute(path)?;
                 Ok(CachedValue::Bytes(bytes))
+            }
+        }
+    }
+
+    fn store_attribute(
+        &self,
+        path: &Path,
+        value: HashMap<String, String>,
+    ) -> Result<(), AttributeError> {
+        // TODO: Review value to store
+        match *path.tokens() {
+            ["request", "headers"] => {
+                self.backend.set_attribute_map(
+                    proxy_wasm::types::MapType::HttpRequestHeaders,
+                    value.clone(),
+                )?;
+
+                self.cache.insert(path.clone(), CachedValue::Map(value))
+            }
+            ["response", "headers"] => {
+                self.backend.set_attribute_map(
+                    proxy_wasm::types::MapType::HttpResponseHeaders,
+                    value.clone(),
+                )?;
+                self.cache.insert(path.clone(), CachedValue::Map(value))
+            }
+            _ => {
+                // TODO
+                Ok(())
             }
         }
     }
@@ -109,6 +145,15 @@ impl ReqRespCtx {
                 ((domain.clone(), field.clone()), result)
             })
             .collect()
+    }
+
+    pub fn set_attribute_map(
+        &self,
+        path: &Path,
+        value: HashMap<String, String>,
+    ) -> Result<(), AttributeError> // TODO: Review value to set
+    {
+        self.store_attribute(path, value)
     }
 }
 

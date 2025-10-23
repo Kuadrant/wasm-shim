@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use crate::v2::data::attribute::{AttributeError, Path};
+use std::collections::HashMap;
 
 mod wasm_host;
 
@@ -16,4 +15,9 @@ pub trait AttributeResolver: Send + Sync {
         &self,
         map_type: proxy_wasm::types::MapType,
     ) -> Result<HashMap<String, String>, AttributeError>;
+    fn set_attribute_map(
+        &self,
+        map_type: proxy_wasm::types::MapType,
+        value: HashMap<String, String>,
+    ) -> Result<(), AttributeError>;
 }
