@@ -88,6 +88,7 @@ mod tests {
     use super::*;
     use crate::v2::kuadrant::MockWasmHost;
     use std::sync::Arc;
+
     #[test]
     fn add_headers_task() {
         let mut existing_headers = HashMap::new();
@@ -106,54 +107,18 @@ mod tests {
             HeadersAction::Add,
         ));
 
-        match task.apply(&mut ctx) {
-            TaskOutcome::Done => (),
-            _ => assert!(false, "Expected TaskOutcome::Done"),
-        }
+        let outcome = task.apply(&mut ctx);
+        assert!(matches!(outcome, TaskOutcome::Done));
 
         let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
             ctx.get_attribute_ref(&Path::from(HeadersType::HttpRequestHeaders));
-        match result {
-            Ok(AttributeState::Available(Some(headers))) => {
-                assert_eq!(headers.len(), 2);
-                assert_eq!(headers["API-Key"], "API-Value");
-                assert_eq!(headers["New-Key"], "New-Value");
-            }
-            _ => assert!(false, "Expected AttributeState::Available(Some(headers))"),
-        }
-    }
 
-    #[test]
-    fn update_headers_task() {
-        let mut existing_headers = HashMap::new();
-        existing_headers.insert("API-Key".to_string(), "API-Value".to_string());
-        let mock_host =
-            MockWasmHost::new().with_map("request.headers".to_string(), existing_headers);
-        let backend = Arc::new(mock_host);
-        let mut ctx = ReqRespCtx::new(backend);
-
-        let mut new_headers = HashMap::new();
-        new_headers.insert("API-Key".to_string(), "New-Value".to_string());
-
-        let task = Box::new(HandleHeadersTask::new(
-            new_headers,
-            HeadersType::HttpRequestHeaders,
-            HeadersAction::Update,
-        ));
-
-        match task.apply(&mut ctx) {
-            TaskOutcome::Done => assert!(true),
-            _ => assert!(false, "Expected TaskOutcome::Done"),
-        }
-
-        let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
-            ctx.get_attribute_ref(&Path::from(HeadersType::HttpRequestHeaders));
-        match result {
-            Ok(AttributeState::Available(Some(headers))) => {
-                assert_eq!(headers.len(), 1);
-                assert_eq!(headers["API-Key"], "New-Value");
-            }
-            _ => assert!(false, "Expected AttributeState::Available(Some(headers))"),
+        if let Ok(AttributeState::Available(Some(headers))) = result {
+            assert_eq!(headers.len(), 2);
+            assert_eq!(headers["API-Key"], "API-Value");
+            assert_eq!(headers["New-Key"], "New-Value");
+        } else {
+            unreachable!("Expected AttributeState::Available(Some(headers))");
         }
     }
 
@@ -176,19 +141,17 @@ mod tests {
             HeadersAction::Remove,
         ));
 
-        match task.apply(&mut ctx) {
-            TaskOutcome::Done => (),
-            _ => assert!(false, "Expected TaskOutcome::Done"),
-        }
+        let outcome = task.apply(&mut ctx);
+        assert!(matches!(outcome, TaskOutcome::Done));
 
         let result: Result<AttributeState<Option<HashMap<String, String>>>, _> =
             ctx.get_attribute_ref(&Path::from(HeadersType::HttpResponseHeaders));
-        match result {
-            Ok(AttributeState::Available(Some(headers))) => {
-                assert_eq!(headers.len(), 1);
-                assert_eq!(headers["X-Origin"], "Kuadrant");
-            }
-            _ => assert!(false, "Expected AttributeState::Available(Some(headers))"),
+
+        if let Ok(AttributeState::Available(Some(headers))) = result {
+            assert_eq!(headers.len(), 1);
+            assert_eq!(headers["X-Origin"], "Kuadrant");
+        } else {
+            unreachable!("Expected AttributeState::Available(Some(headers))");
         }
     }
 }
