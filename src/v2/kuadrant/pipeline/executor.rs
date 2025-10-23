@@ -1,6 +1,9 @@
 use log::error;
 
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::v2::kuadrant::{
+    pipeline::tasks::{PendingTask, Task, TaskOutcome},
+    ReqRespCtx,
+};
 use std::collections::BTreeMap;
 
 pub struct Pipeline {
@@ -31,6 +34,7 @@ impl Pipeline {
                     None
                 }
                 TaskOutcome::Requeued(task) => Some(task),
+                TaskOutcome::Failed => todo!("Handle failed task"),
             })
             .collect();
 
@@ -62,30 +66,5 @@ impl Pipeline {
 
     pub fn is_blocked(&self) -> bool {
         self.deferred_tasks.values().any(PendingTask::is_blocking)
-    }
-}
-
-//todo(adam-cattermole): these are temporary and will be removed
-// or moved to the tasks module
-pub trait Task {
-    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome;
-}
-
-pub enum TaskOutcome {
-    Done,
-    Deferred {
-        token_id: usize,
-        pending: PendingTask,
-    },
-    Requeued(Box<dyn Task>),
-}
-
-pub struct PendingTask {
-    is_blocking: bool,
-}
-
-impl PendingTask {
-    pub fn is_blocking(&self) -> bool {
-        self.is_blocking
     }
 }
