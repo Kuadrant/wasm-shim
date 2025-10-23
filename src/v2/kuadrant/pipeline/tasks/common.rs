@@ -11,14 +11,14 @@ pub enum HeadersType {
 }
 
 #[derive(Clone)]
-pub enum HeadersAction {
-    Add,
-    Remove,
-    Update,
+pub enum HeaderOperation {
+    Append(Headers),
+    Set(Headers),
+    Remove(Vec<String>),
 }
 
-impl From<HeadersType> for Path {
-    fn from(header_type: HeadersType) -> Self {
+impl From<&HeadersType> for Path {
+    fn from(header_type: &HeadersType) -> Self {
         match header_type {
             HeadersType::HttpRequestHeaders => Path::new(vec!["request", "headers"]),
             HeadersType::HttpResponseHeaders => Path::new(vec!["response", "headers"]),
@@ -27,44 +27,39 @@ impl From<HeadersType> for Path {
 }
 
 #[derive(Clone)]
-struct HandleHeadersTask {
-    headers: Headers,
-    headers_type: HeadersType,
-    headers_action: HeadersAction,
+struct ModifyHeadersTask {
+    operation: HeaderOperation,
+    target: HeadersType,
 }
 
-impl HandleHeadersTask {
-    pub fn new(
-        headers: Headers,
-        headers_type: HeadersType,
-        headers_action: HeadersAction,
-    ) -> HandleHeadersTask {
-        HandleHeadersTask {
-            headers,
-            headers_type,
-            headers_action,
-        }
+impl ModifyHeadersTask {
+    pub fn new(operation: HeaderOperation, target: HeadersType) -> ModifyHeadersTask {
+        ModifyHeadersTask { operation, target }
     }
 }
 
-impl Task for HandleHeadersTask {
+impl Task for ModifyHeadersTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        let path: Path = self.headers_type.clone().into();
+        let path: Path = (&self.target).into();
         let result: Result<AttributeState<Option<Headers>>, _> = ctx.get_attribute_ref(&path);
         match result {
-            Ok(AttributeState::Available(Some(mut cached_headers))) => {
-                match self.headers_action {
-                    HeadersAction::Add | HeadersAction::Update => {
-                        // TODO: We could merge the value when adding, now treating as Update
-                        cached_headers.extend(self.headers.clone());
+            Ok(AttributeState::Available(Some(mut existing_headers))) => {
+                match &self.operation {
+                    HeaderOperation::Append(headers) => {
+                        existing_headers.extend(headers.clone());
                     }
-                    HeadersAction::Remove => {
-                        for (key, _) in self.headers.inner() {
-                            cached_headers.remove(key);
+                    HeaderOperation::Set(headers) => {
+                        for (key, value) in headers.clone().into_inner() {
+                            existing_headers.set(key, value);
+                        }
+                    }
+                    HeaderOperation::Remove(keys) => {
+                        for key in keys {
+                            existing_headers.remove(key);
                         }
                     }
                 }
-                if ctx.set_attribute_map(&path, cached_headers).is_ok() {
+                if ctx.set_attribute_map(&path, existing_headers).is_ok() {
                     TaskOutcome::Done
                 } else {
                     TaskOutcome::Requeued(self)
@@ -89,7 +84,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn add_headers_task() {
+    fn append_headers_task() {
         let existing_headers = vec![("API-Key".to_string(), "API-Value".to_string())];
         let mock_host =
             MockWasmHost::new().with_map("request.headers".to_string(), existing_headers);
@@ -98,22 +93,55 @@ mod tests {
 
         let new_headers: Headers = vec![("New-Key".to_string(), "New-Value".to_string())].into();
 
-        let task = Box::new(HandleHeadersTask::new(
-            new_headers,
+        let task = Box::new(ModifyHeadersTask::new(
+            HeaderOperation::Append(new_headers),
             HeadersType::HttpRequestHeaders,
-            HeadersAction::Add,
         ));
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Done));
 
         let result: Result<AttributeState<Option<Headers>>, _> =
-            ctx.get_attribute_ref(&Path::from(HeadersType::HttpRequestHeaders));
+            ctx.get_attribute_ref(&Path::from(&HeadersType::HttpRequestHeaders));
 
         if let Ok(AttributeState::Available(Some(headers))) = result {
             assert_eq!(headers.len(), 2);
             assert_eq!(headers.get("API-Key"), Some("API-Value"));
             assert_eq!(headers.get("New-Key"), Some("New-Value"));
+        } else {
+            unreachable!("Expected AttributeState::Available(Some(headers))");
+        }
+    }
+
+    #[test]
+    fn set_headers_task() {
+        let existing_headers = vec![
+            ("Content-Type".to_string(), "text/plain".to_string()),
+            ("X-Custom".to_string(), "value1".to_string()),
+        ];
+        let mock_host =
+            MockWasmHost::new().with_map("request.headers".to_string(), existing_headers);
+        let backend = Arc::new(mock_host);
+        let mut ctx = ReqRespCtx::new(backend);
+
+        let new_headers: Headers =
+            vec![("Content-Type".to_string(), "application/json".to_string())].into();
+
+        let task = Box::new(ModifyHeadersTask::new(
+            HeaderOperation::Set(new_headers),
+            HeadersType::HttpRequestHeaders,
+        ));
+
+        let outcome = task.apply(&mut ctx);
+        assert!(matches!(outcome, TaskOutcome::Done));
+
+        let result: Result<AttributeState<Option<Headers>>, _> =
+            ctx.get_attribute_ref(&Path::from(&HeadersType::HttpRequestHeaders));
+
+        if let Ok(AttributeState::Available(Some(headers))) = result {
+            assert_eq!(headers.len(), 2);
+            assert_eq!(headers.get("Content-Type"), Some("application/json"));
+            assert_eq!(headers.get("X-Custom"), Some("value1"));
         } else {
             unreachable!("Expected AttributeState::Available(Some(headers))");
         }
@@ -130,20 +158,18 @@ mod tests {
         let backend = Arc::new(mock_host);
         let mut ctx = ReqRespCtx::new(backend);
 
-        let headers_to_remove: Headers =
-            vec![("API-Key-To-Remove".to_string(), "".to_string())].into();
+        let keys_to_remove = vec!["API-Key-To-Remove".to_string()];
 
-        let task = Box::new(HandleHeadersTask::new(
-            headers_to_remove,
+        let task = Box::new(ModifyHeadersTask::new(
+            HeaderOperation::Remove(keys_to_remove),
             HeadersType::HttpResponseHeaders,
-            HeadersAction::Remove,
         ));
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Done));
 
         let result: Result<AttributeState<Option<Headers>>, _> =
-            ctx.get_attribute_ref(&Path::from(HeadersType::HttpResponseHeaders));
+            ctx.get_attribute_ref(&Path::from(&HeadersType::HttpResponseHeaders));
 
         if let Ok(AttributeState::Available(Some(headers))) = result {
             assert_eq!(headers.len(), 1);
