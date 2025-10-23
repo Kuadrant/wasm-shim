@@ -3,11 +3,12 @@ use radix_trie::Trie;
 use std::sync::Mutex;
 
 use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
+use crate::v2::data::Headers;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CachedValue {
     Bytes(Option<Vec<u8>>),
-    Map(Vec<(String, String)>),
+    Headers(Headers),
 }
 
 pub struct AttributeCache {
@@ -103,14 +104,15 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_and_get_map() {
+    fn test_insert_and_get_headers() {
         let cache = AttributeCache::new();
-        let path: Path = "test.map".into();
-        let map = vec![
+        let path: Path = "test.headers".into();
+        let headers: Headers = vec![
             ("key1".to_string(), "value1".to_string()),
             ("key2".to_string(), "value2".to_string()),
-        ];
-        let value = CachedValue::Map(map);
+        ]
+        .into();
+        let value = CachedValue::Headers(headers);
 
         cache.insert(path.clone(), value.clone()).unwrap();
 

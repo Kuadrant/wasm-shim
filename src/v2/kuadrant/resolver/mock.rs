@@ -75,7 +75,7 @@ impl AttributeResolver for MockWasmHost {
     fn set_attribute_map(
         &self,
         _map_type: proxy_wasm::types::MapType,
-        _value: Vec<(String, String)>,
+        _value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError> {
         Ok(())
     }

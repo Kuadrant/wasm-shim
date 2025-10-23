@@ -1,5 +1,6 @@
 use crate::v2::data::attribute::{AttributeError, AttributeState, Path};
 use crate::v2::data::cel::errors::{CelError, EvaluationError};
+use crate::v2::data::Headers;
 use crate::v2::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
@@ -417,15 +418,15 @@ impl Attribute {
                 ValueType::Timestamp => Ok(ctx
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
-                ValueType::Map => Ok(ctx
-                    .get_attribute_ref::<Vec<(String, String)>>(&self.path)?
-                    .map(|opt| {
-                        opt.map(|v| {
-                            let map: HashMap<String, String> = v.into_iter().collect();
-                            Value::Map(cel_interpreter::objects::Map::from(map))
-                        })
-                        .unwrap_or(Value::Null)
-                    })),
+                ValueType::Map => Ok(ctx.get_attribute_ref::<Headers>(&self.path)?.map(|opt| {
+                    opt.map(|headers| {
+                        // todo(adam-cattermole): This conversion drops duplicate headers
+                        let map: HashMap<String, String> =
+                            headers.into_inner().into_iter().collect();
+                        Value::Map(cel_interpreter::objects::Map::from(map))
+                    })
+                    .unwrap_or(Value::Null)
+                })),
                 _ => todo!("Need support for `{t}`s!"),
             },
             None => Ok(ctx

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::data::cel::EvalResult;
-use crate::v2::data::Expression;
+use crate::v2::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use log::warn;
@@ -54,16 +54,16 @@ impl ReqRespCtx {
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
-                let map = self
+                let vec = self
                     .backend
                     .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
-                Ok(CachedValue::Map(map))
+                Ok(CachedValue::Headers(vec.into()))
             }
             ["response", "headers"] => {
-                let map = self
+                let vec = self
                     .backend
                     .get_attribute_map(proxy_wasm::types::MapType::HttpResponseHeaders)?;
-                Ok(CachedValue::Map(map))
+                Ok(CachedValue::Headers(vec.into()))
             }
             ["source", "remote_address"] => {
                 let bytes = self.remote_address()?;
@@ -80,27 +80,22 @@ impl ReqRespCtx {
         }
     }
 
-    fn store_attribute(
-        &self,
-        path: &Path,
-        value: Vec<(String, String)>,
-    ) -> Result<(), AttributeError> {
-        // TODO: Review value to store
+    //todo(adam-cattermole): the value here should be an enum to support other types
+    fn store_attribute(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
                 self.backend.set_attribute_map(
                     proxy_wasm::types::MapType::HttpRequestHeaders,
-                    value.clone(),
+                    value.to_vec(),
                 )?;
-
-                self.cache.insert(path.clone(), CachedValue::Map(value))
+                self.cache.insert(path.clone(), CachedValue::Headers(value))
             }
             ["response", "headers"] => {
                 self.backend.set_attribute_map(
                     proxy_wasm::types::MapType::HttpResponseHeaders,
-                    value.clone(),
+                    value.to_vec(),
                 )?;
-                self.cache.insert(path.clone(), CachedValue::Map(value))
+                self.cache.insert(path.clone(), CachedValue::Headers(value))
             }
             _ => {
                 // TODO
@@ -151,12 +146,7 @@ impl ReqRespCtx {
             .collect()
     }
 
-    pub fn set_attribute_map(
-        &self,
-        path: &Path,
-        value: Vec<(String, String)>,
-    ) -> Result<(), AttributeError> // TODO: Review value to set
-    {
+    pub fn set_attribute_map(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
         self.store_attribute(path, value)
     }
 }
