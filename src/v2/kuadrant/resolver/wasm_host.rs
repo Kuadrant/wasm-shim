@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
 use proxy_wasm::hostcalls;
@@ -22,9 +20,9 @@ impl AttributeResolver for ProxyWasmHost {
     fn get_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
-    ) -> Result<HashMap<String, String>, AttributeError> {
+    ) -> Result<Vec<(String, String)>, AttributeError> {
         match hostcalls::get_map(map_type) {
-            Ok(map) => Ok(map.into_iter().collect()),
+            Ok(map) => Ok(map),
             Err(err) => Err(AttributeError::Retrieval(format!(
                 "Error getting host map: {err:?}"
             ))),
@@ -34,9 +32,8 @@ impl AttributeResolver for ProxyWasmHost {
     fn set_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
-        value: HashMap<String, String>,
+        value: Vec<(String, String)>,
     ) -> Result<(), AttributeError> {
-        //TODO: review the abomination of converting to Vec<(&str, &str)>
         match hostcalls::set_map(
             map_type,
             value

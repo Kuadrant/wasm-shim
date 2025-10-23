@@ -1,5 +1,4 @@
 use chrono::{DateTime, FixedOffset};
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -150,7 +149,7 @@ impl AttributeValue for DateTime<FixedOffset> {
     }
 }
 
-impl AttributeValue for HashMap<String, String> {
+impl AttributeValue for Vec<(String, String)> {
     fn parse(_raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         Err(AttributeError::Parse(
             "Maps do not support parse".to_string(),
