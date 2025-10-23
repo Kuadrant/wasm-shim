@@ -418,10 +418,13 @@ impl Attribute {
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
                 ValueType::Map => Ok(ctx
-                    .get_attribute_ref::<HashMap<String, String>>(&self.path)?
+                    .get_attribute_ref::<Vec<(String, String)>>(&self.path)?
                     .map(|opt| {
-                        opt.map(|m| Value::Map(cel_interpreter::objects::Map::from(m)))
-                            .unwrap_or(Value::Null)
+                        opt.map(|v| {
+                            let map: HashMap<String, String> = v.into_iter().collect();
+                            Value::Map(cel_interpreter::objects::Map::from(map))
+                        })
+                        .unwrap_or(Value::Null)
                     })),
                 _ => todo!("Need support for `{t}`s!"),
             },
@@ -951,9 +954,10 @@ mod tests {
         .expect("This is valid!");
         assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
 
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("X-Auth".to_string(), "kuadrant".to_string());
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        let headers = vec![
+            ("X-Auth".to_string(), "kuadrant".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =

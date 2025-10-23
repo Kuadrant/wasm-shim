@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -84,7 +83,7 @@ impl ReqRespCtx {
     fn store_attribute(
         &self,
         path: &Path,
-        value: HashMap<String, String>,
+        value: Vec<(String, String)>,
     ) -> Result<(), AttributeError> {
         // TODO: Review value to store
         match *path.tokens() {
@@ -155,7 +154,7 @@ impl ReqRespCtx {
     pub fn set_attribute_map(
         &self,
         path: &Path,
-        value: HashMap<String, String>,
+        value: Vec<(String, String)>,
     ) -> Result<(), AttributeError> // TODO: Review value to set
     {
         self.store_attribute(path, value)
