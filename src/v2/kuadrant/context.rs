@@ -54,10 +54,17 @@ impl ReqRespCtx {
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
-                let vec = self
+                match self
                     .backend
-                    .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)?;
-                Ok(CachedValue::Headers(vec.into()))
+                    .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)
+                {
+                    Ok(vec) => Ok(CachedValue::Headers(vec.into())),
+                    Err(AttributeError::NotAvailable(msg)) => {
+                        // We cannot be Pending on request headers
+                        Err(AttributeError::Retrieval(msg))
+                    }
+                    Err(e) => Err(e),
+                }
             }
             ["response", "headers"] => {
                 let vec = self
@@ -84,11 +91,17 @@ impl ReqRespCtx {
     fn store_attribute(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
-                self.backend.set_attribute_map(
+                match self.backend.set_attribute_map(
                     proxy_wasm::types::MapType::HttpRequestHeaders,
                     value.to_vec(),
-                )?;
-                self.cache.insert(path.clone(), CachedValue::Headers(value))
+                ) {
+                    Ok(()) => self.cache.insert(path.clone(), CachedValue::Headers(value)),
+                    Err(AttributeError::NotAvailable(msg)) => {
+                        // We cannot be Pending on request headers
+                        Err(AttributeError::Set(msg))
+                    }
+                    Err(e) => Err(e),
+                }
             }
             ["response", "headers"] => {
                 self.backend.set_attribute_map(
@@ -146,8 +159,16 @@ impl ReqRespCtx {
             .collect()
     }
 
-    pub fn set_attribute_map(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
-        self.store_attribute(path, value)
+    pub fn set_attribute_map(
+        &self,
+        path: &Path,
+        value: Headers,
+    ) -> Result<AttributeState<()>, AttributeError> {
+        match self.store_attribute(path, value) {
+            Ok(()) => Ok(AttributeState::Available(())),
+            Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
+            Err(e) => Err(e),
+        }
     }
 }
 

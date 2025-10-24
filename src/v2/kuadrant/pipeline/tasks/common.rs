@@ -59,10 +59,10 @@ impl Task for ModifyHeadersTask {
                         }
                     }
                 }
-                if ctx.set_attribute_map(&path, existing_headers).is_ok() {
-                    TaskOutcome::Done
-                } else {
-                    TaskOutcome::Requeued(self)
+                match ctx.set_attribute_map(&path, existing_headers) {
+                    Ok(AttributeState::Available(_)) => TaskOutcome::Done,
+                    Ok(AttributeState::Pending) => TaskOutcome::Requeued(self),
+                    Err(_) => TaskOutcome::Failed,
                 }
             }
             Ok(AttributeState::Available(None)) => {
