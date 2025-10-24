@@ -1,4 +1,4 @@
-use crate::configuration::{ActionSet, Service};
+use crate::v2::configuration::{ActionSet, Service};
 use crate::data::{
     Attribute, AttributeOwner, AttributeResolver, Expression, Predicate, PredicateResult,
     PredicateVec,
@@ -61,7 +61,7 @@ impl AttributeOwner for RuntimeActionSet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::configuration::{ActionSet, RouteRuleConditions};
+    use crate::v2::configuration::{ActionSet, RouteRuleConditions};
     use crate::data::PathCache;
 
     #[test]

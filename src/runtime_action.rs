@@ -1,5 +1,5 @@
 use crate::auth_action::AuthAction;
-use crate::configuration::{Action, FailureMode, Service, ServiceType};
+use crate::v2::configuration::{Action, FailureMode, Service, ServiceType};
 use crate::data::{
     Attribute, AttributeOwner, AttributeResolver, Expression, Predicate, PredicateResult,
 };
@@ -202,7 +202,7 @@ impl AttributeOwner for Vec<Predicate> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::configuration::{
+    use crate::v2::configuration::{
         Action, DataItem, DataType, ExpressionItem, FailureMode, ServiceType, Timeout,
     };
 
@@ -254,7 +254,7 @@ mod test {
         action
             .conditional_data
             .extend(conditional_data.into_iter().map(|data_item| {
-                crate::configuration::ConditionalData {
+                crate::v2::configuration::ConditionalData {
                     predicates: Vec::default(),
                     data: vec![data_item],
                 }

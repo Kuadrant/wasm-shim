@@ -1,4 +1,4 @@
-use crate::configuration::{Action, FailureMode, Service};
+use crate::v2::configuration::{Action, FailureMode, Service};
 use crate::data::{
     store_metadata, Attribute, AttributeOwner, AttributeResolver, Expression, Predicate,
     PredicateResult, PredicateVec,
@@ -121,7 +121,7 @@ impl AttributeOwner for AuthAction {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::configuration::{Action, FailureMode, Service, ServiceType, Timeout};
+    use crate::v2::configuration::{Action, FailureMode, Service, ServiceType, Timeout};
     use crate::data::PathCache;
     use crate::envoy::{
         DeniedHttpResponse, HeaderValueOption, HttpStatus, OkHttpResponse, StatusCode,

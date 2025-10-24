@@ -1,8 +1,8 @@
 #[allow(dead_code)]
 use crate::v2::data::cel::Predicate;
+use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::Service;
-use crate::v2::tasks::{Task, TaskOutcome};
 use std::rc::Rc;
 
 #[allow(dead_code)]
@@ -19,7 +19,7 @@ impl Task for RateLimitTask {
         // match self.predicate.eval(ctx) taht returns Result<AttributeState<Value>, CelError>
         // if AttributeState(ok) --> self.service.dispatch, TaskOutcome::Deferred
         // else TaskOutcome::Done
-        // if err (?) TaskOutcome::Pending(self) ?
+        // if err (?) TaskOutcome::Failed(self) ?
 
         TaskOutcome::Done
     }

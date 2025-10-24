@@ -2,6 +2,7 @@ use crate::v2::data::attribute::{AttributeError, Path};
 use std::collections::HashMap;
 
 mod wasm_host;
+pub use wasm_host::ProxyWasmHost;
 
 #[cfg(test)]
 mod mock;

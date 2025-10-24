@@ -4,9 +4,8 @@ use std::sync::Arc;
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::v2::data::cel::EvalResult;
 use crate::v2::data::Expression;
-use crate::v2::kuadrant::cache::CachedValue;
-use crate::v2::kuadrant::resolver::AttributeResolver;
-use crate::v2::kuadrant::AttributeCache;
+use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
+use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use log::warn;
 
 type RequestData = ((String, String), Expression);
@@ -18,6 +17,12 @@ pub struct ReqRespCtx {
     request_data: Option<Arc<Vec<RequestData>>>,
 }
 
+impl Default for ReqRespCtx {
+    fn default() -> Self {
+        Self::new(Arc::new(ProxyWasmHost))
+    }
+}
+
 impl ReqRespCtx {
     pub fn new(backend: Arc<dyn AttributeResolver + 'static>) -> Self {
         Self {
@@ -27,8 +32,8 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn with_request_data(mut self, request_data: &[RequestData]) -> Self {
-        self.request_data = Some(Arc::new(request_data.to_vec()));
+    pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
+        self.request_data = Some(request_data);
         self
     }
 
@@ -242,7 +247,7 @@ mod tests {
         assert!(results_empty.is_empty());
 
         // With request_data
-        let ctx = ReqRespCtx::new(backend).with_request_data(&request_data);
+        let ctx = ReqRespCtx::new(backend).with_request_data(Arc::new(request_data));
         let results = ctx.eval_request_data();
         assert_eq!(results.len(), 2);
 

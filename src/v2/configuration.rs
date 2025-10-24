@@ -42,21 +42,6 @@ pub struct ActionSet {
     pub actions: Vec<Action>,
 }
 
-impl ActionSet {
-    #[cfg(test)]
-    pub fn new(
-        name: String,
-        route_rule_conditions: RouteRuleConditions,
-        actions: Vec<Action>,
-    ) -> Self {
-        ActionSet {
-            name,
-            route_rule_conditions,
-            actions,
-        }
-    }
-}
-
 #[derive(Deserialize, Debug, Clone)]
 pub struct ExpressionItem {
     pub key: String,
