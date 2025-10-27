@@ -557,11 +557,15 @@ fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mu
     match exp {
         CelExpression::Arithmetic(e1, _, e2)
         | CelExpression::Relation(e1, _, e2)
-        | CelExpression::Ternary(e1, _, e2)
         | CelExpression::Or(e1, e2)
         | CelExpression::And(e1, e2) => {
             properties(e1, all, path);
             properties(e2, all, path);
+        }
+        CelExpression::Ternary(e1, e2, e3) => {
+            properties(e1, all, path);
+            properties(e2, all, path);
+            properties(e3, all, path);
         }
         CelExpression::Unary(_, e) => {
             properties(e, all, path);
@@ -987,5 +991,194 @@ mod tests {
             Some(ValueType::String) => {}
             _ => unreachable!("Not supposed to get here!"),
         }
+    }
+
+    #[test]
+    fn test_attribute_get_returns_pending() {
+        let mock_host = MockWasmHost::new().with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let attr = known_attribute_for(&"destination.port".into())
+            .expect("destination.port known attribute exists");
+        let result = attr.get(&ctx).expect("No property error should occur");
+
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_expression_eval_handles_pending_from_build_data_map() {
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new("source.port == 65432 && destination.port == 80")
+            .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_predicate_test_returns_pending() {
+        let mock_host = MockWasmHost::new().with_pending_property("source.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
+        let result = predicate.test(&ctx).expect("Test should succeed");
+
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_predicate_vec_short_circuits_on_pending() {
+        use crate::v2::data::cel::PredicateVec;
+
+        // First pred is Pending
+        let mock_host = MockWasmHost::new()
+            .with_pending_property("source.port".into())
+            .with_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Pending);
+
+        // Second pred is Pending
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Pending);
+
+        // First is false, second is Pending
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 12345_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Available(false));
+
+        // First is Pending, second is false
+        let mock_host = MockWasmHost::new()
+            .with_pending_property("source.port".into())
+            .with_property("destination.port".into(), 443_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_attribute_none_converts_to_null() {
+        let mock_host = MockWasmHost::new(); // No properties set
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let attr = known_attribute_for(&"request.method".into())
+            .expect("request.method is a known attribute");
+        let result = attr.get(&ctx).expect("Should not error");
+
+        assert_eq!(result, AttributeState::Available(Value::Null));
+    }
+
+    #[test]
+    fn test_map_to_value_returns_pending_for_nested_attribute() {
+        use crate::v2::data::cel::data::AttributeMap;
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.method".into(), "GET".bytes().collect())
+            .with_pending_property("source.address".into())
+            .with_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let attr_map = AttributeMap::new(vec![
+            known_attribute_for(&"request.method".into())
+                .expect("request.method known attribute exists"),
+            known_attribute_for(&"source.address".into())
+                .expect("source.address known attribute exists"),
+            known_attribute_for(&"destination.port".into())
+                .expect("destination.port known attribute exists"),
+        ]);
+
+        let result = attr_map
+            .into(&ctx)
+            .expect("Should not return AttributeError");
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_expression_eval_with_complex_mixed_states() {
+        // These tests evaluate the current behaviour but without eager data retrieval
+        // they should all be evaluateable
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new("source.port == 65432 || destination.port == 80")
+            .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+
+        assert_eq!(
+            result,
+            AttributeState::Pending,
+            "Expression with Pending attribute should return Pending"
+        );
+
+        // Nested expressions
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into())
+            .with_property("request.method".into(), "GET".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new(
+            "(source.port == 65432 && destination.port == 80) || request.method == 'POST'",
+        )
+        .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+        assert_eq!(
+            result,
+            AttributeState::Pending,
+            "Complex expression with Pending in subexpression should return Pending"
+        );
+
+        // Ternary with Pending condition
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new("source.port == 65432 ? 443 : destination.port")
+            .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+
+        assert_eq!(
+            result,
+            AttributeState::Pending,
+            "Ternary expression with Pending condition should return Pending"
+        );
     }
 }
