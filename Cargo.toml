@@ -33,6 +33,7 @@ cel-interpreter = { git = "https://github.com/clarkmcc/cel-rust", rev = "5b02b08
 cel-parser = { git = "https://github.com/clarkmcc/cel-rust", rev = "5b02b08" }
 urlencoding = "2.1.3"
 lazy_static = "1.5.0"
+nom = { version = "8", default-features = false }
 
 [dev-dependencies]
 proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }
