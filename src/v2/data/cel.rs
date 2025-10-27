@@ -419,6 +419,8 @@ impl Attribute {
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
                 ValueType::Map => Ok(ctx.get_attribute_ref::<Headers>(&self.path)?.map(|opt| {
+                    //todo(refactor/pull/245): We should think about and handle other types of maps
+                    // other than Headers / Vec<(String, String)>
                     opt.map(|headers| {
                         let map: HashMap<String, String> = headers.into();
                         Value::Map(cel_interpreter::objects::Map::from(map))
