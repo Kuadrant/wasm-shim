@@ -1,11 +1,11 @@
 #[allow(dead_code)]
 mod headers;
 mod ratelimit;
+mod send;
 
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::Service;
-use std::collections::HashSet;
-use std::rc::Rc;
+
+pub type ResponseProcessor<T> = dyn FnOnce(T) -> Vec<Box<dyn Task>>;
 
 #[allow(dead_code)]
 pub trait Task {
@@ -15,8 +15,8 @@ pub trait Task {
         None
     }
 
-    fn dependencies_met(&self, _completed_tasks: &HashSet<String>) -> bool {
-        true
+    fn dependencies(&self) -> &[String] {
+        &[]
     }
 }
 
@@ -24,9 +24,7 @@ pub trait Task {
 pub struct PendingTask {
     task_id: Option<String>,
     is_blocking: bool,
-    allow_task: Option<Box<dyn Task>>,
-    deny_task: Box<dyn Task>,
-    service: Rc<dyn Service<Response = bool>>,
+    process_response: Box<ResponseProcessor<Vec<u8>>>,
 }
 
 #[allow(dead_code)]
@@ -35,14 +33,8 @@ impl PendingTask {
         self.task_id.as_ref()
     }
 
-    pub fn process_response(self, response: Vec<u8>) -> Option<Box<dyn Task>> {
-        if self.service.parse_message(response) {
-            Some(self.deny_task)
-        } else if let Some(action) = self.allow_task {
-            Some(action)
-        } else {
-            None
-        }
+    pub fn process_response(self, response: Vec<u8>) -> Vec<Box<dyn Task>> {
+        (self.process_response)(response)
     }
 
     pub fn is_blocking(&self) -> bool {

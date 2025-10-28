@@ -28,7 +28,11 @@ impl Pipeline {
             .task_queue
             .drain(..)
             .filter_map(|mut task| loop {
-                if !task.dependencies_met(&self.completed_tasks) {
+                if task
+                    .dependencies()
+                    .iter()
+                    .any(|dep| !self.completed_tasks.contains(dep))
+                {
                     return Some(task);
                 }
 
@@ -67,9 +71,8 @@ impl Pipeline {
 
     pub fn digest(&mut self, token_id: usize, response: Vec<u8>) {
         if let Some(pending) = self.deferred_tasks.remove(&token_id) {
-            if let Some(task) = pending.process_response(response) {
-                self.task_queue.push(task);
-            }
+            let tasks = pending.process_response(response);
+            self.task_queue.extend(tasks);
         } else {
             error!("token_id={} not found", token_id);
         }
