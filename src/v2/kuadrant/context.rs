@@ -14,6 +14,8 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Arc<Vec<RequestData>>>,
+    body_size: usize,
+    end_of_stream: bool,
 }
 
 impl Default for ReqRespCtx {
@@ -28,11 +30,23 @@ impl ReqRespCtx {
             backend,
             cache: Arc::new(AttributeCache::new()),
             request_data: None,
+            body_size: 0,
+            end_of_stream: false,
         }
     }
 
     pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
         self.request_data = Some(request_data);
+        self
+    }
+
+    pub fn with_body_size(mut self, body_size: usize) -> Self {
+        self.body_size = body_size;
+        self
+    }
+
+    pub fn with_end_of_stream(mut self, end_of_stream: bool) -> Self {
+        self.end_of_stream = end_of_stream;
         self
     }
 
