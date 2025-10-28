@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct MockWasmHost {
     properties: HashMap<Path, Vec<u8>>,
     maps: HashMap<String, HashMap<String, String>>,
+    pending_properties: Vec<Path>,
 }
 
 impl MockWasmHost {
@@ -13,6 +14,7 @@ impl MockWasmHost {
         Self {
             properties: HashMap::new(),
             maps: HashMap::new(),
+            pending_properties: Vec::new(),
         }
     }
 
@@ -29,10 +31,21 @@ impl MockWasmHost {
         self.maps.insert(map_name, map);
         self
     }
+
+    pub fn with_pending_property(mut self, path: Path) -> Self {
+        self.pending_properties.push(path);
+        self
+    }
 }
 
 impl AttributeResolver for MockWasmHost {
     fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
+        if self.pending_properties.contains(path) {
+            return Err(AttributeError::NotAvailable(format!(
+                "Property {} is pending",
+                path
+            )));
+        }
         match self.properties.get(path) {
             Some(value) => Ok(Some(value.clone())),
             None => Ok(None),
