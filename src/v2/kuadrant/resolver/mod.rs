@@ -1,4 +1,5 @@
 use crate::v2::data::attribute::{AttributeError, Path};
+use proxy_wasm::types::Bytes;
 
 mod wasm_host;
 pub use wasm_host::ProxyWasmHost;
@@ -20,4 +21,9 @@ pub trait AttributeResolver: Send + Sync {
         map_type: proxy_wasm::types::MapType,
         value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError>;
+    fn get_http_response_body(
+        &self,
+        start: usize,
+        max_size: usize,
+    ) -> Result<Option<Bytes>, AttributeError>;
 }
