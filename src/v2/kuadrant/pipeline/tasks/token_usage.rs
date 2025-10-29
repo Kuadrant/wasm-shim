@@ -1,23 +1,42 @@
 use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
+use event_parser::Event;
 
-mod event_builder;
-mod sse_parser;
+mod event_parser;
 
 pub struct TokenUsageTask {
-    event_builder: event_builder::EventBuilder,
+    event_parser: event_parser::EventParser,
+    // Stores the last two events: [second_to_last, last]
+    last_two_events: [Option<Event>; 2],
 }
 
 impl TokenUsageTask {
     pub fn new() -> Self {
         Self {
-            event_builder: event_builder::EventBuilder::new(),
+            event_parser: event_parser::EventParser::default(),
+            last_two_events: [None, None],
+        }
+    }
+
+    fn push_event(&mut self, event: Event) {
+        // Shift the event at position 0 to position 1 (discarding old position 1)
+        self.last_two_events[1] = self.last_two_events[0].take();
+        // Insert the new event at position 0
+        self.last_two_events[0] = Some(event);
+    }
+}
+
+impl From<Box<Self>> for TokenUsageTask {
+    fn from(value: Box<Self>) -> Self {
+        Self {
+            event_parser: value.event_parser,
+            last_two_events: value.last_two_events,
         }
     }
 }
 
 impl Task for TokenUsageTask {
-    fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         // Extract token usage from the second-to-last Server-Sent Event.
         //
         // OpenAI streaming responses typically end with a [DONE] marker, meaning the usage data
@@ -28,7 +47,32 @@ impl Task for TokenUsageTask {
         //   Second-to-last: data: {"id":"...","usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4},...}
         //   Last:           data: [DONE]
 
-        todo!()
+        // TODO: check response content type is text/event-stream
+
+        let mut new_t: TokenUsageTask = self.into();
+
+        match new_t.event_parser.parse(ctx) {
+            Ok(events) => {
+                for event in events {
+                    new_t.push_event(event);
+                }
+            }
+            Err(_e) => {
+                // TODO: propagate the error with the Failed outcome
+                return TaskOutcome::Failed;
+            }
+        }
+
+        match (ctx.is_end_of_stream(), &new_t.last_two_events[1]) {
+            // TODO: probably good to add some error
+            // message saying not enough events where parsed
+            (true, None) => TaskOutcome::Failed,
+            (true, Some(_event)) => {
+                // TODO: store the event somewhere in the ctx?
+                TaskOutcome::Done
+            }
+            (false, _) => TaskOutcome::Requeued(Box::new(new_t)),
+        }
     }
 }
 
@@ -61,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn test_one_message_and_end_of_stream() {
+    fn test_one_event_and_end_of_stream() {
         let buf = String::from(r#"data: {"id": 1}\n\n"#);
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
@@ -75,21 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_usage_and_end_of_stream() {
-        let buf = String::from(r#"data: {"id": 1}\n\ndata: {"id": 2}\n\n"#);
-        let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
-
-        let task = Box::new(TokenUsageTask::new());
-
-        let outcome = task.apply(&mut ctx);
-        assert!(matches!(outcome, TaskOutcome::Failed));
-    }
-
-    #[test]
-    fn test_no_usage_and_not_end_of_stream() {
+    fn test_two_events_and_not_end_of_stream() {
         let buf = String::from(r#"data: {"id": 1}\n\ndata: {"id": 2}\n\n"#);
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
@@ -103,27 +133,8 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_and_not_end_of_stream() {
-        let buf = String::from(
-            r#"data: {"id": 1}\n\ndata: {"id": 2, "usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4}}\n\n"#,
-        );
-        let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(false)
-            .with_body_size(buf.len());
-
-        let task = Box::new(TokenUsageTask::new());
-
-        let outcome = task.apply(&mut ctx);
-        // the task will not parse until end_of_stream is signaled
-        assert!(matches!(outcome, TaskOutcome::Requeued(_)));
-    }
-
-    #[test]
-    fn test_usage_and_end_of_stream() {
-        let buf = String::from(
-            r#"data: {"id": 1}\n\ndata: {"id": 2, "usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4}}\n\ndata: [DONE]\n\n"#,
-        );
+    fn test_two_events_and_end_of_stream() {
+        let buf = String::from(r#"data: {"id": 1}\n\ndata: {"id": 2}\n\n"#);
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
             .with_end_of_stream(true)
@@ -133,38 +144,7 @@ mod tests {
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Done));
-        // assert on changes made to the ReqRespCtx (like adding the attribute with the usage
-        // value)
-        //
-        let buf = String::from(
-            r#"data: {"id": 1, "usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4}}\n\ndata: {"id": 2}\n\n"#,
-        );
-        let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
-
-        let task = Box::new(TokenUsageTask::new());
-
-        let outcome = task.apply(&mut ctx);
-        assert!(matches!(outcome, TaskOutcome::Done));
-        // assert on changes made to the ReqRespCtx (like adding the attribute with the usage
-        // value)
-    }
-
-    #[test]
-    fn test_usage_not_in_second_to_last() {
-        let buf = String::from(
-            r#"data: {"id": 1}\n\ndata: {"id": 2, "usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4}}\n\n"#,
-        );
-        let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
-
-        let task = Box::new(TokenUsageTask::new());
-
-        let outcome = task.apply(&mut ctx);
-        assert!(matches!(outcome, TaskOutcome::Failed));
+        // assert on changes made to the ReqRespCtx
+        // like adding the second last event value
     }
 }

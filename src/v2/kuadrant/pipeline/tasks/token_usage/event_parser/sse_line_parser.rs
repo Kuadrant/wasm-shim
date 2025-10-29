@@ -36,7 +36,7 @@ pub enum RawEventLine<'a> {
 }
 
 #[inline]
-fn is_lf(c: char) -> bool {
+pub fn is_lf(c: char) -> bool {
     c == '\u{000A}'
 }
 
