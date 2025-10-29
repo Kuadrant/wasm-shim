@@ -43,6 +43,23 @@ impl ReqRespCtx {
         self.get_attribute_ref(&path.into())
     }
 
+    pub fn get_required<T: AttributeValue>(
+        &self,
+        path: impl Into<Path>,
+    ) -> Result<T, AttributeError> {
+        let path = path.into();
+        match self.get_attribute_ref::<T>(&path)? {
+            AttributeState::Available(Some(value)) => Ok(value),
+            AttributeState::Available(None) => {
+                Err(AttributeError::Retrieval(format!("{} not set", path)))
+            }
+            AttributeState::Pending => Err(AttributeError::NotAvailable(format!(
+                "{} still pending",
+                path
+            ))),
+        }
+    }
+
     pub fn get_attribute_ref<T: AttributeValue>(
         &self,
         path: &Path,
@@ -146,15 +163,17 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn eval_request_data(&self) -> Vec<((String, String), EvalResult)> {
+    pub fn eval_request_data(&self) -> Vec<request_data::RequestDataEntry> {
         let Some(ref expressions) = self.request_data else {
             return Vec::new();
         };
         expressions
             .iter()
-            .map(|((domain, field), expr)| {
-                let result = expr.eval(self);
-                ((domain.clone(), field.clone()), result)
+            .map(|((domain, field), expr)| request_data::RequestDataEntry {
+                domain: domain.clone(),
+                field: field.clone(),
+                result: expr.eval(self),
+                source: expr.to_string(),
             })
             .collect()
     }
@@ -190,6 +209,17 @@ impl ReqRespCtx {
             message,
             timeout,
         )
+    }
+}
+
+pub mod request_data {
+    use crate::v2::data::cel::EvalResult;
+
+    pub struct RequestDataEntry {
+        pub domain: String,
+        pub field: String,
+        pub result: EvalResult,
+        pub source: String,
     }
 }
 
@@ -285,22 +315,23 @@ mod tests {
         // Check metrics.labels.user result
         let user_result = results
             .iter()
-            .find(|((domain, field), _)| domain == "metrics.labels" && field == "user");
+            .find(|entry| entry.domain == "metrics.labels" && entry.field == "user");
         assert!(user_result.is_some());
-        let (_, result) = user_result.unwrap();
-        assert!(result.is_ok());
-        if let Ok(AttributeState::Available(cel_interpreter::Value::String(user))) = result {
+        let entry = user_result.unwrap();
+        assert!(entry.result.is_ok());
+        if let Ok(AttributeState::Available(cel_interpreter::Value::String(user))) = &entry.result {
             assert_eq!(user.as_ref(), "alice");
         }
 
         // Check metrics.labels.group result
         let group_result = results
             .iter()
-            .find(|((domain, field), _)| domain == "metrics.labels" && field == "group");
+            .find(|entry| entry.domain == "metrics.labels" && entry.field == "group");
         assert!(group_result.is_some());
-        let (_, result) = group_result.unwrap();
-        assert!(result.is_ok());
-        if let Ok(AttributeState::Available(cel_interpreter::Value::String(group))) = result {
+        let entry = group_result.unwrap();
+        assert!(entry.result.is_ok());
+        if let Ok(AttributeState::Available(cel_interpreter::Value::String(group))) = &entry.result
+        {
             assert_eq!(group.as_ref(), "admin");
         }
     }
