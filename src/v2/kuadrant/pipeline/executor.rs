@@ -4,12 +4,13 @@ use crate::v2::kuadrant::{
     pipeline::tasks::{PendingTask, Task, TaskOutcome},
     ReqRespCtx,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub struct Pipeline {
     ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
     deferred_tasks: BTreeMap<usize, PendingTask>,
+    completed_tasks: HashSet<String>,
 }
 
 impl Pipeline {
@@ -18,6 +19,7 @@ impl Pipeline {
             ctx,
             task_queue: Vec::new(),
             deferred_tasks: BTreeMap::new(),
+            completed_tasks: HashSet::new(),
         }
     }
 
@@ -25,16 +27,34 @@ impl Pipeline {
         self.task_queue = self
             .task_queue
             .drain(..)
-            .filter_map(|task| match task.apply(&mut self.ctx) {
-                TaskOutcome::Done => None,
-                TaskOutcome::Deferred { token_id, pending } => {
-                    if self.deferred_tasks.insert(token_id, pending).is_some() {
-                        error!("Duplicate token_id={}", token_id);
-                    }
-                    None
+            .filter_map(|mut task| loop {
+                if !task.dependencies_met(&self.completed_tasks) {
+                    return Some(task);
                 }
-                TaskOutcome::Requeued(task) => Some(task),
-                TaskOutcome::Failed => todo!("Handle failed task"),
+
+                let task_id = task.id();
+                match task.apply(&mut self.ctx) {
+                    TaskOutcome::Done => {
+                        if let Some(id) = task_id {
+                            self.completed_tasks.insert(id);
+                        }
+                        return None;
+                    }
+                    TaskOutcome::Continue(next_task) => {
+                        task = next_task;
+                    }
+                    TaskOutcome::Deferred { token_id, pending } => {
+                        if let Some(id) = pending.task_id() {
+                            self.completed_tasks.insert(id.clone());
+                        }
+                        if self.deferred_tasks.insert(token_id, pending).is_some() {
+                            error!("Duplicate token_id={}", token_id);
+                        }
+                        return None;
+                    }
+                    TaskOutcome::Requeued(task) => return Some(task),
+                    TaskOutcome::Failed => todo!("Handle failed task"),
+                }
             })
             .collect();
 
@@ -45,20 +65,11 @@ impl Pipeline {
         }
     }
 
-    pub fn digest(&mut self, token_id: usize, _response: Vec<u8>) {
-        if let Some(_pending) = self.deferred_tasks.remove(&token_id) {
-            // todo(adam-cattermole): Process the response
-            // if let Some(task) = pending.process_response(response) {
-            //     match task.apply(&mut self.ctx) {
-            //         TaskOutcome::Done => {}
-            //         TaskOutcome::Deferred { token_id, pending } => {
-            //             if self.deferred_tasks.insert(token_id, pending).is_some() {
-            //                 panic!("Duplicate token_id={}", token_id);
-            //             }
-            //         }
-            //         TaskOutcome::Requeued(task) => self.task_queue.push(task),
-            //     }
-            // };
+    pub fn digest(&mut self, token_id: usize, response: Vec<u8>) {
+        if let Some(pending) = self.deferred_tasks.remove(&token_id) {
+            if let Some(task) = pending.process_response(response) {
+                self.task_queue.push(task);
+            }
         } else {
             error!("token_id={} not found", token_id);
         }
