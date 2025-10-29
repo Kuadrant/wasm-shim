@@ -1,3 +1,5 @@
+use log::warn;
+use proxy_wasm::types::Bytes;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -5,7 +7,6 @@ use crate::v2::data::cel::EvalResult;
 use crate::v2::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
-use log::warn;
 
 type RequestData = ((String, String), Expression);
 
@@ -183,6 +184,22 @@ impl ReqRespCtx {
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn is_end_of_stream(&self) -> bool {
+        self.end_of_stream
+    }
+
+    pub fn body_size(&self) -> usize {
+        self.body_size
+    }
+
+    pub(crate) fn get_http_response_body(
+        &self,
+        start: usize,
+        body_size: usize,
+    ) -> Result<Option<Bytes>, AttributeError> {
+        self.backend.get_http_response_body(start, body_size)
     }
 }
 
