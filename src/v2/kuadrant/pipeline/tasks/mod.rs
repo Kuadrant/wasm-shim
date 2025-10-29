@@ -1,3 +1,4 @@
+mod auth;
 #[allow(dead_code)]
 mod headers;
 mod ratelimit;
