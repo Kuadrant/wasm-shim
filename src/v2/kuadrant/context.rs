@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
-use crate::v2::data::cel::EvalResult;
 use crate::v2::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
+use crate::v2::services::ServiceError;
 use log::warn;
 
 type RequestData = ((String, String), Expression);
@@ -169,6 +169,27 @@ impl ReqRespCtx {
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn dispatch_grpc_call(
+        &self,
+        upstream_name: &str,
+        service_name: &str,
+        method: &str,
+        message: Vec<u8>,
+        timeout: std::time::Duration,
+    ) -> Result<u32, ServiceError> {
+        // todo(refactor): resolve tracing headers
+        let headers = Vec::new();
+
+        self.backend.dispatch_grpc_call(
+            upstream_name,
+            service_name,
+            method,
+            headers,
+            message,
+            timeout,
+        )
     }
 }
 

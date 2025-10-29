@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 pub struct Pipeline {
     ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
-    deferred_tasks: BTreeMap<usize, PendingTask>,
+    deferred_tasks: BTreeMap<u32, PendingTask>,
     completed_tasks: HashSet<String>,
 }
 
@@ -69,9 +69,10 @@ impl Pipeline {
         }
     }
 
-    pub fn digest(&mut self, token_id: usize, response: Vec<u8>) {
+    pub fn digest(&mut self, token_id: u32, response: Vec<u8>) {
         if let Some(pending) = self.deferred_tasks.remove(&token_id) {
             let tasks = pending.process_response(response);
+            // todo(refactor): error handling
             self.task_queue.extend(tasks);
         } else {
             error!("token_id={} not found", token_id);
