@@ -20,7 +20,7 @@ use crate::v2::kuadrant::ReqRespCtx;
 
 const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";
 
-struct AuthService {
+pub struct AuthService {
     upstream_name: String,
     service_name: String,
     method: String,

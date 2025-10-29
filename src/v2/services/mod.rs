@@ -5,6 +5,8 @@ use crate::v2::kuadrant::ReqRespCtx;
 mod auth;
 mod rate_limit;
 
+pub use auth::AuthService;
+
 #[derive(Debug)]
 pub enum ServiceError {
     DispatchFailed(String),
