@@ -1,6 +1,7 @@
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
+mod rate_limit;
 
 #[derive(Debug)]
 pub enum ServiceError {
