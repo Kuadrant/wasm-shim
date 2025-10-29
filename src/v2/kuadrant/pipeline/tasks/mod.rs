@@ -48,10 +48,7 @@ impl PendingTask {
 pub enum TaskOutcome {
     Done,
     Continue(Box<dyn Task>),
-    Deferred {
-        token_id: usize,
-        pending: PendingTask,
-    },
+    Deferred { token_id: u32, pending: PendingTask },
     Requeued(Box<dyn Task>),
     Failed, // Possibly wrapping an error
 }

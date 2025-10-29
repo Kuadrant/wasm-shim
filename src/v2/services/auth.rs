@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::Service;
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::temp::GrpcRequest;
+use crate::v2::services::ServiceError;
 
 struct AuthService {
     upstream_name: String,
@@ -14,7 +14,7 @@ struct AuthService {
 impl Service for AuthService {
     type Response = String;
 
-    fn dispatch(&self, _ctx: &mut ReqRespCtx, _scope: String) -> usize {
+    fn dispatch(&self, _ctx: &mut ReqRespCtx, _message: Vec<u8>) -> Result<u32, ServiceError> {
         // build message
         // let _msg = self.request_message(ctx);
 
@@ -23,11 +23,7 @@ impl Service for AuthService {
         todo!()
     }
 
-    fn parse_message(&self, _message: Vec<u8>) -> Self::Response {
-        todo!()
-    }
-
-    fn request_message(&self, _ctx: &mut ReqRespCtx, _scope: String) -> GrpcRequest {
+    fn parse_message(&self, _message: Vec<u8>) -> Result<Self::Response, ServiceError> {
         todo!()
     }
 }

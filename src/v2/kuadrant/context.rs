@@ -7,6 +7,7 @@ use crate::v2::data::cel::EvalResult;
 use crate::v2::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
+use crate::v2::services::ServiceError;
 
 type RequestData = ((String, String), Expression);
 
@@ -200,6 +201,27 @@ impl ReqRespCtx {
         body_size: usize,
     ) -> Result<Option<Bytes>, AttributeError> {
         self.backend.get_http_response_body(start, body_size)
+    }
+
+    pub fn dispatch_grpc_call(
+        &self,
+        upstream_name: &str,
+        service_name: &str,
+        method: &str,
+        message: Vec<u8>,
+        timeout: std::time::Duration,
+    ) -> Result<u32, ServiceError> {
+        // todo(refactor): resolve tracing headers
+        let headers = Vec::new();
+
+        self.backend.dispatch_grpc_call(
+            upstream_name,
+            service_name,
+            method,
+            headers,
+            message,
+            timeout,
+        )
     }
 }
 

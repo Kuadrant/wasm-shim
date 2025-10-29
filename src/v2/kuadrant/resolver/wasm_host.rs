@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
+use crate::v2::services::ServiceError;
 use proxy_wasm::hostcalls;
 
 pub struct ProxyWasmHost;
@@ -60,5 +63,25 @@ impl AttributeResolver for ProxyWasmHost {
         .map_err(|e| {
             AttributeError::Retrieval(format!("Error getting http response body buffer: {e:?}"))
         })
+    }
+
+    fn dispatch_grpc_call(
+        &self,
+        upstream_name: &str,
+        service_name: &str,
+        method: &str,
+        headers: Vec<(&str, &[u8])>,
+        message: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<u32, ServiceError> {
+        hostcalls::dispatch_grpc_call(
+            upstream_name,
+            service_name,
+            method,
+            headers,
+            Some(&message),
+            timeout,
+        )
+        .map_err(|e| ServiceError::DispatchFailed(format!("{e:?}")))
     }
 }

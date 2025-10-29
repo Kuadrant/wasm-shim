@@ -42,8 +42,14 @@ impl<S: Service + 'static> Task for SendTask<S> {
         self.dependencies.as_slice()
     }
 
-    fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
-        let token_id = self.service.dispatch(self.message);
+    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        let token_id = match self.service.dispatch(ctx, self.message) {
+            Ok(id) => id,
+            Err(_e) => {
+                // todo(refactor): error handling
+                return TaskOutcome::Failed;
+            }
+        };
         let service = self.service.clone();
         let process_response = self.process_response;
 
@@ -53,8 +59,13 @@ impl<S: Service + 'static> Task for SendTask<S> {
                 task_id: Some(self.task_id),
                 is_blocking: self.is_blocking,
                 process_response: Box::new(move |response| {
-                    let parsed = service.parse_message(response);
-                    process_response(parsed)
+                    match service.parse_message(response) {
+                        Ok(parsed) => process_response(parsed),
+                        Err(_e) => {
+                            // todo(refactor): error handling
+                            Vec::new()
+                        }
+                    }
                 }),
             },
         }
