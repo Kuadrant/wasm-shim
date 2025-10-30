@@ -25,16 +25,6 @@ struct RateLimitService {
 impl Service for RateLimitService {
     type Response = RateLimitResponse;
 
-    fn dispatch(&self, ctx: &mut ReqRespCtx, message: Vec<u8>) -> Result<u32, ServiceError> {
-        ctx.dispatch_grpc_call(
-            &self.upstream_name,
-            &self.service_name,
-            &self.method,
-            message,
-            self.timeout,
-        )
-    }
-
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError> {
         prost::Message::decode(&message[..])
             .map_err(|e| ServiceError::DecodeFailed(format!("RateLimitResponse: {e}")))
@@ -42,13 +32,35 @@ impl Service for RateLimitService {
 }
 
 impl RateLimitService {
+    fn dispatch_ratelimit(
+        &self,
+        ctx: &mut ReqRespCtx,
+        scope: &str,
+        descriptors: Vec<RateLimitDescriptorData>,
+        hits_addend: u32,
+    ) -> Result<u32, ServiceError> {
+        let ratelimit_request = self
+            .build_request(ctx, scope, descriptors, hits_addend)
+            .map_err(|e| ServiceError::DispatchFailed(format!("Failed to build request: {e}")))?;
+        let outgoing_message = ratelimit_request.encode_to_vec();
+
+        self.dispatch(
+            ctx,
+            &self.upstream_name,
+            &self.service_name,
+            &self.method,
+            outgoing_message,
+            self.timeout,
+        )
+    }
+
     pub fn build_request(
         &self,
         ctx: &mut ReqRespCtx,
-        domain: String,
+        domain: &str,
         descriptors: Vec<RateLimitDescriptorData>,
         hits_addend: u32,
-    ) -> Result<Vec<u8>, AttributeError> {
+    ) -> Result<RateLimitRequest, AttributeError> {
         let mut pb_descriptors: Vec<RateLimitDescriptor> = descriptors
             .iter()
             .map(|desc| RateLimitDescriptor {
@@ -91,12 +103,10 @@ impl RateLimitService {
             }
         }
 
-        let request = RateLimitRequest {
-            domain,
+        Ok(RateLimitRequest {
+            domain: domain.to_string(),
             descriptors: pb_descriptors,
             hits_addend,
-        };
-
-        Ok(request.encode_to_vec())
+        })
     }
 }

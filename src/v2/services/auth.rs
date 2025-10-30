@@ -30,16 +30,6 @@ struct AuthService {
 impl Service for AuthService {
     type Response = CheckResponse;
 
-    fn dispatch(&self, ctx: &mut ReqRespCtx, message: Vec<u8>) -> Result<u32, ServiceError> {
-        ctx.dispatch_grpc_call(
-            &self.upstream_name,
-            &self.service_name,
-            &self.method,
-            message,
-            self.timeout,
-        )
-    }
-
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError> {
         prost::Message::decode(&message[..])
             .map_err(|e| ServiceError::DecodeFailed(format!("CheckResponse: {e}")))
@@ -47,13 +37,20 @@ impl Service for AuthService {
 }
 
 impl AuthService {
-    pub fn build_request(
-        &self,
-        ctx: &mut ReqRespCtx,
-        scope: &str,
-    ) -> Result<Vec<u8>, AttributeError> {
-        let request = build_check_request(ctx, scope)?;
-        Ok(request.encode_to_vec())
+    pub fn dispatch_auth(&self, ctx: &mut ReqRespCtx, scope: &str) -> Result<u32, ServiceError> {
+        let check_request = build_check_request(ctx, scope).map_err(|e| {
+            ServiceError::DispatchFailed(format!("Failed to build CheckRequest: {e}"))
+        })?;
+        let outgoing_message = check_request.encode_to_vec();
+
+        self.dispatch(
+            ctx,
+            &self.upstream_name,
+            &self.service_name,
+            &self.method,
+            outgoing_message,
+            self.timeout,
+        )
     }
 }
 
