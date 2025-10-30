@@ -1,7 +1,6 @@
 #[allow(dead_code)]
 mod headers;
 mod ratelimit;
-mod send;
 
 use crate::v2::kuadrant::ReqRespCtx;
 
