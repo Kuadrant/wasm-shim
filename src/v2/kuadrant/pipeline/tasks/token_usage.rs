@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_one_event_and_end_of_stream() {
-        let buf = String::from(r#"data: {"id": 1}\n\n"#);
+        let buf = String::from("data:foo\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
             .with_end_of_stream(true)
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_two_events_and_not_end_of_stream() {
-        let buf = String::from(r#"data: {"id": 1}\n\ndata: {"id": 2}\n\n"#);
+        let buf = String::from("data:foo\n\ndata:bar\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
             .with_end_of_stream(false)
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_two_events_and_end_of_stream() {
-        let buf = String::from(r#"data: {"id": 1}\n\ndata: {"id": 2}\n\n"#);
+        let buf = String::from("data:foo\n\ndata:bar\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
             .with_end_of_stream(true)
