@@ -82,12 +82,7 @@ fn crlf(input: &str) -> IResult<&str, &str> {
 
 #[inline]
 fn end_of_line(input: &str) -> IResult<&str, &str> {
-    alt((
-        crlf,
-        take_while_m_n(1, 1, is_cr),
-        take_while_m_n(1, 1, is_lf),
-    ))
-    .parse(input)
+    alt((crlf, tag("\u{000D}"), tag("\u{000A}"))).parse(input)
 }
 
 #[inline]
@@ -219,16 +214,19 @@ mod tests {
 
     #[test]
     fn test_end_of_line() {
-        // Streaming parsers need extra data to know parsing is complete
         assert_eq!(end_of_line("\r\nfoo"), Ok(("foo", "\r\n")));
         assert_eq!(end_of_line("\nfoo"), Ok(("foo", "\n")));
         assert_eq!(end_of_line("\rfoo"), Ok(("foo", "\r")));
         assert!(end_of_line("foo").is_err());
+        assert!(end_of_line("foo\n").is_err());
+        assert!(end_of_line("foo\r").is_err());
+        assert!(end_of_line("foo\r\n").is_err());
+        assert_eq!(end_of_line("\n"), Ok(("", "\n")));
     }
 
     #[test]
     fn test_comment() {
-        // Basic comment (streaming parsers need data after newline)
+        // Basic comment
         let result = comment(":this is a comment\nnext");
         assert!(result.is_ok());
         let (remaining, parsed) = result.unwrap();
@@ -274,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_field_with_value() {
-        // Field with value and space (streaming parsers need data after newline)
+        // Field with value and space
         let result = field("event: message\nnext");
         assert!(result.is_ok());
         let (remaining, parsed) = result.unwrap();
@@ -329,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_field_without_value() {
-        // Field without colon (streaming parsers need data after newline)
+        // Field without colon
         let result = field("event\nnext");
         assert!(result.is_ok());
         let (remaining, parsed) = result.unwrap();
@@ -416,8 +414,30 @@ mod tests {
     }
 
     #[test]
+    fn test_line_data() {
+        let result = line("data:foo\n\n");
+        assert!(result.is_ok());
+        let (remaining, parsed) = result.unwrap();
+        assert_eq!(remaining, "\n");
+        match parsed {
+            RawEventLine::Field(name, Some(value)) => {
+                assert_eq!(name, "data");
+                assert_eq!(value, "foo");
+            }
+            _ => panic!("Expected Field"),
+        }
+    }
+
+    #[test]
     fn test_line_empty() {
         let result = line("\nnext");
+        assert!(result.is_ok());
+        match result.unwrap().1 {
+            RawEventLine::Empty => {}
+            _ => panic!("Expected Empty"),
+        }
+
+        let result = line("\n");
         assert!(result.is_ok());
         match result.unwrap().1 {
             RawEventLine::Empty => {}
