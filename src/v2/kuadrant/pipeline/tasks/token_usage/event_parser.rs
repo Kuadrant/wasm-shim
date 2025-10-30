@@ -41,7 +41,7 @@ impl EventParser {
             events.push(event);
         }
 
-        return Ok(events);
+        Ok(events)
     }
 
     fn parse_one_event(&mut self) -> Result<Option<Event>, String> {
@@ -117,7 +117,7 @@ impl EventBuilder {
             return None;
         }
 
-        if sse_line_parser::is_lf(event.data.chars().next_back().unwrap()) {
+        if sse_line_parser::is_lf(event.data.chars().next_back().unwrap_or(' ')) {
             event.data.pop();
         }
 
