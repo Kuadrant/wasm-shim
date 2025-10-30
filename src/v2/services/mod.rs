@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
@@ -23,6 +25,17 @@ impl std::error::Error for ServiceError {}
 pub trait Service {
     type Response;
 
-    fn dispatch(&self, ctx: &mut ReqRespCtx, message: Vec<u8>) -> Result<u32, ServiceError>;
+    fn dispatch(
+        &self,
+        ctx: &mut ReqRespCtx,
+        upstream: &str,
+        service: &str,
+        method: &str,
+        message: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<u32, ServiceError> {
+        ctx.dispatch_grpc_call(upstream, service, method, message, timeout)
+    }
+
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError>;
 }
