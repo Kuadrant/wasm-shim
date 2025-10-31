@@ -24,58 +24,59 @@ impl Pipeline {
     }
 
     pub fn eval(mut self) -> Option<Self> {
-        self.task_queue = self
-            .task_queue
-            .drain(..)
-            .filter_map(|mut task| {
-                #[allow(deprecated)]
-                match task.prepare(&mut self.ctx) {
-                    TaskOutcome::Done => {}
-                    TaskOutcome::Failed => {
-                        error!("Task preparation failed: {:?}", task.id());
-                        return None;
-                    }
-                    _ => {
-                        error!("Unexpected TaskOutcome from prepare");
-                        return None;
+        let tasks_to_process: Vec<_> = self.task_queue.drain(..).collect();
+
+        for task in tasks_to_process {
+            #[allow(deprecated)]
+            match task.prepare(&mut self.ctx) {
+                TaskOutcome::Done => {}
+                TaskOutcome::Failed => {
+                    error!("Task preparation failed: {:?}", task.id());
+                    continue;
+                }
+                TaskOutcome::Requeued(tasks) => {
+                    self.task_queue.extend(tasks);
+                    continue;
+                }
+                _ => {
+                    error!("Unexpected TaskOutcome from prepare");
+                    continue;
+                }
+            }
+
+            if task
+                .dependencies()
+                .iter()
+                .any(|dep| !self.completed_tasks.contains(dep))
+            {
+                self.task_queue.push(task);
+                continue;
+            }
+
+            let task_id = task.id();
+            match task.apply(&mut self.ctx) {
+                TaskOutcome::Done => {
+                    if let Some(id) = task_id {
+                        self.completed_tasks.insert(id);
                     }
                 }
-
-                loop {
-                    if task
-                        .dependencies()
-                        .iter()
-                        .any(|dep| !self.completed_tasks.contains(dep))
-                    {
-                        return Some(task);
+                TaskOutcome::Deferred { token_id, pending } => {
+                    if let Some(id) = pending.task_id() {
+                        self.completed_tasks.insert(id.clone());
                     }
-
-                    let task_id = task.id();
-                    match task.apply(&mut self.ctx) {
-                        TaskOutcome::Done => {
-                            if let Some(id) = task_id {
-                                self.completed_tasks.insert(id);
-                            }
-                            return None;
-                        }
-                        TaskOutcome::Continue(next_task) => {
-                            task = next_task;
-                        }
-                        TaskOutcome::Deferred { token_id, pending } => {
-                            if let Some(id) = pending.task_id() {
-                                self.completed_tasks.insert(id.clone());
-                            }
-                            if self.deferred_tasks.insert(token_id, pending).is_some() {
-                                error!("Duplicate token_id={}", token_id);
-                            }
-                            return None;
-                        }
-                        TaskOutcome::Requeued(task) => return Some(task),
-                        TaskOutcome::Failed => todo!("Handle failed task"),
+                    if self.deferred_tasks.insert(token_id, pending).is_some() {
+                        error!("Duplicate token_id={}", token_id);
                     }
                 }
-            })
-            .collect();
+                TaskOutcome::Requeued(tasks) => {
+                    self.task_queue.extend(tasks);
+                }
+                TaskOutcome::Failed => {
+                    // todo(refactor): error handling
+                    error!("Task failed: {:?}", task_id);
+                }
+            }
+        }
 
         if self.deferred_tasks.is_empty() && self.task_queue.is_empty() {
             None
@@ -84,14 +85,30 @@ impl Pipeline {
         }
     }
 
-    pub fn digest(&mut self, token_id: u32, response: Vec<u8>) {
+    pub fn digest(mut self, token_id: u32, status_code: u32, response_size: usize) -> Option<Self> {
         if let Some(pending) = self.deferred_tasks.remove(&token_id) {
-            let tasks = pending.process_response(response);
-            // todo(refactor): error handling
-            self.task_queue.extend(tasks);
+            match pending.process_response(&mut self.ctx, status_code, response_size) {
+                TaskOutcome::Done => {}
+                TaskOutcome::Requeued(tasks) => {
+                    for task in tasks.into_iter().rev() {
+                        self.task_queue.insert(0, task);
+                    }
+                }
+                TaskOutcome::Deferred { token_id, pending } => {
+                    if self.deferred_tasks.insert(token_id, pending).is_some() {
+                        error!("Duplicate token_id={}", token_id);
+                    }
+                }
+                TaskOutcome::Failed => {
+                    // todo(refactor): error handling
+                    error!("Failed to process response for token_id={}", token_id);
+                }
+            }
         } else {
             error!("token_id={} not found", token_id);
         }
+
+        self.eval()
     }
 
     pub fn is_blocked(&self) -> bool {

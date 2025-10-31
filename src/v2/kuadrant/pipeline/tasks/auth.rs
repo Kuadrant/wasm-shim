@@ -6,6 +6,7 @@ use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
+use prost_types::value::Kind;
 use std::rc::Rc;
 
 pub struct AuthTask {
@@ -86,7 +87,7 @@ impl Task for AuthTask {
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
-            Ok(AttributeState::Pending) => return TaskOutcome::Requeued(self),
+            Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
             Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
             Ok(AttributeState::Available(true)) => {}
             Err(_e) => {
@@ -108,19 +109,26 @@ impl Task for AuthTask {
             pending: PendingTask {
                 task_id: Some(self.task_id),
                 is_blocking: self.is_blocking,
-                process_response: Box::new(move |response| match service.parse_message(response) {
-                    Ok(parsed) => process_auth_response(parsed),
-                    Err(_e) => Vec::new(),
+                process_response: Box::new(move |ctx, status_code, response_size| {
+                    if status_code != proxy_wasm::types::Status::Ok as u32 {
+                        // todo(refactor): failure case
+                        return TaskOutcome::Failed;
+                    }
+
+                    match service.get_response(ctx, response_size) {
+                        Ok(parsed) => process_auth_response(parsed),
+                        Err(_e) => TaskOutcome::Failed,
+                    }
                 }),
             },
         }
     }
 }
 
-fn process_auth_response(response: CheckResponse) -> Vec<Box<dyn Task>> {
-    let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+fn process_auth_response(response: CheckResponse) -> TaskOutcome {
+    let tasks: Vec<Box<dyn Task>> = Vec::new();
 
-    // todo(refactor): Store dynamic_metadata
+    // todo(refactor): Store dynamic_metadata - needs ctx to be passed to this function
 
     match response.http_response {
         None => {
@@ -134,5 +142,47 @@ fn process_auth_response(response: CheckResponse) -> Vec<Box<dyn Task>> {
         }
     }
 
-    tasks
+    if tasks.is_empty() {
+        TaskOutcome::Done
+    } else {
+        TaskOutcome::Requeued(tasks)
+    }
+}
+
+fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+
+    for (key, value) in &s.fields {
+        let current_path = format!("{}.{}", prefix, key);
+
+        match &value.kind {
+            Some(Kind::StructValue(nested_struct)) => {
+                result.extend(process_metadata(nested_struct, current_path));
+            }
+            Some(kind) => {
+                let json = match kind {
+                    Kind::StringValue(s) => Some(serde_json::Value::String(s.clone())),
+                    Kind::BoolValue(b) => Some(serde_json::Value::Bool(*b)),
+                    Kind::NullValue(_) => Some(serde_json::Value::Null),
+                    Kind::NumberValue(n) => Some(serde_json::json!(n)),
+                    Kind::StructValue(_) => unreachable!(),
+                    _ => {
+                        log::warn!("Unknown Struct field kind for key {}: {:?}", key, kind);
+                        None
+                    }
+                };
+
+                if let Some(v) = json {
+                    if let Ok(serialized) = serde_json::to_string(&v) {
+                        result.push((current_path, serialized));
+                    }
+                }
+            }
+            None => {
+                log::warn!("Struct field {} has no kind", key);
+            }
+        }
+    }
+
+    result
 }
