@@ -4,7 +4,7 @@ use crate::v2::configuration::ServiceType;
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
-mod rate_limit;
+pub mod rate_limit;
 
 pub use auth::AuthService;
 pub use rate_limit::RateLimitService;

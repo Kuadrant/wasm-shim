@@ -1,16 +1,13 @@
-use crate::envoy::{
-    rate_limit_descriptor, rate_limit_response, RateLimitDescriptor, RateLimitRequest,
-    RateLimitResponse,
-};
+use crate::envoy::{rate_limit_descriptor, rate_limit_response, RateLimitDescriptor};
 use crate::v2::data::attribute::{AttributeError, AttributeState};
-use crate::v2::data::cel::{EvaluationError, Expression, Predicate};
+use crate::v2::data::cel::{Expression, Predicate, PredicateResult};
 use crate::v2::kuadrant::pipeline::blueprint::{Action, ConditionalData};
 #[allow(dead_code)]
 use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
+use crate::v2::services::rate_limit::RateLimitService;
 use crate::v2::services::Service;
 use cel_interpreter::Value;
-use prost::Message;
 use std::rc::Rc;
 
 /// Builds individual descriptor entries from CEL expressions
@@ -26,7 +23,7 @@ impl DescriptorEntryBuilder {
     }
 
     /// Evaluate the expression to create a descriptor entry
-    fn evaluate(&self, ctx: &ReqRespCtx) -> Result<rate_limit_descriptor::Entry, AttributeError> {
+    fn evaluate(self, ctx: &ReqRespCtx) -> Result<rate_limit_descriptor::Entry, AttributeError> {
         match self.expression.eval(ctx) {
             Ok(AttributeState::Available(value)) => {
                 let value_str = match value {
@@ -61,8 +58,8 @@ impl DescriptorEntryBuilder {
 }
 
 /// Result type indicating the message build outcome
-enum BuildMessageResult {
-    Ready(Vec<u8>),
+enum BuildDescriptorsResult {
+    Ready(Vec<RateLimitDescriptor>),
     Pending,
     Error(AttributeError),
 }
@@ -77,7 +74,7 @@ pub struct RateLimitTask {
 
     // Rate limit configuration
     scope: String,
-    service: Rc<dyn Service<Response = RateLimitResponse>>,
+    service: Rc<RateLimitService>,
 
     // Conditional data for building descriptors
     conditional_data_sets: Vec<ConditionalData>,
@@ -89,11 +86,11 @@ pub struct RateLimitTask {
 
 #[allow(dead_code)]
 impl RateLimitTask {
-    fn new(
+    pub fn new(
         task_id: String,
         dependencies: Vec<String>,
         action: Action,
-        service: Rc<dyn Service<Response = RateLimitResponse>>,
+        service: Rc<RateLimitService>,
     ) -> Self {
         Self {
             task_id,
@@ -107,8 +104,8 @@ impl RateLimitTask {
         }
     }
 
-    /// Builds the rate limit request message from the context
-    fn build_message(&self, ctx: &ReqRespCtx) -> BuildMessageResult {
+    /// Builds the rate limit descriptors from the context
+    fn build_descriptors(&self, ctx: &ReqRespCtx) -> BuildDescriptorsResult {
         // Build descriptor entries by evaluating conditional data
         let mut entries = Vec::new();
 
@@ -119,7 +116,7 @@ impl RateLimitTask {
                     // Predicates passed, evaluate entries
                     match self.build_entries(conditional_data, ctx) {
                         Ok(cond_entries) => entries.extend(cond_entries),
-                        Err(err) => return BuildMessageResult::Error(err),
+                        Err(err) => return BuildDescriptorsResult::Error(err),
                     }
                 }
                 Ok(AttributeState::Available(false)) => {
@@ -128,10 +125,10 @@ impl RateLimitTask {
                 }
                 Ok(AttributeState::Pending) => {
                     // Can't evaluate yet, need to defer
-                    return BuildMessageResult::Pending;
+                    return BuildDescriptorsResult::Pending;
                 }
                 Err(eval_err) => {
-                    return BuildMessageResult::Error(AttributeError::Retrieval(format!(
+                    return BuildDescriptorsResult::Error(AttributeError::Retrieval(format!(
                         "Predicate evaluation failed: {}",
                         eval_err
                     )));
@@ -139,26 +136,13 @@ impl RateLimitTask {
             }
         }
 
-        // Extract known attributes (hits_addend, domain) before filtering
-        let (hits_addend, domain_override) = match self.get_known_attributes(ctx) {
-            Ok(attrs) => attrs,
-            Err(err) => return BuildMessageResult::Error(err),
-        };
-
         // Filter out known attributes from entries
         entries.retain(|entry| !KNOWN_ATTRIBUTES.contains(&entry.key.as_str()));
 
         // If no entries, return empty vector (no rate limiting needed)
         if entries.is_empty() {
-            return BuildMessageResult::Ready(Vec::new());
+            return BuildDescriptorsResult::Ready(Vec::new());
         }
-
-        // Determine domain (use override or default scope)
-        let domain = if domain_override.is_empty() {
-            self.scope.clone()
-        } else {
-            domain_override
-        };
 
         // Build the descriptor
         let descriptor = RateLimitDescriptor {
@@ -166,19 +150,12 @@ impl RateLimitTask {
             limit: None,
         };
 
-        // Build the rate limit request
-        let request = RateLimitRequest {
-            domain,
-            descriptors: vec![descriptor],
-            hits_addend,
-        };
-
         // Encode to protobuf bytes
-        BuildMessageResult::Ready(request.encode_to_vec())
+        BuildDescriptorsResult::Ready(vec![descriptor])
     }
 
     /// Check if all predicates evaluate to true
-    fn predicates_apply(&self, ctx: &ReqRespCtx) -> Result<AttributeState<bool>, EvaluationError> {
+    fn predicates_apply(&self, ctx: &ReqRespCtx) -> PredicateResult {
         if self.predicates.is_empty() {
             return Ok(AttributeState::Available(true));
         }
@@ -252,6 +229,7 @@ impl RateLimitTask {
         Ok((hits_addend, domain))
     }
 
+    /// Builds rate limit entries needed for rate limit descriptors
     fn build_entries(
         &self,
         conditional_data: &ConditionalData,
@@ -271,25 +249,40 @@ impl RateLimitTask {
 impl Task for RateLimitTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         // Build the rate limit message
-        let message = match self.build_message(ctx) {
-            BuildMessageResult::Ready(msg) => msg,
-            BuildMessageResult::Pending => {
+        let descriptors = match self.build_descriptors(ctx) {
+            BuildDescriptorsResult::Ready(msg) => msg,
+            BuildDescriptorsResult::Pending => {
                 // Need to wait for attributes, requeue
                 return TaskOutcome::Requeued(self);
             }
-            BuildMessageResult::Error(_e) => {
+            BuildDescriptorsResult::Error(_e) => {
                 // TODO: Handle error appropriately based on failure mode
                 return TaskOutcome::Failed;
             }
         };
+        // Extract known attributes (hits_addend, domain) before filtering
+        let (hits_addend, domain_override) = match self.get_known_attributes(ctx) {
+            Ok(attrs) => attrs,
+            Err(_err) => return TaskOutcome::Failed, // should we fail or requeue?
+        };
+
+        // Determine domain (use override or default scope)
+        let domain: String = if domain_override.is_empty() {
+            self.scope.clone()
+        } else {
+            domain_override
+        };
 
         // If empty message, skip rate limiting... Or should it be TaskOutcome::Failed?
-        if message.is_empty() {
+        if descriptors.is_empty() {
             return TaskOutcome::Done;
         }
 
-        // Dispatch the message to the rate limit service
-        let token_id = match self.service.dispatch(ctx, message) {
+        // Dispatch the rate limit service message
+        let token_id = match self
+            .service
+            .dispatch_ratelimit(ctx, &domain, descriptors, hits_addend)
+        {
             Ok(id) => id,
             Err(_e) => {
                 // TODO: Handle error based on failure mode (allow/deny)
