@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
-mod rate_limit;
+pub mod rate_limit;
 
 #[derive(Debug)]
 pub enum ServiceError {
