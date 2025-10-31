@@ -1,9 +1,15 @@
-use crate::v2::configuration::{PluginConfiguration, Service};
-use crate::v2::data::{attribute::AttributeState, Expression};
+use crate::v2::configuration::PluginConfiguration;
+use crate::v2::configuration::ServiceType;
+use crate::v2::data::{
+    attribute::AttributeState,
+    cel::{Predicate, PredicateVec},
+    Expression,
+};
 use crate::v2::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
 use crate::v2::kuadrant::pipeline::executor::Pipeline;
+use crate::v2::kuadrant::pipeline::tasks::{AuthTask, Task};
 use crate::v2::kuadrant::ReqRespCtx;
-use cel_interpreter::Value;
+use crate::v2::services::{AuthService, RateLimitService, ServiceInstance};
 use radix_trie::Trie;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -13,7 +19,7 @@ type RequestData = ((String, String), Expression);
 
 pub struct PipelineFactory {
     index: Trie<String, Vec<Rc<Blueprint>>>,
-    services: HashMap<String, Rc<Service>>,
+    services: HashMap<String, ServiceInstance>,
     request_data: Arc<Vec<RequestData>>,
 }
 
@@ -27,10 +33,39 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        let services: HashMap<String, Rc<Service>> = config
+        let services: HashMap<String, ServiceInstance> = config
             .services
-            .into_iter()
-            .map(|(name, svc)| (name, Rc::new(svc)))
+            .iter()
+            .map(|(name, service_config)| {
+                let instance = match service_config.service_type {
+                    ServiceType::Auth => ServiceInstance::Auth(Rc::new(AuthService::new(
+                        service_config.endpoint.clone(),
+                        service_config.timeout.0,
+                    ))),
+                    ServiceType::RateLimit => {
+                        ServiceInstance::RateLimit(Rc::new(RateLimitService::new(
+                            service_config.endpoint.clone(),
+                            service_config.timeout.0,
+                            service_config.service_type.clone(),
+                        )))
+                    }
+                    ServiceType::RateLimitCheck => {
+                        ServiceInstance::RateLimitCheck(Rc::new(RateLimitService::new(
+                            service_config.endpoint.clone(),
+                            service_config.timeout.0,
+                            service_config.service_type.clone(),
+                        )))
+                    }
+                    ServiceType::RateLimitReport => {
+                        ServiceInstance::RateLimitReport(Rc::new(RateLimitService::new(
+                            service_config.endpoint.clone(),
+                            service_config.timeout.0,
+                            service_config.service_type.clone(),
+                        )))
+                    }
+                };
+                (name.clone(), instance)
+            })
             .collect();
 
         let mut index = Trie::new();
@@ -81,13 +116,38 @@ impl PipelineFactory {
     pub fn build(&self, ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
         let ctx = ctx.with_request_data(Arc::clone(&self.request_data));
 
-        let _blueprint = match self.select_blueprint(&ctx)? {
+        let blueprint = match self.select_blueprint(&ctx)? {
             Some(bp) => bp,
             None => return Ok(None),
         };
 
-        // TODO: Create tasks from blueprint.actions
-        Ok(Some(Pipeline::new(ctx)))
+        let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+
+        for action in &blueprint.actions {
+            match &action.service {
+                ServiceInstance::Auth(auth_service) => {
+                    tasks.push(Box::new(AuthTask::new(
+                        action.id.clone(),
+                        Rc::clone(auth_service),
+                        action.scope.clone(),
+                        action.predicates.clone(),
+                        action.dependencies.clone(),
+                        true, // is_blocking = true for auth tasks
+                    )));
+                }
+                ServiceInstance::RateLimit(_)
+                | ServiceInstance::RateLimitCheck(_)
+                | ServiceInstance::RateLimitReport(_) => {
+                    todo!("not yet implemented");
+                }
+            }
+        }
+
+        if tasks.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(Pipeline::new(ctx).with_tasks(tasks)))
     }
 
     fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<&Rc<Blueprint>>, BuildError> {
@@ -120,40 +180,21 @@ impl PipelineFactory {
 
     fn route_predicates_match(
         &self,
-        predicates: &[Expression],
+        predicates: &Vec<Predicate>,
         blueprint_name: &str,
         ctx: &ReqRespCtx,
     ) -> Result<bool, BuildError> {
-        if predicates.is_empty() {
-            return Ok(true);
+        match predicates.apply(ctx) {
+            Ok(AttributeState::Available(result)) => Ok(result),
+            Ok(AttributeState::Pending) => Err(BuildError::DataPending(format!(
+                "route predicate: {}",
+                blueprint_name
+            ))),
+            Err(e) => Err(BuildError::EvaluationError(format!(
+                "route predicate evaluation failed: {}",
+                e
+            ))),
         }
-
-        for predicate in predicates {
-            match predicate.eval(ctx) {
-                Ok(AttributeState::Available(Value::Bool(true))) => continue,
-                Ok(AttributeState::Available(Value::Bool(false))) => return Ok(false),
-                Ok(AttributeState::Available(value)) => {
-                    return Err(BuildError::EvaluationError(format!(
-                        "route predicate returned non-boolean: {:?}",
-                        value
-                    )))
-                }
-                Ok(AttributeState::Pending) => {
-                    return Err(BuildError::DataPending(format!(
-                        "route predicate: {}",
-                        blueprint_name
-                    )))
-                }
-                Err(e) => {
-                    return Err(BuildError::EvaluationError(format!(
-                        "route predicate evaluation failed: {}",
-                        e
-                    )))
-                }
-            }
-        }
-
-        Ok(true)
     }
 }
 
@@ -190,7 +231,7 @@ fn domain_and_field_name(name: &str) -> (&str, &str) {
 mod tests {
     use super::*;
     use crate::v2::configuration::{
-        Action, ActionSet, FailureMode, RouteRuleConditions, ServiceType, Timeout,
+        Action, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType, Timeout,
     };
     use crate::v2::kuadrant::MockWasmHost;
 

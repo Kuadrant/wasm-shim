@@ -3,6 +3,7 @@ mod headers;
 mod ratelimit;
 mod store_data;
 
+pub use auth::AuthTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use store_data::StoreDataTask;
 
