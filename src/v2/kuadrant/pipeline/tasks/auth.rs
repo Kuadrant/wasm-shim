@@ -1,11 +1,14 @@
-use crate::envoy::{check_response, CheckResponse};
+use crate::envoy::{check_response, CheckResponse, HeaderValueOption};
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::data::cel::{Predicate, PredicateVec};
 use crate::v2::data::Headers;
-use crate::v2::kuadrant::pipeline::tasks::{PendingTask, StoreDataTask, Task, TaskOutcome};
+use crate::v2::kuadrant::pipeline::tasks::{
+    HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, StoreDataTask, Task, TaskOutcome,
+};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
+use log::warn;
 use prost_types::value::Kind;
 use std::rc::Rc;
 
@@ -138,13 +141,41 @@ fn process_auth_response(response: CheckResponse) -> TaskOutcome {
 
     match response.http_response {
         None => {
-            // todo(refactor): Handle empty response
+            warn!("Auth response contained no http_response");
+            return TaskOutcome::Failed;
         }
-        Some(check_response::HttpResponse::OkResponse(_ok_response)) => {
-            // todo(refactor): Add headers, handle headers_to_remove
+        Some(check_response::HttpResponse::OkResponse(ok_response)) => {
+            // Check for unsupported fields
+            if !ok_response.response_headers_to_add.is_empty() {
+                warn!("Unsupported field 'response_headers_to_add' in OkHttpResponse");
+                return TaskOutcome::Failed;
+            }
+            if !ok_response.headers_to_remove.is_empty() {
+                warn!("Unsupported field 'headers_to_remove' in OkHttpResponse");
+                return TaskOutcome::Failed;
+            }
+            if !ok_response.query_parameters_to_set.is_empty() {
+                warn!("Unsupported field 'query_parameters_to_set' in OkHttpResponse");
+                return TaskOutcome::Failed;
+            }
+            if !ok_response.query_parameters_to_remove.is_empty() {
+                warn!("Unsupported field 'query_parameters_to_remove' in OkHttpResponse");
+                return TaskOutcome::Failed;
+            }
+
+            // Add request headers if present
+            if !ok_response.headers.is_empty() {
+                let headers = from_envoy_headers(&ok_response.headers);
+                tasks.push(Box::new(ModifyHeadersTask::new(
+                    HeaderOperation::Append(headers),
+                    HeadersType::HttpRequestHeaders,
+                )));
+            }
         }
         Some(check_response::HttpResponse::DeniedResponse(_denied_response)) => {
-            // todo(refactor): Send direct response
+            // todo(refactor): need to implement DirectResponseTask
+            warn!("DeniedResponse not yet implemented");
+            return TaskOutcome::Failed;
         }
     }
 
@@ -153,6 +184,19 @@ fn process_auth_response(response: CheckResponse) -> TaskOutcome {
     } else {
         TaskOutcome::Requeued(tasks)
     }
+}
+
+fn from_envoy_headers(headers: &[HeaderValueOption]) -> Headers {
+    let vec: Vec<(String, String)> = headers
+        .iter()
+        .filter_map(|header| {
+            header
+                .header
+                .as_ref()
+                .map(|hv| (hv.key.to_owned(), hv.value.to_owned()))
+        })
+        .collect();
+    vec.into()
 }
 
 fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, Vec<u8>)> {
@@ -173,7 +217,7 @@ fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, Vec
                     Kind::NumberValue(n) => Some(serde_json::json!(n)),
                     Kind::StructValue(_) => unreachable!(),
                     _ => {
-                        log::warn!("Unknown Struct field kind for key {}: {:?}", key, kind);
+                        warn!("Unknown Struct field kind for key {}: {:?}", key, kind);
                         None
                     }
                 };
@@ -185,7 +229,7 @@ fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, Vec
                 }
             }
             None => {
-                log::warn!("Struct field {} has no kind", key);
+                warn!("Struct field {} has no kind", key);
             }
         }
     }

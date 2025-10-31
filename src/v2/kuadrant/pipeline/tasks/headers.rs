@@ -27,7 +27,7 @@ impl From<&HeadersType> for Path {
 }
 
 #[derive(Clone)]
-struct ModifyHeadersTask {
+pub struct ModifyHeadersTask {
     operation: HeaderOperation,
     target: HeadersType,
 }
