@@ -2,7 +2,10 @@ mod auth;
 #[allow(dead_code)]
 mod headers;
 mod ratelimit;
+mod store_data;
 mod token_usage;
+
+pub use store_data::StoreDataTask;
 
 use crate::v2::kuadrant::ReqRespCtx;
 
