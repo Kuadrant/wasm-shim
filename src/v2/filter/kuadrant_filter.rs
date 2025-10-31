@@ -20,7 +20,15 @@ impl KuadrantFilter {
     }
 }
 
-impl Context for KuadrantFilter {}
+impl Context for KuadrantFilter {
+    fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, response_size: usize) {
+        debug!("#{} on_grpc_call_response", self.context_id);
+        if let Some(pipeline) = self.pipeline.take() {
+            self.pipeline = pipeline.digest(token_id, status_code, response_size);
+            // todo(adam-cattermole): Check pipeline.is_blocked() to determine Action::Pause vs Action::Continue
+        }
+    }
+}
 
 impl HttpContext for KuadrantFilter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
