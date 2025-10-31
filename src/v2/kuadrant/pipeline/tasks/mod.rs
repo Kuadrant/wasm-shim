@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 mod headers;
 mod ratelimit;
+mod token_usage;
 
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::Service;

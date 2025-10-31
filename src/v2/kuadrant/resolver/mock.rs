@@ -1,5 +1,6 @@
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
+use proxy_wasm::types::Bytes;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -7,6 +8,7 @@ pub struct MockWasmHost {
     properties: HashMap<Path, Vec<u8>>,
     maps: HashMap<String, Vec<(String, String)>>,
     pending_properties: Vec<Path>,
+    response_body: Option<Bytes>,
 }
 
 impl MockWasmHost {
@@ -15,6 +17,7 @@ impl MockWasmHost {
             properties: HashMap::new(),
             maps: HashMap::new(),
             pending_properties: Vec::new(),
+            response_body: None,
         }
     }
 
@@ -30,6 +33,11 @@ impl MockWasmHost {
 
     pub fn with_pending_property(mut self, path: Path) -> Self {
         self.pending_properties.push(path);
+        self
+    }
+
+    pub fn with_response_body(mut self, bytes: &[u8]) -> Self {
+        self.response_body = Some(bytes.to_vec());
         self
     }
 }
@@ -78,5 +86,22 @@ impl AttributeResolver for MockWasmHost {
         _value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError> {
         Ok(())
+    }
+
+    fn get_http_response_body(
+        &self,
+        start: usize,
+        max_size: usize,
+    ) -> Result<Option<Bytes>, AttributeError> {
+        match &self.response_body {
+            Some(body) => {
+                let buf_end_index = std::cmp::min(start + max_size, body.len());
+                let mut dst: Bytes = vec![0; buf_end_index];
+                assert!(start <= buf_end_index, "messed up with the indexes!");
+                dst.clone_from_slice(&body[start..buf_end_index]);
+                Ok(Some(dst))
+            }
+            None => Ok(None),
+        }
     }
 }

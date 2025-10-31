@@ -1,3 +1,5 @@
+use log::warn;
+use proxy_wasm::types::Bytes;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -5,7 +7,6 @@ use crate::v2::data::cel::EvalResult;
 use crate::v2::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
-use log::warn;
 
 type RequestData = ((String, String), Expression);
 
@@ -14,6 +15,8 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Arc<Vec<RequestData>>>,
+    body_size: usize,
+    end_of_stream: bool,
 }
 
 impl Default for ReqRespCtx {
@@ -28,11 +31,23 @@ impl ReqRespCtx {
             backend,
             cache: Arc::new(AttributeCache::new()),
             request_data: None,
+            body_size: 0,
+            end_of_stream: false,
         }
     }
 
     pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
         self.request_data = Some(request_data);
+        self
+    }
+
+    pub fn with_body_size(mut self, body_size: usize) -> Self {
+        self.body_size = body_size;
+        self
+    }
+
+    pub fn with_end_of_stream(mut self, end_of_stream: bool) -> Self {
+        self.end_of_stream = end_of_stream;
         self
     }
 
@@ -169,6 +184,22 @@ impl ReqRespCtx {
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn is_end_of_stream(&self) -> bool {
+        self.end_of_stream
+    }
+
+    pub fn body_size(&self) -> usize {
+        self.body_size
+    }
+
+    pub(crate) fn get_http_response_body(
+        &self,
+        start: usize,
+        body_size: usize,
+    ) -> Result<Option<Bytes>, AttributeError> {
+        self.backend.get_http_response_body(start, body_size)
     }
 }
 
