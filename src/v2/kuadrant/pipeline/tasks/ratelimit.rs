@@ -248,7 +248,7 @@ impl RateLimitTask {
 
 impl Task for RateLimitTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        // Build the rate limit message
+        // Build the rate limit descriptors
         let descriptors = match self.build_descriptors(ctx) {
             BuildDescriptorsResult::Ready(msg) => msg,
             BuildDescriptorsResult::Pending => {
@@ -304,7 +304,7 @@ impl Task for RateLimitTask {
                     let rate_limit_response = match service.parse_message(response) {
                         Ok(parsed) => parsed,
                         Err(_e) => {
-                            // TODO: Handle parsing error based on failure mode
+                            // TODO: Handle parsing error and/or FailureMode task?
                             return Vec::new();
                         }
                     };
@@ -313,17 +313,17 @@ impl Task for RateLimitTask {
                     match rate_limit_response.overall_code {
                         code if code == rate_limit_response::Code::Ok as i32 => {
                             // Rate limit check passed
-                            // TODO: Extract headers and create AddResponseHeaders task
+                            // TODO: Extract headers and push ModifyHeadersTask + DirectResponseTask
                             Vec::new()
                         }
                         code if code == rate_limit_response::Code::OverLimit as i32 => {
-                            // Rate limit exceeded - return 429 task
-                            // TODO: Extract headers and refine TooManyRequestsTask task
+                            // Rate limit exceeded - return 429
+                            // TODO: Extract headers and push ModifyHeadersTask + DirectResponseTask
                             Vec::new()
                         }
                         _ => {
                             // Unknown or error response
-                            // TODO: Handle based on failure mode
+                            // TODO: Handle parsing error and/or FailureMode task?
                             Vec::new()
                         }
                     }
@@ -338,14 +338,5 @@ impl Task for RateLimitTask {
 
     fn dependencies(&self) -> &[String] {
         self.dependencies.as_slice()
-    }
-}
-#[allow(dead_code)]
-struct TooManyRequestsTask {}
-
-impl Task for TooManyRequestsTask {
-    fn apply(self: Box<Self>, _: &mut ReqRespCtx) -> TaskOutcome {
-        // ctx.send_message 429
-        TaskOutcome::Done
     }
 }
