@@ -18,6 +18,7 @@ pub trait AttributeResolver: Send + Sync {
         &self,
         map_type: proxy_wasm::types::MapType,
     ) -> Result<Vec<(String, String)>, AttributeError>;
+    fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError>;
     fn set_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
