@@ -15,7 +15,7 @@ use crate::v2::{
 
 pub type RateLimitDescriptorData = Vec<(String, String)>;
 
-struct RateLimitService {
+pub struct RateLimitService {
     upstream_name: String,
     service_name: String,
     method: String,
@@ -32,6 +32,15 @@ impl Service for RateLimitService {
 }
 
 impl RateLimitService {
+    pub fn new(endpoint: String, timeout: Duration, service_name: &str, method: &str) -> Self {
+        Self {
+            upstream_name: endpoint,
+            service_name: service_name.to_string(),
+            method: method.to_string(),
+            timeout,
+        }
+    }
+
     fn dispatch_ratelimit(
         &self,
         ctx: &mut ReqRespCtx,
