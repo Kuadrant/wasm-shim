@@ -2,7 +2,7 @@ use crate::envoy::{check_response, CheckResponse};
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::data::cel::{Predicate, PredicateVec};
 use crate::v2::data::Headers;
-use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
+use crate::v2::kuadrant::pipeline::tasks::{PendingTask, StoreDataTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
@@ -126,9 +126,15 @@ impl Task for AuthTask {
 }
 
 fn process_auth_response(response: CheckResponse) -> TaskOutcome {
-    let tasks: Vec<Box<dyn Task>> = Vec::new();
+    let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
-    // todo(refactor): Store dynamic_metadata - needs ctx to be passed to this function
+    // Create store task if dynamic metadata present
+    if let Some(ref dynamic_metadata) = response.dynamic_metadata {
+        let data = process_metadata(dynamic_metadata, "auth".to_string());
+        if !data.is_empty() {
+            tasks.push(Box::new(StoreDataTask::new(data)));
+        }
+    }
 
     match response.http_response {
         None => {
@@ -149,11 +155,11 @@ fn process_auth_response(response: CheckResponse) -> TaskOutcome {
     }
 }
 
-fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, String)> {
+fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, Vec<u8>)> {
     let mut result = Vec::new();
 
     for (key, value) in &s.fields {
-        let current_path = format!("{}.{}", prefix, key);
+        let current_path = format!("{}\\.{}", prefix, key);
 
         match &value.kind {
             Some(Kind::StructValue(nested_struct)) => {
@@ -174,7 +180,7 @@ fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, Str
 
                 if let Some(v) = json {
                     if let Ok(serialized) = serde_json::to_string(&v) {
-                        result.push((current_path, serialized));
+                        result.push((current_path, serialized.into_bytes()));
                     }
                 }
             }
