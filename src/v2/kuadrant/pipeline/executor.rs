@@ -23,6 +23,11 @@ impl Pipeline {
         }
     }
 
+    pub fn with_tasks(mut self, tasks: Vec<Box<dyn Task>>) -> Self {
+        self.task_queue = tasks;
+        self
+    }
+
     pub fn eval(mut self) -> Option<Self> {
         let tasks_to_process: Vec<_> = self.task_queue.drain(..).collect();
 

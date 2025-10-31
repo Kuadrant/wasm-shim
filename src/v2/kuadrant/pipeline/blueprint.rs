@@ -36,6 +36,7 @@ pub enum CompileError {
     InvalidConditionalPredicate(String),
     InvalidDataExpression(String),
     UnknownService(String),
+    ServiceCreationFailed(String),
 }
 
 impl From<ParseError> for CompileError {
