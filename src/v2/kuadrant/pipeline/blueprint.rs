@@ -1,4 +1,5 @@
 use crate::v2::configuration;
+use crate::v2::data::cel::Predicate;
 use crate::v2::data::Expression;
 use cel_parser::ParseError;
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ pub(super) struct Blueprint {
 pub(super) struct Action {
     pub service: Rc<configuration::Service>,
     pub scope: String,
-    pub predicates: Vec<Expression>,
+    pub predicates: Vec<Predicate>,
     pub conditional_data: Vec<ConditionalData>,
 }
 
@@ -81,10 +82,10 @@ impl Action {
             .get(&config.service)
             .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?;
 
-        let predicates: Vec<Expression> = config
+        let predicates: Vec<Predicate> = config
             .predicates
             .iter()
-            .map(|p| Expression::new(p))
+            .map(|p| Predicate::new(p))
             .collect::<Result<_, _>>()
             .map_err(|e| CompileError::InvalidActionPredicate {
                 service: config.service.clone(),
