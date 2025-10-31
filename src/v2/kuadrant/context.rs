@@ -229,8 +229,11 @@ impl ReqRespCtx {
         message: Vec<u8>,
         timeout: std::time::Duration,
     ) -> Result<u32, ServiceError> {
-        // todo(refactor): resolve tracing headers
-        let headers = Vec::new();
+        let tracing_headers = self.get_tracing_headers();
+        let headers: Vec<(&str, &[u8])> = tracing_headers
+            .iter()
+            .map(|(name, value)| (*name, value.as_slice()))
+            .collect();
 
         self.backend.dispatch_grpc_call(
             upstream_name,
@@ -240,6 +243,24 @@ impl ReqRespCtx {
             message,
             timeout,
         )
+    }
+
+    fn get_tracing_headers(&self) -> Vec<(&'static str, Vec<u8>)> {
+        const TRACING_HEADERS: [&str; 3] = ["traceparent", "tracestate", "baggage"];
+        let mut headers = Vec::new();
+
+        let request_headers: Result<AttributeState<Option<Headers>>, _> =
+            self.get_attribute("request.headers");
+
+        if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
+            for header_name in &TRACING_HEADERS {
+                for header_value in header_map.get_all(header_name) {
+                    headers.push((*header_name, header_value.as_bytes().to_vec()));
+                }
+            }
+        }
+
+        headers
     }
 }
 
@@ -365,5 +386,72 @@ mod tests {
         {
             assert_eq!(group.as_ref(), "admin");
         }
+    }
+
+    #[test]
+    fn test_tracing_headers() {
+        let headers = vec![
+            ("traceparent".to_string(), "00-trace-id-123".to_string()),
+            ("tracestate".to_string(), "state=active".to_string()),
+            ("baggage".to_string(), "userId=alice".to_string()),
+            ("baggage".to_string(), "sessionId=xyz".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
+
+        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let tracing_headers = ctx.get_tracing_headers();
+
+        assert_eq!(tracing_headers.len(), 4);
+
+        assert!(tracing_headers
+            .iter()
+            .any(|(name, value)| *name == "traceparent" && value.as_slice() == b"00-trace-id-123"));
+        assert!(tracing_headers
+            .iter()
+            .any(|(name, value)| *name == "tracestate" && value.as_slice() == b"state=active"));
+
+        let baggage_values: Vec<_> = tracing_headers
+            .iter()
+            .filter(|(name, _)| *name == "baggage")
+            .collect();
+        assert_eq!(baggage_values.len(), 2);
+        assert!(baggage_values
+            .iter()
+            .any(|(_, value)| value.as_slice() == b"userId=alice"));
+        assert!(baggage_values
+            .iter()
+            .any(|(_, value)| value.as_slice() == b"sessionId=xyz"));
+
+        assert!(!tracing_headers
+            .iter()
+            .any(|(name, _)| *name == "content-type"));
+    }
+
+    #[test]
+    fn test_tracing_headers_partial() {
+        let headers = vec![("traceparent".to_string(), "00-trace-id-456".to_string())];
+
+        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let tracing_headers = ctx.get_tracing_headers();
+
+        assert_eq!(tracing_headers.len(), 1);
+        assert_eq!(tracing_headers[0].0, "traceparent");
+        assert_eq!(tracing_headers[0].1.as_slice(), b"00-trace-id-456");
+    }
+
+    #[test]
+    fn test_tracing_headers_none() {
+        let headers: Vec<(String, String)> = vec![];
+
+        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let tracing_headers = ctx.get_tracing_headers();
+
+        assert!(tracing_headers.is_empty());
     }
 }
