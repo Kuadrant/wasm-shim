@@ -9,6 +9,7 @@ use std::time::Duration;
 pub struct MockWasmHost {
     properties: Mutex<HashMap<Path, Vec<u8>>>,
     maps: Mutex<HashMap<String, Vec<(String, String)>>>,
+    grpc_response: Mutex<Option<Vec<u8>>>,
     pending_properties: Vec<Path>,
 }
 
@@ -17,6 +18,7 @@ impl MockWasmHost {
         Self {
             properties: Mutex::new(HashMap::new()),
             maps: Mutex::new(HashMap::new()),
+            grpc_response: Mutex::new(None),
             pending_properties: Vec::new(),
         }
     }
@@ -39,6 +41,14 @@ impl MockWasmHost {
 
     pub fn with_pending_property(mut self, path: Path) -> Self {
         self.pending_properties.push(path);
+        self
+    }
+
+    pub fn with_grpc_response(self, response: Vec<u8>) -> Self {
+        *self
+            .grpc_response
+            .lock()
+            .expect("grpc_response mutex poisoned") = Some(response);
         self
     }
 
@@ -142,5 +152,13 @@ impl AttributeResolver for MockWasmHost {
         // todo(refactor): mock returns a fake token_id
         // in real tests, we'd need to store the message and allow retrieving responses
         Ok(42)
+    }
+
+    fn get_grpc_response(&self, _response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        self.grpc_response
+            .lock()
+            .expect("grpc_response mutex poisoned")
+            .clone()
+            .ok_or_else(|| ServiceError::RetrievalFailed("No response available".to_string()))
     }
 }
