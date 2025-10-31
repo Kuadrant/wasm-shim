@@ -11,10 +11,12 @@ pub(super) struct Blueprint {
 }
 
 pub(super) struct Action {
+    pub id: String,
     pub service: ServiceInstance,
     pub scope: String,
     pub predicates: Vec<Predicate>,
     pub conditional_data: Vec<ConditionalData>,
+    pub dependencies: Vec<String>,
 }
 
 pub(super) struct ConditionalData {
@@ -61,7 +63,16 @@ impl Blueprint {
         let actions: Vec<Action> = config
             .actions
             .iter()
-            .map(|action| Action::compile(action, services))
+            .enumerate()
+            .map(|(i, action)| {
+                let id = i.to_string();
+                let dependencies = if i > 0 {
+                    vec![(i - 1).to_string()]
+                } else {
+                    vec![]
+                };
+                Action::compile(action, services, id, dependencies)
+            })
             .collect::<Result<_, _>>()?;
 
         Ok(Self {
@@ -76,6 +87,8 @@ impl Action {
     fn compile(
         config: &configuration::Action,
         services: &HashMap<String, ServiceInstance>,
+        id: String,
+        dependencies: Vec<String>,
     ) -> Result<Self, CompileError> {
         let service = services
             .get(&config.service)
@@ -98,10 +111,12 @@ impl Action {
             .collect::<Result<_, _>>()?;
 
         Ok(Self {
+            id,
             service: service.clone(),
             scope: config.scope.clone(),
             predicates,
             conditional_data,
+            dependencies,
         })
     }
 }
@@ -237,11 +252,13 @@ mod tests {
             conditional_data: vec![],
         };
 
-        let result = Action::compile(&config, &services);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
         assert!(result.is_ok());
         let action = result.unwrap();
+        assert_eq!(action.id, "0");
         assert_eq!(action.scope, "test-scope");
         assert_eq!(action.predicates.len(), 2);
+        assert!(action.dependencies.is_empty());
     }
 
     #[test]
@@ -255,7 +272,7 @@ mod tests {
             conditional_data: vec![],
         };
 
-        let result = Action::compile(&config, &services);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { ref service, .. }) if service == "test-service"
@@ -273,7 +290,7 @@ mod tests {
             conditional_data: vec![],
         };
 
-        let result = Action::compile(&config, &services);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
         assert!(matches!(
             result,
             Err(CompileError::UnknownService(ref service)) if service == "nonexistent-service"
