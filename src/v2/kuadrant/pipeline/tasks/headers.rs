@@ -27,7 +27,7 @@ impl From<&HeadersType> for Path {
 }
 
 #[derive(Clone)]
-struct ModifyHeadersTask {
+pub struct ModifyHeadersTask {
     operation: HeaderOperation,
     target: HeadersType,
 }
@@ -61,14 +61,14 @@ impl Task for ModifyHeadersTask {
                 }
                 match ctx.set_attribute_map(&path, existing_headers) {
                     Ok(AttributeState::Available(_)) => TaskOutcome::Done,
-                    Ok(AttributeState::Pending) => TaskOutcome::Requeued(self),
+                    Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
                     Err(_) => TaskOutcome::Failed,
                 }
             }
             Ok(AttributeState::Available(None)) => {
                 unreachable!("get_attribute_ref can't return AttributeState::Available(None)")
             }
-            Ok(AttributeState::Pending) => TaskOutcome::Requeued(self),
+            Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
             Err(_) => {
                 // TODO: Error handling since this was a major failure.
                 TaskOutcome::Failed

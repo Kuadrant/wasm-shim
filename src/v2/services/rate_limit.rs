@@ -6,6 +6,7 @@ use prost::Message;
 use crate::envoy::{
     rate_limit_descriptor, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
 };
+use crate::v2::configuration::ServiceType;
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::{
     data::attribute::AttributeError,
@@ -15,7 +16,7 @@ use crate::v2::{
 
 pub type RateLimitDescriptorData = Vec<(String, String)>;
 
-struct RateLimitService {
+pub struct RateLimitService {
     upstream_name: String,
     service_name: String,
     method: String,
@@ -32,6 +33,33 @@ impl Service for RateLimitService {
 }
 
 impl RateLimitService {
+    pub fn new(endpoint: String, timeout: Duration, service_type: ServiceType) -> Self {
+        let (service_name, method) = match service_type {
+            ServiceType::RateLimit => (
+                "envoy.service.ratelimit.v3.RateLimitService",
+                "ShouldRateLimit",
+            ),
+            ServiceType::RateLimitCheck => (
+                "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                "Check",
+            ),
+            ServiceType::RateLimitReport => (
+                "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                "Report",
+            ),
+            _ => {
+                panic!("RateLimitService::new called with non-rate limit service type");
+            }
+        };
+
+        Self {
+            upstream_name: endpoint,
+            service_name: service_name.to_string(),
+            method: method.to_string(),
+            timeout,
+        }
+    }
+
     fn dispatch_ratelimit(
         &self,
         ctx: &mut ReqRespCtx,

@@ -20,7 +20,7 @@ use crate::v2::kuadrant::ReqRespCtx;
 
 const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";
 
-struct AuthService {
+pub struct AuthService {
     upstream_name: String,
     service_name: String,
     method: String,
@@ -37,6 +37,15 @@ impl Service for AuthService {
 }
 
 impl AuthService {
+    pub fn new(endpoint: String, timeout: Duration) -> Self {
+        Self {
+            upstream_name: endpoint.clone(),
+            service_name: "envoy.service.auth.v3.Authorization".to_string(),
+            method: "Check".to_string(),
+            timeout,
+        }
+    }
+
     pub fn dispatch_auth(&self, ctx: &mut ReqRespCtx, scope: &str) -> Result<u32, ServiceError> {
         let check_request = build_check_request(ctx, scope).map_err(|e| {
             ServiceError::DispatchFailed(format!("Failed to build CheckRequest: {e}"))
