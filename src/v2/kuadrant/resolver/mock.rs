@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct MockWasmHost {
     properties: HashMap<Path, Vec<u8>>,
-    maps: HashMap<String, HashMap<String, String>>,
+    maps: HashMap<String, Vec<(String, String)>>,
     pending_properties: Vec<Path>,
 }
 
@@ -23,11 +23,7 @@ impl MockWasmHost {
         self
     }
 
-    pub fn with_map(
-        mut self,
-        map_name: String,
-        map: std::collections::HashMap<String, String>,
-    ) -> Self {
+    pub fn with_map(mut self, map_name: String, map: Vec<(String, String)>) -> Self {
         self.maps.insert(map_name, map);
         self
     }
@@ -55,7 +51,7 @@ impl AttributeResolver for MockWasmHost {
     fn get_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
-    ) -> Result<HashMap<String, String>, AttributeError> {
+    ) -> Result<Vec<(String, String)>, AttributeError> {
         let map_key = match map_type {
             proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
             proxy_wasm::types::MapType::HttpResponseHeaders => "response.headers",
@@ -79,7 +75,7 @@ impl AttributeResolver for MockWasmHost {
     fn set_attribute_map(
         &self,
         _map_type: proxy_wasm::types::MapType,
-        _value: HashMap<String, String>,
+        _value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError> {
         Ok(())
     }

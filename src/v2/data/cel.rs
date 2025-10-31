@@ -1,5 +1,6 @@
 use crate::v2::data::attribute::{AttributeError, AttributeState, Path};
 use crate::v2::data::cel::errors::{CelError, EvaluationError};
+use crate::v2::data::Headers;
 use crate::v2::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
@@ -417,12 +418,15 @@ impl Attribute {
                 ValueType::Timestamp => Ok(ctx
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
-                ValueType::Map => Ok(ctx
-                    .get_attribute_ref::<HashMap<String, String>>(&self.path)?
-                    .map(|opt| {
-                        opt.map(|m| Value::Map(cel_interpreter::objects::Map::from(m)))
-                            .unwrap_or(Value::Null)
-                    })),
+                ValueType::Map => Ok(ctx.get_attribute_ref::<Headers>(&self.path)?.map(|opt| {
+                    //todo(refactor/pull/245): We should think about and handle other types of maps
+                    // other than Headers / Vec<(String, String)>
+                    opt.map(|headers| {
+                        let map: HashMap<String, String> = headers.into();
+                        Value::Map(cel_interpreter::objects::Map::from(map))
+                    })
+                    .unwrap_or(Value::Null)
+                })),
                 _ => todo!("Need support for `{t}`s!"),
             },
             None => Ok(ctx
@@ -951,9 +955,10 @@ mod tests {
         .expect("This is valid!");
         assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
 
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("X-Auth".to_string(), "kuadrant".to_string());
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        let headers = vec![
+            ("X-Auth".to_string(), "kuadrant".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =

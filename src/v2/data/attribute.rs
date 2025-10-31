@@ -1,8 +1,8 @@
 use chrono::{DateTime, FixedOffset};
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
+use crate::v2::data::Headers;
 use crate::v2::kuadrant::CachedValue;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,8 +64,8 @@ pub trait AttributeValue {
         match cached {
             CachedValue::Bytes(Some(bytes)) => Ok(Some(Self::parse(bytes.clone())?)),
             CachedValue::Bytes(None) => Ok(None),
-            CachedValue::Map(_) => Err(AttributeError::Parse(
-                "Expected bytes, found map".to_string(),
+            CachedValue::Headers(_) => Err(AttributeError::Parse(
+                "Expected bytes, found headers".to_string(),
             )),
         }
     }
@@ -150,18 +150,18 @@ impl AttributeValue for DateTime<FixedOffset> {
     }
 }
 
-impl AttributeValue for HashMap<String, String> {
+impl AttributeValue for Headers {
     fn parse(_raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
         Err(AttributeError::Parse(
-            "Maps do not support parse".to_string(),
+            "Headers do not support parse".to_string(),
         ))
     }
 
     fn from_cached(cached: &CachedValue) -> Result<Option<Self>, AttributeError> {
         match cached {
-            CachedValue::Map(map) => Ok(Some(map.clone())),
+            CachedValue::Headers(headers) => Ok(Some(headers.clone())),
             CachedValue::Bytes(_) => Err(AttributeError::Parse(
-                "Expected map, found bytes".to_string(),
+                "Expected headers, found bytes".to_string(),
             )),
         }
     }

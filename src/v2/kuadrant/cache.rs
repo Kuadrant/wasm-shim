@@ -1,14 +1,14 @@
 use log::warn;
 use radix_trie::Trie;
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
+use crate::v2::data::Headers;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CachedValue {
     Bytes(Option<Vec<u8>>),
-    Map(HashMap<String, String>),
+    Headers(Headers),
 }
 
 pub struct AttributeCache {
@@ -90,7 +90,6 @@ impl AttributeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn test_insert_and_get_bytes() {
@@ -105,13 +104,15 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_and_get_map() {
+    fn test_insert_and_get_headers() {
         let cache = AttributeCache::new();
-        let path: Path = "test.map".into();
-        let mut map = HashMap::new();
-        map.insert("key1".to_string(), "value1".to_string());
-        map.insert("key2".to_string(), "value2".to_string());
-        let value = CachedValue::Map(map);
+        let path: Path = "test.headers".into();
+        let headers: Headers = vec![
+            ("key1".to_string(), "value1".to_string()),
+            ("key2".to_string(), "value2".to_string()),
+        ]
+        .into();
+        let value = CachedValue::Headers(headers);
 
         cache.insert(path.clone(), value.clone()).unwrap();
 
