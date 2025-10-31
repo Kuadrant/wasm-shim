@@ -11,6 +11,7 @@ pub use auth::AuthService;
 pub enum ServiceError {
     DispatchFailed(String),
     DecodeFailed(String),
+    RetrievalFailed(String),
 }
 
 impl std::fmt::Display for ServiceError {
@@ -18,6 +19,9 @@ impl std::fmt::Display for ServiceError {
         match self {
             ServiceError::DispatchFailed(msg) => write!(f, "Failed to dispatch gRPC call: {}", msg),
             ServiceError::DecodeFailed(msg) => write!(f, "Failed to decode response: {}", msg),
+            ServiceError::RetrievalFailed(msg) => {
+                write!(f, "Failed to retrieve gRPC response: {}", msg)
+            }
         }
     }
 }
@@ -40,4 +44,13 @@ pub trait Service {
     }
 
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError>;
+
+    fn get_response(
+        &self,
+        ctx: &mut ReqRespCtx,
+        response_size: usize,
+    ) -> Result<Self::Response, ServiceError> {
+        let message = ctx.get_grpc_response(response_size)?;
+        self.parse_message(message)
+    }
 }

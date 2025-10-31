@@ -38,4 +38,5 @@ pub trait AttributeResolver: Send + Sync {
         message: Vec<u8>,
         timeout: Duration,
     ) -> Result<u32, ServiceError>;
+    fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError>;
 }

@@ -268,6 +268,10 @@ impl ReqRespCtx {
         )
     }
 
+    pub fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        self.backend.get_grpc_response(response_size)
+    }
+
     fn get_tracing_headers(&self) -> Vec<(&'static str, Vec<u8>)> {
         const TRACING_HEADERS: [&str; 3] = ["traceparent", "tracestate", "baggage"];
         let mut headers = Vec::new();
