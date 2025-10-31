@@ -1,24 +1,24 @@
 use crate::v2::configuration;
-use crate::v2::data::Expression;
+use crate::v2::data::{cel::Predicate, Expression};
+use crate::v2::services::ServiceInstance;
 use cel_parser::ParseError;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 pub(super) struct Blueprint {
     pub name: String,
-    pub route_predicates: Vec<Expression>,
+    pub route_predicates: Vec<Predicate>,
     pub actions: Vec<Action>,
 }
 
 pub(super) struct Action {
-    pub service: Rc<configuration::Service>,
+    pub service: ServiceInstance,
     pub scope: String,
-    pub predicates: Vec<Expression>,
+    pub predicates: Vec<Predicate>,
     pub conditional_data: Vec<ConditionalData>,
 }
 
 pub(super) struct ConditionalData {
-    pub predicates: Vec<Expression>,
+    pub predicates: Vec<Predicate>,
     pub data: Vec<DataItem>,
 }
 
@@ -45,13 +45,13 @@ impl From<ParseError> for CompileError {
 impl Blueprint {
     pub fn compile(
         config: &configuration::ActionSet,
-        services: &HashMap<String, Rc<configuration::Service>>,
+        services: &HashMap<String, ServiceInstance>,
     ) -> Result<Self, CompileError> {
-        let route_predicates: Vec<Expression> = config
+        let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
             .predicates
             .iter()
-            .map(|p| Expression::new_extended(p))
+            .map(|p| Predicate::new(p))
             .collect::<Result<_, _>>()
             .map_err(|e| CompileError::InvalidRoutePredicate {
                 action_set: config.name.clone(),
@@ -75,16 +75,16 @@ impl Blueprint {
 impl Action {
     fn compile(
         config: &configuration::Action,
-        services: &HashMap<String, Rc<configuration::Service>>,
+        services: &HashMap<String, ServiceInstance>,
     ) -> Result<Self, CompileError> {
         let service = services
             .get(&config.service)
             .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?;
 
-        let predicates: Vec<Expression> = config
+        let predicates: Vec<Predicate> = config
             .predicates
             .iter()
-            .map(|p| Expression::new(p))
+            .map(|p| Predicate::new(p))
             .collect::<Result<_, _>>()
             .map_err(|e| CompileError::InvalidActionPredicate {
                 service: config.service.clone(),
@@ -98,7 +98,7 @@ impl Action {
             .collect::<Result<_, _>>()?;
 
         Ok(Self {
-            service: Rc::clone(service),
+            service: service.clone(),
             scope: config.scope.clone(),
             predicates,
             conditional_data,
@@ -108,10 +108,10 @@ impl Action {
 
 impl ConditionalData {
     fn compile(config: &configuration::ConditionalData) -> Result<Self, CompileError> {
-        let predicates: Vec<Expression> = config
+        let predicates: Vec<Predicate> = config
             .predicates
             .iter()
-            .map(|p| Expression::new(p))
+            .map(|p| Predicate::new(p))
             .collect::<Result<_, _>>()
             .map_err(|e| CompileError::InvalidConditionalPredicate(e.to_string()))?;
 
@@ -147,19 +147,19 @@ mod tests {
     use super::*;
     use crate::v2::configuration::{
         Action as ConfigAction, ActionSet, ConditionalData as ConfigConditionalData,
-        DataItem as ConfigDataItem, DataType, ExpressionItem, FailureMode, RouteRuleConditions,
-        Service, ServiceType, StaticItem, Timeout,
+        DataItem as ConfigDataItem, DataType, ExpressionItem, RouteRuleConditions, StaticItem,
     };
+    use crate::v2::services::{AuthService, ServiceInstance};
+    use std::collections::HashMap;
+    use std::rc::Rc;
 
-    fn build_test_service(name: &str) -> (String, Rc<Service>) {
+    fn build_test_service(name: &str) -> (String, ServiceInstance) {
         (
             name.to_string(),
-            Rc::new(Service {
-                service_type: ServiceType::Auth,
-                endpoint: "test-cluster".to_string(),
-                failure_mode: FailureMode::Deny,
-                timeout: Timeout::default(),
-            }),
+            ServiceInstance::Auth(Rc::new(AuthService::new(
+                "test-cluster".to_string(),
+                std::time::Duration::from_secs(10),
+            ))),
         )
     }
 
