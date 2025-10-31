@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use crate::v2::kuadrant::ReqRespCtx;
 
@@ -6,6 +6,15 @@ mod auth;
 mod rate_limit;
 
 pub use auth::AuthService;
+pub use rate_limit::RateLimitService;
+
+#[derive(Clone)]
+pub enum ServiceInstance {
+    Auth(Rc<AuthService>),
+    RateLimit(Rc<RateLimitService>),
+    RateLimitCheck(Rc<RateLimitService>),
+    RateLimitReport(Rc<RateLimitService>),
+}
 
 #[derive(Debug)]
 pub enum ServiceError {
