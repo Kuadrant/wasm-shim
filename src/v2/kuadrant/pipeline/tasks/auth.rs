@@ -1,12 +1,12 @@
 use crate::envoy::{check_response, CheckResponse};
-use crate::v2::data::attribute::{AttributeError, AttributeState};
+use crate::v2::data::attribute::AttributeState;
 use crate::v2::data::cel::{Predicate, PredicateVec};
-use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::v2::data::Headers;
+use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::AuthService;
+use crate::v2::services::{AuthService, Service};
+use chrono::{DateTime, FixedOffset};
 use std::rc::Rc;
-
-use super::send::SendTask;
 
 pub struct AuthTask {
     task_id: String,
@@ -38,6 +38,44 @@ impl AuthTask {
 }
 
 impl Task for AuthTask {
+    fn prepare(&self, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        let mut has_pending = false;
+        let mut has_error = false;
+
+        macro_rules! touch {
+            ($path:expr, $type:ty) => {
+                match ctx.get_attribute::<$type>($path) {
+                    Ok(AttributeState::Available(_)) => {}
+                    Ok(AttributeState::Pending) => has_pending = true,
+                    Err(_) => has_error = true,
+                }
+            };
+        }
+
+        // these are required to build a CheckRequest
+        touch!("request.headers", Headers);
+        touch!("request.host", String);
+        touch!("request.method", String);
+        touch!("request.scheme", String);
+        touch!("request.path", String);
+        touch!("request.protocol", String);
+        touch!("request.time", DateTime<FixedOffset>);
+        touch!("destination.address", String);
+        touch!("destination.port", i64);
+        touch!("source.address", String);
+        touch!("source.port", i64);
+
+        // eval request_data early
+        let _ = ctx.eval_request_data();
+
+        // in this case they should all be available
+        if has_pending || has_error {
+            TaskOutcome::Failed
+        } else {
+            TaskOutcome::Done
+        }
+    }
+
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
     }
@@ -56,24 +94,26 @@ impl Task for AuthTask {
             }
         }
 
-        let message = match self.service.build_request(ctx, &self.scope) {
-            Ok(msg) => msg,
-            Err(AttributeError::NotAvailable(_)) => return TaskOutcome::Requeued(self),
+        let token_id = match self.service.dispatch_auth(ctx, &self.scope) {
+            Ok(id) => id,
             Err(_e) => {
                 return TaskOutcome::Failed;
             }
         };
 
-        let send_task = SendTask::new(
-            self.task_id,
-            self.dependencies,
-            self.is_blocking,
-            self.service.clone(),
-            message,
-            Box::new(process_auth_response),
-        );
+        let service = self.service.clone();
 
-        TaskOutcome::Continue(Box::new(send_task))
+        TaskOutcome::Deferred {
+            token_id,
+            pending: PendingTask {
+                task_id: Some(self.task_id),
+                is_blocking: self.is_blocking,
+                process_response: Box::new(move |response| match service.parse_message(response) {
+                    Ok(parsed) => process_auth_response(parsed),
+                    Err(_e) => Vec::new(),
+                }),
+            },
+        }
     }
 }
 

@@ -9,6 +9,10 @@ pub type ResponseProcessor<T> = dyn FnOnce(T) -> Vec<Box<dyn Task>>;
 
 #[allow(dead_code)]
 pub trait Task {
+    fn prepare(&self, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+        TaskOutcome::Done
+    }
+
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome;
 
     fn id(&self) -> Option<String> {
