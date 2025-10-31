@@ -36,6 +36,16 @@ impl AttributeResolver for ProxyWasmHost {
         }
     }
 
+    fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError> {
+        match hostcalls::set_property(path.tokens(), Some(value)) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(AttributeError::Set(format!(
+                "Failed to set property {}: {:?}",
+                path, err
+            ))),
+        }
+    }
+
     fn set_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
