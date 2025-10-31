@@ -1,51 +1,17 @@
-#[allow(dead_code)]
-use crate::v2::kuadrant::pipeline::tasks::{PendingTask, ResponseProcessor, Task, TaskOutcome};
-use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::{Service, ServiceError};
-use crate::v2::data::cel::{Expression, Predicate, EvaluationError};
-use crate::v2::data::attribute::{AttributeState, AttributeError};
 use crate::envoy::{
-    rate_limit_descriptor, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
-    rate_limit_response
+    rate_limit_descriptor, rate_limit_response, RateLimitDescriptor, RateLimitRequest,
+    RateLimitResponse,
 };
+use crate::v2::data::attribute::{AttributeError, AttributeState};
+use crate::v2::data::cel::{EvaluationError, Expression, Predicate};
+use crate::v2::kuadrant::pipeline::blueprint::{Action, ConditionalData};
+#[allow(dead_code)]
+use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
+use crate::v2::kuadrant::ReqRespCtx;
+use crate::v2::services::Service;
 use cel_interpreter::Value;
 use prost::Message;
 use std::rc::Rc;
-
-/// Represents a set of descriptor entries with predicates
-struct ConditionalData {
-    data: Vec<DescriptorEntryBuilder>,
-    predicates: Vec<Predicate>,
-}
-
-impl ConditionalData {
-    /// Check if all predicates evaluate to true
-    fn predicates_apply(&self, ctx: &ReqRespCtx) -> Result<AttributeState<bool>, EvaluationError> {
-        if self.predicates.is_empty() {
-            return Ok(AttributeState::Available(true));
-        }
-
-        for predicate in &self.predicates {
-            match predicate.test(ctx)? {
-                AttributeState::Available(true) => continue,
-                AttributeState::Available(false) => return Ok(AttributeState::Available(false)),
-                AttributeState::Pending => return Ok(AttributeState::Pending),
-            }
-        }
-        Ok(AttributeState::Available(true))
-    }
-
-    /// Build descriptor entries by evaluating expressions
-    fn build_entries(&self, ctx: &ReqRespCtx) -> Result<Vec<rate_limit_descriptor::Entry>, AttributeError> {
-        let mut entries = Vec::new();
-
-        for builder in &self.data {
-            entries.push(builder.evaluate(ctx)?);
-        }
-
-        Ok(entries)
-    }
-}
 
 /// Builds individual descriptor entries from CEL expressions
 struct DescriptorEntryBuilder {
@@ -54,6 +20,11 @@ struct DescriptorEntryBuilder {
 }
 
 impl DescriptorEntryBuilder {
+    /// Create an instance of DescriptorEntryBuilder
+    fn new(key: String, expression: Expression) -> Self {
+        Self { key, expression }
+    }
+
     /// Evaluate the expression to create a descriptor entry
     fn evaluate(&self, ctx: &ReqRespCtx) -> Result<rate_limit_descriptor::Entry, AttributeError> {
         match self.expression.eval(ctx) {
@@ -66,7 +37,9 @@ impl DescriptorEntryBuilder {
                     Value::Bool(b) => format!("{b}"),
                     Value::Null => "null".to_owned(),
                     _ => {
-                        return Err(AttributeError::Parse("Only scalar values can be sent as data".to_string()));
+                        return Err(AttributeError::Parse(
+                            "Only scalar values can be sent as data".to_string(),
+                        ));
                     }
                 };
 
@@ -75,16 +48,14 @@ impl DescriptorEntryBuilder {
                     value: value_str,
                 })
             }
-            Ok(AttributeState::Pending) => {
-                Err(AttributeError::NotAvailable(
-                    format!("Expression '{}' evaluation is pending", self.key)
-                ))
-            }
-            Err(cel_err) => {
-                Err(AttributeError::Retrieval(
-                    format!("CEL evaluation error for '{}': {}", self.key, cel_err)
-                ))
-            }
+            Ok(AttributeState::Pending) => Err(AttributeError::NotAvailable(format!(
+                "Expression '{}' evaluation is pending",
+                self.key
+            ))),
+            Err(cel_err) => Err(AttributeError::Retrieval(format!(
+                "CEL evaluation error for '{}': {}",
+                self.key, cel_err
+            ))),
         }
     }
 }
@@ -110,6 +81,7 @@ pub struct RateLimitTask {
 
     // Conditional data for building descriptors
     conditional_data_sets: Vec<ConditionalData>,
+    predicates: Vec<Predicate>,
 
     // Default hits addend
     default_hits_addend: u32,
@@ -120,18 +92,17 @@ impl RateLimitTask {
     fn new(
         task_id: String,
         dependencies: Vec<String>,
-        is_blocking: bool,
-        scope: String,
+        action: Action,
         service: Rc<dyn Service<Response = RateLimitResponse>>,
-        conditional_data_sets: Vec<ConditionalData>,
     ) -> Self {
         Self {
             task_id,
             dependencies,
-            is_blocking,
-            scope,
+            is_blocking: true,
+            scope: action.scope,
             service,
-            conditional_data_sets,
+            conditional_data_sets: action.conditional_data,
+            predicates: action.predicates,
             default_hits_addend: 1,
         }
     }
@@ -141,11 +112,12 @@ impl RateLimitTask {
         // Build descriptor entries by evaluating conditional data
         let mut entries = Vec::new();
 
+        // TODO: Candidate for a `prepare` task/method
         for conditional_data in &self.conditional_data_sets {
-            match conditional_data.predicates_apply(ctx) {
+            match self.predicates_apply(ctx) {
                 Ok(AttributeState::Available(true)) => {
                     // Predicates passed, evaluate entries
-                    match conditional_data.build_entries(ctx) {
+                    match self.build_entries(conditional_data, ctx) {
                         Ok(cond_entries) => entries.extend(cond_entries),
                         Err(err) => return BuildMessageResult::Error(err),
                     }
@@ -159,9 +131,10 @@ impl RateLimitTask {
                     return BuildMessageResult::Pending;
                 }
                 Err(eval_err) => {
-                    return BuildMessageResult::Error(AttributeError::Retrieval(
-                        format!("Predicate evaluation failed: {}", eval_err)
-                    ));
+                    return BuildMessageResult::Error(AttributeError::Retrieval(format!(
+                        "Predicate evaluation failed: {}",
+                        eval_err
+                    )));
                 }
             }
         }
@@ -204,62 +177,94 @@ impl RateLimitTask {
         BuildMessageResult::Ready(request.encode_to_vec())
     }
 
+    /// Check if all predicates evaluate to true
+    fn predicates_apply(&self, ctx: &ReqRespCtx) -> Result<AttributeState<bool>, EvaluationError> {
+        if self.predicates.is_empty() {
+            return Ok(AttributeState::Available(true));
+        }
+
+        for predicate in &self.predicates {
+            match predicate.test(ctx)? {
+                AttributeState::Available(true) => continue,
+                AttributeState::Available(false) => return Ok(AttributeState::Available(false)),
+                AttributeState::Pending => return Ok(AttributeState::Pending),
+            }
+        }
+        Ok(AttributeState::Available(true))
+    }
+
     /// Extract known attributes like ratelimit.domain and ratelimit.hits_addend
     fn get_known_attributes(&self, ctx: &ReqRespCtx) -> Result<(u32, String), AttributeError> {
         let mut hits_addend = self.default_hits_addend;
         let mut domain = String::new();
 
         for conditional_data in &self.conditional_data_sets {
-            for entry_builder in &conditional_data.data {
-                if KNOWN_ATTRIBUTES.contains(&entry_builder.key.as_str()) {
-                    match entry_builder.expression.eval(ctx) {
-                        Ok(AttributeState::Available(val)) => {
-                            match entry_builder.key.as_str() {
-                                "ratelimit.domain" => {
-                                    if let Value::String(s) = val {
-                                        if s.is_empty() {
-                                            return Err(AttributeError::Parse(
-                                                "ratelimit.domain cannot be empty".to_string()
-                                            ));
-                                        }
-                                        domain = s.to_string();
-                                    } else {
-                                        return Err(AttributeError::Parse("ratelimit.domain must be string".to_string()));
+            for data_item in &conditional_data.data {
+                if KNOWN_ATTRIBUTES.contains(&data_item.key.as_str()) {
+                    match data_item.value.eval(ctx) {
+                        Ok(AttributeState::Available(val)) => match data_item.key.as_str() {
+                            "ratelimit.domain" => {
+                                if let Value::String(s) = val {
+                                    if s.is_empty() {
+                                        return Err(AttributeError::Parse(
+                                            "ratelimit.domain cannot be empty".to_string(),
+                                        ));
                                     }
+                                    domain = s.to_string();
+                                } else {
+                                    return Err(AttributeError::Parse(
+                                        "ratelimit.domain must be string".to_string(),
+                                    ));
                                 }
-                                "ratelimit.hits_addend" => {
-                                    match val {
-                                        Value::Int(i) if i >= 0 && i <= u32::MAX as i64 => {
-                                            hits_addend = i as u32;
-                                        }
-                                        Value::UInt(u) if u <= u32::MAX as u64 => {
-                                            hits_addend = u as u32;
-                                        }
-                                        _ => {
-                                            return Err(AttributeError::Parse(
-                                                "ratelimit.hits_addend must be 0 <= X <= u32::MAX".to_string()
-                                            ));
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
-                        }
+                            "ratelimit.hits_addend" => match val {
+                                Value::Int(i) if i >= 0 && i <= u32::MAX as i64 => {
+                                    hits_addend = i as u32;
+                                }
+                                Value::UInt(u) if u <= u32::MAX as u64 => {
+                                    hits_addend = u as u32;
+                                }
+                                _ => {
+                                    return Err(AttributeError::Parse(
+                                        "ratelimit.hits_addend must be 0 <= X <= u32::MAX"
+                                            .to_string(),
+                                    ));
+                                }
+                            },
+                            _ => {}
+                        },
                         Ok(AttributeState::Pending) => {
-                            return Err(AttributeError::NotAvailable(
-                                format!("Attribute {} is pending", entry_builder.key)
-                            ));
+                            return Err(AttributeError::NotAvailable(format!(
+                                "Attribute {} is pending",
+                                data_item.key
+                            )));
                         }
                         Err(cel_err) => {
-                            return Err(AttributeError::Retrieval(
-                                format!("CEL evaluation error: {}", cel_err)
-                            ));
+                            return Err(AttributeError::Retrieval(format!(
+                                "CEL evaluation error: {}",
+                                cel_err
+                            )));
                         }
                     }
                 }
             }
         }
         Ok((hits_addend, domain))
+    }
+
+    fn build_entries(
+        &self,
+        conditional_data: &ConditionalData,
+        ctx: &ReqRespCtx,
+    ) -> Result<Vec<rate_limit_descriptor::Entry>, AttributeError> {
+        conditional_data
+            .data
+            .iter()
+            .map(|data_item| {
+                DescriptorEntryBuilder::new(data_item.key.clone(), data_item.value.clone())
+                    .evaluate(ctx)
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 
