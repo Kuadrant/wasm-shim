@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(remaining, "next");
         match parsed {
             RawEventLine::Comment(c) => assert_eq!(c, "this is a comment"),
-            _ => panic!("Expected Comment"),
+            _ => unreachable!("Expected Comment"),
         }
 
         // Empty comment
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(remaining, "next");
         match parsed {
             RawEventLine::Comment(c) => assert_eq!(c, ""),
-            _ => panic!("Expected Comment"),
+            _ => unreachable!("Expected Comment"),
         }
 
         // Comment with CRLF
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(remaining, "next");
         match parsed {
             RawEventLine::Comment(c) => assert_eq!(c, "comment"),
-            _ => panic!("Expected Comment"),
+            _ => unreachable!("Expected Comment"),
         }
 
         // Comment with remaining input
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(remaining, "remaining");
         match parsed {
             RawEventLine::Comment(c) => assert_eq!(c, "first"),
-            _ => panic!("Expected Comment"),
+            _ => unreachable!("Expected Comment"),
         }
 
         // Not a comment (no colon)
@@ -282,7 +282,7 @@ mod tests {
                 assert_eq!(name, "event");
                 assert_eq!(value, "message");
             }
-            _ => panic!("Expected Field with value"),
+            _ => unreachable!("Expected Field with value"),
         }
 
         // Field with value without space
@@ -295,7 +295,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, "hello world");
             }
-            _ => panic!("Expected Field with value"),
+            _ => unreachable!("Expected Field with value"),
         }
 
         // Field with empty value after colon and space
@@ -308,7 +308,7 @@ mod tests {
                 assert_eq!(name, "retry");
                 assert_eq!(value, "");
             }
-            _ => panic!("Expected Field with empty value"),
+            _ => unreachable!("Expected Field with empty value"),
         }
 
         // Field with empty value after colon (no space)
@@ -321,7 +321,7 @@ mod tests {
                 assert_eq!(name, "id");
                 assert_eq!(value, "");
             }
-            _ => panic!("Expected Field with empty value"),
+            _ => unreachable!("Expected Field with empty value"),
         }
     }
 
@@ -336,7 +336,7 @@ mod tests {
             RawEventLine::Field(name, None) => {
                 assert_eq!(name, "event");
             }
-            _ => panic!("Expected Field without value"),
+            _ => unreachable!("Expected Field without value"),
         }
     }
 
@@ -350,7 +350,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, "test");
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
 
         // CR
@@ -361,7 +361,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, "test");
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
 
         // LF
@@ -372,7 +372,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, "test");
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
     }
 
@@ -394,7 +394,7 @@ mod tests {
         assert!(result.is_ok());
         match result.unwrap().1 {
             RawEventLine::Comment(c) => assert_eq!(c, "comment"),
-            _ => panic!("Expected Comment"),
+            _ => unreachable!("Expected Comment"),
         }
     }
 
@@ -409,7 +409,7 @@ mod tests {
                 assert_eq!(name, "event");
                 assert_eq!(value, "message");
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
     }
 
@@ -424,7 +424,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, "foo");
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
     }
 
@@ -434,14 +434,14 @@ mod tests {
         assert!(result.is_ok());
         match result.unwrap().1 {
             RawEventLine::Empty => {}
-            _ => panic!("Expected Empty"),
+            _ => unreachable!("Expected Empty"),
         }
 
         let result = line("\n");
         assert!(result.is_ok());
         match result.unwrap().1 {
             RawEventLine::Empty => {}
-            _ => panic!("Expected Empty"),
+            _ => unreachable!("Expected Empty"),
         }
     }
 
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(remaining, "next");
         match parsed {
             RawEventLine::Comment(_) => {}
-            _ => panic!("Expected Comment to have priority"),
+            _ => unreachable!("Expected Comment to have priority"),
         }
     }
 
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(remaining, "next");
         match parsed {
             RawEventLine::Field(name, None) => assert_eq!(name, "retry3000"),
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
 
         // Field value with colons
@@ -481,7 +481,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, "time:12:30:45");
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
     }
 
@@ -497,7 +497,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, " multiple spaces"); // First space stripped, rest preserved
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
     }
 
@@ -519,7 +519,7 @@ mod tests {
                 assert_eq!(name, "data");
                 assert_eq!(value, r#"{"id":1}"#);
             }
-            _ => panic!("Expected Field"),
+            _ => unreachable!("Expected Field"),
         }
     }
 }
