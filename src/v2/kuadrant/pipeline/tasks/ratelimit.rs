@@ -339,3 +339,365 @@ impl Task for RateLimitTask {
         self.dependencies.as_slice()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::v2::configuration;
+    use crate::v2::configuration::ServiceType;
+    use crate::v2::data::cel::Expression;
+    use crate::v2::data::cel::Predicate;
+    use crate::v2::kuadrant::pipeline::blueprint::DataItem;
+    use crate::v2::kuadrant::resolver::MockWasmHost;
+    use crate::v2::kuadrant::ReqRespCtx;
+    use std::sync::Arc;
+
+    fn create_test_context() -> ReqRespCtx {
+        let mock_host = MockWasmHost::new();
+        ReqRespCtx::new(Arc::new(mock_host))
+    }
+
+    fn create_test_context_with_headers(headers: Vec<(String, String)>) -> ReqRespCtx {
+        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
+        ReqRespCtx::new(Arc::new(mock_host))
+    }
+
+    fn create_test_service() -> RateLimitService {
+        RateLimitService::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::time::Duration::from_secs(1),
+        )
+    }
+
+    fn create_test_action(
+        predicates: Vec<Predicate>,
+        conditional_data: Vec<ConditionalData>,
+    ) -> Action {
+        Action {
+            service: Rc::new(configuration::Service {
+                service_type: ServiceType::RateLimit,
+                endpoint: "test".to_string(),
+                failure_mode: Default::default(),
+                timeout: Default::default(),
+            }),
+            scope: "test".to_string(),
+            predicates,
+            conditional_data,
+        }
+    }
+
+    /*
+    // TODO: Fix this test
+    #[test]
+    fn test_descriptor_builder_with_headers() {
+        let ctx = create_test_context_with_headers(vec![
+            ("host".to_string(), "example.com".to_string()),
+        ]);
+        let expression = Expression::new("request.headers.host").unwrap();
+        let builder = DescriptorEntryBuilder::new("host_key".to_string(), expression);
+
+        let result = builder.evaluate(&ctx).unwrap();
+
+        assert_eq!(result.key, "host_key");
+        assert_eq!(result.value, "example.com");
+    } */
+
+    #[test]
+    fn test_no_predicates_returns_true() {
+        let ctx = create_test_context();
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![], vec![]),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.predicates_apply(&ctx).unwrap();
+
+        assert_eq!(result, AttributeState::Available(true));
+    }
+
+    #[test]
+    fn test_predicates_pass() {
+        let ctx = create_test_context();
+        let predicates = vec![
+            Predicate::new("true").unwrap(),
+            Predicate::new("1 == 1").unwrap(),
+        ];
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(predicates, vec![]),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.predicates_apply(&ctx).unwrap();
+
+        assert_eq!(result, AttributeState::Available(true));
+    }
+
+    #[test]
+    fn test_predicates_one_fails() {
+        let ctx = create_test_context();
+        let predicates = vec![
+            Predicate::new("true").unwrap(),
+            Predicate::new("false").unwrap(),
+        ];
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(predicates, vec![]),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.predicates_apply(&ctx).unwrap();
+
+        assert_eq!(result, AttributeState::Available(false));
+    }
+
+    #[test]
+    fn test_default_values_when_no_known_attributes() {
+        let ctx = create_test_context();
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![], vec![]),
+            Rc::new(create_test_service()),
+        );
+
+        let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
+
+        assert_eq!(hits_addend, 1);
+        assert_eq!(domain, "");
+    }
+
+    #[test]
+    fn test_default_values_with_known_attributes() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![
+                DataItem {
+                    key: "ratelimit.domain".to_string(),
+                    value: Expression::new("\"example.org\"").unwrap(),
+                },
+                DataItem {
+                    key: "ratelimit.hits_addend".to_string(),
+                    value: Expression::new("5").unwrap(),
+                },
+            ],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![], vec![conditional_data]),
+            Rc::new(create_test_service()),
+        );
+
+        let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
+
+        assert_eq!(hits_addend, 5);
+        assert_eq!(domain, "example.org");
+    }
+
+    #[test]
+    fn test_build_entries() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![
+                DataItem {
+                    key: "key1".to_string(),
+                    value: Expression::new("\"value1\"").unwrap(),
+                },
+                DataItem {
+                    key: "key2".to_string(),
+                    value: Expression::new("\"value2\"").unwrap(),
+                },
+            ],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(
+                vec![],
+                vec![ConditionalData {
+                    predicates: vec![],
+                    data: vec![
+                        DataItem {
+                            key: "key1".to_string(),
+                            value: Expression::new("\"value1\"").unwrap(),
+                        },
+                        DataItem {
+                            key: "key2".to_string(),
+                            value: Expression::new("\"value2\"").unwrap(),
+                        },
+                    ],
+                }],
+            ),
+            Rc::new(create_test_service()),
+        );
+
+        let entries = task.build_entries(&conditional_data, &ctx).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, "key1");
+        assert_eq!(entries[0].value, "value1");
+        assert_eq!(entries[1].key, "key2");
+        assert_eq!(entries[1].value, "value2");
+    }
+
+    #[test]
+    fn test_build_descriptors_filters_known_attributes() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![
+                DataItem {
+                    key: "ratelimit.domain".to_string(),
+                    value: Expression::new("\"my-domain\"").unwrap(),
+                },
+                DataItem {
+                    key: "ratelimit.hits_addend".to_string(),
+                    value: Expression::new("5").unwrap(),
+                },
+                DataItem {
+                    key: "actual_key".to_string(),
+                    value: Expression::new("\"actual_value\"").unwrap(),
+                },
+            ],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![], vec![conditional_data]),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.build_descriptors(&ctx).unwrap();
+
+        match result {
+            BuildDescriptorsState::Ready(descriptors) => {
+                assert_eq!(descriptors.len(), 1);
+                // Known attributes should be filtered out
+                assert_eq!(descriptors[0].entries.len(), 1);
+                assert_eq!(descriptors[0].entries[0].key, "actual_key");
+            }
+            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+        }
+    }
+
+    #[test]
+    fn test_build_descriptors_with_failing_predicate() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                key: "test_key".to_string(),
+                value: Expression::new("\"test_value\"").unwrap(),
+            }],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(
+                vec![Predicate::new("false").unwrap()],
+                vec![conditional_data],
+            ),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.build_descriptors(&ctx).unwrap();
+
+        match result {
+            BuildDescriptorsState::Ready(descriptors) => {
+                // Predicate failed, so no descriptors should be built
+                assert_eq!(descriptors.len(), 0);
+            }
+            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+        }
+    }
+
+    #[test]
+    fn test_build_descriptors_with_passing_predicate() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                key: "test_key".to_string(),
+                value: Expression::new("\"test_value\"").unwrap(),
+            }],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(
+                vec![Predicate::new("true").unwrap()],
+                vec![conditional_data],
+            ),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.build_descriptors(&ctx).unwrap();
+
+        match result {
+            BuildDescriptorsState::Ready(descriptors) => {
+                assert_eq!(descriptors.len(), 1);
+                assert_eq!(descriptors[0].entries.len(), 1);
+            }
+            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+        }
+    }
+
+    #[test]
+    fn test_task_outcome_done() {
+        let mut ctx = create_test_context();
+
+        let task = Box::new(RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![Predicate::new("false").unwrap()], vec![]),
+            Rc::new(create_test_service()),
+        ));
+
+        let outcome = task.apply(&mut ctx);
+
+        assert!(matches!(outcome, TaskOutcome::Done));
+    }
+
+    #[test]
+    fn test_task_outcome_deferred() {
+        let mut ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                key: "test_key".to_string(),
+                value: Expression::new("\"test_value\"").unwrap(),
+            }],
+        };
+
+        let task = Box::new(RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(
+                vec![Predicate::new("true").unwrap()],
+                vec![conditional_data],
+            ),
+            Rc::new(create_test_service()),
+        ));
+
+        let outcome = task.apply(&mut ctx);
+
+        assert!(matches!(
+            outcome,
+            TaskOutcome::Deferred {
+                token_id: _,
+                pending: _
+            }
+        ));
+    }
+
+    // TODO: More specific testing for task outcomes when the rate limit response task is done
+}
