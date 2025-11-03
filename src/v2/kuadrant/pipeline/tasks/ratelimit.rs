@@ -105,33 +105,33 @@ impl RateLimitTask {
 
     /// Builds the rate limit descriptors from the context
     fn build_descriptors(&self, ctx: &ReqRespCtx) -> Result<BuildDescriptorsState, AttributeError> {
+        // TODO: Candidate for a `prepare` task/method
         // Build descriptor entries by evaluating conditional data
         let mut entries = Vec::new();
-
-        // TODO: Candidate for a `prepare` task/method
-        for conditional_data in &self.conditional_data_sets {
-            match self.predicates_apply(ctx) {
-                Ok(AttributeState::Available(true)) => {
-                    // Predicates passed, evaluate entries
+        // if predicates don't apply, skip RL. return empty entries
+        match self.predicates_apply(ctx) {
+            Ok(AttributeState::Available(true)) => {
+                // Top level predicates passed, evaluating conditional data to build entries
+                for conditional_data in &self.conditional_data_sets {
                     match self.build_entries(conditional_data, ctx) {
                         Ok(cond_entries) => entries.extend(cond_entries),
                         Err(err) => return Err(err),
                     }
                 }
-                Ok(AttributeState::Available(false)) => {
-                    // Predicates didn't pass, skip this conditional data
-                    continue;
-                }
-                Ok(AttributeState::Pending) => {
-                    // Can't evaluate yet, need to defer
-                    return Ok(BuildDescriptorsState::Pending);
-                }
-                Err(eval_err) => {
-                    return Err(AttributeError::Retrieval(format!(
-                        "Predicate evaluation failed: {}",
-                        eval_err
-                    )));
-                }
+            }
+            Ok(AttributeState::Available(false)) => {
+                // Top level predicates didn't apply, returning empty descriptor entries
+                return Ok(BuildDescriptorsState::Ready(vec![]));
+            }
+            Ok(AttributeState::Pending) => {
+                // Can't evaluate yet, need to defer
+                return Ok(BuildDescriptorsState::Pending);
+            }
+            Err(eval_err) => {
+                return Err(AttributeError::Retrieval(format!(
+                    "Predicate evaluation failed: {}",
+                    eval_err
+                )));
             }
         }
 
@@ -234,14 +234,23 @@ impl RateLimitTask {
         conditional_data: &ConditionalData,
         ctx: &ReqRespCtx,
     ) -> Result<Vec<rate_limit_descriptor::Entry>, AttributeError> {
-        conditional_data
-            .data
-            .iter()
-            .map(|data_item| {
-                DescriptorEntryBuilder::new(data_item.key.clone(), data_item.value.clone())
-                    .evaluate(ctx)
+        if conditional_data.predicates.is_empty()
+            || conditional_data.predicates.iter().any(|expr| {
+                expr.eval(ctx)
+                    .is_ok_and(|v| matches!(v, AttributeState::Available(Value::Bool(true))))
             })
-            .collect::<Result<Vec<_>, _>>()
+        {
+            conditional_data
+                .data
+                .iter()
+                .map(|data_item| {
+                    DescriptorEntryBuilder::new(data_item.key.clone(), data_item.value.clone())
+                        .evaluate(ctx)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        } else {
+            Ok(vec![])
+        }
     }
 }
 
@@ -637,6 +646,61 @@ mod tests {
                 vec![Predicate::new("true").unwrap()],
                 vec![conditional_data],
             ),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.build_descriptors(&ctx).unwrap();
+
+        match result {
+            BuildDescriptorsState::Ready(descriptors) => {
+                assert_eq!(descriptors.len(), 1);
+                assert_eq!(descriptors[0].entries.len(), 1);
+            }
+            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+        }
+    }
+
+    #[test]
+    fn test_build_descriptors_with_failing_conditional_data_predicate() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![Expression::new("false").unwrap()],
+            data: vec![DataItem {
+                key: "test_key".to_string(),
+                value: Expression::new("\"test_value\"").unwrap(),
+            }],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![], vec![conditional_data]),
+            Rc::new(create_test_service()),
+        );
+
+        let result = task.build_descriptors(&ctx).unwrap();
+
+        match result {
+            BuildDescriptorsState::Ready(descriptors) => {
+                assert_eq!(descriptors.len(), 0);
+            }
+            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+        }
+    }
+
+    #[test]
+    fn test_build_descriptors_with_passing_conditional_data_predicate() {
+        let ctx = create_test_context();
+        let conditional_data = ConditionalData {
+            predicates: vec![Expression::new("true").unwrap()],
+            data: vec![DataItem {
+                key: "test_key".to_string(),
+                value: Expression::new("\"test_value\"").unwrap(),
+            }],
+        };
+        let task = RateLimitTask::new(
+            "test".to_string(),
+            vec![],
+            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
         );
 
