@@ -57,11 +57,10 @@ impl DescriptorEntryBuilder {
     }
 }
 
-/// Result type indicating the message build outcome
-enum BuildDescriptorsResult {
+/// Type indicating the state of the descriptors build outcome
+enum BuildDescriptorsState {
     Ready(Vec<RateLimitDescriptor>),
     Pending,
-    Error(AttributeError),
 }
 
 const KNOWN_ATTRIBUTES: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"];
@@ -105,7 +104,7 @@ impl RateLimitTask {
     }
 
     /// Builds the rate limit descriptors from the context
-    fn build_descriptors(&self, ctx: &ReqRespCtx) -> BuildDescriptorsResult {
+    fn build_descriptors(&self, ctx: &ReqRespCtx) -> Result<BuildDescriptorsState, AttributeError> {
         // Build descriptor entries by evaluating conditional data
         let mut entries = Vec::new();
 
@@ -116,7 +115,7 @@ impl RateLimitTask {
                     // Predicates passed, evaluate entries
                     match self.build_entries(conditional_data, ctx) {
                         Ok(cond_entries) => entries.extend(cond_entries),
-                        Err(err) => return BuildDescriptorsResult::Error(err),
+                        Err(err) => return Err(err),
                     }
                 }
                 Ok(AttributeState::Available(false)) => {
@@ -125,10 +124,10 @@ impl RateLimitTask {
                 }
                 Ok(AttributeState::Pending) => {
                     // Can't evaluate yet, need to defer
-                    return BuildDescriptorsResult::Pending;
+                    return Ok(BuildDescriptorsState::Pending);
                 }
                 Err(eval_err) => {
-                    return BuildDescriptorsResult::Error(AttributeError::Retrieval(format!(
+                    return Err(AttributeError::Retrieval(format!(
                         "Predicate evaluation failed: {}",
                         eval_err
                     )));
@@ -141,7 +140,7 @@ impl RateLimitTask {
 
         // If no entries, return empty vector (no rate limiting needed)
         if entries.is_empty() {
-            return BuildDescriptorsResult::Ready(Vec::new());
+            return Ok(BuildDescriptorsState::Ready(Vec::new()));
         }
 
         // Build the descriptor
@@ -151,7 +150,7 @@ impl RateLimitTask {
         };
 
         // Encode to protobuf bytes
-        BuildDescriptorsResult::Ready(vec![descriptor])
+        Ok(BuildDescriptorsState::Ready(vec![descriptor]))
     }
 
     /// Check if all predicates evaluate to true
@@ -250,12 +249,12 @@ impl Task for RateLimitTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         // Build the rate limit descriptors
         let descriptors = match self.build_descriptors(ctx) {
-            BuildDescriptorsResult::Ready(msg) => msg,
-            BuildDescriptorsResult::Pending => {
+            Ok(BuildDescriptorsState::Ready(msg)) => msg,
+            Ok(BuildDescriptorsState::Pending) => {
                 // Need to wait for attributes, requeue
                 return TaskOutcome::Requeued(self);
             }
-            BuildDescriptorsResult::Error(_e) => {
+            Err(_e) => {
                 // TODO: Handle error appropriately based on failure mode
                 return TaskOutcome::Failed;
             }
