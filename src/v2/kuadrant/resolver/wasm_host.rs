@@ -46,4 +46,19 @@ impl AttributeResolver for ProxyWasmHost {
             Err(err) => Err(AttributeError::Set(format!("Error setting map: {err:?}"))),
         }
     }
+
+    fn get_http_response_body(
+        &self,
+        start: usize,
+        max_size: usize,
+    ) -> Result<Option<proxy_wasm::types::Bytes>, AttributeError> {
+        hostcalls::get_buffer(
+            proxy_wasm::types::BufferType::HttpResponseBody,
+            start,
+            max_size,
+        )
+        .map_err(|e| {
+            AttributeError::Retrieval(format!("Error getting http response body buffer: {e:?}"))
+        })
+    }
 }
