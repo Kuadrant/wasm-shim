@@ -1,6 +1,7 @@
+use crate::envoy::rate_limit_descriptor::Entry;
 use crate::envoy::{rate_limit_descriptor, rate_limit_response, RateLimitDescriptor};
 use crate::v2::data::attribute::{AttributeError, AttributeState};
-use crate::v2::data::cel::{Expression, Predicate, PredicateResult};
+use crate::v2::data::cel::{Expression, Predicate};
 use crate::v2::kuadrant::pipeline::blueprint::{Action, ConditionalData};
 #[allow(dead_code)]
 use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
@@ -108,35 +109,34 @@ impl RateLimitTask {
         // TODO: Candidate for a `prepare` task/method
         // Build descriptor entries by evaluating conditional data
         let mut entries = Vec::new();
+
         // if predicates don't apply, skip RL. return empty entries
-        match self.predicates_apply(ctx) {
-            Ok(AttributeState::Available(true)) => {
-                // Top level predicates passed, evaluating conditional data to build entries
-                for conditional_data in &self.conditional_data_sets {
-                    match self.build_entries(conditional_data, ctx) {
-                        Ok(cond_entries) => entries.extend(cond_entries),
-                        Err(err) => return Err(err),
+        if self.predicates.is_empty() {
+            entries = self.collect_entries(ctx)?;
+        } else {
+            for predicate in &self.predicates {
+                match predicate.test(ctx) {
+                    Ok(AttributeState::Available(true)) => {
+                        // Top level predicates passed, evaluating conditional data to build entries
+                        entries = self.collect_entries(ctx)?;
+                    }
+                    Ok(AttributeState::Available(false)) => {
+                        // Top level predicates didn't apply, returning empty descriptor entries
+                        return Ok(BuildDescriptorsState::Ready(vec![]));
+                    }
+                    Ok(AttributeState::Pending) => {
+                        // Can't evaluate yet, need to defer
+                        return Ok(BuildDescriptorsState::Pending);
+                    }
+                    Err(eval_err) => {
+                        return Err(AttributeError::Retrieval(format!(
+                            "Predicate evaluation failed: {}",
+                            eval_err
+                        )));
                     }
                 }
             }
-            Ok(AttributeState::Available(false)) => {
-                // Top level predicates didn't apply, returning empty descriptor entries
-                return Ok(BuildDescriptorsState::Ready(vec![]));
-            }
-            Ok(AttributeState::Pending) => {
-                // Can't evaluate yet, need to defer
-                return Ok(BuildDescriptorsState::Pending);
-            }
-            Err(eval_err) => {
-                return Err(AttributeError::Retrieval(format!(
-                    "Predicate evaluation failed: {}",
-                    eval_err
-                )));
-            }
         }
-
-        // Filter out known attributes from entries
-        entries.retain(|entry| !KNOWN_ATTRIBUTES.contains(&entry.key.as_str()));
 
         // If no entries, return empty vector (no rate limiting needed)
         if entries.is_empty() {
@@ -153,20 +153,17 @@ impl RateLimitTask {
         Ok(BuildDescriptorsState::Ready(vec![descriptor]))
     }
 
-    /// Check if all predicates evaluate to true
-    fn predicates_apply(&self, ctx: &ReqRespCtx) -> PredicateResult {
-        if self.predicates.is_empty() {
-            return Ok(AttributeState::Available(true));
-        }
-
-        for predicate in &self.predicates {
-            match predicate.test(ctx)? {
-                AttributeState::Available(true) => continue,
-                AttributeState::Available(false) => return Ok(AttributeState::Available(false)),
-                AttributeState::Pending => return Ok(AttributeState::Pending),
-            }
-        }
-        Ok(AttributeState::Available(true))
+    /// Collects RateLimit Entries filtering out known attributes
+    fn collect_entries(&self, ctx: &ReqRespCtx) -> Result<Vec<Entry>, AttributeError> {
+        Ok(self
+            .conditional_data_sets
+            .iter()
+            .map(|conditional_data| self.build_entries(conditional_data, ctx))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .filter(|entry| !KNOWN_ATTRIBUTES.contains(&entry.key.as_str()))
+            .collect())
     }
 
     /// Extract known attributes like ratelimit.domain and ratelimit.hits_addend
@@ -414,56 +411,77 @@ mod tests {
     } */
 
     #[test]
-    fn test_no_predicates_returns_true() {
+    fn test_collect_entries_multiple_conditional_data_sets() {
         let ctx = create_test_context();
+        let conditional_data1 = ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                key: "key1".to_string(),
+                value: Expression::new("\"value1\"").unwrap(),
+            }],
+        };
+        let conditional_data2 = ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                key: "key2".to_string(),
+                value: Expression::new("\"value2\"").unwrap(),
+            }],
+        };
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![]),
+            create_test_action(vec![], vec![conditional_data1, conditional_data2]),
             Rc::new(create_test_service()),
         );
 
-        let result = task.predicates_apply(&ctx).unwrap();
+        let entries = task.collect_entries(&ctx).unwrap();
 
-        assert_eq!(result, AttributeState::Available(true));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, "key1");
+        assert_eq!(entries[0].value, "value1");
+        assert_eq!(entries[1].key, "key2");
+        assert_eq!(entries[1].value, "value2");
     }
 
     #[test]
-    fn test_predicates_pass() {
+    fn test_collect_entries_filters_known_attributes() {
         let ctx = create_test_context();
-        let predicates = vec![
-            Predicate::new("true").unwrap(),
-            Predicate::new("1 == 1").unwrap(),
-        ];
+        let conditional_data = ConditionalData {
+            predicates: vec![],
+            data: vec![
+                DataItem {
+                    key: "ratelimit.domain".to_string(),
+                    value: Expression::new("\"my-domain\"").unwrap(),
+                },
+                DataItem {
+                    key: "ratelimit.hits_addend".to_string(),
+                    value: Expression::new("5").unwrap(),
+                },
+                DataItem {
+                    key: "user_key".to_string(),
+                    value: Expression::new("\"user123\"").unwrap(),
+                },
+                DataItem {
+                    key: "api_key".to_string(),
+                    value: Expression::new("\"api456\"").unwrap(),
+                },
+            ],
+        };
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(predicates, vec![]),
+            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
         );
 
-        let result = task.predicates_apply(&ctx).unwrap();
+        let entries = task.collect_entries(&ctx).unwrap();
 
-        assert_eq!(result, AttributeState::Available(true));
-    }
-
-    #[test]
-    fn test_predicates_one_fails() {
-        let ctx = create_test_context();
-        let predicates = vec![
-            Predicate::new("true").unwrap(),
-            Predicate::new("false").unwrap(),
-        ];
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            create_test_action(predicates, vec![]),
-            Rc::new(create_test_service()),
-        );
-
-        let result = task.predicates_apply(&ctx).unwrap();
-
-        assert_eq!(result, AttributeState::Available(false));
+        // Should only have 2 entries, filtering out the 2 known attributes
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, "user_key");
+        assert_eq!(entries[0].value, "user123");
+        assert_eq!(entries[1].key, "api_key");
+        assert_eq!(entries[1].value, "api456");
     }
 
     #[test]
