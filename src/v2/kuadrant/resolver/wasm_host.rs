@@ -92,7 +92,7 @@ impl AttributeResolver for ProxyWasmHost {
             Some(&message),
             timeout,
         )
-        .map_err(|e| ServiceError::DispatchFailed(format!("{e:?}")))
+        .map_err(|e| ServiceError::Dispatch(format!("{e:?}")))
     }
 
     fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
@@ -101,9 +101,7 @@ impl AttributeResolver for ProxyWasmHost {
             0,
             response_size,
         )
-        .map_err(|e| {
-            ServiceError::RetrievalFailed(format!("Failed to get gRPC response: {:?}", e))
-        })?
-        .ok_or_else(|| ServiceError::RetrievalFailed("No gRPC response body available".to_string()))
+        .map_err(|e| ServiceError::Retrieval(format!("Failed to get gRPC response: {:?}", e)))?
+        .ok_or_else(|| ServiceError::Retrieval("No gRPC response body available".to_string()))
     }
 }

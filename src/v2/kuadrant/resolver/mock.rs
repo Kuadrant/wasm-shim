@@ -184,6 +184,6 @@ impl AttributeResolver for MockWasmHost {
             .lock()
             .expect("grpc_response mutex poisoned")
             .clone()
-            .ok_or_else(|| ServiceError::RetrievalFailed("No response available".to_string()))
+            .ok_or_else(|| ServiceError::Retrieval("No response available".to_string()))
     }
 }
