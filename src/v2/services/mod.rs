@@ -1,13 +1,41 @@
-use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::temp::GrpcRequest;
+use std::time::Duration;
 
-pub mod auth;
+use crate::v2::kuadrant::ReqRespCtx;
+
+mod auth;
+mod rate_limit;
+
+#[derive(Debug)]
+pub enum ServiceError {
+    DispatchFailed(String),
+    DecodeFailed(String),
+}
+
+impl std::fmt::Display for ServiceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServiceError::DispatchFailed(msg) => write!(f, "Failed to dispatch gRPC call: {}", msg),
+            ServiceError::DecodeFailed(msg) => write!(f, "Failed to decode response: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ServiceError {}
 
 pub trait Service {
     type Response;
-    fn dispatch(&self, ctx: &mut ReqRespCtx, scope: String) -> usize;
-    fn parse_message(&self, message: Vec<u8>) -> Self::Response;
 
-    #[deprecated]
-    fn request_message(&self, ctx: &mut ReqRespCtx, scope: String) -> GrpcRequest;
+    fn dispatch(
+        &self,
+        ctx: &mut ReqRespCtx,
+        upstream: &str,
+        service: &str,
+        method: &str,
+        message: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<u32, ServiceError> {
+        ctx.dispatch_grpc_call(upstream, service, method, message, timeout)
+    }
+
+    fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError>;
 }

@@ -1,7 +1,9 @@
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
+use crate::v2::services::ServiceError;
 use proxy_wasm::types::Bytes;
 use std::collections::HashMap;
+use std::time::Duration;
 
 #[derive(Default)]
 pub struct MockWasmHost {
@@ -103,5 +105,19 @@ impl AttributeResolver for MockWasmHost {
             }
             None => Ok(None),
         }
+    }
+
+    fn dispatch_grpc_call(
+        &self,
+        _upstream_name: &str,
+        _service_name: &str,
+        _method: &str,
+        _headers: Vec<(&str, &[u8])>,
+        _message: Vec<u8>,
+        _timeout: Duration,
+    ) -> Result<u32, ServiceError> {
+        // todo(refactor): mock returns a fake token_id
+        // in real tests, we'd need to store the message and allow retrieving responses
+        Ok(42)
     }
 }

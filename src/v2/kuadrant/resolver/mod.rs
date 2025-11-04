@@ -1,5 +1,7 @@
 use crate::v2::data::attribute::{AttributeError, Path};
+use crate::v2::services::ServiceError;
 use proxy_wasm::types::Bytes;
+use std::time::Duration;
 
 mod wasm_host;
 pub use wasm_host::ProxyWasmHost;
@@ -26,4 +28,13 @@ pub trait AttributeResolver: Send + Sync {
         start: usize,
         max_size: usize,
     ) -> Result<Option<Bytes>, AttributeError>;
+    fn dispatch_grpc_call(
+        &self,
+        upstream_name: &str,
+        service_name: &str,
+        method: &str,
+        headers: Vec<(&str, &[u8])>,
+        message: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<u32, ServiceError>;
 }
