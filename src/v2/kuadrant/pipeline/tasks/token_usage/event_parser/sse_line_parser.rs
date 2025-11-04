@@ -1,6 +1,10 @@
 //
 // Initially copied from: https://github.com/jpopesculian/eventsource-stream/blob/v0.2.3/src/parser.rs
 // Original License: Apache-2.0
+// Other considered alternatives:
+// * https://github.com/4t145/sse-stream
+// * https://github.com/launchdarkly/rust-eventsource-client
+// * https://github.com/lluchs/eventsource
 
 use nom::branch::alt;
 use nom::bytes::streaming::{tag, take_while, take_while1, take_while_m_n};
