@@ -18,6 +18,10 @@ impl KuadrantFilter {
             pipeline: None,
         }
     }
+
+    fn should_pause(&self) -> bool {
+        self.pipeline.as_ref().is_some_and(|p| p.requires_pause())
+    }
 }
 
 impl Context for KuadrantFilter {
@@ -25,7 +29,6 @@ impl Context for KuadrantFilter {
         debug!("#{} on_grpc_call_response", self.context_id);
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.digest(token_id, status_code, response_size);
-            // todo(adam-cattermole): Check pipeline.is_blocked() to determine Action::Pause vs Action::Continue
         }
     }
 }
@@ -40,8 +43,11 @@ impl HttpContext for KuadrantFilter {
             Ok(Some(pipeline)) => {
                 debug!("#{} pipeline built successfully", self.context_id);
                 self.pipeline = pipeline.eval();
-                // todo(adam-cattermole): Check pipeline.is_blocked() to determine Action::Pause vs Action::Continue
-                Action::Continue
+                if self.should_pause() {
+                    Action::Pause
+                } else {
+                    Action::Continue
+                }
             }
             Ok(None) => {
                 debug!("#{} no matching route found", self.context_id);
@@ -59,26 +65,35 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_request_body", self.context_id);
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.eval();
-            // todo(adam-cattermole): Check pipeline.is_blocked() to determine Action::Pause vs Action::Continue
         }
-        Action::Continue
+        if self.should_pause() {
+            Action::Pause
+        } else {
+            Action::Continue
+        }
     }
 
     fn on_http_response_headers(&mut self, _: usize, _: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.eval();
-            // todo(adam-cattermole): Check pipeline.is_blocked() to determine Action::Pause vs Action::Continue
         }
-        Action::Continue
+        if self.should_pause() {
+            Action::Pause
+        } else {
+            Action::Continue
+        }
     }
 
     fn on_http_response_body(&mut self, _body_size: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_body", self.context_id);
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.eval();
-            // todo(adam-cattermole): Check pipeline.is_blocked() to determine Action::Pause vs Action::Continue
         }
-        Action::Continue
+        if self.should_pause() {
+            Action::Pause
+        } else {
+            Action::Continue
+        }
     }
 }

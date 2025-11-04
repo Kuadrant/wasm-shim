@@ -19,7 +19,7 @@ pub struct AuthTask {
     scope: String,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
-    is_blocking: bool,
+    pauses_filter: bool,
 }
 
 impl AuthTask {
@@ -29,7 +29,7 @@ impl AuthTask {
         scope: String,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
-        is_blocking: bool,
+        pauses_filter: bool,
     ) -> Self {
         Self {
             task_id,
@@ -37,7 +37,7 @@ impl AuthTask {
             scope,
             predicates,
             dependencies,
-            is_blocking,
+            pauses_filter,
         }
     }
 
@@ -48,7 +48,7 @@ impl AuthTask {
         scope: String,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
-        is_blocking: bool,
+        pauses_filter: bool,
     ) -> Self {
         macro_rules! touch {
             ($path:expr, $type:ty) => {
@@ -78,7 +78,7 @@ impl AuthTask {
             scope,
             predicates,
             dependencies,
-            is_blocking,
+            pauses_filter,
         )
     }
 }
@@ -86,6 +86,10 @@ impl AuthTask {
 impl Task for AuthTask {
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
+    }
+
+    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+        self.pauses_filter
     }
 
     fn dependencies(&self) -> &[String] {
@@ -117,7 +121,7 @@ impl Task for AuthTask {
             token_id,
             pending: PendingTask {
                 task_id: Some(self.task_id),
-                is_blocking: self.is_blocking,
+                pauses_filter: self.pauses_filter,
                 process_response: Box::new(move |ctx, status_code, response_size| {
                     if status_code != proxy_wasm::types::Status::Ok as u32 {
                         // todo(refactor): failure case

@@ -110,7 +110,7 @@ impl PipelineFactory {
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.dependencies.clone(),
-                        true, // is_blocking = true for auth tasks
+                        true, // pauses_filter = true for auth tasks
                     )));
                 }
                 ServiceInstance::RateLimit(_)
