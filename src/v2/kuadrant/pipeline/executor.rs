@@ -61,9 +61,6 @@ impl Pipeline {
                     }
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
-                    if let Some(id) = pending.task_id() {
-                        self.completed_tasks.insert(id.clone());
-                    }
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
                         error!("Duplicate token_id={}", token_id);
                     }
@@ -87,9 +84,17 @@ impl Pipeline {
 
     pub fn digest(mut self, token_id: u32, status_code: u32, response_size: usize) -> Option<Self> {
         if let Some(pending) = self.deferred_tasks.remove(&token_id) {
+            let task_id = pending.task_id().cloned();
             match pending.process_response(&mut self.ctx, status_code, response_size) {
-                TaskOutcome::Done => {}
+                TaskOutcome::Done => {
+                    if let Some(id) = task_id {
+                        self.completed_tasks.insert(id);
+                    }
+                }
                 TaskOutcome::Requeued(tasks) => {
+                    if let Some(id) = task_id {
+                        self.completed_tasks.insert(id);
+                    }
                     for task in tasks.into_iter().rev() {
                         self.task_queue.insert(0, task);
                     }
