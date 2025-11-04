@@ -50,7 +50,7 @@ impl Pipeline {
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
-                        error!("Duplicate token_id={}", token_id);
+                        error!("Duplicate token_id: {}", token_id);
                     }
                 }
                 TaskOutcome::Requeued(tasks) => {
@@ -95,12 +95,12 @@ impl Pipeline {
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
-                        error!("Duplicate token_id={}", token_id);
+                        error!("Duplicate token_id: {}", token_id);
                     }
                 }
                 TaskOutcome::Failed => {
                     // todo(refactor): error handling
-                    error!("Failed to process response for token_id={}", token_id);
+                    error!("Failed to process response for token_id: {}", token_id);
                 }
                 TaskOutcome::Terminate(terminal_task) => {
                     terminal_task.apply(&mut self.ctx);
@@ -110,7 +110,7 @@ impl Pipeline {
                 }
             }
         } else {
-            error!("token_id={} not found", token_id);
+            error!("token_id: {} not found", token_id);
         }
 
         self.eval()

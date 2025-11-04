@@ -9,6 +9,7 @@ use crate::v2::kuadrant::pipeline::executor::Pipeline;
 use crate::v2::kuadrant::pipeline::tasks::{AuthTask, Task};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::ServiceInstance;
+use log::debug;
 use radix_trie::Trie;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -133,15 +134,23 @@ impl PipelineFactory {
 
         let candidates = match self.index.get_ancestor_value(&reverse_subdomain(&hostname)) {
             Some(blueprints) => blueprints,
-            None => return Ok(None),
+            None => {
+                debug!("No matching blueprint found for hostname: {}", hostname);
+                return Ok(None);
+            }
         };
 
         for blueprint in candidates {
             if self.route_predicates_match(&blueprint.route_predicates, &blueprint.name, ctx)? {
+                debug!(
+                    "Selected blueprint {} for hostname: {}",
+                    blueprint.name, hostname
+                );
                 return Ok(Some(blueprint));
             }
         }
 
+        debug!("No matching blueprint found for hostname: {}", hostname);
         Ok(None)
     }
 

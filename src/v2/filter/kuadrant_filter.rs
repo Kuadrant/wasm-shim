@@ -26,7 +26,10 @@ impl KuadrantFilter {
 
 impl Context for KuadrantFilter {
     fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, response_size: usize) {
-        debug!("#{} on_grpc_call_response", self.context_id);
+        debug!(
+            "#{} on_grpc_call_response: received gRPC call response: token: {}, status: {}",
+            self.context_id, token_id, status_code
+        );
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.digest(token_id, status_code, response_size);
         }
