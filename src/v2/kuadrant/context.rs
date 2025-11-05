@@ -119,8 +119,13 @@ impl ReqRespCtx {
         }
     }
 
-    //todo(adam-cattermole): the value here should be an enum to support other types
-    fn store_attribute(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
+    fn store_attribute_bytes(&self, path: &Path, value: Vec<u8>) -> Result<(), AttributeError> {
+        self.backend.set_attribute(path, &value)?;
+        self.cache
+            .insert(path.clone(), CachedValue::Bytes(Some(value)))
+    }
+
+    fn store_attribute_headers(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
                 match self.backend.set_attribute_map(
@@ -142,10 +147,9 @@ impl ReqRespCtx {
                 )?;
                 self.cache.insert(path.clone(), CachedValue::Headers(value))
             }
-            _ => {
-                // TODO
-                Ok(())
-            }
+            _ => Err(AttributeError::Set(
+                "Headers can only be set on request.headers or response.headers".to_string(),
+            )),
         }
     }
 
@@ -193,12 +197,31 @@ impl ReqRespCtx {
             .collect()
     }
 
+    pub fn set_attribute(
+        &self,
+        attribute_path: &str,
+        value: &[u8],
+    ) -> Result<AttributeState<()>, AttributeError> {
+        const KUADRANT_NAMESPACE: &str = "kuadrant";
+
+        let escaped_path = attribute_path.replace('.', "\\.");
+        let full_path = format!("{}\\.{}", KUADRANT_NAMESPACE, escaped_path);
+        let path = Path::from(full_path.as_str());
+
+        match self.store_attribute_bytes(&path, value.to_vec()) {
+            Ok(()) => Ok(AttributeState::Available(())),
+            Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Sets header maps for request or response headers
     pub fn set_attribute_map(
         &self,
         path: &Path,
         value: Headers,
     ) -> Result<AttributeState<()>, AttributeError> {
-        match self.store_attribute(path, value) {
+        match self.store_attribute_headers(path, value) {
             Ok(()) => Ok(AttributeState::Available(())),
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
@@ -243,6 +266,10 @@ impl ReqRespCtx {
             message,
             timeout,
         )
+    }
+
+    pub fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        self.backend.get_grpc_response(response_size)
     }
 
     fn get_tracing_headers(&self) -> Vec<(&'static str, Vec<u8>)> {

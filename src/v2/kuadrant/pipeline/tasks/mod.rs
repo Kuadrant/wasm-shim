@@ -1,11 +1,15 @@
-#[allow(dead_code)]
+mod auth;
 mod headers;
 mod ratelimit;
+mod store_data;
 mod token_usage;
+
+pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
+pub use store_data::StoreDataTask;
 
 use crate::v2::kuadrant::ReqRespCtx;
 
-pub type ResponseProcessor<T> = dyn FnOnce(T) -> Vec<Box<dyn Task>>;
+pub type ResponseProcessor = dyn FnOnce(&mut ReqRespCtx, u32, usize) -> TaskOutcome;
 
 #[allow(dead_code)]
 pub trait Task {
@@ -24,7 +28,7 @@ pub trait Task {
 pub struct PendingTask {
     task_id: Option<String>,
     is_blocking: bool,
-    process_response: Box<ResponseProcessor<Vec<u8>>>,
+    process_response: Box<ResponseProcessor>,
 }
 
 #[allow(dead_code)]
@@ -33,8 +37,13 @@ impl PendingTask {
         self.task_id.as_ref()
     }
 
-    pub fn process_response(self, response: Vec<u8>) -> Vec<Box<dyn Task>> {
-        (self.process_response)(response)
+    pub fn process_response(
+        self,
+        ctx: &mut ReqRespCtx,
+        status_code: u32,
+        response_size: usize,
+    ) -> TaskOutcome {
+        (self.process_response)(ctx, status_code, response_size)
     }
 
     pub fn is_blocking(&self) -> bool {
@@ -46,8 +55,7 @@ impl PendingTask {
 #[allow(dead_code)]
 pub enum TaskOutcome {
     Done,
-    Continue(Box<dyn Task>),
     Deferred { token_id: u32, pending: PendingTask },
-    Requeued(Box<dyn Task>),
+    Requeued(Vec<Box<dyn Task>>),
     Failed, // Possibly wrapping an error
 }

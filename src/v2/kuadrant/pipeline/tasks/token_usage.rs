@@ -71,7 +71,7 @@ impl Task for TokenUsageTask {
                 // TODO: store the event somewhere in the ctx?
                 TaskOutcome::Done
             }
-            (false, _) => TaskOutcome::Requeued(Box::new(new_t)),
+            (false, _) => TaskOutcome::Requeued(vec![Box::new(new_t)]),
         }
     }
 }

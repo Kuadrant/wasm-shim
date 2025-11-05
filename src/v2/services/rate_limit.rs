@@ -27,7 +27,7 @@ impl Service for RateLimitService {
 
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError> {
         prost::Message::decode(&message[..])
-            .map_err(|e| ServiceError::DecodeFailed(format!("RateLimitResponse: {e}")))
+            .map_err(|e| ServiceError::Decode(format!("RateLimitResponse: {e}")))
     }
 }
 
@@ -41,7 +41,7 @@ impl RateLimitService {
     ) -> Result<u32, ServiceError> {
         let ratelimit_request = self
             .build_request(ctx, scope, descriptors, hits_addend)
-            .map_err(|e| ServiceError::DispatchFailed(format!("Failed to build request: {e}")))?;
+            .map_err(|e| ServiceError::Dispatch(format!("Failed to build request: {e}")))?;
         let outgoing_message = ratelimit_request.encode_to_vec();
 
         self.dispatch(

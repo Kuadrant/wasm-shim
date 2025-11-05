@@ -36,6 +36,16 @@ impl AttributeResolver for ProxyWasmHost {
         }
     }
 
+    fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError> {
+        match hostcalls::set_property(path.tokens(), Some(value)) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(AttributeError::Set(format!(
+                "Failed to set property {}: {:?}",
+                path, err
+            ))),
+        }
+    }
+
     fn set_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
@@ -82,6 +92,16 @@ impl AttributeResolver for ProxyWasmHost {
             Some(&message),
             timeout,
         )
-        .map_err(|e| ServiceError::DispatchFailed(format!("{e:?}")))
+        .map_err(|e| ServiceError::Dispatch(format!("{e:?}")))
+    }
+
+    fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        hostcalls::get_buffer(
+            proxy_wasm::types::BufferType::GrpcReceiveBuffer,
+            0,
+            response_size,
+        )
+        .map_err(|e| ServiceError::Retrieval(format!("Failed to get gRPC response: {:?}", e)))?
+        .ok_or_else(|| ServiceError::Retrieval("No gRPC response body available".to_string()))
     }
 }

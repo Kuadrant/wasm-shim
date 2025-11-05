@@ -18,6 +18,7 @@ pub trait AttributeResolver: Send + Sync {
         &self,
         map_type: proxy_wasm::types::MapType,
     ) -> Result<Vec<(String, String)>, AttributeError>;
+    fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError>;
     fn set_attribute_map(
         &self,
         map_type: proxy_wasm::types::MapType,
@@ -37,4 +38,5 @@ pub trait AttributeResolver: Send + Sync {
         message: Vec<u8>,
         timeout: Duration,
     ) -> Result<u32, ServiceError>;
+    fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError>;
 }

@@ -20,7 +20,7 @@ use crate::v2::kuadrant::ReqRespCtx;
 
 const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";
 
-struct AuthService {
+pub struct AuthService {
     upstream_name: String,
     service_name: String,
     method: String,
@@ -32,15 +32,14 @@ impl Service for AuthService {
 
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError> {
         prost::Message::decode(&message[..])
-            .map_err(|e| ServiceError::DecodeFailed(format!("CheckResponse: {e}")))
+            .map_err(|e| ServiceError::Decode(format!("CheckResponse: {e}")))
     }
 }
 
 impl AuthService {
     pub fn dispatch_auth(&self, ctx: &mut ReqRespCtx, scope: &str) -> Result<u32, ServiceError> {
-        let check_request = build_check_request(ctx, scope).map_err(|e| {
-            ServiceError::DispatchFailed(format!("Failed to build CheckRequest: {e}"))
-        })?;
+        let check_request = build_check_request(ctx, scope)
+            .map_err(|e| ServiceError::Dispatch(format!("Failed to build CheckRequest: {e}")))?;
         let outgoing_message = check_request.encode_to_vec();
 
         self.dispatch(
