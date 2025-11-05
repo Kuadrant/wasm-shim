@@ -55,6 +55,12 @@ impl Pipeline {
                     // todo(refactor): error handling
                     error!("Task failed: {:?}", task_id);
                 }
+                TaskOutcome::Terminate(terminal_task) => {
+                    terminal_task.apply(&mut self.ctx);
+                    self.task_queue.clear();
+                    self.deferred_tasks.clear();
+                    return None;
+                }
             }
         }
 
@@ -90,6 +96,12 @@ impl Pipeline {
                 TaskOutcome::Failed => {
                     // todo(refactor): error handling
                     error!("Failed to process response for token_id={}", token_id);
+                }
+                TaskOutcome::Terminate(terminal_task) => {
+                    terminal_task.apply(&mut self.ctx);
+                    self.task_queue.clear();
+                    self.deferred_tasks.clear();
+                    return None;
                 }
             }
         } else {

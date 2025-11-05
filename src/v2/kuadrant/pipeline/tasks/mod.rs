@@ -57,5 +57,6 @@ pub enum TaskOutcome {
     Done,
     Deferred { token_id: u32, pending: PendingTask },
     Requeued(Vec<Box<dyn Task>>),
-    Failed, // Possibly wrapping an error
+    Failed,
+    Terminate(Box<dyn Task>),
 }
