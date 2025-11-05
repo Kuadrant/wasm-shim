@@ -18,7 +18,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
-pub(super) mod errors {
+pub(crate) mod errors {
     use crate::v2::data::attribute::AttributeError;
     use crate::v2::data::Expression;
     use cel_interpreter::ExecutionError;

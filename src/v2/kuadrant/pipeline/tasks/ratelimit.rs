@@ -1,8 +1,9 @@
 use crate::envoy::rate_limit_descriptor::Entry;
-use crate::envoy::{rate_limit_descriptor, rate_limit_response, RateLimitDescriptor};
+use crate::envoy::{rate_limit_response, RateLimitDescriptor};
 use crate::v2::data::attribute::{AttributeError, AttributeState};
+use crate::v2::data::cel::errors::EvaluationError;
 use crate::v2::data::cel::{Expression, Predicate};
-use crate::v2::kuadrant::pipeline::blueprint::{Action, ConditionalData};
+use crate::v2::kuadrant::pipeline::blueprint::ConditionalData;
 #[allow(dead_code)]
 use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
@@ -24,7 +25,7 @@ impl DescriptorEntryBuilder {
     }
 
     /// Evaluate the expression to create a descriptor entry
-    fn evaluate(self, ctx: &ReqRespCtx) -> Result<rate_limit_descriptor::Entry, AttributeError> {
+    fn evaluate(self, ctx: &ReqRespCtx) -> Result<Entry, EvaluationError> {
         match self.expression.eval(ctx) {
             Ok(AttributeState::Available(value)) => {
                 let value_str = match value {
@@ -35,33 +36,28 @@ impl DescriptorEntryBuilder {
                     Value::Bool(b) => format!("{b}"),
                     Value::Null => "null".to_owned(),
                     _ => {
-                        return Err(AttributeError::Parse(
+                        return Err(EvaluationError::new(
+                            self.expression,
                             "Only scalar values can be sent as data".to_string(),
                         ));
                     }
                 };
 
-                Ok(rate_limit_descriptor::Entry {
+                Ok(Entry {
                     key: self.key.clone(),
                     value: value_str,
                 })
             }
-            Ok(AttributeState::Pending) => Err(AttributeError::NotAvailable(format!(
-                "Expression '{}' evaluation is pending",
-                self.key
-            ))),
-            Err(cel_err) => Err(AttributeError::Retrieval(format!(
-                "CEL evaluation error for '{}': {}",
-                self.key, cel_err
-            ))),
+            Ok(AttributeState::Pending) => Err(EvaluationError::new(
+                self.expression,
+                format!("Expression '{}' evaluation is pending", self.key),
+            )),
+            Err(cel_err) => Err(EvaluationError::new(
+                self.expression,
+                format!("CEL evaluation error for '{}': {}", self.key, cel_err),
+            )),
         }
     }
-}
-
-/// Type indicating the state of the descriptors build outcome
-enum BuildDescriptorsState {
-    Ready(Vec<RateLimitDescriptor>),
-    Pending,
 }
 
 const KNOWN_ATTRIBUTES: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"];
@@ -89,73 +85,50 @@ impl RateLimitTask {
     pub fn new(
         task_id: String,
         dependencies: Vec<String>,
-        action: Action,
         service: Rc<RateLimitService>,
+        scope: String,
+        predicates: Vec<Predicate>,
+        conditional_data_sets: Vec<ConditionalData>,
     ) -> Self {
         Self {
             task_id,
             dependencies,
             is_blocking: true,
-            scope: action.scope,
+            scope,
             service,
-            conditional_data_sets: action.conditional_data,
-            predicates: action.predicates,
+            predicates,
+            conditional_data_sets,
             default_hits_addend: 1,
         }
     }
 
     /// Builds the rate limit descriptors from the context
-    fn build_descriptors(&self, ctx: &ReqRespCtx) -> Result<BuildDescriptorsState, AttributeError> {
+    fn build_descriptors(
+        &self,
+        ctx: &ReqRespCtx,
+    ) -> Result<AttributeState<Vec<RateLimitDescriptor>>, EvaluationError> {
         // TODO: Candidate for a `prepare` task/method
-        // Build descriptor entries by evaluating conditional data
-        let mut entries = Vec::new();
-
-        // if predicates don't apply, skip RL. return empty entries
-        if self.predicates.is_empty() {
-            entries = self.collect_entries(ctx)?;
-        } else {
+        if !self.predicates.is_empty() {
             for predicate in &self.predicates {
-                match predicate.test(ctx) {
-                    Ok(AttributeState::Available(true)) => {
-                        // Top level predicates passed, evaluating conditional data to build entries
-                        entries = self.collect_entries(ctx)?;
-                    }
-                    Ok(AttributeState::Available(false)) => {
-                        // Top level predicates didn't apply, returning empty descriptor entries
-                        return Ok(BuildDescriptorsState::Ready(vec![]));
-                    }
-                    Ok(AttributeState::Pending) => {
-                        // Can't evaluate yet, need to defer
-                        return Ok(BuildDescriptorsState::Pending);
-                    }
-                    Err(eval_err) => {
-                        return Err(AttributeError::Retrieval(format!(
-                            "Predicate evaluation failed: {}",
-                            eval_err
-                        )));
-                    }
+                match predicate.test(ctx)? {
+                    AttributeState::Available(false) => {
+                        return Ok(AttributeState::Available(vec![]))
+                    } // Top level predicates didn't apply, returning empty descriptor entries
+                    AttributeState::Pending => return Ok(AttributeState::Pending),
+                    _ => {}
                 }
             }
+            return self.collect_descriptors(ctx);
         }
-
-        // If no entries, return empty vector (no rate limiting needed)
-        if entries.is_empty() {
-            return Ok(BuildDescriptorsState::Ready(Vec::new()));
-        }
-
-        // Build the descriptor
-        let descriptor = RateLimitDescriptor {
-            entries,
-            limit: None,
-        };
-
-        // Encode to protobuf bytes
-        Ok(BuildDescriptorsState::Ready(vec![descriptor]))
+        self.collect_descriptors(ctx)
     }
 
     /// Collects RateLimit Entries filtering out known attributes
-    fn collect_entries(&self, ctx: &ReqRespCtx) -> Result<Vec<Entry>, AttributeError> {
-        Ok(self
+    fn collect_descriptors(
+        &self,
+        ctx: &ReqRespCtx,
+    ) -> Result<AttributeState<Vec<RateLimitDescriptor>>, EvaluationError> {
+        let entries: Vec<Entry> = self
             .conditional_data_sets
             .iter()
             .map(|conditional_data| self.build_entries(conditional_data, ctx))
@@ -163,7 +136,15 @@ impl RateLimitTask {
             .into_iter()
             .flatten()
             .filter(|entry| !KNOWN_ATTRIBUTES.contains(&entry.key.as_str()))
-            .collect())
+            .collect();
+
+        if !entries.is_empty() {
+            return Ok(AttributeState::Available(vec![RateLimitDescriptor {
+                entries,
+                limit: None,
+            }]));
+        }
+        Ok(AttributeState::Available(Vec::new()))
     }
 
     /// Extract known attributes like ratelimit.domain and ratelimit.hits_addend
@@ -230,7 +211,7 @@ impl RateLimitTask {
         &self,
         conditional_data: &ConditionalData,
         ctx: &ReqRespCtx,
-    ) -> Result<Vec<rate_limit_descriptor::Entry>, AttributeError> {
+    ) -> Result<Vec<Entry>, EvaluationError> {
         if conditional_data.predicates.is_empty()
             || conditional_data.predicates.iter().any(|expr| {
                 expr.eval(ctx)
@@ -255,8 +236,8 @@ impl Task for RateLimitTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         // Build the rate limit descriptors
         let descriptors = match self.build_descriptors(ctx) {
-            Ok(BuildDescriptorsState::Ready(msg)) => msg,
-            Ok(BuildDescriptorsState::Pending) => {
+            Ok(AttributeState::Available(descriptors)) => descriptors,
+            Ok(AttributeState::Pending) => {
                 // Need to wait for attributes, requeue
                 return TaskOutcome::Requeued(self);
             }
@@ -349,8 +330,6 @@ impl Task for RateLimitTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::configuration;
-    use crate::v2::configuration::ServiceType;
     use crate::v2::data::cel::Expression;
     use crate::v2::data::cel::Predicate;
     use crate::v2::kuadrant::pipeline::blueprint::DataItem;
@@ -375,23 +354,6 @@ mod tests {
             "test".to_string(),
             std::time::Duration::from_secs(1),
         )
-    }
-
-    fn create_test_action(
-        predicates: Vec<Predicate>,
-        conditional_data: Vec<ConditionalData>,
-    ) -> Action {
-        Action {
-            service: Rc::new(configuration::Service {
-                service_type: ServiceType::RateLimit,
-                endpoint: "test".to_string(),
-                failure_mode: Default::default(),
-                timeout: Default::default(),
-            }),
-            scope: "test".to_string(),
-            predicates,
-            conditional_data,
-        }
     }
 
     /*
@@ -430,11 +392,16 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![conditional_data1, conditional_data2]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![conditional_data1, conditional_data2],
         );
 
-        let entries = task.collect_entries(&ctx).unwrap();
+        let AttributeState::Available(descriptors) = task.collect_descriptors(&ctx).unwrap() else {
+            unreachable!("Should not happen")
+        };
+        let entries = &descriptors[0].entries;
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].key, "key1");
@@ -470,13 +437,17 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![conditional_data],
         );
 
-        let entries = task.collect_entries(&ctx).unwrap();
+        let AttributeState::Available(descriptors) = task.collect_descriptors(&ctx).unwrap() else {
+            unreachable!("Should not happen")
+        };
+        let entries = &descriptors[0].entries;
 
-        // Should only have 2 entries, filtering out the 2 known attributes
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].key, "user_key");
         assert_eq!(entries[0].value, "user123");
@@ -490,8 +461,10 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![],
         );
 
         let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
@@ -519,8 +492,10 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![conditional_data],
         );
 
         let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
@@ -545,26 +520,26 @@ mod tests {
                 },
             ],
         };
+
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(
-                vec![],
-                vec![ConditionalData {
-                    predicates: vec![],
-                    data: vec![
-                        DataItem {
-                            key: "key1".to_string(),
-                            value: Expression::new("\"value1\"").unwrap(),
-                        },
-                        DataItem {
-                            key: "key2".to_string(),
-                            value: Expression::new("\"value2\"").unwrap(),
-                        },
-                    ],
-                }],
-            ),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![ConditionalData {
+                predicates: vec![],
+                data: vec![
+                    DataItem {
+                        key: "key1".to_string(),
+                        value: Expression::new("\"value1\"").unwrap(),
+                    },
+                    DataItem {
+                        key: "key2".to_string(),
+                        value: Expression::new("\"value2\"").unwrap(),
+                    },
+                ],
+            }],
         );
 
         let entries = task.build_entries(&conditional_data, &ctx).unwrap();
@@ -599,20 +574,22 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![conditional_data],
         );
 
         let result = task.build_descriptors(&ctx).unwrap();
 
         match result {
-            BuildDescriptorsState::Ready(descriptors) => {
+            AttributeState::Available(descriptors) => {
                 assert_eq!(descriptors.len(), 1);
                 // Known attributes should be filtered out
                 assert_eq!(descriptors[0].entries.len(), 1);
                 assert_eq!(descriptors[0].entries[0].key, "actual_key");
             }
-            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
         }
     }
 
@@ -629,21 +606,20 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(
-                vec![Predicate::new("false").unwrap()],
-                vec![conditional_data],
-            ),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![Predicate::new("false").unwrap()],
+            vec![conditional_data],
         );
 
         let result = task.build_descriptors(&ctx).unwrap();
 
         match result {
-            BuildDescriptorsState::Ready(descriptors) => {
+            AttributeState::Available(descriptors) => {
                 // Predicate failed, so no descriptors should be built
                 assert_eq!(descriptors.len(), 0);
             }
-            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
         }
     }
 
@@ -653,28 +629,27 @@ mod tests {
         let conditional_data = ConditionalData {
             predicates: vec![],
             data: vec![DataItem {
-                key: "test_key".to_string(),
-                value: Expression::new("\"test_value\"").unwrap(),
+                key: "key_1".to_string(),
+                value: Expression::new("42").unwrap(),
             }],
         };
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(
-                vec![Predicate::new("true").unwrap()],
-                vec![conditional_data],
-            ),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![Predicate::new("true").unwrap()],
+            vec![conditional_data],
         );
 
         let result = task.build_descriptors(&ctx).unwrap();
 
         match result {
-            BuildDescriptorsState::Ready(descriptors) => {
+            AttributeState::Available(descriptors) => {
                 assert_eq!(descriptors.len(), 1);
                 assert_eq!(descriptors[0].entries.len(), 1);
             }
-            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
         }
     }
 
@@ -691,17 +666,19 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![conditional_data],
         );
 
         let result = task.build_descriptors(&ctx).unwrap();
 
         match result {
-            BuildDescriptorsState::Ready(descriptors) => {
+            AttributeState::Available(descriptors) => {
                 assert_eq!(descriptors.len(), 0);
             }
-            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
         }
     }
 
@@ -718,30 +695,33 @@ mod tests {
         let task = RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![], vec![conditional_data]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            vec![conditional_data],
         );
 
         let result = task.build_descriptors(&ctx).unwrap();
 
         match result {
-            BuildDescriptorsState::Ready(descriptors) => {
+            AttributeState::Available(descriptors) => {
                 assert_eq!(descriptors.len(), 1);
                 assert_eq!(descriptors[0].entries.len(), 1);
             }
-            BuildDescriptorsState::Pending => unreachable!("Expected Ready, got Pending"),
+            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
         }
     }
 
     #[test]
     fn test_task_outcome_done() {
         let mut ctx = create_test_context();
-
         let task = Box::new(RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(vec![Predicate::new("false").unwrap()], vec![]),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![Predicate::new("false").unwrap()],
+            vec![],
         ));
 
         let outcome = task.apply(&mut ctx);
@@ -759,15 +739,13 @@ mod tests {
                 value: Expression::new("\"test_value\"").unwrap(),
             }],
         };
-
         let task = Box::new(RateLimitTask::new(
             "test".to_string(),
             vec![],
-            create_test_action(
-                vec![Predicate::new("true").unwrap()],
-                vec![conditional_data],
-            ),
             Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![Predicate::new("true").unwrap()],
+            vec![conditional_data],
         ));
 
         let outcome = task.apply(&mut ctx);
