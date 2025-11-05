@@ -5,6 +5,7 @@ mod send_reply;
 mod store_data;
 mod token_usage;
 
+pub use auth::AuthTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
@@ -24,12 +25,16 @@ pub trait Task {
     fn dependencies(&self) -> &[String] {
         &[]
     }
+
+    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+        false
+    }
 }
 
 #[allow(dead_code)]
 pub struct PendingTask {
     task_id: Option<String>,
-    is_blocking: bool,
+    pauses_filter: bool,
     process_response: Box<ResponseProcessor>,
 }
 
@@ -48,9 +53,8 @@ impl PendingTask {
         (self.process_response)(ctx, status_code, response_size)
     }
 
-    pub fn is_blocking(&self) -> bool {
-        // This would need to peak into `ok_action` AND `rl_action` to see if we need to block
-        self.is_blocking
+    pub fn pauses_filter(&self) -> bool {
+        self.pauses_filter
     }
 }
 

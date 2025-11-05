@@ -8,6 +8,7 @@ pub struct TokenUsageTask {
     event_parser: event_parser::EventParser,
     // Stores the last two events: [second_to_last, last]
     last_two_events: [Option<Event>; 2],
+    started: bool,
 }
 
 impl TokenUsageTask {
@@ -15,6 +16,7 @@ impl TokenUsageTask {
         Self {
             event_parser: event_parser::EventParser::default(),
             last_two_events: [None, None],
+            started: false,
         }
     }
 
@@ -31,11 +33,16 @@ impl From<Box<Self>> for TokenUsageTask {
         Self {
             event_parser: value.event_parser,
             last_two_events: value.last_two_events,
+            started: value.started,
         }
     }
 }
 
 impl Task for TokenUsageTask {
+    fn pauses_filter(&self, ctx: &ReqRespCtx) -> bool {
+        self.started && !ctx.is_end_of_stream()
+    }
+
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         // Extract token usage from the second-to-last Server-Sent Event.
         //
@@ -50,6 +57,7 @@ impl Task for TokenUsageTask {
         // TODO: check response content type is text/event-stream
 
         let mut new_t: TokenUsageTask = self.into();
+        new_t.started = true;
 
         match new_t.event_parser.parse(ctx) {
             Ok(events) => {

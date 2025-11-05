@@ -3,6 +3,7 @@ use crate::v2::data::attribute::{AttributeState, Path};
 use crate::v2::data::Headers;
 use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
+use log::debug;
 
 #[derive(Clone)]
 pub enum HeadersType {
@@ -46,14 +47,17 @@ impl Task for ModifyHeadersTask {
             Ok(AttributeState::Available(Some(mut existing_headers))) => {
                 match &self.operation {
                     HeaderOperation::Append(headers) => {
+                        debug!("Appending {} headers", headers.len());
                         existing_headers.extend(headers.clone());
                     }
                     HeaderOperation::Set(headers) => {
+                        debug!("Setting {} headers", headers.len());
                         for (key, value) in headers.clone().into_inner() {
                             existing_headers.set(key, value);
                         }
                     }
                     HeaderOperation::Remove(keys) => {
+                        debug!("Removing {} headers", keys.len());
                         for key in keys {
                             existing_headers.remove(key);
                         }

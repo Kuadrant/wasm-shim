@@ -1,11 +1,21 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
+use crate::v2::configuration::ServiceType;
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
 mod rate_limit;
 
 pub use auth::AuthService;
+pub use rate_limit::RateLimitService;
+
+#[derive(Clone)]
+pub enum ServiceInstance {
+    Auth(Rc<AuthService>),
+    RateLimit(Rc<RateLimitService>),
+    RateLimitCheck(Rc<RateLimitService>),
+    RateLimitReport(Rc<RateLimitService>),
+}
 
 #[derive(Debug)]
 pub enum ServiceError {
@@ -27,6 +37,44 @@ impl std::fmt::Display for ServiceError {
 }
 
 impl std::error::Error for ServiceError {}
+
+impl TryFrom<(String, Duration, ServiceType)> for ServiceInstance {
+    type Error = ServiceError;
+
+    fn try_from(value: (String, Duration, ServiceType)) -> Result<Self, Self::Error> {
+        let (endpoint, timeout, service_type) = value;
+
+        match service_type {
+            ServiceType::Auth => Ok(ServiceInstance::Auth(Rc::new(AuthService::new(
+                endpoint, timeout,
+            )))),
+            ServiceType::RateLimit => {
+                Ok(ServiceInstance::RateLimit(Rc::new(RateLimitService::new(
+                    endpoint,
+                    timeout,
+                    "envoy.service.ratelimit.v3.RateLimitService",
+                    "ShouldRateLimit",
+                ))))
+            }
+            ServiceType::RateLimitCheck => Ok(ServiceInstance::RateLimitCheck(Rc::new(
+                RateLimitService::new(
+                    endpoint,
+                    timeout,
+                    "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                    "Check",
+                ),
+            ))),
+            ServiceType::RateLimitReport => Ok(ServiceInstance::RateLimitReport(Rc::new(
+                RateLimitService::new(
+                    endpoint,
+                    timeout,
+                    "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                    "Report",
+                ),
+            ))),
+        }
+    }
+}
 
 pub trait Service {
     type Response;

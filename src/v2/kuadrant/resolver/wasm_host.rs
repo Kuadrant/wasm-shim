@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use log::{debug, error};
+
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
 use crate::v2::services::ServiceError;
@@ -9,13 +11,14 @@ pub struct ProxyWasmHost;
 
 impl AttributeResolver for ProxyWasmHost {
     fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
+        debug!("Getting property: `{}`", path);
         match hostcalls::get_property(path.tokens()) {
             Ok(data) => Ok(data),
             Err(proxy_wasm::types::Status::BadArgument) => Err(AttributeError::NotAvailable(
-                format!("Property {path} not available in current request phase"),
+                format!("Property `{path}` not available in current request phase"),
             )),
             Err(e) => Err(AttributeError::Retrieval(format!(
-                "failed to get property: {path}: {e:?}"
+                "failed to get property: `{path}`: {e:?}"
             ))),
         }
     }
@@ -26,7 +29,7 @@ impl AttributeResolver for ProxyWasmHost {
     ) -> Result<Vec<(String, String)>, AttributeError> {
         match hostcalls::get_map(map_type) {
             Ok(map) if map.is_empty() => Err(AttributeError::NotAvailable(format!(
-                "Map {:?} not available in current phase",
+                "Map `{:?}` not available in current phase",
                 map_type
             ))),
             Ok(map) => Ok(map),
@@ -37,10 +40,11 @@ impl AttributeResolver for ProxyWasmHost {
     }
 
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError> {
+        debug!("Setting property: `{}`", path);
         match hostcalls::set_property(path.tokens(), Some(value)) {
             Ok(_) => Ok(()),
             Err(err) => Err(AttributeError::Set(format!(
-                "Failed to set property {}: {:?}",
+                "Failed to set property `{}`: {:?}",
                 path, err
             ))),
         }
@@ -54,7 +58,7 @@ impl AttributeResolver for ProxyWasmHost {
         match hostcalls::set_map(map_type, value) {
             Ok(_) => Ok(()),
             Err(proxy_wasm::types::Status::BadArgument) => Err(AttributeError::NotAvailable(
-                format!("Map {:?} not available in current phase", map_type),
+                format!("Map `{:?}` not available in current phase", map_type),
             )),
             Err(err) => Err(AttributeError::Set(format!("Error setting map: {err:?}"))),
         }
@@ -84,18 +88,34 @@ impl AttributeResolver for ProxyWasmHost {
         message: Vec<u8>,
         timeout: Duration,
     ) -> Result<u32, ServiceError> {
-        hostcalls::dispatch_grpc_call(
+        debug!(
+            "Dispatching gRPC call to {}/{}.{}, timeout: {:?}",
+            upstream_name, service_name, method, timeout
+        );
+        match hostcalls::dispatch_grpc_call(
             upstream_name,
             service_name,
             method,
             headers,
             Some(&message),
             timeout,
-        )
-        .map_err(|e| ServiceError::Dispatch(format!("{e:?}")))
+        ) {
+            Ok(token_id) => {
+                debug!("gRPC call dispatched successfully, token_id: {}", token_id);
+                Ok(token_id)
+            }
+            Err(e) => {
+                error!(
+                    "Failed to dispatch gRPC call to {}/{}.{}: {:?}",
+                    upstream_name, service_name, method, e
+                );
+                Err(ServiceError::Dispatch(format!("{e:?}")))
+            }
+        }
     }
 
     fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        debug!("Getting gRPC response, size: {} bytes", response_size);
         hostcalls::get_buffer(
             proxy_wasm::types::BufferType::GrpcReceiveBuffer,
             0,
@@ -111,6 +131,7 @@ impl AttributeResolver for ProxyWasmHost {
         headers: Vec<(&str, &str)>,
         body: Option<&[u8]>,
     ) -> Result<(), ServiceError> {
+        debug!("Sending local reply, status code: {}", status_code);
         hostcalls::send_http_response(status_code, headers, body)
             .map_err(|e| ServiceError::Dispatch(format!("Failed to send HTTP reply: {:?}", e)))
     }

@@ -23,6 +23,11 @@ impl Pipeline {
         }
     }
 
+    pub fn with_tasks(mut self, tasks: Vec<Box<dyn Task>>) -> Self {
+        self.task_queue = tasks;
+        self
+    }
+
     pub fn eval(mut self) -> Option<Self> {
         let tasks_to_process: Vec<_> = self.task_queue.drain(..).collect();
 
@@ -45,7 +50,7 @@ impl Pipeline {
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
-                        error!("Duplicate token_id={}", token_id);
+                        error!("Duplicate token_id: {}", token_id);
                     }
                 }
                 TaskOutcome::Requeued(tasks) => {
@@ -90,12 +95,12 @@ impl Pipeline {
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
-                        error!("Duplicate token_id={}", token_id);
+                        error!("Duplicate token_id: {}", token_id);
                     }
                 }
                 TaskOutcome::Failed => {
                     // todo(refactor): error handling
-                    error!("Failed to process response for token_id={}", token_id);
+                    error!("Failed to process response for token_id: {}", token_id);
                 }
                 TaskOutcome::Terminate(terminal_task) => {
                     terminal_task.apply(&mut self.ctx);
@@ -105,13 +110,21 @@ impl Pipeline {
                 }
             }
         } else {
-            error!("token_id={} not found", token_id);
+            error!("token_id: {} not found", token_id);
         }
 
         self.eval()
     }
 
-    pub fn is_blocked(&self) -> bool {
-        self.deferred_tasks.values().any(PendingTask::is_blocking)
+    pub fn requires_pause(&self) -> bool {
+        let has_blocking_deferred_tasks =
+            self.deferred_tasks.values().any(PendingTask::pauses_filter);
+
+        let has_blocking_queued_tasks = self
+            .task_queue
+            .iter()
+            .any(|task| task.pauses_filter(&self.ctx));
+
+        has_blocking_deferred_tasks || has_blocking_queued_tasks
     }
 }
