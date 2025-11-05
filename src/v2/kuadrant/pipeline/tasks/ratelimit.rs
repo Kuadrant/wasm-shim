@@ -66,7 +66,7 @@ const KNOWN_ATTRIBUTES: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"
 pub struct RateLimitTask {
     task_id: String,
     dependencies: Vec<String>,
-    is_blocking: bool,
+    pauses_filter: bool,
 
     // Rate limit configuration
     scope: String,
@@ -93,7 +93,7 @@ impl RateLimitTask {
         Self {
             task_id,
             dependencies,
-            is_blocking: true,
+            pauses_filter: true,
             scope,
             service,
             predicates,
@@ -213,9 +213,9 @@ impl RateLimitTask {
         ctx: &ReqRespCtx,
     ) -> Result<Vec<Entry>, EvaluationError> {
         if conditional_data.predicates.is_empty()
-            || conditional_data.predicates.iter().any(|expr| {
-                expr.eval(ctx)
-                    .is_ok_and(|v| matches!(v, AttributeState::Available(Value::Bool(true))))
+            || conditional_data.predicates.iter().any(|pred| {
+                pred.test(ctx)
+                    .is_ok_and(|v| matches!(v, AttributeState::Available(true)))
             })
         {
             conditional_data
@@ -239,7 +239,7 @@ impl Task for RateLimitTask {
             Ok(AttributeState::Available(descriptors)) => descriptors,
             Ok(AttributeState::Pending) => {
                 // Need to wait for attributes, requeue
-                return TaskOutcome::Requeued(self);
+                return TaskOutcome::Requeued(vec![self]);
             }
             Err(_e) => {
                 // TODO: Handle error appropriately based on failure mode
@@ -284,14 +284,13 @@ impl Task for RateLimitTask {
             token_id,
             pending: PendingTask {
                 task_id: Some(self.task_id),
-                is_blocking: self.is_blocking,
-                process_response: Box::new(move |response| {
-                    // Parse the rate limit response
-                    let rate_limit_response = match service.parse_message(response) {
+                pauses_filter: self.pauses_filter,
+                process_response: Box::new(move |ctx, _status_code, response_size| {
+                    let rate_limit_response = match service.get_response(ctx, response_size) {
                         Ok(parsed) => parsed,
                         Err(_e) => {
-                            // TODO: Handle parsing error and/or FailureMode task?
-                            return Vec::new();
+                            // TODO: Handle parsing error
+                            return TaskOutcome::Failed;
                         }
                     };
 
@@ -300,17 +299,17 @@ impl Task for RateLimitTask {
                         code if code == rate_limit_response::Code::Ok as i32 => {
                             // Rate limit check passed
                             // TODO: Extract headers and push ModifyHeadersTask + DirectResponseTask
-                            Vec::new()
+                            todo!()
                         }
                         code if code == rate_limit_response::Code::OverLimit as i32 => {
                             // Rate limit exceeded - return 429
                             // TODO: Extract headers and push ModifyHeadersTask + DirectResponseTask
-                            Vec::new()
+                            todo!()
                         }
                         _ => {
                             // Unknown or error response
                             // TODO: Handle parsing error and/or FailureMode task?
-                            Vec::new()
+                            todo!()
                         }
                     }
                 }),
@@ -324,6 +323,10 @@ impl Task for RateLimitTask {
 
     fn dependencies(&self) -> &[String] {
         self.dependencies.as_slice()
+    }
+
+    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+        self.pauses_filter
     }
 }
 
@@ -350,9 +353,9 @@ mod tests {
     fn create_test_service() -> RateLimitService {
         RateLimitService::new(
             "test".to_string(),
-            "test".to_string(),
-            "test".to_string(),
             std::time::Duration::from_secs(1),
+            "test",
+            "POST",
         )
     }
 
@@ -657,7 +660,7 @@ mod tests {
     fn test_build_descriptors_with_failing_conditional_data_predicate() {
         let ctx = create_test_context();
         let conditional_data = ConditionalData {
-            predicates: vec![Expression::new("false").unwrap()],
+            predicates: vec![Predicate::new("false").unwrap()],
             data: vec![DataItem {
                 key: "test_key".to_string(),
                 value: Expression::new("\"test_value\"").unwrap(),
@@ -686,7 +689,7 @@ mod tests {
     fn test_build_descriptors_with_passing_conditional_data_predicate() {
         let ctx = create_test_context();
         let conditional_data = ConditionalData {
-            predicates: vec![Expression::new("true").unwrap()],
+            predicates: vec![Predicate::new("true").unwrap()],
             data: vec![DataItem {
                 key: "test_key".to_string(),
                 value: Expression::new("\"test_value\"").unwrap(),
