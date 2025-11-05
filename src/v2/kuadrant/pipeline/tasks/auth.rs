@@ -8,7 +8,7 @@ use crate::v2::kuadrant::pipeline::tasks::{
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
-use log::warn;
+use log::{error, warn};
 use prost_types::value::Kind;
 use std::rc::Rc;
 
@@ -96,14 +96,16 @@ impl Task for AuthTask {
             Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
             Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
             Ok(AttributeState::Available(true)) => {}
-            Err(_e) => {
+            Err(e) => {
+                error!("Failed to apply predicates: {e:?}");
                 return TaskOutcome::Failed;
             }
         }
 
         let token_id = match self.service.dispatch_auth(ctx, &self.scope) {
             Ok(id) => id,
-            Err(_e) => {
+            Err(e) => {
+                error!("Failed to dispatch auth: {e:?}");
                 return TaskOutcome::Failed;
             }
         };
@@ -123,7 +125,10 @@ impl Task for AuthTask {
 
                     match service.get_response(ctx, response_size) {
                         Ok(parsed) => process_auth_response(parsed),
-                        Err(_e) => TaskOutcome::Failed,
+                        Err(e) => {
+                            error!("Failed to get response: {e:?}");
+                            TaskOutcome::Failed
+                        }
                     }
                 }),
             },
