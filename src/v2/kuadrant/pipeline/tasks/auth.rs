@@ -39,20 +39,19 @@ impl AuthTask {
             is_blocking,
         }
     }
-}
 
-impl Task for AuthTask {
-    fn prepare(&self, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        let mut has_pending = false;
-        let mut has_error = false;
-
+    pub fn new_with_dependencies(
+        ctx: &mut ReqRespCtx,
+        task_id: String,
+        service: Rc<AuthService>,
+        scope: String,
+        predicates: Vec<Predicate>,
+        dependencies: Vec<String>,
+        is_blocking: bool,
+    ) -> Self {
         macro_rules! touch {
             ($path:expr, $type:ty) => {
-                match ctx.get_attribute::<$type>($path) {
-                    Ok(AttributeState::Available(_)) => {}
-                    Ok(AttributeState::Pending) => has_pending = true,
-                    Err(_) => has_error = true,
-                }
+                let _ = ctx.get_attribute::<$type>($path);
             };
         }
 
@@ -72,14 +71,18 @@ impl Task for AuthTask {
         // eval request_data early
         let _ = ctx.eval_request_data();
 
-        // in this case they should all be available
-        if has_pending || has_error {
-            TaskOutcome::Failed
-        } else {
-            TaskOutcome::Done
-        }
+        Self::new(
+            task_id,
+            service,
+            scope,
+            predicates,
+            dependencies,
+            is_blocking,
+        )
     }
+}
 
+impl Task for AuthTask {
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
     }

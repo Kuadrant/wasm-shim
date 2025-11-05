@@ -27,23 +27,6 @@ impl Pipeline {
         let tasks_to_process: Vec<_> = self.task_queue.drain(..).collect();
 
         for task in tasks_to_process {
-            #[allow(deprecated)]
-            match task.prepare(&mut self.ctx) {
-                TaskOutcome::Done => {}
-                TaskOutcome::Failed => {
-                    error!("Task preparation failed: {:?}", task.id());
-                    continue;
-                }
-                TaskOutcome::Requeued(tasks) => {
-                    self.task_queue.extend(tasks);
-                    continue;
-                }
-                _ => {
-                    error!("Unexpected TaskOutcome from prepare");
-                    continue;
-                }
-            }
-
             if task
                 .dependencies()
                 .iter()
