@@ -186,4 +186,13 @@ impl AttributeResolver for MockWasmHost {
             .clone()
             .ok_or_else(|| ServiceError::Retrieval("No response available".to_string()))
     }
+
+    fn send_http_reply(
+        &self,
+        _status_code: u32,
+        _headers: Vec<(&str, &str)>,
+        _body: Option<&[u8]>,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
 }

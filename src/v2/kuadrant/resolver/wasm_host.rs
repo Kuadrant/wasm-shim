@@ -104,4 +104,14 @@ impl AttributeResolver for ProxyWasmHost {
         .map_err(|e| ServiceError::Retrieval(format!("Failed to get gRPC response: {:?}", e)))?
         .ok_or_else(|| ServiceError::Retrieval("No gRPC response body available".to_string()))
     }
+
+    fn send_http_reply(
+        &self,
+        status_code: u32,
+        headers: Vec<(&str, &str)>,
+        body: Option<&[u8]>,
+    ) -> Result<(), ServiceError> {
+        hostcalls::send_http_response(status_code, headers, body)
+            .map_err(|e| ServiceError::Dispatch(format!("Failed to send HTTP reply: {:?}", e)))
+    }
 }

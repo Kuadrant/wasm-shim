@@ -39,4 +39,10 @@ pub trait AttributeResolver: Send + Sync {
         timeout: Duration,
     ) -> Result<u32, ServiceError>;
     fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError>;
+    fn send_http_reply(
+        &self,
+        status_code: u32,
+        headers: Vec<(&str, &str)>,
+        body: Option<&[u8]>,
+    ) -> Result<(), ServiceError>;
 }

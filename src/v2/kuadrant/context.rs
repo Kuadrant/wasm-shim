@@ -272,6 +272,15 @@ impl ReqRespCtx {
         self.backend.get_grpc_response(response_size)
     }
 
+    pub fn send_http_reply(
+        &self,
+        status_code: u32,
+        headers: Vec<(&str, &str)>,
+        body: Option<&[u8]>,
+    ) -> Result<(), ServiceError> {
+        self.backend.send_http_reply(status_code, headers, body)
+    }
+
     fn get_tracing_headers(&self) -> Vec<(&'static str, Vec<u8>)> {
         const TRACING_HEADERS: [&str; 3] = ["traceparent", "tracestate", "baggage"];
         let mut headers = Vec::new();

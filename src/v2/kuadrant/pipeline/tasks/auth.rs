@@ -3,7 +3,8 @@ use crate::v2::data::attribute::AttributeState;
 use crate::v2::data::cel::{Predicate, PredicateVec};
 use crate::v2::data::Headers;
 use crate::v2::kuadrant::pipeline::tasks::{
-    HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, StoreDataTask, Task, TaskOutcome,
+    HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, SendReplyTask, StoreDataTask,
+    Task, TaskOutcome,
 };
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{AuthService, Service};
@@ -180,10 +181,26 @@ fn process_auth_response(response: CheckResponse) -> TaskOutcome {
                 )));
             }
         }
-        Some(check_response::HttpResponse::DeniedResponse(_denied_response)) => {
-            // todo(refactor): need to implement DirectResponseTask
-            warn!("DeniedResponse not yet implemented");
-            return TaskOutcome::Failed;
+        Some(check_response::HttpResponse::DeniedResponse(denied_response)) => {
+            let status_code = denied_response
+                .status
+                .as_ref()
+                .map(|s| s.code as u32)
+                .unwrap_or(403);
+
+            let headers = from_envoy_headers(&denied_response.headers);
+
+            let body = if denied_response.body.is_empty() {
+                None
+            } else {
+                Some(denied_response.body.clone())
+            };
+
+            return TaskOutcome::Terminate(Box::new(SendReplyTask::new(
+                status_code,
+                headers.into_inner(),
+                body,
+            )));
         }
     }
 

@@ -1,10 +1,12 @@
 mod auth;
 mod headers;
 mod ratelimit;
+mod send_reply;
 mod store_data;
 mod token_usage;
 
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
+pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
 
 use crate::v2::kuadrant::ReqRespCtx;
@@ -57,5 +59,6 @@ pub enum TaskOutcome {
     Done,
     Deferred { token_id: u32, pending: PendingTask },
     Requeued(Vec<Box<dyn Task>>),
-    Failed, // Possibly wrapping an error
+    Failed,
+    Terminate(Box<dyn Task>),
 }
