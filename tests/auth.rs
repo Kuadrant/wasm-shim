@@ -104,6 +104,10 @@ fn it_auths() {
             Some("#2 pipeline built successfully"),
         )
         // retrieving properties for CheckRequest
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
         .expect_log(
@@ -306,6 +310,10 @@ fn it_passes_request_data() {
             Some("#2 pipeline built successfully"),
         )
         // retrieving properties for CheckRequest
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
         .expect_log(
@@ -479,6 +487,10 @@ fn it_denies() {
             Some("#2 pipeline built successfully"),
         )
         // retrieving properties for CheckRequest
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
         .expect_log(
@@ -677,6 +689,10 @@ fn it_does_not_fold_auth_actions() {
             Some("#2 pipeline built successfully"),
         )
         // retrieving properties for CheckRequest
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
         .expect_log(

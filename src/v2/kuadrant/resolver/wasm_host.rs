@@ -27,6 +27,7 @@ impl AttributeResolver for ProxyWasmHost {
         &self,
         map_type: proxy_wasm::types::MapType,
     ) -> Result<Vec<(String, String)>, AttributeError> {
+        debug!("Getting map: `{:?}`", map_type);
         match hostcalls::get_map(map_type) {
             Ok(map) if map.is_empty() => Err(AttributeError::NotAvailable(format!(
                 "Map `{:?}` not available in current phase",
