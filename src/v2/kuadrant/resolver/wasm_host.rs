@@ -116,6 +116,11 @@ impl AttributeResolver for ProxyWasmHost {
     }
 
     fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        if response_size == 0 {
+            return Err(ServiceError::Retrieval(
+                "Received response with size 0".to_string(),
+            ));
+        }
         debug!("Getting gRPC response, size: {} bytes", response_size);
         hostcalls::get_buffer(
             proxy_wasm::types::BufferType::GrpcReceiveBuffer,
