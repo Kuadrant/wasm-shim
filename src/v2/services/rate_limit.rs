@@ -13,7 +13,7 @@ use crate::v2::{
     services::{Service, ServiceError},
 };
 
-pub type RateLimitDescriptorData = Vec<(String, String)>;
+pub type RateLimitDescriptorData = Vec<RateLimitDescriptor>;
 
 pub struct RateLimitService {
     upstream_name: String,
@@ -41,11 +41,11 @@ impl RateLimitService {
         }
     }
 
-    fn dispatch_ratelimit(
+    pub fn dispatch_ratelimit(
         &self,
         ctx: &mut ReqRespCtx,
         scope: &str,
-        descriptors: Vec<RateLimitDescriptorData>,
+        descriptors: RateLimitDescriptorData,
         hits_addend: u32,
     ) -> Result<u32, ServiceError> {
         let ratelimit_request = self
@@ -67,23 +67,10 @@ impl RateLimitService {
         &self,
         ctx: &mut ReqRespCtx,
         domain: &str,
-        descriptors: Vec<RateLimitDescriptorData>,
+        descriptors: RateLimitDescriptorData,
         hits_addend: u32,
     ) -> Result<RateLimitRequest, AttributeError> {
-        let mut pb_descriptors: Vec<RateLimitDescriptor> = descriptors
-            .iter()
-            .map(|desc| RateLimitDescriptor {
-                entries: desc
-                    .iter()
-                    .map(|(k, v)| rate_limit_descriptor::Entry {
-                        key: k.clone(),
-                        value: v.clone(),
-                    })
-                    .collect(),
-                limit: None,
-            })
-            .collect();
-
+        let mut pb_descriptors: Vec<RateLimitDescriptor> = descriptors;
         let request_data = ctx.eval_request_data();
         if !request_data.is_empty() {
             let entries: Vec<_> = request_data
