@@ -27,6 +27,7 @@ impl AttributeResolver for ProxyWasmHost {
         &self,
         map_type: proxy_wasm::types::MapType,
     ) -> Result<Vec<(String, String)>, AttributeError> {
+        debug!("Getting map: `{:?}`", map_type);
         match hostcalls::get_map(map_type) {
             Ok(map) if map.is_empty() => Err(AttributeError::NotAvailable(format!(
                 "Map `{:?}` not available in current phase",
@@ -115,6 +116,11 @@ impl AttributeResolver for ProxyWasmHost {
     }
 
     fn get_grpc_response(&self, response_size: usize) -> Result<Vec<u8>, ServiceError> {
+        if response_size == 0 {
+            return Err(ServiceError::Retrieval(
+                "Received response with size 0".to_string(),
+            ));
+        }
         debug!("Getting gRPC response, size: {} bytes", response_size);
         hostcalls::get_buffer(
             proxy_wasm::types::BufferType::GrpcReceiveBuffer,
