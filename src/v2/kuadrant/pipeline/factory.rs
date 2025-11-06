@@ -6,7 +6,7 @@ use crate::v2::data::{
 };
 use crate::v2::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
 use crate::v2::kuadrant::pipeline::executor::Pipeline;
-use crate::v2::kuadrant::pipeline::tasks::{AuthTask, Task};
+use crate::v2::kuadrant::pipeline::tasks::Task;
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::ServiceInstance;
 use log::debug;
@@ -100,28 +100,7 @@ impl PipelineFactory {
             None => return Ok(None),
         };
 
-        let mut tasks: Vec<Box<dyn Task>> = Vec::new();
-
-        for action in &blueprint.actions {
-            match &action.service {
-                ServiceInstance::Auth(auth_service) => {
-                    tasks.push(Box::new(AuthTask::new(
-                        action.id.clone(),
-                        Rc::clone(auth_service),
-                        action.scope.clone(),
-                        action.predicates.clone(),
-                        action.dependencies.clone(),
-                        true, // pauses_filter = true for auth tasks
-                    )));
-                }
-                ServiceInstance::RateLimit(_)
-                | ServiceInstance::RateLimitCheck(_)
-                | ServiceInstance::RateLimitReport(_) => {
-                    todo!("not yet implemented");
-                }
-            }
-        }
-
+        let tasks: Vec<Box<dyn Task>> = blueprint.as_ref().into();
         if tasks.is_empty() {
             return Ok(None);
         }

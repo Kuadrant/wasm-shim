@@ -7,8 +7,10 @@ mod token_usage;
 
 pub use auth::AuthTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
+pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
+pub use token_usage::TokenUsageTask;
 
 use crate::v2::kuadrant::ReqRespCtx;
 

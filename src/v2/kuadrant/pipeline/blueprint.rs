@@ -1,8 +1,10 @@
 use crate::v2::configuration;
 use crate::v2::data::{cel::Predicate, Expression};
+use crate::v2::kuadrant::pipeline::tasks::{AuthTask, RateLimitTask, Task, TokenUsageTask};
 use crate::v2::services::ServiceInstance;
 use cel_parser::ParseError;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub(super) struct Blueprint {
     pub name: String,
@@ -19,11 +21,13 @@ pub(super) struct Action {
     pub dependencies: Vec<String>,
 }
 
+#[derive(Clone)]
 pub(super) struct ConditionalData {
     pub predicates: Vec<Predicate>,
     pub data: Vec<DataItem>,
 }
 
+#[derive(Clone)]
 pub(super) struct DataItem {
     pub key: String,
     pub value: Expression,
@@ -81,6 +85,54 @@ impl Blueprint {
             route_predicates,
             actions,
         })
+    }
+}
+
+impl From<&Blueprint> for Vec<Box<dyn Task>> {
+    fn from(blueprint: &Blueprint) -> Self {
+        let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+
+        for action in &blueprint.actions {
+            match &action.service {
+                ServiceInstance::Auth(auth_service) => {
+                    tasks.push(Box::new(AuthTask::new(
+                        action.id.clone(),
+                        Rc::clone(auth_service),
+                        action.scope.clone(),
+                        action.predicates.clone(),
+                        action.dependencies.clone(),
+                        true, // pauses_filter = true for auth tasks
+                    )));
+                }
+                ServiceInstance::RateLimit(ratelimit_service)
+                | ServiceInstance::RateLimitCheck(ratelimit_service) => {
+                    tasks.push(Box::new(RateLimitTask::new(
+                        action.id.clone(),
+                        action.dependencies.clone(),
+                        Rc::clone(ratelimit_service),
+                        action.scope.clone(),
+                        action.predicates.clone(),
+                        action.conditional_data.clone(),
+                    )));
+                    // true, // pauses_filter = true for regular ratelimit and check tasks
+                }
+                ServiceInstance::RateLimitReport(ratelimit_service) => {
+                    // parse token usage from response
+                    tasks.push(Box::new(TokenUsageTask::new()));
+                    tasks.push(Box::new(RateLimitTask::new(
+                        action.id.clone(),
+                        action.dependencies.clone(),
+                        Rc::clone(ratelimit_service),
+                        action.scope.clone(),
+                        action.predicates.clone(),
+                        action.conditional_data.clone(),
+                        // false, // pauses_filter = false for ratelimit report tasks
+                    )));
+                }
+            }
+        }
+
+        tasks
     }
 }
 
