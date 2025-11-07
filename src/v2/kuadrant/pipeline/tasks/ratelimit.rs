@@ -292,24 +292,29 @@ impl Task for RateLimitTask {
         // Return deferred outcome with response processor
         TaskOutcome::Deferred {
             token_id,
-            pending: PendingTask {
-                task_id: Some(self.task_id),
+            pending: Box::new(PendingTask {
+                task_id: self.task_id,
                 pauses_filter: self.pauses_filter,
-                process_response: Box::new(move |ctx, status_code, response_size| {
-                    if status_code != proxy_wasm::types::Status::Ok as u32 {
-                        // TODO: failure case
-                        return TaskOutcome::Failed;
-                    }
-
-                    match service.get_response(ctx, response_size) {
-                        Ok(response) => process_rl_response(response),
-                        Err(e) => {
-                            error!("Failed to get response: {e:?}");
+                process_response: Box::new(move |ctx| match ctx.get_grpc_response_data() {
+                    Ok((status_code, response_size)) => {
+                        if status_code != proxy_wasm::types::Status::Ok as u32 {
                             TaskOutcome::Failed
+                        } else {
+                            match service.get_response(ctx, response_size) {
+                                Ok(response) => process_rl_response(response),
+                                Err(e) => {
+                                    error!("Failed to get response: {e:?}");
+                                    TaskOutcome::Failed
+                                }
+                            }
                         }
                     }
+                    Err(e) => {
+                        error!("Failed to get response: {e:?}");
+                        TaskOutcome::Failed
+                    }
                 }),
-            },
+            }),
         }
     }
 

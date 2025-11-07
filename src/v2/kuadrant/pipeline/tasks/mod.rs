@@ -1,4 +1,5 @@
 mod auth;
+mod failure_mode;
 mod headers;
 mod ratelimit;
 mod send_reply;
@@ -14,9 +15,9 @@ pub use token_usage::TokenUsageTask;
 
 use crate::v2::kuadrant::ReqRespCtx;
 
-pub type ResponseProcessor = dyn FnOnce(&mut ReqRespCtx, u32, usize) -> TaskOutcome;
+//todo(refactor): this now has the signature of a task; should it be one?
+pub type ResponseProcessor = dyn FnOnce(&mut ReqRespCtx) -> TaskOutcome;
 
-#[allow(dead_code)]
 pub trait Task {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome;
 
@@ -33,37 +34,30 @@ pub trait Task {
     }
 }
 
-#[allow(dead_code)]
 pub struct PendingTask {
-    task_id: Option<String>,
+    task_id: String,
     pauses_filter: bool,
     process_response: Box<ResponseProcessor>,
 }
 
-#[allow(dead_code)]
-impl PendingTask {
-    pub fn task_id(&self) -> Option<&String> {
-        self.task_id.as_ref()
+impl Task for PendingTask {
+    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        (self.process_response)(ctx)
     }
-
-    pub fn process_response(
-        self,
-        ctx: &mut ReqRespCtx,
-        status_code: u32,
-        response_size: usize,
-    ) -> TaskOutcome {
-        (self.process_response)(ctx, status_code, response_size)
+    fn id(&self) -> Option<String> {
+        Some(self.task_id.clone())
     }
-
-    pub fn pauses_filter(&self) -> bool {
+    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
         self.pauses_filter
     }
 }
 
-#[allow(dead_code)]
 pub enum TaskOutcome {
     Done,
-    Deferred { token_id: u32, pending: PendingTask },
+    Deferred {
+        token_id: u32,
+        pending: Box<dyn Task>,
+    },
     Requeued(Vec<Box<dyn Task>>),
     Failed,
     Terminate(Box<dyn Task>),
