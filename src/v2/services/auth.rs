@@ -13,6 +13,7 @@ use crate::envoy::{
     address, attribute_context, socket_address, Address, AttributeContext, CheckRequest,
     CheckResponse, Metadata, SocketAddress,
 };
+use crate::v2::configuration::FailureMode;
 use crate::v2::data::attribute::AttributeError;
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::data::Headers;
@@ -25,6 +26,7 @@ pub struct AuthService {
     service_name: String,
     method: String,
     timeout: Duration,
+    failure_mode: FailureMode,
 }
 
 impl Service for AuthService {
@@ -37,13 +39,18 @@ impl Service for AuthService {
 }
 
 impl AuthService {
-    pub fn new(endpoint: String, timeout: Duration) -> Self {
+    pub fn new(endpoint: String, timeout: Duration, failure_mode: FailureMode) -> Self {
         Self {
             upstream_name: endpoint.clone(),
             service_name: "envoy.service.auth.v3.Authorization".to_string(),
             method: "Check".to_string(),
             timeout,
+            failure_mode,
         }
+    }
+
+    pub fn failure_mode(&self) -> FailureMode {
+        self.failure_mode
     }
 
     pub fn dispatch_auth(&self, ctx: &mut ReqRespCtx, scope: &str) -> Result<u32, ServiceError> {

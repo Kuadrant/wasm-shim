@@ -3,9 +3,15 @@ use crate::v2::kuadrant::{
     ReqRespCtx,
 };
 
-struct FailureModeTask {
+pub struct FailureModeTask {
     task: Box<dyn Task>,
     abort: bool,
+}
+
+impl FailureModeTask {
+    pub fn new(task: Box<dyn Task>, abort: bool) -> Self {
+        Self { task, abort }
+    }
 }
 
 impl Task for FailureModeTask {

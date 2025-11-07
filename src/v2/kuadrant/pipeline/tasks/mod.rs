@@ -7,6 +7,7 @@ mod store_data;
 mod token_usage;
 
 pub use auth::AuthTask;
+pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
