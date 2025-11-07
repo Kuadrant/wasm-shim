@@ -7,9 +7,9 @@ use crate::v2::kuadrant::pipeline::blueprint::ConditionalData;
 #[allow(dead_code)]
 use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::rate_limit::RateLimitService;
-use crate::v2::services::Service;
+use crate::v2::services::{RateLimitService, Service};
 use cel_interpreter::Value;
+use log::error;
 use std::rc::Rc;
 
 /// Builds individual descriptor entries from CEL expressions
@@ -77,6 +77,7 @@ pub struct RateLimitTask {
     default_hits_addend: u32,
 }
 
+/// Creates a new RL task
 #[allow(dead_code)]
 impl RateLimitTask {
     pub fn new(
@@ -86,11 +87,12 @@ impl RateLimitTask {
         scope: String,
         predicates: Vec<Predicate>,
         conditional_data_sets: Vec<ConditionalData>,
+        pauses_filter: bool,
     ) -> Self {
         Self {
             task_id,
             dependencies,
-            pauses_filter: true,
+            pauses_filter,
             scope,
             service,
             predicates,
@@ -99,21 +101,41 @@ impl RateLimitTask {
         }
     }
 
-    /// Builds the rate limit descriptors from the context
-    fn build_descriptors(
-        &self,
-        ctx: &ReqRespCtx,
-    ) -> Result<AttributeState<Vec<RateLimitDescriptor>>, EvaluationError> {
-        // TODO: Candidate for a `prepare` task/method
-        match self.predicates.apply(ctx)? {
-            AttributeState::Available(false) => Ok(AttributeState::Available(vec![])),
-            AttributeState::Pending => Ok(AttributeState::Pending),
-            _ => self.collect_descriptors(ctx),
-        }
+    /// Creates a new RL task prior caching its needed attributes
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_caching_attributes(
+        ctx: &mut ReqRespCtx,
+        task_id: String,
+        service: Rc<RateLimitService>,
+        scope: String,
+        dependencies: Vec<String>,
+        predicates: Vec<Predicate>,
+        conditional_data_sets: Vec<ConditionalData>,
+        pauses_filter: bool,
+    ) -> Self {
+        // Warming up the cache
+        let _ = predicates.apply(ctx);
+        let _ = conditional_data_sets.iter().map(|conditional_data| {
+            let _ = conditional_data.predicates.apply(ctx);
+            conditional_data
+                .data
+                .iter()
+                .map(|data| data.value.eval(ctx))
+        });
+
+        Self::new(
+            task_id,
+            dependencies,
+            service,
+            scope,
+            predicates,
+            conditional_data_sets,
+            pauses_filter,
+        )
     }
 
-    /// Collects RateLimit Entries filtering out known attributes
-    fn collect_descriptors(
+    /// Builds the rate limit descriptors from the context
+    fn build_descriptors(
         &self,
         ctx: &ReqRespCtx,
     ) -> Result<AttributeState<Vec<RateLimitDescriptor>>, EvaluationError> {
@@ -213,6 +235,16 @@ impl RateLimitTask {
 
 impl Task for RateLimitTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        match self.predicates.apply(ctx) {
+            Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
+            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+            Ok(AttributeState::Available(true)) => {}
+            Err(e) => {
+                error!("Failed to apply predicates: {e:?}");
+                return TaskOutcome::Failed;
+            }
+        }
+
         // Build the rate limit descriptors
         let descriptors = match self.build_descriptors(ctx) {
             Ok(AttributeState::Available(descriptors)) => descriptors,
@@ -338,11 +370,28 @@ mod tests {
         )
     }
 
+    fn create_test_task_with(
+        ctx: &mut ReqRespCtx,
+        top_predicates: Vec<Predicate>,
+        conditional_data: Vec<ConditionalData>,
+    ) -> RateLimitTask {
+        RateLimitTask::new_with_caching_attributes(
+            ctx,
+            "test".to_string(),
+            Rc::new(create_test_service()),
+            "test".to_string(),
+            vec![],
+            top_predicates,
+            conditional_data,
+            false,
+        )
+    }
+
     /*
     // TODO: Fix this test
     #[test]
     fn test_descriptor_builder_with_headers() {
-        let ctx = create_test_context_with_headers(vec![
+        let mut ctx = create_test_context_with_headers(vec![
             ("host".to_string(), "example.com".to_string()),
         ]);
         let expression = Expression::new("request.headers.host").unwrap();
@@ -356,14 +405,16 @@ mod tests {
 
     #[test]
     fn test_default_values_when_no_known_attributes() {
-        let ctx = create_test_context();
-        let task = RateLimitTask::new(
+        let mut ctx = create_test_context();
+        let task = RateLimitTask::new_with_caching_attributes(
+            &mut ctx,
             "test".to_string(),
-            vec![],
             Rc::new(create_test_service()),
             "test".to_string(),
             vec![],
             vec![],
+            vec![],
+            false,
         );
 
         let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
@@ -374,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_default_values_with_known_attributes() {
-        let ctx = create_test_context();
+        let mut ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![],
             data: vec![
@@ -388,13 +439,15 @@ mod tests {
                 },
             ],
         };
-        let task = RateLimitTask::new(
+        let task = RateLimitTask::new_with_caching_attributes(
+            &mut ctx,
             "test".to_string(),
-            vec![],
             Rc::new(create_test_service()),
             "test".to_string(),
             vec![],
+            vec![],
             vec![conditional_data],
+            false,
         );
 
         let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
@@ -405,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_filters_known_attributes() {
-        let ctx = create_test_context();
+        let mut ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![],
             data: vec![
@@ -423,13 +476,15 @@ mod tests {
                 },
             ],
         };
-        let task = RateLimitTask::new(
+        let task = RateLimitTask::new_with_caching_attributes(
+            &mut ctx,
             "test".to_string(),
-            vec![],
             Rc::new(create_test_service()),
             "test".to_string(),
             vec![],
+            vec![],
             vec![conditional_data],
+            false,
         );
 
         let result = task.build_descriptors(&ctx).unwrap();
@@ -446,73 +501,8 @@ mod tests {
     }
 
     #[test]
-    fn test_build_descriptors_with_failing_top_predicate() {
-        let ctx = create_test_context();
-        let conditional_data = ConditionalData {
-            predicates: vec![],
-            data: vec![DataItem {
-                key: "test_key".to_string(),
-                value: Expression::new("\"test_value\"").unwrap(),
-            }],
-        };
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
-            vec![
-                Predicate::new("false").unwrap(),
-                Predicate::new("true").unwrap(),
-            ],
-            vec![conditional_data],
-        );
-
-        let result = task.build_descriptors(&ctx).unwrap();
-
-        match result {
-            AttributeState::Available(descriptors) => {
-                // One of the top level Predicate failed, so no descriptors should be built
-                assert_eq!(descriptors.len(), 0);
-            }
-            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
-        }
-    }
-
-    #[test]
-    fn test_build_descriptors_with_passing_top_predicate() {
-        let ctx = create_test_context();
-        let conditional_data = ConditionalData {
-            predicates: vec![],
-            data: vec![DataItem {
-                key: "test_key".to_string(),
-                value: Expression::new("\"test_value\"").unwrap(),
-            }],
-        };
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
-            vec![Predicate::new("true").unwrap()],
-            vec![conditional_data],
-        );
-
-        let result = task.build_descriptors(&ctx).unwrap();
-
-        match result {
-            AttributeState::Available(descriptors) => {
-                // Top level Predicate failed, so no descriptors should be built
-                assert_eq!(descriptors.len(), 1);
-                assert_eq!(descriptors[0].entries.len(), 1);
-                assert_eq!(descriptors[0].entries[0].key, "test_key");
-            }
-            AttributeState::Pending => unreachable!("Expected Ready, got Pending"),
-        }
-    }
-
-    #[test]
     fn test_build_descriptors_with_one_conditional_failing_predicate() {
-        let ctx = create_test_context();
+        let mut ctx = create_test_context();
         let conditional_data = vec![
             ConditionalData {
                 predicates: vec![
@@ -535,11 +525,8 @@ mod tests {
                 }],
             },
         ];
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
+        let task = create_test_task_with(
+            &mut ctx,
             vec![Predicate::new("true").unwrap()],
             conditional_data,
         );
@@ -559,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_passing_predicates() {
-        let ctx = create_test_context();
+        let mut ctx = create_test_context();
         let conditional_data = vec![
             ConditionalData {
                 predicates: vec![],
@@ -576,11 +563,8 @@ mod tests {
                 }],
             },
         ];
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
+        let task = create_test_task_with(
+            &mut ctx,
             vec![Predicate::new("true").unwrap()],
             conditional_data,
         );
@@ -602,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_failing_conditional_data_predicate() {
-        let ctx = create_test_context();
+        let mut ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![Predicate::new("false").unwrap()],
             data: vec![DataItem {
@@ -610,14 +594,7 @@ mod tests {
                 value: Expression::new("\"test_value\"").unwrap(),
             }],
         };
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
-            vec![],
-            vec![conditional_data],
-        );
+        let task = create_test_task_with(&mut ctx, vec![], vec![conditional_data]);
 
         let result = task.build_descriptors(&ctx).unwrap();
 
@@ -631,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_passing_conditional_data_predicate() {
-        let ctx = create_test_context();
+        let mut ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![Predicate::new("true").unwrap()],
             data: vec![DataItem {
@@ -639,14 +616,7 @@ mod tests {
                 value: Expression::new("\"test_value\"").unwrap(),
             }],
         };
-        let task = RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
-            vec![],
-            vec![conditional_data],
-        );
+        let task = create_test_task_with(&mut ctx, vec![], vec![conditional_data]);
 
         let result = task.build_descriptors(&ctx).unwrap();
 
@@ -662,11 +632,8 @@ mod tests {
     #[test]
     fn test_task_outcome_done() {
         let mut ctx = create_test_context();
-        let task = Box::new(RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
+        let task = Box::new(create_test_task_with(
+            &mut ctx,
             vec![Predicate::new("false").unwrap()],
             vec![],
         ));
@@ -686,11 +653,8 @@ mod tests {
                 value: Expression::new("\"test_value\"").unwrap(),
             }],
         };
-        let task = Box::new(RateLimitTask::new(
-            "test".to_string(),
-            vec![],
-            Rc::new(create_test_service()),
-            "test".to_string(),
+        let task = Box::new(create_test_task_with(
+            &mut ctx,
             vec![Predicate::new("true").unwrap()],
             vec![conditional_data],
         ));
