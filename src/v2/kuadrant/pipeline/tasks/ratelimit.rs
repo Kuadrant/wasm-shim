@@ -1,10 +1,13 @@
 use crate::envoy::rate_limit_descriptor::Entry;
-use crate::envoy::{rate_limit_response, RateLimitDescriptor};
+use crate::envoy::{rate_limit_response, HeaderValue, RateLimitDescriptor, RateLimitResponse};
 use crate::v2::data::attribute::{AttributeError, AttributeState};
 use crate::v2::data::cel::errors::EvaluationError;
 use crate::v2::data::cel::{Expression, Predicate, PredicateVec};
+use crate::v2::data::Headers;
 use crate::v2::kuadrant::pipeline::blueprint::ConditionalData;
-#[allow(dead_code)]
+use crate::v2::kuadrant::pipeline::tasks::{
+    HeaderOperation, HeadersType, ModifyHeadersTask, SendReplyTask,
+};
 use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{RateLimitService, Service};
@@ -75,7 +78,6 @@ pub struct RateLimitTask {
 }
 
 /// Creates a new RL task
-#[allow(dead_code)]
 impl RateLimitTask {
     pub fn new(
         task_id: String,
@@ -293,31 +295,17 @@ impl Task for RateLimitTask {
             pending: PendingTask {
                 task_id: Some(self.task_id),
                 pauses_filter: self.pauses_filter,
-                process_response: Box::new(move |ctx, _status_code, response_size| {
-                    let rate_limit_response = match service.get_response(ctx, response_size) {
-                        Ok(parsed) => parsed,
-                        Err(_e) => {
-                            // TODO: Handle parsing error
-                            return TaskOutcome::Failed;
-                        }
-                    };
+                process_response: Box::new(move |ctx, status_code, response_size| {
+                    if status_code != proxy_wasm::types::Status::Ok as u32 {
+                        // TODO: failure case
+                        return TaskOutcome::Failed;
+                    }
 
-                    // Process based on response code
-                    match rate_limit_response.overall_code {
-                        code if code == rate_limit_response::Code::Ok as i32 => {
-                            // Rate limit check passed
-                            // TODO: Extract headers and push ModifyHeadersTask + DirectResponseTask
-                            todo!()
-                        }
-                        code if code == rate_limit_response::Code::OverLimit as i32 => {
-                            // Rate limit exceeded - return 429
-                            // TODO: Extract headers and push ModifyHeadersTask + DirectResponseTask
-                            todo!()
-                        }
-                        _ => {
-                            // Unknown or error response
-                            // TODO: Handle parsing error and/or FailureMode task?
-                            todo!()
+                    match service.get_response(ctx, response_size) {
+                        Ok(response) => process_rl_response(response),
+                        Err(e) => {
+                            error!("Failed to get response: {e:?}");
+                            TaskOutcome::Failed
                         }
                     }
                 }),
@@ -336,6 +324,47 @@ impl Task for RateLimitTask {
     fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
         self.pauses_filter
     }
+}
+
+fn process_rl_response(response: RateLimitResponse) -> TaskOutcome {
+    // Process based on response code
+    match response.overall_code {
+        code if code == rate_limit_response::Code::Ok as i32 => {
+            // Rate limit check passed
+            if !response.response_headers_to_add.is_empty() {
+                let headers = from_envoy_header_value(&response.response_headers_to_add);
+                return TaskOutcome::Requeued(vec![Box::new(ModifyHeadersTask::new(
+                    HeaderOperation::Append(headers),
+                    HeadersType::HttpRequestHeaders,
+                ))]);
+            }
+            TaskOutcome::Done
+        }
+        code if code == rate_limit_response::Code::OverLimit as i32 => {
+            // Rate limit exceeded - return 429
+            let headers = from_envoy_header_value(&response.response_headers_to_add);
+            let status_code = crate::envoy::StatusCode::TooManyRequests as u32;
+            let body = Some("Too Many Requests\n".to_string());
+
+            TaskOutcome::Terminate(Box::new(SendReplyTask::new(
+                status_code,
+                headers.into_inner(),
+                body,
+            )))
+        }
+        i32::MIN..=i32::MAX => {
+            // Unknown code or error response
+            TaskOutcome::Failed
+        }
+    }
+}
+
+pub fn from_envoy_header_value(headers: &[HeaderValue]) -> Headers {
+    let vec: Vec<(String, String)> = headers
+        .iter()
+        .map(|hv| (hv.key.to_owned(), hv.value.to_owned()))
+        .collect();
+    vec.into()
 }
 
 #[cfg(test)]
@@ -383,22 +412,6 @@ mod tests {
             false,
         )
     }
-
-    /*
-    // TODO: Fix this test
-    #[test]
-    fn test_descriptor_builder_with_headers() {
-        let ctx = create_test_context_with_headers(vec![
-            ("host".to_string(), "example.com".to_string()),
-        ]);
-        let expression = Expression::new("request.headers.host").unwrap();
-        let builder = DescriptorEntryBuilder::new("host_key".to_string(), expression);
-
-        let result = builder.evaluate(&ctx).unwrap();
-
-        assert_eq!(result.key, "host_key");
-        assert_eq!(result.value, "example.com");
-    } */
 
     #[test]
     fn test_default_values_when_no_known_attributes() {
@@ -666,6 +679,5 @@ mod tests {
             }
         ));
     }
-
-    // TODO: More specific testing for task outcomes when the rate limit response task is done
+    // TODO: More specific testing for task outcomes
 }
