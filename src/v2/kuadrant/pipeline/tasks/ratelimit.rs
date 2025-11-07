@@ -72,9 +72,6 @@ pub struct RateLimitTask {
     // Conditional data for building descriptors
     conditional_data_sets: Vec<ConditionalData>,
     predicates: Vec<Predicate>,
-
-    // Default hits addend
-    default_hits_addend: u32,
 }
 
 /// Creates a new RL task
@@ -97,7 +94,6 @@ impl RateLimitTask {
             service,
             predicates,
             conditional_data_sets,
-            default_hits_addend: 1,
         }
     }
 
@@ -175,7 +171,8 @@ impl RateLimitTask {
 
     /// Extract known attributes like ratelimit.domain and ratelimit.hits_addend
     fn get_known_attributes(&self, ctx: &ReqRespCtx) -> Result<(u32, String), AttributeError> {
-        let mut hits_addend = self.default_hits_addend;
+        const DEFAULT_HITS_ADDEND: u32 = 1;
+        let mut hits_addend = DEFAULT_HITS_ADDEND;
         let mut domain = String::new();
 
         for conditional_data in &self.conditional_data_sets {
