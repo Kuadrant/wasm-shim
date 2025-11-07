@@ -23,7 +23,7 @@ pub struct AuthTask {
 }
 
 impl AuthTask {
-    pub fn new(
+    fn new(
         task_id: String,
         service: Rc<AuthService>,
         scope: String,
@@ -41,8 +41,8 @@ impl AuthTask {
         }
     }
 
-    pub fn new_with_dependencies(
-        ctx: &mut ReqRespCtx,
+    pub fn new_with_attributes(
+        ctx: &ReqRespCtx,
         task_id: String,
         service: Rc<AuthService>,
         scope: String,
@@ -68,6 +68,8 @@ impl AuthTask {
         touch!("destination.port", i64);
         touch!("source.address", String);
         touch!("source.port", i64);
+
+        let _ = predicates.apply(ctx);
 
         // eval request_data early
         let _ = ctx.eval_request_data();

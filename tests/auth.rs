@@ -99,10 +99,6 @@ fn it_auths() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving properties for CheckRequest
         .expect_log(
             Some(LogLevel::Debug),
@@ -158,6 +154,10 @@ fn it_auths() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -305,10 +305,6 @@ fn it_passes_request_data() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving properties for CheckRequest
         .expect_log(
             Some(LogLevel::Debug),
@@ -370,6 +366,10 @@ fn it_passes_request_data() {
         )
         .expect_get_property(Some(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Adding data: `io.kuadrant` with entries: [\"bar\", \"foo\"]")
@@ -482,10 +482,6 @@ fn it_denies() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving properties for CheckRequest
         .expect_log(
             Some(LogLevel::Debug),
@@ -541,6 +537,10 @@ fn it_denies() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -684,10 +684,6 @@ fn it_does_not_fold_auth_actions() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving properties for CheckRequest
         .expect_log(
             Some(LogLevel::Debug),
@@ -749,6 +745,10 @@ fn it_does_not_fold_auth_actions() {
         )
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
