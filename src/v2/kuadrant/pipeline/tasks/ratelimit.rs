@@ -103,12 +103,12 @@ impl RateLimitTask {
 
     /// Creates a new RL task prior caching its needed attributes
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_caching_attributes(
-        ctx: &mut ReqRespCtx,
+    pub fn new_with_attributes(
+        ctx: &ReqRespCtx,
         task_id: String,
+        dependencies: Vec<String>,
         service: Rc<RateLimitService>,
         scope: String,
-        dependencies: Vec<String>,
         predicates: Vec<Predicate>,
         conditional_data_sets: Vec<ConditionalData>,
         pauses_filter: bool,
@@ -371,16 +371,16 @@ mod tests {
     }
 
     fn create_test_task_with(
-        ctx: &mut ReqRespCtx,
+        ctx: &ReqRespCtx,
         top_predicates: Vec<Predicate>,
         conditional_data: Vec<ConditionalData>,
     ) -> RateLimitTask {
-        RateLimitTask::new_with_caching_attributes(
+        RateLimitTask::new_with_attributes(
             ctx,
             "test".to_string(),
+            vec![],
             Rc::new(create_test_service()),
             "test".to_string(),
-            vec![],
             top_predicates,
             conditional_data,
             false,
@@ -391,7 +391,7 @@ mod tests {
     // TODO: Fix this test
     #[test]
     fn test_descriptor_builder_with_headers() {
-        let mut ctx = create_test_context_with_headers(vec![
+        let ctx = create_test_context_with_headers(vec![
             ("host".to_string(), "example.com".to_string()),
         ]);
         let expression = Expression::new("request.headers.host").unwrap();
@@ -405,13 +405,13 @@ mod tests {
 
     #[test]
     fn test_default_values_when_no_known_attributes() {
-        let mut ctx = create_test_context();
-        let task = RateLimitTask::new_with_caching_attributes(
-            &mut ctx,
-            "test".to_string(),
-            Rc::new(create_test_service()),
+        let ctx = create_test_context();
+        let task = RateLimitTask::new_with_attributes(
+            &ctx,
             "test".to_string(),
             vec![],
+            Rc::new(create_test_service()),
+            "test".to_string(),
             vec![],
             vec![],
             false,
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_default_values_with_known_attributes() {
-        let mut ctx = create_test_context();
+        let ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![],
             data: vec![
@@ -439,12 +439,12 @@ mod tests {
                 },
             ],
         };
-        let task = RateLimitTask::new_with_caching_attributes(
-            &mut ctx,
-            "test".to_string(),
-            Rc::new(create_test_service()),
+        let task = RateLimitTask::new_with_attributes(
+            &ctx,
             "test".to_string(),
             vec![],
+            Rc::new(create_test_service()),
+            "test".to_string(),
             vec![],
             vec![conditional_data],
             false,
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_filters_known_attributes() {
-        let mut ctx = create_test_context();
+        let ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![],
             data: vec![
@@ -476,12 +476,12 @@ mod tests {
                 },
             ],
         };
-        let task = RateLimitTask::new_with_caching_attributes(
-            &mut ctx,
-            "test".to_string(),
-            Rc::new(create_test_service()),
+        let task = RateLimitTask::new_with_attributes(
+            &ctx,
             "test".to_string(),
             vec![],
+            Rc::new(create_test_service()),
+            "test".to_string(),
             vec![],
             vec![conditional_data],
             false,
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_one_conditional_failing_predicate() {
-        let mut ctx = create_test_context();
+        let ctx = create_test_context();
         let conditional_data = vec![
             ConditionalData {
                 predicates: vec![
@@ -526,7 +526,7 @@ mod tests {
             },
         ];
         let task = create_test_task_with(
-            &mut ctx,
+            &ctx,
             vec![Predicate::new("true").unwrap()],
             conditional_data,
         );
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_passing_predicates() {
-        let mut ctx = create_test_context();
+        let ctx = create_test_context();
         let conditional_data = vec![
             ConditionalData {
                 predicates: vec![],
@@ -564,7 +564,7 @@ mod tests {
             },
         ];
         let task = create_test_task_with(
-            &mut ctx,
+            &ctx,
             vec![Predicate::new("true").unwrap()],
             conditional_data,
         );
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_failing_conditional_data_predicate() {
-        let mut ctx = create_test_context();
+        let ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![Predicate::new("false").unwrap()],
             data: vec![DataItem {
@@ -594,7 +594,7 @@ mod tests {
                 value: Expression::new("\"test_value\"").unwrap(),
             }],
         };
-        let task = create_test_task_with(&mut ctx, vec![], vec![conditional_data]);
+        let task = create_test_task_with(&ctx, vec![], vec![conditional_data]);
 
         let result = task.build_descriptors(&ctx).unwrap();
 
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_build_descriptors_with_passing_conditional_data_predicate() {
-        let mut ctx = create_test_context();
+        let ctx = create_test_context();
         let conditional_data = ConditionalData {
             predicates: vec![Predicate::new("true").unwrap()],
             data: vec![DataItem {
@@ -616,7 +616,7 @@ mod tests {
                 value: Expression::new("\"test_value\"").unwrap(),
             }],
         };
-        let task = create_test_task_with(&mut ctx, vec![], vec![conditional_data]);
+        let task = create_test_task_with(&ctx, vec![], vec![conditional_data]);
 
         let result = task.build_descriptors(&ctx).unwrap();
 
@@ -633,7 +633,7 @@ mod tests {
     fn test_task_outcome_done() {
         let mut ctx = create_test_context();
         let task = Box::new(create_test_task_with(
-            &mut ctx,
+            &ctx,
             vec![Predicate::new("false").unwrap()],
             vec![],
         ));
@@ -654,7 +654,7 @@ mod tests {
             }],
         };
         let task = Box::new(create_test_task_with(
-            &mut ctx,
+            &ctx,
             vec![Predicate::new("true").unwrap()],
             vec![conditional_data],
         ));

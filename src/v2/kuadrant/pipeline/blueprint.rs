@@ -108,27 +108,29 @@ impl Blueprint {
                 }
                 ServiceInstance::RateLimit(ratelimit_service)
                 | ServiceInstance::RateLimitCheck(ratelimit_service) => {
-                    tasks.push(Box::new(RateLimitTask::new(
+                    tasks.push(Box::new(RateLimitTask::new_with_attributes(
+                        ctx,
                         action.id.clone(),
                         action.dependencies.clone(),
                         Rc::clone(ratelimit_service),
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.conditional_data.clone(),
+                        true, // pauses_filter = true for regular ratelimit and check tasks
                     )));
-                    // true, // pauses_filter = true for regular ratelimit and check tasks
                 }
                 ServiceInstance::RateLimitReport(ratelimit_service) => {
                     // parse token usage from response
                     tasks.push(Box::new(TokenUsageTask::new()));
-                    tasks.push(Box::new(RateLimitTask::new(
+                    tasks.push(Box::new(RateLimitTask::new_with_attributes(
+                        ctx,
                         action.id.clone(),
                         action.dependencies.clone(),
                         Rc::clone(ratelimit_service),
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.conditional_data.clone(),
-                        // false, // pauses_filter = false for ratelimit report tasks
+                        false, // pauses_filter = false for ratelimit report tasks
                     )));
                 }
             }
