@@ -12,7 +12,7 @@ use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::{RateLimitService, Service};
 use cel_interpreter::Value;
-use log::error;
+use log::{debug, error};
 use std::rc::Rc;
 
 /// Builds individual descriptor entries from CEL expressions
@@ -251,15 +251,24 @@ impl Task for RateLimitTask {
                 // Need to wait for attributes, requeue
                 return TaskOutcome::Requeued(vec![self]);
             }
-            Err(_e) => {
-                // TODO: Handle error appropriately based on failure mode
+            Err(e) => {
+                error!("Failed to build descriptors: {e:?}");
                 return TaskOutcome::Failed;
             }
         };
+
+        if descriptors.is_empty() {
+            debug!("No descriptors to rate limit");
+            return TaskOutcome::Done;
+        }
+
         // Extract known attributes (hits_addend, domain) before filtering
         let (hits_addend, domain_override) = match self.get_known_attributes(ctx) {
             Ok(attrs) => attrs,
-            Err(_err) => return TaskOutcome::Failed, // should we fail or requeue?
+            Err(e) => {
+                error!("Failed to extract known attributes: {e:?}");
+                return TaskOutcome::Failed;
+            }
         };
 
         // Determine domain (use override or default scope)
@@ -269,19 +278,14 @@ impl Task for RateLimitTask {
             domain_override
         };
 
-        // If empty message, skip rate limiting... Or should it be TaskOutcome::Failed?
-        if descriptors.is_empty() {
-            return TaskOutcome::Done;
-        }
-
         // Dispatch the rate limit service message
         let token_id = match self
             .service
             .dispatch_ratelimit(ctx, &domain, descriptors, hits_addend)
         {
             Ok(id) => id,
-            Err(_e) => {
-                // TODO: Handle error based on failure mode (allow/deny)
+            Err(e) => {
+                error!("Failed to dispatch rate limit: {}", e);
                 return TaskOutcome::Failed;
             }
         };
