@@ -100,7 +100,7 @@ impl PipelineFactory {
             None => return Ok(None),
         };
 
-        let tasks: Vec<Box<dyn Task>> = blueprint.as_ref().into();
+        let tasks: Vec<Box<dyn Task>> = blueprint.to_tasks(&ctx);
         if tasks.is_empty() {
             return Ok(None);
         }

@@ -1,6 +1,7 @@
 use crate::v2::configuration;
 use crate::v2::data::{cel::Predicate, Expression};
 use crate::v2::kuadrant::pipeline::tasks::{AuthTask, RateLimitTask, Task, TokenUsageTask};
+use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::ServiceInstance;
 use cel_parser::ParseError;
 use std::collections::HashMap;
@@ -88,14 +89,15 @@ impl Blueprint {
     }
 }
 
-impl From<&Blueprint> for Vec<Box<dyn Task>> {
-    fn from(blueprint: &Blueprint) -> Self {
+impl Blueprint {
+    pub fn to_tasks(&self, ctx: &ReqRespCtx) -> Vec<Box<dyn Task>> {
         let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
-        for action in &blueprint.actions {
+        for action in &self.actions {
             match &action.service {
                 ServiceInstance::Auth(auth_service) => {
-                    tasks.push(Box::new(AuthTask::new(
+                    tasks.push(Box::new(AuthTask::new_with_attributes(
+                        ctx,
                         action.id.clone(),
                         Rc::clone(auth_service),
                         action.scope.clone(),
