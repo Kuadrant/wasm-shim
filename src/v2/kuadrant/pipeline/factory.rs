@@ -138,7 +138,10 @@ impl PipelineFactory {
 
     fn get_hostname(&self, ctx: &ReqRespCtx) -> Result<String, BuildError> {
         match ctx.get_attribute::<String>("request.host") {
-            Ok(AttributeState::Available(Some(hostname))) => Ok(hostname),
+            Ok(AttributeState::Available(Some(host))) => {
+                let split_host = host.split_once(':').map_or(host.as_str(), |(h, _)| h);
+                Ok(split_host.to_owned())
+            }
             Ok(AttributeState::Available(None)) => Err(BuildError::EvaluationError(
                 "hostname not found".to_string(),
             )),
