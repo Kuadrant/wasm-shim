@@ -1,7 +1,6 @@
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
 use crate::v2::services::ServiceError;
-use proxy_wasm::types::Bytes;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -12,7 +11,7 @@ pub struct MockWasmHost {
     maps: Mutex<HashMap<String, Vec<(String, String)>>>,
     grpc_response: Mutex<Option<Vec<u8>>>,
     pending_properties: Vec<Path>,
-    response_body: Option<Bytes>,
+    response_body: Option<Vec<u8>>,
 }
 
 impl MockWasmHost {
@@ -144,11 +143,11 @@ impl AttributeResolver for MockWasmHost {
         &self,
         start: usize,
         max_size: usize,
-    ) -> Result<Option<Bytes>, AttributeError> {
+    ) -> Result<Option<Vec<u8>>, AttributeError> {
         match &self.response_body {
             Some(body) => {
                 let buf_end_index = std::cmp::min(start + max_size, body.len());
-                let mut dst: Bytes = vec![0; buf_end_index];
+                let mut dst = vec![0; buf_end_index];
                 assert!(start <= buf_end_index, "messed up with the indexes!");
                 dst.clone_from_slice(&body[start..buf_end_index]);
                 Ok(Some(dst))

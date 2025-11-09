@@ -1,5 +1,4 @@
 use log::warn;
-use proxy_wasm::types::Bytes;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -258,7 +257,7 @@ impl ReqRespCtx {
         &self,
         start: usize,
         body_size: usize,
-    ) -> Result<Option<Bytes>, AttributeError> {
+    ) -> Result<Option<Vec<u8>>, AttributeError> {
         self.backend.get_http_response_body(start, body_size)
     }
 
