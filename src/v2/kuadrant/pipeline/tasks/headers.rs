@@ -12,6 +12,7 @@ pub enum HeadersType {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum HeaderOperation {
     Append(Headers),
     Set(Headers),

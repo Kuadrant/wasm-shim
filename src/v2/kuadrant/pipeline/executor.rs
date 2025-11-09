@@ -7,7 +7,7 @@ use crate::v2::kuadrant::{
 use std::collections::{BTreeMap, HashSet};
 
 pub struct Pipeline {
-    ctx: ReqRespCtx,
+    pub ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
     deferred_tasks: BTreeMap<u32, Box<dyn Task>>,
     completed_tasks: HashSet<String>,

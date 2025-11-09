@@ -139,9 +139,8 @@ mod tests {
     fn test_one_complete_event() {
         let buf = String::from("data: foo\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -162,9 +161,8 @@ mod tests {
     fn test_two_complete_events() {
         let buf = String::from("data: first event\n\ndata: second event\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -193,9 +191,8 @@ mod tests {
         // First chunk contains one complete event and start of another
         let buf1 = String::from("data: complete\n\ndata: partial");
         let mock_backend = MockWasmHost::new().with_response_body(buf1.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(false)
-            .with_body_size(buf1.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf1.len(), false);
 
         let mut event_parser = EventParser::default();
 
@@ -216,9 +213,8 @@ mod tests {
         // Now send the completion of the partial event
         let buf2 = String::from(" event\n\n");
         let mock_backend2 = MockWasmHost::new().with_response_body(buf2.as_bytes());
-        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2))
-            .with_end_of_stream(true)
-            .with_body_size(buf2.len());
+        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2));
+        ctx2.set_body_size(buf2.len(), true);
 
         let events2 = event_parser
             .parse(&mut ctx2)
@@ -238,9 +234,8 @@ mod tests {
     fn test_event_with_all_fields() {
         let buf = String::from("event: custom\ndata: test data\nid: 123\nretry: 5000\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -262,9 +257,8 @@ mod tests {
     fn test_event_with_multiple_data_lines() {
         let buf = String::from("data: line 1\ndata: line 2\ndata: line 3\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -285,9 +279,8 @@ mod tests {
     fn test_event_with_comments() {
         let buf = String::from(": this is a comment\ndata: actual data\n: another comment\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -309,9 +302,8 @@ mod tests {
         // Events with no data should not be dispatched
         let buf = String::from("event: test\nid: 123\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -326,9 +318,8 @@ mod tests {
         // IDs containing null character should be ignored
         let buf = String::from("data: test\nid: invalid\u{0000}id\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -350,9 +341,8 @@ mod tests {
         // Invalid retry value should be ignored
         let buf = String::from("data: test\nretry: not_a_number\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -375,9 +365,8 @@ mod tests {
         // Data ending with LF should have it removed
         let buf = String::from("data: test data\n\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -400,9 +389,8 @@ mod tests {
         // However, events with empty data are not dispatched per SSE spec
         let buf = String::from("data:\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let mut event_parser = EventParser::default();
 
@@ -418,9 +406,8 @@ mod tests {
         // Test that partial events are properly buffered across multiple parse calls
         let buf1 = String::from("ev");
         let mock_backend = MockWasmHost::new().with_response_body(buf1.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(false)
-            .with_body_size(buf1.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf1.len(), false);
 
         let mut event_parser = EventParser::default();
         let events = event_parser
@@ -430,9 +417,8 @@ mod tests {
 
         let buf2 = String::from("ent: test\ndata: some ");
         let mock_backend2 = MockWasmHost::new().with_response_body(buf2.as_bytes());
-        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2))
-            .with_end_of_stream(false)
-            .with_body_size(buf2.len());
+        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2));
+        ctx2.set_body_size(buf2.len(), false);
 
         let events = event_parser
             .parse(&mut ctx2)
@@ -441,9 +427,8 @@ mod tests {
 
         let buf3 = String::from("data\n\n");
         let mock_backend3 = MockWasmHost::new().with_response_body(buf3.as_bytes());
-        let mut ctx3 = ReqRespCtx::new(Arc::new(mock_backend3))
-            .with_end_of_stream(true)
-            .with_body_size(buf3.len());
+        let mut ctx3 = ReqRespCtx::new(Arc::new(mock_backend3));
+        ctx3.set_body_size(buf3.len(), true);
 
         let events = event_parser
             .parse(&mut ctx3)
@@ -463,9 +448,8 @@ mod tests {
         // Test that partial data events are properly buffered across multiple parse calls
         let buf1 = String::from("data: data1\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf1.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(false)
-            .with_body_size(buf1.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf1.len(), false);
 
         let mut event_parser = EventParser::default();
         let events = event_parser
@@ -475,9 +459,8 @@ mod tests {
 
         let buf2 = String::from("data: data2\n\n");
         let mock_backend2 = MockWasmHost::new().with_response_body(buf2.as_bytes());
-        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2))
-            .with_end_of_stream(true)
-            .with_body_size(buf2.len());
+        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2));
+        ctx2.set_body_size(buf2.len(), true);
 
         let events = event_parser
             .parse(&mut ctx2)

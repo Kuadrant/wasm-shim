@@ -12,6 +12,7 @@ use crate::v2::services::ServiceInstance;
 use log::debug;
 use radix_trie::Trie;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -19,7 +20,6 @@ type RequestData = ((String, String), Expression);
 
 pub struct PipelineFactory {
     index: Trie<String, Vec<Rc<Blueprint>>>,
-    services: HashMap<String, ServiceInstance>,
     request_data: Arc<Vec<RequestData>>,
 }
 
@@ -27,6 +27,15 @@ pub struct PipelineFactory {
 pub enum BuildError {
     DataPending(String),
     EvaluationError(String),
+}
+
+impl Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildError::DataPending(msg) => write!(f, "Data pending: {}", msg),
+            BuildError::EvaluationError(msg) => write!(f, "Evaluation error: {}", msg),
+        }
+    }
 }
 
 impl TryFrom<PluginConfiguration> for PipelineFactory {
@@ -71,7 +80,6 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
 
         Ok(Self {
             index,
-            services,
             request_data: Arc::new(request_data),
         })
     }
@@ -81,7 +89,6 @@ impl Default for PipelineFactory {
     fn default() -> Self {
         Self {
             index: Trie::new(),
-            services: HashMap::new(),
             request_data: Arc::new(Vec::new()),
         }
     }

@@ -45,11 +45,6 @@ pub fn is_lf(c: char) -> bool {
 }
 
 #[inline]
-fn is_cr(c: char) -> bool {
-    c == '\u{000D}'
-}
-
-#[inline]
 fn is_space(c: char) -> bool {
     c == '\u{0020}'
 }
@@ -57,11 +52,6 @@ fn is_space(c: char) -> bool {
 #[inline]
 fn is_colon(c: char) -> bool {
     c == '\u{003A}'
-}
-
-#[inline]
-fn is_bom(c: char) -> bool {
-    c == '\u{feff}'
 }
 
 #[inline]
@@ -138,15 +128,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_cr() {
-        assert!(is_cr('\u{000D}'));
-        assert!(is_cr('\r'));
-        assert!(!is_cr('\n'));
-        assert!(!is_cr(' '));
-        assert!(!is_cr('a'));
-    }
-
-    #[test]
     fn test_is_space() {
         assert!(is_space('\u{0020}'));
         assert!(is_space(' '));
@@ -162,13 +143,6 @@ mod tests {
         assert!(!is_colon(';'));
         assert!(!is_colon(' '));
         assert!(!is_colon('a'));
-    }
-
-    #[test]
-    fn test_is_bom() {
-        assert!(is_bom('\u{feff}'));
-        assert!(!is_bom(' '));
-        assert!(!is_bom('a'));
     }
 
     #[test]

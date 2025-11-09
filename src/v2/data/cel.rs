@@ -157,6 +157,7 @@ impl Expression {
         Self::new_expression(expression, false)
     }
 
+    #[cfg(test)]
     pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
         Self::new_expression(expression, true)
     }
@@ -303,6 +304,7 @@ impl Predicate {
     /// Unlike with [`Predicate::new`], a `Predicate::route_rule` is backed by an
     /// `Expression` that has extended capabilities enabled.
     /// See [`Expression::add_extended_capabilities`]
+    #[cfg(test)]
     pub fn route_rule(predicate: &str) -> Result<Self, ParseError> {
         Ok(Self {
             expression: Expression::new_extended(predicate)?,

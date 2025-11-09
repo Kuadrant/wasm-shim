@@ -52,14 +52,6 @@ impl MockWasmHost {
         self
     }
 
-    pub fn with_grpc_response(self, response: Vec<u8>) -> Self {
-        *self
-            .grpc_response
-            .lock()
-            .expect("grpc_response mutex poisoned") = Some(response);
-        self
-    }
-
     pub fn get_property(&self, path: &Path) -> Option<Vec<u8>> {
         self.properties
             .lock()

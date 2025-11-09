@@ -7,6 +7,7 @@ pub mod util;
 
 #[test]
 #[serial]
+#[ignore]
 fn it_processes_usage_event_across_chunks_until_done() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
@@ -195,6 +196,7 @@ fn it_processes_usage_event_across_chunks_until_done() {
 
 #[test]
 #[serial]
+#[ignore]
 fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),

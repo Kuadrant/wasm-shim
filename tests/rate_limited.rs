@@ -541,6 +541,12 @@ fn it_passes_additional_headers() {
         .returning(Some(&grpc_response))
         // todo(refactor): This attempt to append headers is supposed to fail
         // the proxy-wasm test framework does not take into account the phase when trying to set the maps
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpResponseHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(None)
         .expect_log(Some(LogLevel::Debug), Some("Appending 2 headers"))
         .expect_set_header_map_pairs(None, None)
         .execute_and_expect(ReturnType::None)

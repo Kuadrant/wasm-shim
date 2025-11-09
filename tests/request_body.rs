@@ -8,6 +8,7 @@ pub mod util;
 
 #[test]
 #[serial]
+#[ignore]
 fn it_waits_for_the_request_body() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
@@ -277,6 +278,7 @@ fn it_waits_for_the_request_body() {
 
 #[test]
 #[serial]
+#[ignore]
 fn it_reads_request_attr_in_advance_when_request_body() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),

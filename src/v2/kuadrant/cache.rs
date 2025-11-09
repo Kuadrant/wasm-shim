@@ -63,6 +63,7 @@ impl AttributeCache {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn contains_key(&self, path: &Path) -> Result<bool, AttributeError> {
         let guard = self
             .inner
