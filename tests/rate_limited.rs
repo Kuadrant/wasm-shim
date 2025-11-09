@@ -1,7 +1,7 @@
 use crate::util::common::wasm_module;
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
-use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
+use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType, Status};
 use serial_test::serial;
 
 pub mod util;
@@ -539,8 +539,18 @@ fn it_passes_additional_headers() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
-        // todo(refactor): This attempt to append headers is supposed to fail
-        // the proxy-wasm test framework does not take into account the phase when trying to set the maps
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpResponseHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(Status::BadArgument)
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Getting map: `HttpResponseHeaders`"),
@@ -549,15 +559,6 @@ fn it_passes_additional_headers() {
         .returning(None)
         .expect_log(Some(LogLevel::Debug), Some("Appending 2 headers"))
         .expect_set_header_map_pairs(None, None)
-        .execute_and_expect(ReturnType::None)
-        .unwrap();
-
-    module
-        .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
-        // todo(refactor): It was supposed to fail in previous phase but succeed here
-        // .expect_log(Some(LogLevel::Debug), Some("Appending 2 headers"))
-        // .expect_set_header_map_pairs(None, None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
