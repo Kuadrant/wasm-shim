@@ -17,6 +17,8 @@ pub struct ReqRespCtx {
     request_data: Option<Arc<Vec<RequestData>>>,
     body_size: usize,
     end_of_stream: bool,
+    // todo(refactor): we should handle token here
+    grpc_response_data: Option<(u32, usize)>,
 }
 
 impl Default for ReqRespCtx {
@@ -33,6 +35,7 @@ impl ReqRespCtx {
             request_data: None,
             body_size: 0,
             end_of_stream: false,
+            grpc_response_data: None,
         }
     }
 
@@ -49,6 +52,26 @@ impl ReqRespCtx {
     pub fn with_end_of_stream(mut self, end_of_stream: bool) -> Self {
         self.end_of_stream = end_of_stream;
         self
+    }
+
+    pub fn set_grpc_response_data(
+        &mut self,
+        status_code: u32,
+        response_size: usize,
+    ) -> Result<(), ServiceError> {
+        if self.grpc_response_data.is_some() {
+            return Err(ServiceError::Retrieval(
+                "gRPC response data already set".to_string(),
+            ));
+        }
+        self.grpc_response_data = Some((status_code, response_size));
+        Ok(())
+    }
+
+    pub fn get_grpc_response_data(&mut self) -> Result<(u32, usize), ServiceError> {
+        self.grpc_response_data
+            .take()
+            .ok_or_else(|| ServiceError::Retrieval("No gRPC response data available".to_string()))
     }
 
     pub fn get_attribute<T: AttributeValue>(

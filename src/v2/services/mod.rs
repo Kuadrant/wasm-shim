@@ -1,6 +1,6 @@
 use std::{rc::Rc, time::Duration};
 
-use crate::v2::configuration::ServiceType;
+use crate::v2::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
@@ -15,6 +15,17 @@ pub enum ServiceInstance {
     RateLimit(Rc<RateLimitService>),
     RateLimitCheck(Rc<RateLimitService>),
     RateLimitReport(Rc<RateLimitService>),
+}
+
+impl ServiceInstance {
+    pub fn failure_mode(&self) -> FailureMode {
+        match self {
+            ServiceInstance::Auth(service) => service.failure_mode(),
+            ServiceInstance::RateLimit(service) => service.failure_mode(),
+            ServiceInstance::RateLimitCheck(service) => service.failure_mode(),
+            ServiceInstance::RateLimitReport(service) => service.failure_mode(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -38,38 +49,41 @@ impl std::fmt::Display for ServiceError {
 
 impl std::error::Error for ServiceError {}
 
-impl TryFrom<(String, Duration, ServiceType)> for ServiceInstance {
+impl TryFrom<&ServiceConfig> for ServiceInstance {
     type Error = ServiceError;
 
-    fn try_from(value: (String, Duration, ServiceType)) -> Result<Self, Self::Error> {
-        let (endpoint, timeout, service_type) = value;
-
-        match service_type {
+    fn try_from(service: &ServiceConfig) -> Result<Self, Self::Error> {
+        match service.service_type {
             ServiceType::Auth => Ok(ServiceInstance::Auth(Rc::new(AuthService::new(
-                endpoint, timeout,
+                service.endpoint.clone(),
+                service.timeout.0,
+                service.failure_mode,
             )))),
             ServiceType::RateLimit => {
                 Ok(ServiceInstance::RateLimit(Rc::new(RateLimitService::new(
-                    endpoint,
-                    timeout,
+                    service.endpoint.clone(),
+                    service.timeout.0,
                     "envoy.service.ratelimit.v3.RateLimitService",
                     "ShouldRateLimit",
+                    service.failure_mode,
                 ))))
             }
             ServiceType::RateLimitCheck => Ok(ServiceInstance::RateLimitCheck(Rc::new(
                 RateLimitService::new(
-                    endpoint,
-                    timeout,
+                    service.endpoint.clone(),
+                    service.timeout.0,
                     "envoy.extensions.common.ratelimit.v3.RateLimitService",
                     "Check",
+                    service.failure_mode,
                 ),
             ))),
             ServiceType::RateLimitReport => Ok(ServiceInstance::RateLimitReport(Rc::new(
                 RateLimitService::new(
-                    endpoint,
-                    timeout,
+                    service.endpoint.clone(),
+                    service.timeout.0,
                     "envoy.extensions.common.ratelimit.v3.RateLimitService",
                     "Report",
+                    service.failure_mode,
                 ),
             ))),
         }

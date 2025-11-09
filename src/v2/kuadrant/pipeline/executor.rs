@@ -1,7 +1,7 @@
 use log::error;
 
 use crate::v2::kuadrant::{
-    pipeline::tasks::{PendingTask, Task, TaskOutcome},
+    pipeline::tasks::{Task, TaskOutcome},
     ReqRespCtx,
 };
 use std::collections::{BTreeMap, HashSet};
@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 pub struct Pipeline {
     ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
-    deferred_tasks: BTreeMap<u32, PendingTask>,
+    deferred_tasks: BTreeMap<u32, Box<dyn Task>>,
     completed_tasks: HashSet<String>,
 }
 
@@ -78,8 +78,12 @@ impl Pipeline {
 
     pub fn digest(mut self, token_id: u32, status_code: u32, response_size: usize) -> Option<Self> {
         if let Some(pending) = self.deferred_tasks.remove(&token_id) {
-            let task_id = pending.task_id().cloned();
-            match pending.process_response(&mut self.ctx, status_code, response_size) {
+            match self.ctx.set_grpc_response_data(status_code, response_size) {
+                Ok(_) => {}
+                Err(err) => error!("Failed to set gRPC response data: {}", err),
+            };
+            let task_id = pending.id();
+            match pending.apply(&mut self.ctx) {
                 TaskOutcome::Done => {
                     if let Some(id) = task_id {
                         self.completed_tasks.insert(id);
@@ -117,8 +121,10 @@ impl Pipeline {
     }
 
     pub fn requires_pause(&self) -> bool {
-        let has_blocking_deferred_tasks =
-            self.deferred_tasks.values().any(PendingTask::pauses_filter);
+        let has_blocking_deferred_tasks = self
+            .deferred_tasks
+            .values()
+            .any(|task| task.pauses_filter(&self.ctx));
 
         let has_blocking_queued_tasks = self
             .task_queue

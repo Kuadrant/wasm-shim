@@ -292,24 +292,29 @@ impl Task for RateLimitTask {
         // Return deferred outcome with response processor
         TaskOutcome::Deferred {
             token_id,
-            pending: PendingTask {
-                task_id: Some(self.task_id),
+            pending: Box::new(PendingTask {
+                task_id: self.task_id,
                 pauses_filter: self.pauses_filter,
-                process_response: Box::new(move |ctx, status_code, response_size| {
-                    if status_code != proxy_wasm::types::Status::Ok as u32 {
-                        // TODO: failure case
-                        return TaskOutcome::Failed;
-                    }
-
-                    match service.get_response(ctx, response_size) {
-                        Ok(response) => process_rl_response(response),
-                        Err(e) => {
-                            error!("Failed to get response: {e:?}");
+                process_response: Box::new(move |ctx| match ctx.get_grpc_response_data() {
+                    Ok((status_code, response_size)) => {
+                        if status_code != proxy_wasm::types::Status::Ok as u32 {
                             TaskOutcome::Failed
+                        } else {
+                            match service.get_response(ctx, response_size) {
+                                Ok(response) => process_rl_response(response),
+                                Err(e) => {
+                                    error!("Failed to get response: {e:?}");
+                                    TaskOutcome::Failed
+                                }
+                            }
                         }
                     }
+                    Err(e) => {
+                        error!("Failed to get response: {e:?}");
+                        TaskOutcome::Failed
+                    }
                 }),
-            },
+            }),
         }
     }
 
@@ -370,6 +375,7 @@ pub fn from_envoy_header_value(headers: &[HeaderValue]) -> Headers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v2::configuration::FailureMode;
     use crate::v2::data::cel::Expression;
     use crate::v2::data::cel::Predicate;
     use crate::v2::kuadrant::pipeline::blueprint::DataItem;
@@ -393,6 +399,7 @@ mod tests {
             std::time::Duration::from_secs(1),
             "test",
             "POST",
+            FailureMode::Deny,
         )
     }
 

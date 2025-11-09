@@ -6,6 +6,7 @@ use prost::Message;
 use crate::envoy::{
     rate_limit_descriptor, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
 };
+use crate::v2::configuration::FailureMode;
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::{
     data::attribute::AttributeError,
@@ -20,6 +21,7 @@ pub struct RateLimitService {
     service_name: String,
     method: String,
     timeout: Duration,
+    failure_mode: FailureMode,
 }
 
 impl Service for RateLimitService {
@@ -32,13 +34,24 @@ impl Service for RateLimitService {
 }
 
 impl RateLimitService {
-    pub fn new(endpoint: String, timeout: Duration, service_name: &str, method: &str) -> Self {
+    pub fn new(
+        endpoint: String,
+        timeout: Duration,
+        service_name: &str,
+        method: &str,
+        failure_mode: FailureMode,
+    ) -> Self {
         Self {
             upstream_name: endpoint,
             service_name: service_name.to_string(),
             method: method.to_string(),
             timeout,
+            failure_mode,
         }
+    }
+
+    pub fn failure_mode(&self) -> FailureMode {
+        self.failure_mode
     }
 
     pub fn dispatch_ratelimit(

@@ -37,12 +37,8 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
             .services
             .iter()
             .map(|(name, service_config)| {
-                let instance = ServiceInstance::try_from((
-                    service_config.endpoint.clone(),
-                    service_config.timeout.0,
-                    service_config.service_type.clone(),
-                ))
-                .map_err(|e| CompileError::ServiceCreationFailed(format!("{}", e)))?;
+                let instance = ServiceInstance::try_from(service_config)
+                    .map_err(|e| CompileError::ServiceCreationFailed(format!("{}", e)))?;
                 Ok((name.clone(), instance))
             })
             .collect::<Result<_, CompileError>>()?;

@@ -1,6 +1,8 @@
 use crate::v2::configuration;
 use crate::v2::data::{cel::Predicate, Expression};
-use crate::v2::kuadrant::pipeline::tasks::{AuthTask, RateLimitTask, Task, TokenUsageTask};
+use crate::v2::kuadrant::pipeline::tasks::{
+    AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
+};
 use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::ServiceInstance;
 use cel_parser::ParseError;
@@ -94,9 +96,12 @@ impl Blueprint {
         let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
         for action in &self.actions {
+            let abort_on_failure =
+                action.service.failure_mode() == configuration::FailureMode::Deny;
+
             match &action.service {
                 ServiceInstance::Auth(auth_service) => {
-                    tasks.push(Box::new(AuthTask::new_with_attributes(
+                    let task = Box::new(AuthTask::new_with_attributes(
                         ctx,
                         action.id.clone(),
                         Rc::clone(auth_service),
@@ -104,11 +109,12 @@ impl Blueprint {
                         action.predicates.clone(),
                         action.dependencies.clone(),
                         true, // pauses_filter = true for auth tasks
-                    )));
+                    ));
+                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::RateLimit(ratelimit_service)
                 | ServiceInstance::RateLimitCheck(ratelimit_service) => {
-                    tasks.push(Box::new(RateLimitTask::new_with_attributes(
+                    let task = Box::new(RateLimitTask::new_with_attributes(
                         ctx,
                         action.id.clone(),
                         action.dependencies.clone(),
@@ -117,12 +123,13 @@ impl Blueprint {
                         action.predicates.clone(),
                         action.conditional_data.clone(),
                         true, // pauses_filter = true for regular ratelimit and check tasks
-                    )));
+                    ));
+                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::RateLimitReport(ratelimit_service) => {
                     // parse token usage from response
                     tasks.push(Box::new(TokenUsageTask::new()));
-                    tasks.push(Box::new(RateLimitTask::new_with_attributes(
+                    let task = Box::new(RateLimitTask::new_with_attributes(
                         ctx,
                         action.id.clone(),
                         action.dependencies.clone(),
@@ -131,7 +138,8 @@ impl Blueprint {
                         action.predicates.clone(),
                         action.conditional_data.clone(),
                         false, // pauses_filter = false for ratelimit report tasks
-                    )));
+                    ));
+                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
             }
         }
@@ -217,6 +225,7 @@ impl DataItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v2::configuration::FailureMode;
     use crate::v2::configuration::{
         Action as ConfigAction, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, ExpressionItem, RouteRuleConditions, StaticItem,
@@ -231,6 +240,7 @@ mod tests {
             ServiceInstance::Auth(Rc::new(AuthService::new(
                 "test-cluster".to_string(),
                 std::time::Duration::from_secs(10),
+                FailureMode::Deny,
             ))),
         )
     }

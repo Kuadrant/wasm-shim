@@ -1,3 +1,4 @@
+use crate::envoy::StatusCode;
 use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use log::error;
@@ -15,6 +16,14 @@ impl SendReplyTask {
             headers,
             body,
         }
+    }
+
+    pub fn default() -> Self {
+        Self::new(
+            StatusCode::InternalServerError as u32,
+            Vec::new(),
+            Some("Internal Server Error.\n".to_string()),
+        )
     }
 }
 
