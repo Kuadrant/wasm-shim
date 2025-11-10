@@ -8,6 +8,7 @@ pub struct KuadrantFilter {
     context_id: u32,
     factory: Rc<PipelineFactory>,
     pipeline: Option<Pipeline>,
+    in_response_phase: bool,
 }
 
 impl KuadrantFilter {
@@ -16,6 +17,7 @@ impl KuadrantFilter {
             context_id,
             factory,
             pipeline: None,
+            in_response_phase: false,
         }
     }
 
@@ -32,6 +34,21 @@ impl Context for KuadrantFilter {
         );
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.digest(token_id, status_code, response_size);
+
+            if !self.should_pause() {
+                let result = if self.in_response_phase {
+                    self.resume_http_response()
+                } else {
+                    self.resume_http_request()
+                };
+
+                if let Err(e) = result {
+                    error!(
+                        "#{} failed to resume filter processing: {:?}",
+                        self.context_id, e
+                    );
+                }
+            }
         }
     }
 }
@@ -79,6 +96,7 @@ impl HttpContext for KuadrantFilter {
 
     fn on_http_response_headers(&mut self, _: usize, _: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
+        self.in_response_phase = true;
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.eval();
         }
