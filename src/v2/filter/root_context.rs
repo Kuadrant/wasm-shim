@@ -1,5 +1,5 @@
 use super::kuadrant_filter::KuadrantFilter;
-use crate::v2::configuration::PluginConfiguration;
+use crate::configuration::PluginConfiguration;
 use crate::v2::kuadrant::PipelineFactory;
 use const_format::formatcp;
 use log::{debug, error, info};
@@ -91,7 +91,7 @@ impl Context for FilterRoot {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::configuration::PluginConfiguration;
+    use crate::configuration::PluginConfiguration;
 
     #[test]
     fn invalid_json_fails_to_parse() {

@@ -379,7 +379,7 @@ pub fn from_envoy_header_value(headers: &[HeaderValue]) -> Headers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::configuration::FailureMode;
+    use crate::configuration::FailureMode;
     use crate::v2::data::cel::Expression;
     use crate::v2::data::cel::Predicate;
     use crate::v2::kuadrant::pipeline::blueprint::DataItem;

@@ -13,7 +13,7 @@ use crate::envoy::{
     address, attribute_context, socket_address, Address, AttributeContext, CheckRequest,
     CheckResponse, Metadata, SocketAddress,
 };
-use crate::v2::configuration::FailureMode;
+use crate::configuration::FailureMode;
 use crate::v2::data::attribute::AttributeError;
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::data::Headers;

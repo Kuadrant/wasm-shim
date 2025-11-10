@@ -1,4 +1,4 @@
-use crate::v2::configuration::PluginConfiguration;
+use crate::configuration::PluginConfiguration;
 use crate::v2::data::{
     attribute::AttributeState,
     cel::{Predicate, PredicateVec},
@@ -202,7 +202,7 @@ fn domain_and_field_name(name: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::configuration::{
+    use crate::configuration::{
         Action, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType, Timeout,
     };
     use crate::v2::kuadrant::MockWasmHost;

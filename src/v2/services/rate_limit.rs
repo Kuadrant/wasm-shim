@@ -6,7 +6,7 @@ use prost::Message;
 use crate::envoy::{
     rate_limit_descriptor, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
 };
-use crate::v2::configuration::FailureMode;
+use crate::configuration::FailureMode;
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::{
     data::attribute::AttributeError,

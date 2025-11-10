@@ -1,4 +1,4 @@
-use crate::v2::configuration;
+use crate::configuration;
 use crate::v2::data::{cel::Predicate, Expression};
 use crate::v2::kuadrant::pipeline::tasks::{
     AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
@@ -249,8 +249,8 @@ impl DataItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::configuration::FailureMode;
-    use crate::v2::configuration::{
+    use crate::configuration::FailureMode;
+    use crate::configuration::{
         Action as ConfigAction, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, ExpressionItem, RouteRuleConditions, StaticItem,
     };

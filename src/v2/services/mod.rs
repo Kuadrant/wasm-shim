@@ -1,6 +1,6 @@
 use std::{rc::Rc, time::Duration};
 
-use crate::v2::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
+use crate::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
 use crate::v2::kuadrant::ReqRespCtx;
 
 mod auth;
