@@ -6,6 +6,7 @@ mod v2;
 mod configuration;
 mod filter;
 mod services;
+mod data;
 
 #[cfg_attr(
     all(

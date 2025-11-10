@@ -14,9 +14,9 @@ use crate::envoy::{
     CheckResponse, Metadata, SocketAddress,
 };
 use crate::configuration::FailureMode;
-use crate::v2::data::attribute::AttributeError;
-use crate::v2::data::attribute::AttributeState;
-use crate::v2::data::Headers;
+use crate::data::attribute::AttributeError;
+use crate::data::attribute::AttributeState;
+use crate::data::Headers;
 use crate::v2::kuadrant::ReqRespCtx;
 
 const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";

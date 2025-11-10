@@ -1,5 +1,5 @@
 use crate::configuration;
-use crate::v2::data::{cel::Predicate, Expression};
+use crate::data::{cel::Predicate, Expression};
 use crate::v2::kuadrant::pipeline::tasks::{
     AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
 };

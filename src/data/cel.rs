@@ -1,6 +1,6 @@
-use crate::v2::data::attribute::{AttributeError, AttributeState, Path};
-use crate::v2::data::cel::errors::{CelError, EvaluationError};
-use crate::v2::data::Headers;
+use crate::data::attribute::{AttributeError, AttributeState, Path};
+use crate::data::cel::errors::{CelError, EvaluationError};
+use crate::data::Headers;
 use crate::v2::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
@@ -19,8 +19,8 @@ use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
 pub(crate) mod errors {
-    use crate::v2::data::attribute::AttributeError;
-    use crate::v2::data::Expression;
+    use crate::data::attribute::AttributeError;
+    use crate::data::Expression;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
@@ -632,8 +632,8 @@ pub fn debug_all_well_known_attributes() {
 }
 
 pub mod data {
-    use crate::v2::data::attribute::{AttributeError, AttributeState};
-    use crate::v2::data::cel::Attribute;
+    use crate::data::attribute::{AttributeError, AttributeState};
+    use crate::data::cel::Attribute;
     use crate::v2::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
@@ -711,8 +711,8 @@ pub mod data {
 
     #[cfg(test)]
     mod tests {
-        use crate::v2::data::cel::data::{AttributeMap, Token};
-        use crate::v2::data::cel::known_attribute_for;
+        use crate::data::cel::data::{AttributeMap, Token};
+        use crate::data::cel::known_attribute_for;
 
         #[test]
         fn it_works() {
@@ -781,8 +781,8 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::v2::data::attribute::{AttributeState, Path};
-    use crate::v2::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::data::attribute::{AttributeState, Path};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::v2::kuadrant::MockWasmHost;
     use crate::v2::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_predicate_vec_short_circuits_on_pending() {
-        use crate::v2::data::cel::PredicateVec;
+        use crate::data::cel::PredicateVec;
 
         // First pred is Pending
         let mock_host = MockWasmHost::new()
@@ -1113,7 +1113,7 @@ mod tests {
 
     #[test]
     fn test_map_to_value_returns_pending_for_nested_attribute() {
-        use crate::v2::data::cel::data::AttributeMap;
+        use crate::data::cel::data::AttributeMap;
 
         let mock_host = MockWasmHost::new()
             .with_property("request.method".into(), "GET".bytes().collect())

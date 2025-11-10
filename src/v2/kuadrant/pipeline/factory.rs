@@ -1,5 +1,5 @@
 use crate::configuration::PluginConfiguration;
-use crate::v2::data::{
+use crate::data::{
     attribute::AttributeState,
     cel::{Predicate, PredicateVec},
     Expression,

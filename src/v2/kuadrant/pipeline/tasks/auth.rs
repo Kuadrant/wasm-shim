@@ -1,7 +1,7 @@
 use crate::envoy::{check_response, CheckResponse, HeaderValueOption};
-use crate::v2::data::attribute::AttributeState;
-use crate::v2::data::cel::{Predicate, PredicateVec};
-use crate::v2::data::Headers;
+use crate::data::attribute::AttributeState;
+use crate::data::cel::{Predicate, PredicateVec};
+use crate::data::Headers;
 use crate::v2::kuadrant::pipeline::tasks::{
     HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, SendReplyTask, StoreDataTask,
     Task, TaskOutcome,

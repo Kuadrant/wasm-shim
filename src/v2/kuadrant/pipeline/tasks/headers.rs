@@ -1,6 +1,6 @@
 #[allow(dead_code)]
-use crate::v2::data::attribute::{AttributeState, Path};
-use crate::v2::data::Headers;
+use crate::data::attribute::{AttributeState, Path};
+use crate::data::Headers;
 use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::v2::kuadrant::ReqRespCtx;
 use log::debug;

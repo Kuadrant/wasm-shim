@@ -1,8 +1,8 @@
 use log::warn;
 use std::sync::Arc;
 
-use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
-use crate::v2::data::{Expression, Headers};
+use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
+use crate::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
@@ -318,7 +318,7 @@ impl ReqRespCtx {
 }
 
 pub mod request_data {
-    use crate::v2::data::cel::EvalResult;
+    use crate::data::cel::EvalResult;
 
     pub struct RequestDataEntry {
         pub domain: String,
@@ -331,9 +331,10 @@ pub mod request_data {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::data::cel::Expression;
-    use crate::v2::{data::attribute::AttributeState, kuadrant::resolver::MockWasmHost};
+    use crate::data::cel::Expression;
+    use crate::v2::kuadrant::resolver::MockWasmHost;
     use std::sync::Arc;
+    use crate::data::attribute::AttributeState;
 
     #[test]
     fn test_caching_basic_functionality() {

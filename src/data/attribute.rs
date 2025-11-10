@@ -2,7 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-use crate::v2::data::Headers;
+use crate::data::Headers;
 use crate::v2::kuadrant::CachedValue;
 
 #[derive(Debug, Clone, PartialEq)]

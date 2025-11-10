@@ -1,9 +1,9 @@
 use crate::envoy::rate_limit_descriptor::Entry;
 use crate::envoy::{rate_limit_response, HeaderValue, RateLimitDescriptor, RateLimitResponse};
-use crate::v2::data::attribute::{AttributeError, AttributeState};
-use crate::v2::data::cel::errors::EvaluationError;
-use crate::v2::data::cel::{Expression, Predicate, PredicateVec};
-use crate::v2::data::Headers;
+use crate::data::attribute::{AttributeError, AttributeState};
+use crate::data::cel::errors::EvaluationError;
+use crate::data::cel::{Expression, Predicate, PredicateVec};
+use crate::data::Headers;
 use crate::v2::kuadrant::pipeline::blueprint::ConditionalData;
 use crate::v2::kuadrant::pipeline::tasks::{
     HeaderOperation, HeadersType, ModifyHeadersTask, SendReplyTask,
@@ -380,8 +380,8 @@ pub fn from_envoy_header_value(headers: &[HeaderValue]) -> Headers {
 mod tests {
     use super::*;
     use crate::configuration::FailureMode;
-    use crate::v2::data::cel::Expression;
-    use crate::v2::data::cel::Predicate;
+    use crate::data::cel::Expression;
+    use crate::data::cel::Predicate;
     use crate::v2::kuadrant::pipeline::blueprint::DataItem;
     use crate::v2::kuadrant::resolver::MockWasmHost;
     use crate::v2::kuadrant::ReqRespCtx;

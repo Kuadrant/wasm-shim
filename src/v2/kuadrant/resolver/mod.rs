@@ -1,4 +1,4 @@
-use crate::v2::data::attribute::{AttributeError, Path};
+use crate::data::attribute::{AttributeError, Path};
 use crate::services::ServiceError;
 use std::time::Duration;
 

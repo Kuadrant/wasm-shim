@@ -272,11 +272,11 @@ mod tests {
     use std::sync::Arc;
 
     use crate::v2::{
-        data::{attribute::AttributeState, cel::Expression},
         kuadrant::MockWasmHost,
         kuadrant::ReqRespCtx,
     };
     use cel_interpreter::Value;
+    use crate::data::{attribute::AttributeState, cel::Expression};
 
     #[test]
     fn extended_string_fn() {

@@ -2,8 +2,8 @@ use log::warn;
 use radix_trie::Trie;
 use std::sync::Mutex;
 
-use crate::v2::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
-use crate::v2::data::Headers;
+use crate::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
+use crate::data::Headers;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CachedValue {
