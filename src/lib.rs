@@ -2,7 +2,6 @@ extern crate core;
 
 #[allow(unused_imports)]
 mod envoy;
-mod v2;
 mod configuration;
 mod filter;
 mod services;
