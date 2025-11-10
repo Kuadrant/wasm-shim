@@ -1,8 +1,12 @@
 extern crate core;
 
+mod configuration;
+mod data;
 #[allow(unused_imports)]
 mod envoy;
-mod v2;
+mod filter;
+mod kuadrant;
+mod services;
 
 #[cfg_attr(
     all(
@@ -22,7 +26,7 @@ mod v2;
 )]
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
-    use crate::v2::filter::FilterRoot;
+    use filter::FilterRoot;
     use log::info;
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
