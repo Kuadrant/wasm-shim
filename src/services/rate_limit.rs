@@ -3,13 +3,13 @@ use std::time::Duration;
 use cel_interpreter::Value;
 use prost::Message;
 
+use crate::configuration::FailureMode;
+use crate::data::attribute::{AttributeError, AttributeState};
 use crate::envoy::{
     rate_limit_descriptor, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
 };
-use crate::configuration::FailureMode;
-use crate::services::{Service, ServiceError};
-use crate::data::attribute::{AttributeError, AttributeState};
 use crate::kuadrant::ReqRespCtx;
+use crate::services::{Service, ServiceError};
 
 pub type RateLimitDescriptorData = Vec<RateLimitDescriptor>;
 

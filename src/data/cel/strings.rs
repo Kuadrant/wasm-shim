@@ -271,9 +271,9 @@ pub fn substring(This(this): This<Arc<String>>, Arguments(args): Arguments) -> R
 mod tests {
     use std::sync::Arc;
 
-    use cel_interpreter::Value;
     use crate::data::{attribute::AttributeState, cel::Expression};
     use crate::kuadrant::{MockWasmHost, ReqRespCtx};
+    use cel_interpreter::Value;
 
     #[test]
     fn extended_string_fn() {

@@ -9,14 +9,14 @@ use prost::Message;
 use prost_types::{Struct, Timestamp};
 
 use super::{Service, ServiceError};
-use crate::envoy::{
-    address, attribute_context, socket_address, Address, AttributeContext, CheckRequest,
-    CheckResponse, Metadata, SocketAddress,
-};
 use crate::configuration::FailureMode;
 use crate::data::attribute::AttributeError;
 use crate::data::attribute::AttributeState;
 use crate::data::Headers;
+use crate::envoy::{
+    address, attribute_context, socket_address, Address, AttributeContext, CheckRequest,
+    CheckResponse, Metadata, SocketAddress,
+};
 use crate::kuadrant::ReqRespCtx;
 
 const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";

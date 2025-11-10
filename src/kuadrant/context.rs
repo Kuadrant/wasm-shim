@@ -331,10 +331,10 @@ pub mod request_data {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::attribute::AttributeState;
     use crate::data::cel::Expression;
     use crate::kuadrant::resolver::MockWasmHost;
     use std::sync::Arc;
-    use crate::data::attribute::AttributeState;
 
     #[test]
     fn test_caching_basic_functionality() {

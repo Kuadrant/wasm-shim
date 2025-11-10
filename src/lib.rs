@@ -1,12 +1,12 @@
 extern crate core;
 
+mod configuration;
+mod data;
 #[allow(unused_imports)]
 mod envoy;
-mod configuration;
 mod filter;
-mod services;
-mod data;
 mod kuadrant;
+mod services;
 
 #[cfg_attr(
     all(
