@@ -7,6 +7,7 @@ use crate::v2::kuadrant::ReqRespCtx;
 use crate::v2::services::ServiceInstance;
 use cel_parser::ParseError;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::rc::Rc;
 
 pub(super) struct Blueprint {
@@ -49,6 +50,29 @@ pub enum CompileError {
 impl From<ParseError> for CompileError {
     fn from(e: ParseError) -> Self {
         CompileError::InvalidDataExpression(e.to_string())
+    }
+}
+
+impl Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompileError::InvalidRoutePredicate { action_set, error } => {
+                write!(f, "Invalid route predicate on {}: {}", action_set, error)
+            }
+            CompileError::InvalidActionPredicate { service, error } => {
+                write!(f, "Invalid action predicate on {}: {}", service, error)
+            }
+            CompileError::InvalidConditionalPredicate(msg) => {
+                write!(f, "Invalid conditional predicate: {}", msg)
+            }
+            CompileError::InvalidDataExpression(msg) => {
+                write!(f, "Invalid data expression: {}", msg)
+            }
+            CompileError::UnknownService(srv) => write!(f, "Unknown service: {}", srv),
+            CompileError::ServiceCreationFailed(srv) => {
+                write!(f, "Service creation failed: {}", srv)
+            }
+        }
     }
 }
 

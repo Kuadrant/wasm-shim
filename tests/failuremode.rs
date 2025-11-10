@@ -1,4 +1,5 @@
 use crate::util::common::wasm_module;
+use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
@@ -40,7 +41,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         {
             "name": "some-name",
             "routeRuleConditions": {
-                "hostnames": ["example.com"]
+                "hostnames": ["cars.toystore.com"]
             },
             "actions": [
             {
@@ -101,23 +102,30 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("example.com"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
+            Some("Getting property: `request.host`"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some(data::request::HOST))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 send_grpc_request: unreachable-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
+            Some("#2 pipeline built successfully"),
         )
-        // retrieving tracing headers
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
-        .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
+        )
         .expect_grpc_call(
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -127,6 +135,10 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(first_call_token_id))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some(format!("gRPC call dispatched successfully, token_id: {}", first_call_token_id).as_str()),
+        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -140,7 +152,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 send_grpc_request: limitador-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
+            Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -151,6 +163,10 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(second_call_token_id))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some(format!("gRPC call dispatched successfully, token_id: {}", second_call_token_id).as_str()),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -165,12 +181,12 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {second_call_token_id}, status: 0").as_str()),
         )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_response(rl): received OK response"),
+            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
         )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -216,7 +232,7 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         {
             "name": "some-name",
             "routeRuleConditions": {
-                "hostnames": ["example.com"]
+                "hostnames": ["cars.toystore.com"]
             },
             "actions": [
             {
@@ -276,23 +292,30 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("example.com"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
+            Some("Getting property: `request.host`"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some(data::request::HOST))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 send_grpc_request: unreachable-cluster envoy.service.ratelimit.v3.RateLimitService ShouldRateLimit 5s"),
+            Some("#2 pipeline built successfully"),
         )
-        // retrieving tracing headers
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
-        .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
+        )
         .expect_grpc_call(
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -302,6 +325,10 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some(5000),
         )
         .returning(Ok(42))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("gRPC call dispatched successfully, token_id: 42"),
+        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -311,6 +338,10 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: 42, status: {status_code}").as_str()),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Sending local reply, status code: 500"),
         )
         .expect_send_local_response(Some(500), None, None, None)
         .execute_and_expect(ReturnType::None)

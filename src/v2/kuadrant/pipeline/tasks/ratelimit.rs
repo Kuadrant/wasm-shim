@@ -344,7 +344,7 @@ fn process_rl_response(response: RateLimitResponse) -> TaskOutcome {
                 let headers = from_envoy_header_value(&response.response_headers_to_add);
                 return TaskOutcome::Requeued(vec![Box::new(ModifyHeadersTask::new(
                     HeaderOperation::Append(headers),
-                    HeadersType::HttpRequestHeaders,
+                    HeadersType::HttpResponseHeaders,
                 ))]);
             }
             TaskOutcome::Done
@@ -389,11 +389,6 @@ mod tests {
 
     fn create_test_context() -> ReqRespCtx {
         let mock_host = MockWasmHost::new();
-        ReqRespCtx::new(Arc::new(mock_host))
-    }
-
-    fn create_test_context_with_headers(headers: Vec<(String, String)>) -> ReqRespCtx {
-        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
         ReqRespCtx::new(Arc::new(mock_host))
     }
 

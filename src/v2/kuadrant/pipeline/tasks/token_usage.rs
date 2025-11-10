@@ -93,7 +93,8 @@ mod tests {
     #[test]
     fn test_no_data_and_not_end_of_stream() {
         let mock_backend = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend)).with_end_of_stream(false);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(0, false);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -104,7 +105,8 @@ mod tests {
     #[test]
     fn test_no_data_and_end_of_stream() {
         let mock_backend = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend)).with_end_of_stream(true);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(0, true);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -116,9 +118,8 @@ mod tests {
     fn test_one_event_and_end_of_stream() {
         let buf = String::from("data:foo\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -130,9 +131,8 @@ mod tests {
     fn test_two_events_and_not_end_of_stream() {
         let buf = String::from("data:foo\n\ndata:bar\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(false)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), false);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -144,9 +144,8 @@ mod tests {
     fn test_two_events_and_end_of_stream() {
         let buf = String::from("data:foo\n\ndata:bar\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend))
-            .with_end_of_stream(true)
-            .with_body_size(buf.len());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
+        ctx.set_body_size(buf.len(), true);
 
         let task = Box::new(TokenUsageTask::new());
 

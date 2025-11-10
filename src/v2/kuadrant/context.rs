@@ -1,5 +1,4 @@
 use log::warn;
-use proxy_wasm::types::Bytes;
 use std::sync::Arc;
 
 use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -44,14 +43,9 @@ impl ReqRespCtx {
         self
     }
 
-    pub fn with_body_size(mut self, body_size: usize) -> Self {
+    pub fn set_body_size(&mut self, body_size: usize, end_of_stream: bool) {
         self.body_size = body_size;
-        self
-    }
-
-    pub fn with_end_of_stream(mut self, end_of_stream: bool) -> Self {
         self.end_of_stream = end_of_stream;
-        self
     }
 
     pub fn set_grpc_response_data(
@@ -263,7 +257,7 @@ impl ReqRespCtx {
         &self,
         start: usize,
         body_size: usize,
-    ) -> Result<Option<Bytes>, AttributeError> {
+    ) -> Result<Option<Vec<u8>>, AttributeError> {
         self.backend.get_http_response_body(start, body_size)
     }
 
