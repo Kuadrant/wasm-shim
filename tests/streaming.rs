@@ -1,6 +1,6 @@
 use crate::util::common::wasm_module;
 use proxy_wasm_test_framework::tester;
-use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
+use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType, Status};
 use serial_test::serial;
 
 pub mod util;
@@ -196,7 +196,6 @@ fn it_processes_usage_event_across_chunks_until_done() {
 
 #[test]
 #[serial]
-#[ignore]
 fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
@@ -273,8 +272,23 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting property: `request.host`"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .failing_with(Status::BadArgument)
+        // here!
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 action_set selected some-name"),

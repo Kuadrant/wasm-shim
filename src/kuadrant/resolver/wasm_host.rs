@@ -6,6 +6,7 @@ use super::AttributeResolver;
 use crate::data::attribute::{AttributeError, Path};
 use crate::services::ServiceError;
 use proxy_wasm::hostcalls;
+use proxy_wasm::types::Status;
 
 pub struct ProxyWasmHost;
 
@@ -70,14 +71,19 @@ impl AttributeResolver for ProxyWasmHost {
         start: usize,
         max_size: usize,
     ) -> Result<Option<proxy_wasm::types::Bytes>, AttributeError> {
-        hostcalls::get_buffer(
+        match hostcalls::get_buffer(
             proxy_wasm::types::BufferType::HttpResponseBody,
             start,
             max_size,
-        )
-        .map_err(|e| {
-            AttributeError::Retrieval(format!("Error getting http response body buffer: {e:?}"))
-        })
+        ) {
+            Ok(bytes) => Ok(bytes),
+            Err(Status::BadArgument) => {
+                Err(AttributeError::NotAvailable("response.body".to_string()))
+            }
+            Err(e) => Err(AttributeError::Retrieval(format!(
+                "Error getting http response body buffer: {e:?}"
+            ))),
+        }
     }
 
     fn dispatch_grpc_call(
