@@ -48,8 +48,8 @@ impl Task for TokenUsageTask {
         // Extract token usage from the second-to-last Server-Sent Event.
         //
         // OpenAI streaming responses typically end with a [DONE] marker, meaning the usage data
-        // appears in the event immediately before it. By targeting only this event, we
-        // avoid parsing the entire stream.
+        // appears in the event immediately before it. By targeting only this event, we don't need
+        // to store all events, but are still parsing the entire stream.
         //
         // Example:
         //   Second-to-last: data: {"id":"...","usage":{"prompt_tokens":0,"completion_tokens":4,"total_tokens":4},...}
