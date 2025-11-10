@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::{Expression, Headers};
-use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
-use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
+use crate::kuadrant::cache::{AttributeCache, CachedValue};
+use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
 
 type RequestData = ((String, String), Expression);
@@ -332,7 +332,7 @@ pub mod request_data {
 mod tests {
     use super::*;
     use crate::data::cel::Expression;
-    use crate::v2::kuadrant::resolver::MockWasmHost;
+    use crate::kuadrant::resolver::MockWasmHost;
     use std::sync::Arc;
     use crate::data::attribute::AttributeState;
 

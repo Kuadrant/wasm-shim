@@ -1,8 +1,8 @@
 #[allow(dead_code)]
 use crate::data::attribute::{AttributeState, Path};
 use crate::data::Headers;
-use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::kuadrant::ReqRespCtx;
 use log::debug;
 
 #[derive(Clone)]
@@ -85,7 +85,7 @@ impl Task for ModifyHeadersTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::kuadrant::MockWasmHost;
+    use crate::kuadrant::MockWasmHost;
     use std::sync::Arc;
 
     #[test]

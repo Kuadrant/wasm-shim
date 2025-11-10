@@ -17,7 +17,7 @@ use crate::configuration::FailureMode;
 use crate::data::attribute::AttributeError;
 use crate::data::attribute::AttributeState;
 use crate::data::Headers;
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 
 const KUADRANT_METADATA_PREFIX: &str = "io.kuadrant";
 

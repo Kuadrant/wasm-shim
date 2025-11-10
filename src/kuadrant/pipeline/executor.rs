@@ -1,6 +1,6 @@
 use log::error;
 
-use crate::v2::kuadrant::{
+use crate::kuadrant::{
     pipeline::tasks::{Task, TaskOutcome},
     ReqRespCtx,
 };

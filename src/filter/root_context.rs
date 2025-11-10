@@ -1,6 +1,6 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::configuration::PluginConfiguration;
-use crate::v2::kuadrant::PipelineFactory;
+use crate::kuadrant::PipelineFactory;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};

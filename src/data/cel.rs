@@ -1,7 +1,7 @@
 use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::Headers;
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
@@ -634,7 +634,7 @@ pub fn debug_all_well_known_attributes() {
 pub mod data {
     use crate::data::attribute::{AttributeError, AttributeState};
     use crate::data::cel::Attribute;
-    use crate::v2::kuadrant::ReqRespCtx;
+    use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -783,8 +783,8 @@ pub mod data {
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
-    use crate::v2::kuadrant::MockWasmHost;
-    use crate::v2::kuadrant::ReqRespCtx;
+    use crate::kuadrant::MockWasmHost;
+    use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
     use std::sync::Arc;

@@ -4,10 +4,10 @@ use crate::data::{
     cel::{Predicate, PredicateVec},
     Expression,
 };
-use crate::v2::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
-use crate::v2::kuadrant::pipeline::executor::Pipeline;
-use crate::v2::kuadrant::pipeline::tasks::Task;
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
+use crate::kuadrant::pipeline::executor::Pipeline;
+use crate::kuadrant::pipeline::tasks::Task;
+use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use log::debug;
 use radix_trie::Trie;
@@ -205,7 +205,7 @@ mod tests {
     use crate::configuration::{
         Action, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType, Timeout,
     };
-    use crate::v2::kuadrant::MockWasmHost;
+    use crate::kuadrant::MockWasmHost;
 
     fn build_test_config(
         hostnames: Vec<String>,

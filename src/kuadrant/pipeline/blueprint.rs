@@ -1,22 +1,22 @@
 use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
-use crate::v2::kuadrant::pipeline::tasks::{
+use crate::kuadrant::pipeline::tasks::{
     AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
 };
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use cel_parser::ParseError;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
 
-pub(super) struct Blueprint {
+pub(crate) struct Blueprint {
     pub name: String,
     pub route_predicates: Vec<Predicate>,
     pub actions: Vec<Action>,
 }
 
-pub(super) struct Action {
+pub(crate) struct Action {
     pub id: String,
     pub service: ServiceInstance,
     pub scope: String,
@@ -26,13 +26,13 @@ pub(super) struct Action {
 }
 
 #[derive(Clone)]
-pub(super) struct ConditionalData {
+pub(crate) struct ConditionalData {
     pub predicates: Vec<Predicate>,
     pub data: Vec<DataItem>,
 }
 
 #[derive(Clone)]
-pub(super) struct DataItem {
+pub(crate) struct DataItem {
     pub key: String,
     pub value: Expression,
 }

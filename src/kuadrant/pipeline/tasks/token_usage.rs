@@ -1,5 +1,5 @@
-use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
 
 mod event_parser;
@@ -87,7 +87,7 @@ impl Task for TokenUsageTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::kuadrant::MockWasmHost;
+    use crate::kuadrant::MockWasmHost;
     use std::sync::Arc;
 
     #[test]

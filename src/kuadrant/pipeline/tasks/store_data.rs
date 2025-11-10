@@ -1,7 +1,7 @@
 use log::error;
 
-use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::kuadrant::ReqRespCtx;
 
 pub struct StoreDataTask {
     data: Vec<(String, Vec<u8>)>,

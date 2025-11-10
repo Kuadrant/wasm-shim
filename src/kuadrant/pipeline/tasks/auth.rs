@@ -2,11 +2,11 @@ use crate::envoy::{check_response, CheckResponse, HeaderValueOption};
 use crate::data::attribute::AttributeState;
 use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Headers;
-use crate::v2::kuadrant::pipeline::tasks::{
+use crate::kuadrant::pipeline::tasks::{
     HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, SendReplyTask, StoreDataTask,
     Task, TaskOutcome,
 };
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 use crate::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
 use log::{error, warn};

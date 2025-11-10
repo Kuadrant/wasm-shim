@@ -14,7 +14,7 @@ pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
 pub use token_usage::TokenUsageTask;
 
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 
 //todo(refactor): this now has the signature of a task; should it be one?
 pub type ResponseProcessor = dyn FnOnce(&mut ReqRespCtx) -> TaskOutcome;

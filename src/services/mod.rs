@@ -1,7 +1,7 @@
 use std::{rc::Rc, time::Duration};
 
 use crate::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 
 mod auth;
 pub mod rate_limit;

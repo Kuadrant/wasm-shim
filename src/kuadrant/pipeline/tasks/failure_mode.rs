@@ -1,4 +1,4 @@
-use crate::v2::kuadrant::{
+use crate::kuadrant::{
     pipeline::tasks::{SendReplyTask, Task, TaskOutcome},
     ReqRespCtx,
 };

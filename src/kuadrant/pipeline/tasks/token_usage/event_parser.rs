@@ -1,4 +1,4 @@
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::ReqRespCtx;
 use core::time::Duration;
 use sse_line_parser::RawEventLine;
 
@@ -132,7 +132,7 @@ impl EventBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::kuadrant::MockWasmHost;
+    use crate::kuadrant::MockWasmHost;
     use std::sync::Arc;
 
     #[test]

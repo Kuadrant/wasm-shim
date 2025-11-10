@@ -7,6 +7,7 @@ mod configuration;
 mod filter;
 mod services;
 mod data;
+mod kuadrant;
 
 #[cfg_attr(
     all(

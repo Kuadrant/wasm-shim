@@ -4,12 +4,12 @@ use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::errors::EvaluationError;
 use crate::data::cel::{Expression, Predicate, PredicateVec};
 use crate::data::Headers;
-use crate::v2::kuadrant::pipeline::blueprint::ConditionalData;
-use crate::v2::kuadrant::pipeline::tasks::{
+use crate::kuadrant::pipeline::blueprint::ConditionalData;
+use crate::kuadrant::pipeline::tasks::{
     HeaderOperation, HeadersType, ModifyHeadersTask, SendReplyTask,
 };
-use crate::v2::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
+use crate::kuadrant::ReqRespCtx;
 use crate::services::{RateLimitService, Service};
 use cel_interpreter::Value;
 use log::{debug, error};
@@ -382,9 +382,9 @@ mod tests {
     use crate::configuration::FailureMode;
     use crate::data::cel::Expression;
     use crate::data::cel::Predicate;
-    use crate::v2::kuadrant::pipeline::blueprint::DataItem;
-    use crate::v2::kuadrant::resolver::MockWasmHost;
-    use crate::v2::kuadrant::ReqRespCtx;
+    use crate::kuadrant::pipeline::blueprint::DataItem;
+    use crate::kuadrant::resolver::MockWasmHost;
+    use crate::kuadrant::ReqRespCtx;
     use std::sync::Arc;
 
     fn create_test_context() -> ReqRespCtx {

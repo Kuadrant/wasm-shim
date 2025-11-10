@@ -1,6 +1,6 @@
 use crate::envoy::StatusCode;
-use crate::v2::kuadrant::pipeline::tasks::{Task, TaskOutcome};
-use crate::v2::kuadrant::ReqRespCtx;
+use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::kuadrant::ReqRespCtx;
 use log::error;
 
 pub struct SendReplyTask {
@@ -49,7 +49,7 @@ impl Task for SendReplyTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::kuadrant::MockWasmHost;
+    use crate::kuadrant::MockWasmHost;
     use std::sync::Arc;
 
     #[test]
