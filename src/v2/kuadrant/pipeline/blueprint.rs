@@ -4,7 +4,7 @@ use crate::v2::kuadrant::pipeline::tasks::{
     AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
 };
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::ServiceInstance;
+use crate::services::ServiceInstance;
 use cel_parser::ParseError;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -254,7 +254,7 @@ mod tests {
         Action as ConfigAction, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, ExpressionItem, RouteRuleConditions, StaticItem,
     };
-    use crate::v2::services::{AuthService, ServiceInstance};
+    use crate::services::{AuthService, ServiceInstance};
     use std::collections::HashMap;
     use std::rc::Rc;
 

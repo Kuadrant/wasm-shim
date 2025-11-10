@@ -4,7 +4,7 @@ use log::{debug, error};
 
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
-use crate::v2::services::ServiceError;
+use crate::services::ServiceError;
 use proxy_wasm::hostcalls;
 
 pub struct ProxyWasmHost;

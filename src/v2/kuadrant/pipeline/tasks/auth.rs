@@ -7,7 +7,7 @@ use crate::v2::kuadrant::pipeline::tasks::{
     Task, TaskOutcome,
 };
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::{AuthService, Service};
+use crate::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
 use log::{error, warn};
 use prost_types::value::Kind;

@@ -1,5 +1,5 @@
 use crate::v2::data::attribute::{AttributeError, Path};
-use crate::v2::services::ServiceError;
+use crate::services::ServiceError;
 use std::time::Duration;
 
 mod wasm_host;

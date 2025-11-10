@@ -5,6 +5,7 @@ mod envoy;
 mod v2;
 mod configuration;
 mod filter;
+mod services;
 
 #[cfg_attr(
     all(

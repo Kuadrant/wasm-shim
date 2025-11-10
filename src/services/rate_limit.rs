@@ -7,11 +7,11 @@ use crate::envoy::{
     rate_limit_descriptor, RateLimitDescriptor, RateLimitRequest, RateLimitResponse,
 };
 use crate::configuration::FailureMode;
+use crate::services::{Service, ServiceError};
 use crate::v2::data::attribute::AttributeState;
 use crate::v2::{
     data::attribute::AttributeError,
     kuadrant::ReqRespCtx,
-    services::{Service, ServiceError},
 };
 
 pub type RateLimitDescriptorData = Vec<RateLimitDescriptor>;

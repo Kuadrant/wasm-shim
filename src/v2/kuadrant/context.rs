@@ -5,7 +5,7 @@ use crate::v2::data::attribute::{wasm_prop, AttributeError, AttributeState, Attr
 use crate::v2::data::{Expression, Headers};
 use crate::v2::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::v2::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
-use crate::v2::services::ServiceError;
+use crate::services::ServiceError;
 
 type RequestData = ((String, String), Expression);
 

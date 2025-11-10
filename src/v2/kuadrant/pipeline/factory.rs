@@ -8,7 +8,7 @@ use crate::v2::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
 use crate::v2::kuadrant::pipeline::executor::Pipeline;
 use crate::v2::kuadrant::pipeline::tasks::Task;
 use crate::v2::kuadrant::ReqRespCtx;
-use crate::v2::services::ServiceInstance;
+use crate::services::ServiceInstance;
 use log::debug;
 use radix_trie::Trie;
 use std::collections::HashMap;

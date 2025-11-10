@@ -1,6 +1,6 @@
 use super::AttributeResolver;
 use crate::v2::data::attribute::{AttributeError, Path};
-use crate::v2::services::ServiceError;
+use crate::services::ServiceError;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
