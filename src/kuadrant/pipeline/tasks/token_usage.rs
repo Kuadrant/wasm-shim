@@ -1,3 +1,4 @@
+use crate::data::attribute::AttributeState;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
@@ -57,9 +58,18 @@ impl Task for TokenUsageTask {
         // TODO: check response content type is text/event-stream
 
         let mut new_t: TokenUsageTask = self.into();
+
+        let chunk_bytes = match ctx.get_http_response_body(0, ctx.body_size()) {
+            Ok(AttributeState::Available(bytes)) => bytes.unwrap_or_default(),
+            Ok(AttributeState::Pending) => {
+                return TaskOutcome::Requeued(vec![Box::new(new_t)]);
+            }
+            Err(_err) => return TaskOutcome::Failed,
+        };
+
         new_t.started = true;
 
-        match new_t.event_parser.parse(ctx) {
+        match new_t.event_parser.parse(chunk_bytes) {
             Ok(events) => {
                 for event in events {
                     new_t.push_event(event);
@@ -94,7 +104,7 @@ mod tests {
     fn test_no_data_and_not_end_of_stream() {
         let mock_backend = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_body_size(0, false);
+        ctx.set_current_response_body_buffer_size(0, false);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -106,7 +116,7 @@ mod tests {
     fn test_no_data_and_end_of_stream() {
         let mock_backend = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_body_size(0, true);
+        ctx.set_current_response_body_buffer_size(0, true);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -119,7 +129,7 @@ mod tests {
         let buf = String::from("data:foo\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_body_size(buf.len(), true);
+        ctx.set_current_response_body_buffer_size(buf.len(), true);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -132,7 +142,7 @@ mod tests {
         let buf = String::from("data:foo\n\ndata:bar\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_body_size(buf.len(), false);
+        ctx.set_current_response_body_buffer_size(buf.len(), false);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -145,7 +155,7 @@ mod tests {
         let buf = String::from("data:foo\n\ndata:bar\n\n");
         let mock_backend = MockWasmHost::new().with_response_body(buf.as_bytes());
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_body_size(buf.len(), true);
+        ctx.set_current_response_body_buffer_size(buf.len(), true);
 
         let task = Box::new(TokenUsageTask::new());
 
