@@ -3,14 +3,14 @@ name: Rust
 
 on:
   push:
-    branches: ['main']
+    branches: ["main"]
   pull_request:
-    branches: ['*']
+    branches: ["*"]
   merge_group:
-    types: [ checks_requested ]
+    types: [checks_requested]
   workflow_dispatch:
   schedule:
-    - cron: '5 4 * * *'
+    - cron: "5 4 * * *"
 
 jobs:
   check:
@@ -24,9 +24,10 @@ jobs:
           toolchain: stable
           override: true
           target: wasm32-unknown-unknown
-      - uses: arduino/setup-protoc@v1
+      - uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: "3.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions-rs/cargo@v1
         with:
           command: check
@@ -44,7 +45,7 @@ jobs:
           target: wasm32-unknown-unknown
       - uses: arduino/setup-protoc@v1
         with:
-          version: '3.x'
+          version: "3.x"
       - uses: actions-rs/cargo@v1
         with:
           command: build
@@ -67,7 +68,7 @@ jobs:
           target: wasm32-unknown-unknown
       - uses: arduino/setup-protoc@v1
         with:
-          version: '3.x'
+          version: "3.x"
       - run: rustup component add clippy
       - uses: actions-rs/cargo@v1
         with:
@@ -78,7 +79,7 @@ jobs:
     # This check adds a list of checks to one job to simplify adding settings to the repo.
     # If a new check is added in this file, and it should be retested on entry to the merge queue,
     # it needs to be added to the list below aka needs: [ existing check 1, existing check 2, new check ].
-    needs: [ check, fmt, clippy ]
+    needs: [check, fmt, clippy]
     if: always()
     runs-on: ubuntu-latest
     steps:
