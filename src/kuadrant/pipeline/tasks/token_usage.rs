@@ -4,7 +4,7 @@ use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
-use log::{error, warn};
+use log::{debug, error, warn};
 use serde_json::Value;
 
 mod event_parser;
@@ -71,7 +71,7 @@ impl Task for TokenUsageTask {
                     strategy.feed_buffer(bytes);
                 }
                 Ok(AttributeState::Available(None)) => {
-                    // todo(refactor): No bytes available?
+                    debug!("No buffer available");
                 }
                 Ok(AttributeState::Pending) => {
                     task.strategy = Some(strategy);
@@ -101,11 +101,11 @@ impl Task for TokenUsageTask {
                             }
                         }
                         Value::String(s) => task.prop_setter.set_prop(prop, s),
-                        // todo(refactor): unimplemented?
-                        Value::Null | Value::Array(_) | Value::Object(_) => {}
+                        Value::Null | Value::Array(_) | Value::Object(_) => {
+                            warn!("Unsupported json value type: {:?}", json_value);
+                        }
                     }
                 } else {
-                    // todo(refactor): what do we do if property is missing?
                     warn!("Missing json property: {}", prop);
                 }
             }
