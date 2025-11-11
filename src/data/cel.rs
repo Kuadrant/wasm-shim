@@ -135,7 +135,7 @@ impl Props {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct PropSetter {
     expected: Vec<String>,
     props: Vec<Arc<Mutex<Props>>>,
@@ -152,7 +152,7 @@ impl PropSetter {
             props.push(arc);
         }
         for data in conditional_data {
-            for predicate in predicates {
+            for predicate in &data.predicates {
                 let arc = predicate.expression.response_props.clone();
                 expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
                 props.push(arc);
@@ -305,9 +305,7 @@ impl Expression {
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
         #[allow(clippy::unwrap_used)]
-        if self.response_props.deref().lock().unwrap().pending()
-            && req_ctx.response_body_buffer_size() == 0
-        {
+        if self.response_props.deref().lock().unwrap().pending() {
             return Ok(AttributeState::Pending);
         }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)

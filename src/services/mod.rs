@@ -1,7 +1,7 @@
-use std::{rc::Rc, time::Duration};
-
 use crate::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
 use crate::kuadrant::ReqRespCtx;
+use log::debug;
+use std::{rc::Rc, time::Duration};
 
 mod auth;
 pub mod rate_limit;
@@ -102,6 +102,10 @@ pub trait Service {
         message: Vec<u8>,
         timeout: Duration,
     ) -> Result<u32, ServiceError> {
+        debug!(
+            "Dispatching gRPC call to {}: {} {}",
+            upstream, service, method
+        );
         ctx.dispatch_grpc_call(upstream, service, method, message, timeout)
     }
 

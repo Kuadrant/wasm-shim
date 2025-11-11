@@ -26,13 +26,13 @@ pub(crate) struct Action {
     pub dependencies: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ConditionalData {
     pub predicates: Vec<Predicate>,
     pub data: Vec<DataItem>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DataItem {
     pub key: String,
     pub value: Expression,
