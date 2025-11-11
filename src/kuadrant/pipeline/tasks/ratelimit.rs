@@ -140,7 +140,16 @@ impl RateLimitTask {
         let mut entries: Vec<Entry> = Vec::new();
         for conditional_data in &self.conditional_data_sets {
             match conditional_data.predicates.apply(ctx)? {
-                AttributeState::Pending => return Ok(AttributeState::Pending),
+                AttributeState::Pending => {
+                    for data_item in &conditional_data.data {
+                        let _ = DescriptorEntryBuilder::new(
+                            data_item.key.clone(),
+                            data_item.value.clone(),
+                        )
+                        .evaluate(ctx);
+                    }
+                    return Ok(AttributeState::Pending);
+                }
                 AttributeState::Available(false) => continue,
                 AttributeState::Available(true) => {
                     for data_item in &conditional_data.data {

@@ -292,6 +292,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(Status::BadArgument)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting property: `request.method`"),
+        )
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some(b"POST"))
         .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -357,6 +363,22 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_response_body(http_context, 0, true)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
+        // TODO: I DONT THINK SO!!!
+        .expect_log(Some(LogLevel::Debug), Some("Getting map: `HttpRequestHeaders`"))
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(Some(vec![("content-type", "text/event-stream")]))
+        // TODO: END
+        .expect_log(Some(LogLevel::Debug), Some("Dispatching gRPC call to limitador-cluster/envoy.extensions.common.ratelimit.v3.RateLimitService.Report, timeout: 5s"))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("envoy.extensions.common.ratelimit.v3.RateLimitService"),
+            Some("Report"),
+            Some(&[0, 0, 0, 0]),
+            None,
+            Some(5000),
+        )
+        .returning(Ok(99))
+        .expect_log(Some(LogLevel::Debug), Some("gRPC call dispatched successfully, token_id: 99"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -367,12 +389,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             Some(LogLevel::Debug),
             Some("#2 on_grpc_call_response: received gRPC call response: token: 99, status: 0"),
         )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_response(rl): received OK response"),
+            Some("Getting gRPC response, size: 2 bytes"),
         )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 }
