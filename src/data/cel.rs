@@ -27,7 +27,7 @@ pub(crate) mod errors {
 
     #[derive(Debug)]
     pub struct EvaluationError {
-        expression: Expression,
+        expression: Box<Expression>,
         message: String,
     }
 
@@ -80,7 +80,7 @@ pub(crate) mod errors {
     impl EvaluationError {
         pub fn new(expression: Expression, message: String) -> EvaluationError {
             EvaluationError {
-                expression,
+                expression: Box::new(expression),
                 message,
             }
         }
