@@ -249,7 +249,7 @@ impl ReqRespCtx {
         self.response_end_of_stream
     }
 
-    pub fn body_size(&self) -> usize {
+    pub fn response_body_buffer_size(&self) -> usize {
         self.response_body_size
     }
 

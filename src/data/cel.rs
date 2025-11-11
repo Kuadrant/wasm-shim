@@ -206,12 +206,8 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-        if !self.response_props.is_empty() {
-            return match req_ctx.get_http_response_body(0, 10) {
-                Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
-                Ok(_) => data::AttributeMap::new(self.attributes.clone()).into(req_ctx),
-                Err(e) => Err(e),
-            };
+        if !self.response_props.is_empty() && req_ctx.response_body_buffer_size() == 0 {
+            return Ok(AttributeState::Pending);
         }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
@@ -814,7 +810,6 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
-    use crate::data::cel::data::AttributeMap;
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;

@@ -59,7 +59,11 @@ impl Task for TokenUsageTask {
 
         let mut new_t: TokenUsageTask = self.into();
 
-        let chunk_bytes = match ctx.get_http_response_body(0, ctx.body_size()) {
+        if ctx.response_body_buffer_size() == 0 {
+            return TaskOutcome::Requeued(vec![Box::new(new_t)]);
+        }
+
+        let chunk_bytes = match ctx.get_http_response_body(0, ctx.response_body_buffer_size()) {
             Ok(AttributeState::Available(bytes)) => bytes.unwrap_or_default(),
             Ok(AttributeState::Pending) => {
                 return TaskOutcome::Requeued(vec![Box::new(new_t)]);

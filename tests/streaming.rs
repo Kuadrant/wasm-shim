@@ -1,6 +1,6 @@
 use crate::util::common::wasm_module;
 use proxy_wasm_test_framework::tester;
-use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType, Status};
+use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
 use serial_test::serial;
 
 pub mod util;
@@ -286,10 +286,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
-        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
-        .failing_with(Status::BadArgument)
-        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
-        .failing_with(Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
