@@ -99,8 +99,7 @@ impl Task for TokenUsageTask {
             // message saying not enough events where parsed
             (true, None) => TaskOutcome::Failed,
             (true, Some(_event)) => {
-                // TODO: store the event somewhere in the ctx?
-
+                // TODO: parse the event for the props!
                 let props: Vec<String> = new_t.prop_setter.expected_props().to_vec();
                 for prop in props {
                     new_t.prop_setter.set_prop(prop, true);
