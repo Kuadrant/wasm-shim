@@ -36,8 +36,7 @@ lazy_static = "1.5.0"
 nom = { version = "8", default-features = false }
 
 [dev-dependencies]
-#proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }
-proxy-wasm-test-framework = { path = "/Users/asnaps/src/github.com/Kuadrant/wasm-test-framework" }
+proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", branch = "kuadrant" }
 serial_test = "2.0.0"
 
 [build-dependencies]
