@@ -84,9 +84,6 @@ impl HttpContext for KuadrantFilter {
     fn on_http_request_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_body", self.context_id);
         if let Some(mut pipeline) = self.pipeline.take() {
-            pipeline
-                .ctx
-                .set_current_response_body_buffer_size(body_size, end_of_stream);
             self.pipeline = pipeline.eval();
         }
         if self.should_pause() {
