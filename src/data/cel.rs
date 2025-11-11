@@ -5,7 +5,7 @@ use crate::kuadrant::ConditionalData;
 use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
-use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
+use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use cel_parser::{parse, Atom, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
@@ -289,6 +289,11 @@ impl Expression {
             );
         }
 
+        #[allow(clippy::unwrap_used)]
+        let values = self.response_props.lock().unwrap().clone().values();
+        ctx.add_variable_from_value(RESPONSE_BODY_JSON_DATA, Value::Map(values.into()));
+        ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
+
         let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
         Ok(AttributeState::Available(result))
     }
@@ -306,6 +311,30 @@ impl Expression {
             return Ok(AttributeState::Pending);
         }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
+    }
+}
+
+const RESPONSE_BODY_JSON_DATA: &str = "@responseBodyJSON";
+const RESPONSE_BODY_JSON_FN: &str = "responseBodyJSON";
+
+pub fn response_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
+    let key: Result<Key, Value> = arg.try_into();
+    match key {
+        Ok(key) => match ftx.ptx.get_variable(RESPONSE_BODY_JSON_DATA) {
+            Ok(Value::Map(map)) => match map.get(&key) {
+                None => Ok(Value::Null),
+                Some(value) => Ok(value.clone()),
+            },
+            Err(e) => Err(e),
+            _ => Err(ExecutionError::FunctionError {
+                function: RESPONSE_BODY_JSON_FN.to_string(),
+                message: "Bad internal state!".to_string(),
+            }),
+        },
+        Err(e) => Err(ExecutionError::UnexpectedType {
+            got: format!("{e:?}"),
+            want: "Key".to_string(),
+        }),
     }
 }
 
@@ -1083,6 +1112,18 @@ mod tests {
         assert_eq!(
             predicate.test(&ctx).expect("This must evaluate properly!"),
             AttributeState::Available(true)
+        );
+    }
+
+    #[test]
+    fn response_body_json() {
+        let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
+        expr.response_props.lock().unwrap().set_prop("bar", 42);
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr.eval(&ctx).unwrap()
         );
     }
 
