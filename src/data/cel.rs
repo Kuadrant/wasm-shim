@@ -111,12 +111,12 @@ impl Props {
         !self.is_empty() && self.props.iter().any(|(_, value)| value.is_none())
     }
 
-    fn values(&self) -> HashMap<String, Value> {
+    fn values(self) -> HashMap<String, Value> {
         self.props
-            .iter()
+            .into_iter()
             .filter_map(|(k, v)| {
                 if let Some(v) = v {
-                    Some((k.clone(), v.clone()))
+                    Some((k, v))
                 } else {
                     None
                 }
@@ -124,11 +124,11 @@ impl Props {
             .collect()
     }
 
-    fn set_prop(&mut self, key: String, value: Value) -> bool {
-        match self.props.entry(key) {
+    fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) -> bool {
+        match self.props.entry(key.into()) {
             Entry::Occupied(mut e) => {
                 if e.get().is_none() {
-                    e.get_mut().replace(value);
+                    e.get_mut().replace(value.into());
                     true
                 } else {
                     false
@@ -1284,17 +1284,17 @@ mod tests {
     fn test_props() {
         let mut props: Props = vec!["foo".to_string(), "bar".to_string()].into();
         assert!(props.pending());
-        assert!(props.set_prop("foo".to_string(), 1.into()));
-        assert!(!props.set_prop("baz".to_string(), 1.into()));
+        assert!(props.set_prop("foo", 1));
+        assert!(!props.set_prop("baz", 1));
         assert!(props.pending());
-        assert_eq!(props.values().get("foo").cloned(), Some(1.into()));
-        assert_eq!(props.values().get("baz").cloned(), None);
-        assert_eq!(props.values().len(), 1);
-        assert!(props.set_prop("bar".to_string(), 2.into()));
+        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.clone().values().get("baz").cloned(), None);
+        assert_eq!(props.clone().values().len(), 1);
+        assert!(props.set_prop("bar", 2));
         assert!(!props.pending());
-        assert_eq!(props.values().get("foo").cloned(), Some(1.into()));
-        assert_eq!(props.values().get("bar").cloned(), Some(2.into()));
-        assert_eq!(props.values().get("baz").cloned(), None);
-        assert_eq!(props.values().len(), 2);
+        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.clone().values().get("bar").cloned(), Some(2.into()));
+        assert_eq!(props.clone().values().get("baz").cloned(), None);
+        assert_eq!(props.clone().values().len(), 2);
     }
 }
