@@ -695,6 +695,7 @@ fn properties<'e>(
             properties(e, all, response_props, path);
         }
         CelExpression::FunctionCall(ident, None, args) => {
+            path.clear();
             if let CelExpression::Ident(ident) = ident.as_ref() {
                 if ident.as_str() == "responseBodyJSON" && args.len() == 1 {
                     if let CelExpression::Atom(Atom::String(prop)) = &args[0] {
