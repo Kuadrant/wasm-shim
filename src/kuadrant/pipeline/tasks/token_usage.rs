@@ -3,6 +3,8 @@ use crate::data::cel::PropSetter;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
+use serde_json::Value;
+use std::collections::HashMap;
 
 mod event_parser;
 
@@ -109,6 +111,88 @@ impl Task for TokenUsageTask {
             (false, _) => TaskOutcome::Requeued(vec![Box::new(new_t)]),
         }
     }
+}
+
+trait ExtractionStrategy {
+    fn feed_buffer(&mut self, bytes: Vec<u8>);
+
+    fn extract_properties(self: Box<Self>, paths: &[String]) -> HashMap<String, Value>;
+}
+
+struct SseStrategy {
+    event_parser: event_parser::EventParser,
+    last_two_events: [Option<Event>; 2],
+}
+
+impl SseStrategy {
+    fn new() -> Self {
+        Self {
+            event_parser: event_parser::EventParser::default(),
+            last_two_events: [None, None],
+        }
+    }
+
+    fn push_event(&mut self, event: Event) {
+        self.last_two_events[1] = self.last_two_events[0].take();
+        self.last_two_events[0] = Some(event);
+    }
+}
+
+impl ExtractionStrategy for SseStrategy {
+    fn feed_buffer(&mut self, bytes: Vec<u8>) {
+        if let Ok(events) = self.event_parser.parse(bytes) {
+            for event in events {
+                self.push_event(event);
+            }
+        }
+    }
+
+    fn extract_properties(self: Box<Self>, paths: &[String]) -> HashMap<String, Value> {
+        if let Some(event) = &self.last_two_events[1] {
+            if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
+                return extract_properties_from_json(&json, paths);
+            }
+        }
+        HashMap::new()
+    }
+}
+
+struct JsonStrategy {
+    buffer: Vec<u8>,
+}
+
+impl JsonStrategy {
+    fn new() -> Self {
+        Self {
+            buffer: Default::default(),
+        }
+    }
+}
+
+impl ExtractionStrategy for JsonStrategy {
+    fn feed_buffer(&mut self, mut bytes: Vec<u8>) {
+        self.buffer.append(&mut bytes);
+    }
+
+    fn extract_properties(self: Box<Self>, paths: &[String]) -> HashMap<String, Value> {
+        if let Ok(json_str) = String::from_utf8(self.buffer) {
+            if let Ok(json) = serde_json::from_str::<Value>(&json_str) {
+                return extract_properties_from_json(&json, paths);
+            }
+        }
+        HashMap::new()
+    }
+}
+
+fn extract_properties_from_json(json: &Value, paths: &[String]) -> HashMap<String, Value> {
+    let mut result = HashMap::new();
+
+    for path in paths {
+        if let Some(value) = json.pointer(path) {
+            result.insert(path.clone(), value.clone());
+        }
+    }
+    result
 }
 
 #[cfg(test)]
