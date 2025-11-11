@@ -98,9 +98,59 @@ pub(crate) mod errors {
 }
 
 #[derive(Clone, Debug)]
+pub struct Props {
+    props: HashMap<String, Option<Value>>,
+}
+
+impl Props {
+    fn is_empty(&self) -> bool {
+        self.props.is_empty()
+    }
+
+    fn pending(&self) -> bool {
+        !self.is_empty() && self.props.iter().any(|(_, value)| value.is_none())
+    }
+
+    fn values(&self) -> HashMap<String, Value> {
+        self.props
+            .iter()
+            .filter_map(|(k, v)| {
+                if let Some(v) = v {
+                    Some((k.clone(), v.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn set_prop(&mut self, key: String, value: Value) -> bool {
+        match self.props.entry(key) {
+            Entry::Occupied(mut e) => {
+                if e.get().is_none() {
+                    e.get_mut().replace(value);
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(_) => false,
+        }
+    }
+}
+
+impl From<Vec<String>> for Props {
+    fn from(value: Vec<String>) -> Self {
+        Self {
+            props: value.into_iter().map(|s| (s, None)).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
-    response_props: Vec<String>,
+    response_props: Props,
     expression: CelExpression,
     extended: bool,
 }
@@ -155,7 +205,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
-            response_props,
+            response_props: response_props.into(),
             expression,
             extended,
         })
@@ -206,7 +256,7 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-        if !self.response_props.is_empty() && req_ctx.response_body_buffer_size() == 0 {
+        if self.response_props.pending() && req_ctx.response_body_buffer_size() == 0 {
             return Ok(AttributeState::Pending);
         }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
@@ -810,7 +860,7 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
-    use crate::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate, Props};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
@@ -854,7 +904,10 @@ mod tests {
             "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
         )
         .expect("This is valid CEL!");
-        assert_eq!(value.response_props, vec!["foo.bar".to_string()]);
+        assert_eq!(
+            value.response_props.props,
+            [("foo.bar".to_string(), None)].into()
+        );
     }
 
     #[test]
@@ -1225,5 +1278,23 @@ mod tests {
             AttributeState::Pending,
             "Ternary expression with Pending condition should return Pending"
         );
+    }
+
+    #[test]
+    fn test_props() {
+        let mut props: Props = vec!["foo".to_string(), "bar".to_string()].into();
+        assert!(props.pending());
+        assert!(props.set_prop("foo".to_string(), 1.into()));
+        assert!(!props.set_prop("baz".to_string(), 1.into()));
+        assert!(props.pending());
+        assert_eq!(props.values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.values().get("baz").cloned(), None);
+        assert_eq!(props.values().len(), 1);
+        assert!(props.set_prop("bar".to_string(), 2.into()));
+        assert!(!props.pending());
+        assert_eq!(props.values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.values().get("bar").cloned(), Some(2.into()));
+        assert_eq!(props.values().get("baz").cloned(), None);
+        assert_eq!(props.values().len(), 2);
     }
 }
