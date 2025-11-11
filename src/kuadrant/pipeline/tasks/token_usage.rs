@@ -68,7 +68,7 @@ impl Task for TokenUsageTask {
 
         let mut new_t: TokenUsageTask = self.into();
 
-        if ctx.response_body_buffer_size() == 0 {
+        if ctx.response_body_buffer_size() == 0 && !ctx.is_end_of_stream(){
             return TaskOutcome::Requeued(vec![Box::new(new_t)]);
         }
 
