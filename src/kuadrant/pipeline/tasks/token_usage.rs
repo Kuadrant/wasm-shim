@@ -4,9 +4,8 @@ use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
-use log::error;
+use log::{error, warn};
 use serde_json::Value;
-use std::collections::HashMap;
 
 mod event_parser;
 
@@ -86,16 +85,29 @@ impl Task for TokenUsageTask {
         }
 
         if ctx.is_end_of_stream() {
-            let paths: Vec<String> = task.prop_setter.expected_props().to_vec();
-            let extracted = strategy.extract_properties(&paths);
+            let props: Vec<String> = task.prop_setter.expected_props().to_vec();
 
-            // todo(refactor): store the extracted properties in ctx
-            for prop in paths.clone() {
-                task.prop_setter.set_prop(prop, true);
-            }
-            if extracted.is_empty() && !paths.is_empty() {
-                // todo(refactor): is this an expected failure?
-                return TaskOutcome::Failed;
+            for prop in props {
+                if let Some(json_value) = strategy.extract_property(&prop) {
+                    match json_value {
+                        Value::Bool(b) => task.prop_setter.set_prop(prop, b),
+                        Value::Number(n) => {
+                            if let Some(u) = n.as_u64() {
+                                task.prop_setter.set_prop(prop, u);
+                            } else if let Some(i) = n.as_i64() {
+                                task.prop_setter.set_prop(prop, i);
+                            } else if let Some(f) = n.as_f64() {
+                                task.prop_setter.set_prop(prop, f);
+                            }
+                        }
+                        Value::String(s) => task.prop_setter.set_prop(prop, s),
+                        // todo(refactor): unimplemented?
+                        Value::Null | Value::Array(_) | Value::Object(_) => {}
+                    }
+                } else {
+                    // todo(refactor): what do we do if property is missing?
+                    warn!("Missing json property: {}", prop);
+                }
             }
             return TaskOutcome::Done;
         }
@@ -120,14 +132,14 @@ fn select_strategy(headers: &Headers) -> Box<dyn ExtractionStrategy> {
 
 trait ExtractionStrategy {
     fn feed_buffer(&mut self, bytes: Vec<u8>);
-
-    fn extract_properties(self: Box<Self>, paths: &[String]) -> HashMap<String, Value>;
+    fn extract_property(&mut self, prop: &str) -> Option<Value>;
 }
 
 struct SseStrategy {
     event_parser: event_parser::EventParser,
     // Stores the last two events: [second_to_last, last]
     last_two_events: [Option<Event>; 2],
+    parsed_json: Option<Value>,
 }
 
 impl SseStrategy {
@@ -135,6 +147,7 @@ impl SseStrategy {
         Self {
             event_parser: event_parser::EventParser::default(),
             last_two_events: [None, None],
+            parsed_json: None,
         }
     }
 
@@ -153,24 +166,28 @@ impl ExtractionStrategy for SseStrategy {
         }
     }
 
-    fn extract_properties(self: Box<Self>, paths: &[String]) -> HashMap<String, Value> {
-        if let Some(event) = &self.last_two_events[1] {
-            if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
-                return extract_properties_from_json(&json, paths);
+    fn extract_property(&mut self, prop: &str) -> Option<Value> {
+        if self.parsed_json.is_none() {
+            if let Some(event) = &self.last_two_events[1] {
+                if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
+                    self.parsed_json = Some(json);
+                }
             }
         }
-        HashMap::new()
+        self.parsed_json.as_ref()?.pointer(prop).cloned()
     }
 }
 
 struct JsonStrategy {
     buffer: Vec<u8>,
+    parsed_json: Option<Value>,
 }
 
 impl JsonStrategy {
     fn new() -> Self {
         Self {
             buffer: Default::default(),
+            parsed_json: None,
         }
     }
 }
@@ -180,24 +197,16 @@ impl ExtractionStrategy for JsonStrategy {
         self.buffer.append(&mut bytes);
     }
 
-    fn extract_properties(self: Box<Self>, paths: &[String]) -> HashMap<String, Value> {
-        if let Ok(json_str) = String::from_utf8(self.buffer) {
-            if let Ok(json) = serde_json::from_str::<Value>(&json_str) {
-                return extract_properties_from_json(&json, paths);
+    fn extract_property(&mut self, prop: &str) -> Option<Value> {
+        if self.parsed_json.is_none() {
+            if let Ok(json_str) = String::from_utf8(self.buffer.clone()) {
+                if let Ok(json) = serde_json::from_str::<Value>(&json_str) {
+                    self.parsed_json = Some(json);
+                }
             }
         }
-        HashMap::new()
+        self.parsed_json.as_ref()?.pointer(prop).cloned()
     }
-}
-
-fn extract_properties_from_json(json: &Value, paths: &[String]) -> HashMap<String, Value> {
-    let mut result = HashMap::new();
-    for path in paths {
-        if let Some(value) = json.pointer(path) {
-            result.insert(path.clone(), value.clone());
-        }
-    }
-    result
 }
 
 #[cfg(test)]
@@ -240,14 +249,10 @@ mod tests {
         let events = b"data: {\"usage\":{\"total_tokens\":10}}\n\ndata: [DONE]\n\n";
         strategy.feed_buffer(events.to_vec());
 
-        let paths = vec!["/usage/total_tokens".to_string()];
-        let result = Box::new(strategy).extract_properties(&paths);
+        let result = strategy.extract_property("/usage/total_tokens");
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(
-            result.get("/usage/total_tokens").unwrap().as_u64(),
-            Some(10)
-        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_u64(), Some(10));
     }
 
     #[test]
@@ -257,10 +262,9 @@ mod tests {
         let events = b"data: [DONE]\n\n";
         strategy.feed_buffer(events.to_vec());
 
-        let paths = vec!["/usage/total_tokens".to_string()];
-        let result = Box::new(strategy).extract_properties(&paths);
+        let result = strategy.extract_property("/usage/total_tokens");
 
-        assert!(result.is_empty());
+        assert!(result.is_none());
     }
 
     #[test]
@@ -270,21 +274,14 @@ mod tests {
         let json = br#"{"usage":{"total_tokens":42,"prompt_tokens":10}}"#;
         strategy.feed_buffer(json.to_vec());
 
-        let paths = vec![
-            "/usage/total_tokens".to_string(),
-            "/usage/prompt_tokens".to_string(),
-        ];
-        let result = Box::new(strategy).extract_properties(&paths);
+        let total_tokens = strategy.extract_property("/usage/total_tokens");
+        let prompt_tokens = strategy.extract_property("/usage/prompt_tokens");
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(
-            result.get("/usage/total_tokens").unwrap().as_u64(),
-            Some(42)
-        );
-        assert_eq!(
-            result.get("/usage/prompt_tokens").unwrap().as_u64(),
-            Some(10)
-        );
+        assert!(total_tokens.is_some());
+        assert_eq!(total_tokens.unwrap().as_u64(), Some(42));
+
+        assert!(prompt_tokens.is_some());
+        assert_eq!(prompt_tokens.unwrap().as_u64(), Some(10));
     }
 
     #[test]
@@ -294,34 +291,12 @@ mod tests {
         let json = br#"{"usage":{"total_tokens":42}}"#;
         strategy.feed_buffer(json.to_vec());
 
-        let paths = vec![
-            "/usage/total_tokens".to_string(),
-            "/usage/nonexistent".to_string(),
-        ];
-        let result = Box::new(strategy).extract_properties(&paths);
+        let total_tokens = strategy.extract_property("/usage/total_tokens");
+        let nonexistent = strategy.extract_property("/usage/nonexistent");
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(
-            result.get("/usage/total_tokens").unwrap().as_u64(),
-            Some(42)
-        );
-        assert!(result.get("/usage/nonexistent").is_none());
-    }
+        assert!(total_tokens.is_some());
+        assert_eq!(total_tokens.unwrap().as_u64(), Some(42));
 
-    #[test]
-    fn test_task_fails_when_paths_expected_but_no_data() {
-        let headers = vec![("content-type".to_string(), "application/json".to_string())];
-        let mock_backend = MockWasmHost::new().with_map("response.headers".to_string(), headers);
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_current_response_body_buffer_size(0, true);
-
-        // Create a predicate that uses responseBodyJSON to set expected props
-        use crate::data::cel::Predicate;
-        let predicate = Predicate::new("responseBodyJSON('/usage/total_tokens') == 10").unwrap();
-        let prop_setter = PropSetter::new(&[predicate], &[]);
-        let task = Box::new(TokenUsageTask::with_prop_setter(prop_setter));
-
-        let outcome = task.apply(&mut ctx);
-        assert!(matches!(outcome, TaskOutcome::Failed));
+        assert!(nonexistent.is_none());
     }
 }
