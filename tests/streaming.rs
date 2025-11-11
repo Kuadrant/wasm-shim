@@ -288,26 +288,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         )
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .failing_with(Status::BadArgument)
-        // here!
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
-        )
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
-        .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("get_property: path: [\"request\", \"method\"]"),
-        )
-        .expect_get_property(Some(vec!["request", "method"]))
-        .returning(Some(b"POST"))
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .failing_with(Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
+    // FAILS FROM HERE
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))

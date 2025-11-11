@@ -5,7 +5,7 @@ use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
-use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
+use cel_parser::{parse, Atom, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
@@ -100,6 +100,7 @@ pub(crate) mod errors {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
+    response_props: Vec<String>,
     expression: CelExpression,
     extended: bool,
 }
@@ -131,7 +132,13 @@ impl Expression {
         let expression = parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
-        properties(&expression, &mut props, &mut Vec::default());
+        let mut response_props = Vec::with_capacity(1);
+        properties(
+            &expression,
+            &mut props,
+            &mut response_props,
+            &mut Vec::default(),
+        );
 
         let mut attributes: Vec<Attribute> = props
             .into_iter()
@@ -148,6 +155,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
+            response_props,
             expression,
             extended,
         })
@@ -198,6 +206,13 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
+        if !self.response_props.is_empty() {
+            return match req_ctx.get_http_response_body(0, 10) {
+                Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
+                Ok(_) => data::AttributeMap::new(self.attributes.clone()).into(req_ctx),
+                Err(e) => Err(e),
+            };
+        }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
 }
@@ -559,48 +574,65 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     ])
 }
 
-fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mut Vec<&'e str>) {
+fn properties<'e>(
+    exp: &'e CelExpression,
+    all: &mut Vec<Vec<&'e str>>,
+    response_props: &mut Vec<String>,
+    path: &mut Vec<&'e str>,
+) {
     match exp {
         CelExpression::Arithmetic(e1, _, e2)
         | CelExpression::Relation(e1, _, e2)
         | CelExpression::Or(e1, e2)
         | CelExpression::And(e1, e2) => {
-            properties(e1, all, path);
-            properties(e2, all, path);
+            properties(e1, all, response_props, path);
+            properties(e2, all, response_props, path);
         }
         CelExpression::Ternary(e1, e2, e3) => {
-            properties(e1, all, path);
-            properties(e2, all, path);
-            properties(e3, all, path);
+            properties(e1, all, response_props, path);
+            properties(e2, all, response_props, path);
+            properties(e3, all, response_props, path);
         }
         CelExpression::Unary(_, e) => {
-            properties(e, all, path);
+            properties(e, all, response_props, path);
         }
         CelExpression::Member(e, a) => {
             if let Member::Attribute(attr) = &**a {
                 path.insert(0, attr.as_str())
             }
-            properties(e, all, path);
+            properties(e, all, response_props, path);
+        }
+        CelExpression::FunctionCall(ident, None, args) => {
+            if let CelExpression::Ident(ident) = ident.as_ref() {
+                if ident.as_str() == "responseBodyJSON" && args.len() == 1 {
+                    if let CelExpression::Atom(Atom::String(prop)) = &args[0] {
+                        response_props.push(prop.to_string());
+                    }
+                }
+            }
+            for e in args {
+                properties(e, all, response_props, path);
+            }
         }
         CelExpression::FunctionCall(_, target, args) => {
             // The attributes of the values returned by functions are skipped.
             path.clear();
             if let Some(target) = target {
-                properties(target, all, path);
+                properties(target, all, response_props, path);
             }
             for e in args {
-                properties(e, all, path);
+                properties(e, all, response_props, path);
             }
         }
         CelExpression::List(e) => {
             for e in e {
-                properties(e, all, path);
+                properties(e, all, response_props, path);
             }
         }
         CelExpression::Map(v) => {
             for (e1, e2) in v {
-                properties(e1, all, path);
-                properties(e2, all, path);
+                properties(e1, all, response_props, path);
+                properties(e2, all, response_props, path);
             }
         }
         CelExpression::Atom(_) => {}
@@ -782,6 +814,7 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
+    use crate::data::cel::data::AttributeMap;
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
@@ -818,6 +851,15 @@ mod tests {
         let value = Expression::new("my_func(foo.bar).a.b > 3").expect("This is valid CEL!");
         assert_eq!(value.attributes.len(), 1);
         assert_eq!(value.attributes[0].path, "foo.bar".into());
+    }
+
+    #[test]
+    fn expressions_captures_response_props() {
+        let value = Expression::new(
+            "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
+        )
+        .expect("This is valid CEL!");
+        assert_eq!(value.response_props, vec!["foo.bar".to_string()]);
     }
 
     #[test]
