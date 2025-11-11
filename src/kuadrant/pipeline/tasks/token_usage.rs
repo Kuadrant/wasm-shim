@@ -1,4 +1,5 @@
 use crate::data::attribute::AttributeState;
+use crate::data::cel::PropSetter;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
@@ -10,14 +11,21 @@ pub struct TokenUsageTask {
     // Stores the last two events: [second_to_last, last]
     last_two_events: [Option<Event>; 2],
     started: bool,
+    prop_setter: PropSetter,
 }
 
 impl TokenUsageTask {
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_prop_setter(Default::default())
+    }
+
+    pub fn with_prop_setter(prop_setter: PropSetter) -> Self {
         Self {
             event_parser: event_parser::EventParser::default(),
             last_two_events: [None, None],
             started: false,
+            prop_setter,
         }
     }
 
@@ -35,6 +43,7 @@ impl From<Box<Self>> for TokenUsageTask {
             event_parser: value.event_parser,
             last_two_events: value.last_two_events,
             started: value.started,
+            prop_setter: value.prop_setter,
         }
     }
 }
@@ -91,6 +100,11 @@ impl Task for TokenUsageTask {
             (true, None) => TaskOutcome::Failed,
             (true, Some(_event)) => {
                 // TODO: store the event somewhere in the ctx?
+
+                let props: Vec<String> = new_t.prop_setter.expected_props().to_vec();
+                for prop in props {
+                    new_t.prop_setter.set_prop(prop, true);
+                }
                 TaskOutcome::Done
             }
             (false, _) => TaskOutcome::Requeued(vec![Box::new(new_t)]),

@@ -1,6 +1,7 @@
 use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::Headers;
+use crate::kuadrant::ConditionalData;
 use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
@@ -15,7 +16,8 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::{Arc, OnceLock};
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, OnceLock};
 use urlencoding::decode;
 
 pub(crate) mod errors {
@@ -98,7 +100,7 @@ pub(crate) mod errors {
 }
 
 #[derive(Clone, Debug)]
-pub struct Props {
+struct Props {
     props: HashMap<String, Option<Value>>,
 }
 
@@ -114,13 +116,7 @@ impl Props {
     fn values(self) -> HashMap<String, Value> {
         self.props
             .into_iter()
-            .filter_map(|(k, v)| {
-                if let Some(v) = v {
-                    Some((k, v))
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
             .collect()
     }
 
@@ -139,6 +135,53 @@ impl Props {
     }
 }
 
+#[derive(Default)]
+pub struct PropSetter {
+    expected: Vec<String>,
+    props: Vec<Arc<Mutex<Props>>>,
+}
+
+impl PropSetter {
+    #[allow(clippy::unwrap_used)]
+    pub fn new(predicates: &[Predicate], conditional_data: &[ConditionalData]) -> Self {
+        let mut expected: Vec<String> = Vec::new();
+        let mut props = vec![];
+        for predicate in predicates {
+            let arc = predicate.expression.response_props.clone();
+            expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+            props.push(arc);
+        }
+        for data in conditional_data {
+            for predicate in predicates {
+                let arc = predicate.expression.response_props.clone();
+                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+                props.push(arc);
+            }
+            for item in &data.data {
+                let arc = item.value.response_props.clone();
+                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+                props.push(arc);
+            }
+        }
+        expected.dedup();
+        Self { expected, props }
+    }
+
+    pub fn expected_props(&self) -> &[String] {
+        &self.expected
+    }
+
+    pub fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        let key = key.into();
+        let value = value.into();
+        for prop in self.props.iter_mut() {
+            if let Ok(mut prop) = prop.lock() {
+                prop.set_prop(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
 impl From<Vec<String>> for Props {
     fn from(value: Vec<String>) -> Self {
         Self {
@@ -150,7 +193,7 @@ impl From<Vec<String>> for Props {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
-    response_props: Props,
+    response_props: Arc<Mutex<Props>>,
     expression: CelExpression,
     extended: bool,
 }
@@ -205,7 +248,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
-            response_props: response_props.into(),
+            response_props: Arc::new(Mutex::new(response_props.into())),
             expression,
             extended,
         })
@@ -256,7 +299,10 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-        if self.response_props.pending() && req_ctx.response_body_buffer_size() == 0 {
+        #[allow(clippy::unwrap_used)]
+        if self.response_props.deref().lock().unwrap().pending()
+            && req_ctx.response_body_buffer_size() == 0
+        {
             return Ok(AttributeState::Pending);
         }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
@@ -860,11 +906,13 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
-    use crate::data::cel::{known_attribute_for, Expression, Predicate, Props};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate, PropSetter, Props};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
+    use std::collections::HashMap;
+    use std::ops::Deref;
     use std::sync::Arc;
 
     #[test]
@@ -905,7 +953,7 @@ mod tests {
         )
         .expect("This is valid CEL!");
         assert_eq!(
-            value.response_props.props,
+            value.response_props.deref().lock().unwrap().props,
             [("foo.bar".to_string(), None)].into()
         );
     }
@@ -1296,5 +1344,24 @@ mod tests {
         assert_eq!(props.clone().values().get("bar").cloned(), Some(2.into()));
         assert_eq!(props.clone().values().get("baz").cloned(), None);
         assert_eq!(props.clone().values().len(), 2);
+    }
+
+    #[test]
+    fn test_prop_setter() {
+        let predicates = &[Predicate::new("responseBodyJSON('foo') == 42").unwrap()];
+        let mut setter = PropSetter::new(predicates, &[]);
+        setter.set_prop("foo", 42);
+        let expected: HashMap<String, Value> = HashMap::from([("foo".into(), 42.into())]);
+        assert_eq!(
+            predicates[0]
+                .expression
+                .response_props
+                .deref()
+                .lock()
+                .unwrap()
+                .clone()
+                .values(),
+            expected
+        );
     }
 }
