@@ -71,7 +71,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                 RateLimitService::new(
                     service.endpoint.clone(),
                     service.timeout.0,
-                    "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                    "kuadrant.service.ratelimit.v1.RateLimitService",
                     "Check",
                     service.failure_mode,
                 ),
@@ -80,7 +80,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                 RateLimitService::new(
                     service.endpoint.clone(),
                     service.timeout.0,
-                    "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                    "kuadrant.service.ratelimit.v1.RateLimitService",
                     "Report",
                     service.failure_mode,
                 ),
