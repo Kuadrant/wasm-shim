@@ -284,6 +284,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         )
         .expect_log(
             Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
         .expect_log(
@@ -363,11 +369,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_response_body(http_context, 0, true)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
-        // TODO: I DONT THINK SO!!!
-        .expect_log(Some(LogLevel::Debug), Some("Getting map: `HttpRequestHeaders`"))
-        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(Some(vec![("content-type", "text/event-stream")]))
-        // TODO: END
         .expect_log(Some(LogLevel::Debug), Some("Dispatching gRPC call to limitador-cluster/envoy.extensions.common.ratelimit.v3.RateLimitService.Report, timeout: 5s"))
         .expect_grpc_call(
             Some("limitador-cluster"),

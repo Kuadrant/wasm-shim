@@ -114,14 +114,14 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -304,14 +304,14 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),

@@ -94,14 +94,14 @@ fn it_fails_on_first_action_grpc_call() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to does-not-exist/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s")
@@ -248,10 +248,6 @@ fn it_fails_on_second_action_grpc_call() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -259,6 +255,10 @@ fn it_fails_on_second_action_grpc_call() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -418,10 +418,6 @@ fn it_fails_on_first_action_grpc_response() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -429,6 +425,10 @@ fn it_fails_on_first_action_grpc_response() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -580,10 +580,6 @@ fn it_fails_on_second_action_grpc_response() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -591,6 +587,10 @@ fn it_fails_on_second_action_grpc_response() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),

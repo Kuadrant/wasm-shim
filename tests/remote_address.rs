@@ -102,10 +102,6 @@ fn it_limits_based_on_source_address() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -113,6 +109,10 @@ fn it_limits_based_on_source_address() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
