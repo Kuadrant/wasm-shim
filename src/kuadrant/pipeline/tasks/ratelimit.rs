@@ -259,7 +259,6 @@ impl Task for RateLimitTask {
             Ok(AttributeState::Available(descriptors)) => descriptors,
             Ok(AttributeState::Pending) => {
                 // Need to wait for attributes, requeue
-                debug!("Requeue");
                 return TaskOutcome::Requeued(vec![self]);
             }
             Err(e) => {

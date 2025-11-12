@@ -304,7 +304,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(b"POST"))
-        .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -317,7 +316,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .returning(Some(vec![("content-type", "text/event-stream")]))
-        .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -328,7 +326,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk1))
-        .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -339,7 +336,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk2))
-        .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -350,7 +346,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk3))
-        .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -361,7 +356,6 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk4))
-        .expect_log(Some(LogLevel::Debug), Some("Requeue"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
