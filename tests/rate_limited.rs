@@ -164,7 +164,6 @@ fn it_limits() {
         )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
-
         .expect_log(
             Some(LogLevel::Debug),
             Some("Getting property: `request.method`"),
@@ -175,10 +174,6 @@ fn it_limits() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -186,6 +181,10 @@ fn it_limits() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s")
@@ -334,10 +333,6 @@ fn it_resolved_and_passes_request_data() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -345,6 +340,10 @@ fn it_resolved_and_passes_request_data() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -491,10 +490,6 @@ fn it_passes_additional_headers() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -502,6 +497,10 @@ fn it_passes_additional_headers() {
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -649,15 +648,15 @@ fn it_rate_limits_with_empty_predicates() {
         )
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
-        // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
+        // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -781,6 +780,12 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
             Some(LogLevel::Debug),
             Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
