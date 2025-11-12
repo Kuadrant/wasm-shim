@@ -10,7 +10,6 @@ use serde_json::Value;
 mod event_parser;
 
 pub struct TokenUsageTask {
-    pause: bool,
     strategy: Option<Box<dyn ExtractionStrategy>>,
     prop_setter: PropSetter,
 }
@@ -23,7 +22,6 @@ impl TokenUsageTask {
 
     pub fn with_prop_setter(prop_setter: PropSetter) -> Self {
         Self {
-            pause: true,
             strategy: None,
             prop_setter,
         }
@@ -33,7 +31,6 @@ impl TokenUsageTask {
 impl From<Box<Self>> for TokenUsageTask {
     fn from(value: Box<Self>) -> Self {
         Self {
-            pause: value.pause,
             strategy: value.strategy,
             prop_setter: value.prop_setter,
         }
@@ -41,13 +38,6 @@ impl From<Box<Self>> for TokenUsageTask {
 }
 
 impl Task for TokenUsageTask {
-    fn pauses_filter(&self, ctx: &ReqRespCtx) -> bool {
-        if !self.pause {
-            return false;
-        }
-        self.strategy.is_some() && !ctx.is_end_of_stream()
-    }
-
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         let mut task: TokenUsageTask = self.into();
 
@@ -55,11 +45,7 @@ impl Task for TokenUsageTask {
             Some(s) => s,
             None => {
                 match ctx.get_attribute_ref::<Headers>(&"response.headers".into()) {
-                    Ok(AttributeState::Available(Some(headers))) => {
-                        let (pause, strategy) = select_strategy(&headers);
-                        task.pause = pause;
-                        strategy
-                    }
+                    Ok(AttributeState::Available(Some(headers))) => select_strategy(&headers),
                     Ok(AttributeState::Available(None)) => {
                         unreachable!("Headers map should never be Available(None)")
                     }
@@ -127,16 +113,16 @@ impl Task for TokenUsageTask {
     }
 }
 
-fn select_strategy(headers: &Headers) -> (bool, Box<dyn ExtractionStrategy>) {
+fn select_strategy(headers: &Headers) -> Box<dyn ExtractionStrategy> {
     if let Some(ct) = headers.get("content-type") {
         if ct.contains("text/event-stream") {
-            (false, Box::new(SseStrategy::new()))
+            Box::new(SseStrategy::new())
         } else {
-            (true, Box::new(JsonStrategy::new()))
+            Box::new(JsonStrategy::new())
         }
     } else {
         // default to JSON
-        (true, Box::new(JsonStrategy::new()))
+        Box::new(JsonStrategy::new())
     }
 }
 

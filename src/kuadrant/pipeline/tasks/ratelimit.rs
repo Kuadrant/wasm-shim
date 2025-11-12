@@ -309,7 +309,7 @@ impl Task for RateLimitTask {
             token_id,
             pending: Box::new(PendingTask {
                 task_id: self.task_id,
-                pauses_filter: self.pauses_filter,
+                pauses_filter: true,
                 process_response: Box::new(move |ctx| match ctx.get_grpc_response_data() {
                     Ok((status_code, response_size)) => {
                         if status_code != proxy_wasm::types::Status::Ok as u32 {

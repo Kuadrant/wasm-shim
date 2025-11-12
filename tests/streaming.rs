@@ -380,7 +380,7 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         )
         .returning(Ok(99))
         .expect_log(Some(LogLevel::Debug), Some("gRPC call dispatched successfully, token_id: 99"))
-        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];
