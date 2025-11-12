@@ -112,6 +112,7 @@ impl RateLimitTask {
         pauses_filter: bool,
     ) -> Self {
         // Warming up the cache
+        let _ = ctx.get_attribute::<Headers>("request.headers");
         let _ = predicates.apply(ctx);
         let _ = conditional_data_sets.iter().map(|conditional_data| {
             let _ = conditional_data.predicates.apply(ctx);
