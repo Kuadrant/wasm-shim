@@ -1,7 +1,6 @@
-use std::{rc::Rc, time::Duration};
-
 use crate::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
 use crate::kuadrant::ReqRespCtx;
+use std::{rc::Rc, time::Duration};
 
 mod auth;
 pub mod rate_limit;
@@ -72,7 +71,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                 RateLimitService::new(
                     service.endpoint.clone(),
                     service.timeout.0,
-                    "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                    "kuadrant.service.ratelimit.v1.RateLimitService",
                     "Check",
                     service.failure_mode,
                 ),
@@ -81,7 +80,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                 RateLimitService::new(
                     service.endpoint.clone(),
                     service.timeout.0,
-                    "envoy.extensions.common.ratelimit.v3.RateLimitService",
+                    "kuadrant.service.ratelimit.v1.RateLimitService",
                     "Report",
                     service.failure_mode,
                 ),

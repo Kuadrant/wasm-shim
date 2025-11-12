@@ -14,8 +14,8 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Arc<Vec<RequestData>>>,
-    body_size: usize,
-    end_of_stream: bool,
+    response_body_size: usize,
+    response_end_of_stream: bool,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
 }
@@ -32,8 +32,8 @@ impl ReqRespCtx {
             backend,
             cache: Arc::new(AttributeCache::new()),
             request_data: None,
-            body_size: 0,
-            end_of_stream: false,
+            response_body_size: 0,
+            response_end_of_stream: false,
             grpc_response_data: None,
         }
     }
@@ -43,9 +43,9 @@ impl ReqRespCtx {
         self
     }
 
-    pub fn set_body_size(&mut self, body_size: usize, end_of_stream: bool) {
-        self.body_size = body_size;
-        self.end_of_stream = end_of_stream;
+    pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
+        self.response_body_size = body_size;
+        self.response_end_of_stream = end_of_stream;
     }
 
     pub fn set_grpc_response_data(
@@ -246,19 +246,23 @@ impl ReqRespCtx {
     }
 
     pub fn is_end_of_stream(&self) -> bool {
-        self.end_of_stream
+        self.response_end_of_stream
     }
 
-    pub fn body_size(&self) -> usize {
-        self.body_size
+    pub fn response_body_buffer_size(&self) -> usize {
+        self.response_body_size
     }
 
     pub(crate) fn get_http_response_body(
         &self,
         start: usize,
         body_size: usize,
-    ) -> Result<Option<Vec<u8>>, AttributeError> {
-        self.backend.get_http_response_body(start, body_size)
+    ) -> Result<AttributeState<Option<Vec<u8>>>, AttributeError> {
+        match self.backend.get_http_response_body(start, body_size) {
+            Ok(maybe_bytes) => Ok(AttributeState::Available(maybe_bytes)),
+            Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn dispatch_grpc_call(

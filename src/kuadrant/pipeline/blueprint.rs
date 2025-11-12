@@ -1,4 +1,5 @@
 use crate::configuration;
+use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
@@ -25,13 +26,13 @@ pub(crate) struct Action {
     pub dependencies: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ConditionalData {
     pub predicates: Vec<Predicate>,
     pub data: Vec<DataItem>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DataItem {
     pub key: String,
     pub value: Expression,
@@ -152,7 +153,6 @@ impl Blueprint {
                 }
                 ServiceInstance::RateLimitReport(ratelimit_service) => {
                     // parse token usage from response
-                    tasks.push(Box::new(TokenUsageTask::new()));
                     let task = Box::new(RateLimitTask::new_with_attributes(
                         ctx,
                         action.id.clone(),
@@ -163,6 +163,10 @@ impl Blueprint {
                         action.conditional_data.clone(),
                         false, // pauses_filter = false for ratelimit report tasks
                     ));
+                    tasks.push(Box::new(TokenUsageTask::with_prop_setter(PropSetter::new(
+                        action.predicates.as_slice(),
+                        action.conditional_data.as_slice(),
+                    ))));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
             }

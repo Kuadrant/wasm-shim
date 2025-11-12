@@ -1,11 +1,12 @@
 use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::Headers;
+use crate::kuadrant::ConditionalData;
 use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
-use cel_interpreter::{Context, ExecutionError, ResolveResult, Value};
-use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
+use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
+use cel_parser::{parse, Atom, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
@@ -15,7 +16,8 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::{Arc, OnceLock};
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, OnceLock};
 use urlencoding::decode;
 
 pub(crate) mod errors {
@@ -27,7 +29,7 @@ pub(crate) mod errors {
 
     #[derive(Debug)]
     pub struct EvaluationError {
-        expression: Expression,
+        expression: Box<Expression>,
         message: String,
     }
 
@@ -80,7 +82,7 @@ pub(crate) mod errors {
     impl EvaluationError {
         pub fn new(expression: Expression, message: String) -> EvaluationError {
             EvaluationError {
-                expression,
+                expression: Box::new(expression),
                 message,
             }
         }
@@ -98,8 +100,100 @@ pub(crate) mod errors {
 }
 
 #[derive(Clone, Debug)]
+struct Props {
+    props: HashMap<String, Option<Value>>,
+}
+
+impl Props {
+    fn is_empty(&self) -> bool {
+        self.props.is_empty()
+    }
+
+    fn pending(&self) -> bool {
+        !self.is_empty() && self.props.iter().any(|(_, value)| value.is_none())
+    }
+
+    fn values(self) -> HashMap<String, Value> {
+        self.props
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect()
+    }
+
+    fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) -> bool {
+        match self.props.entry(key.into()) {
+            Entry::Occupied(mut e) => {
+                if e.get().is_none() {
+                    e.get_mut().replace(value.into());
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PropSetter {
+    expected: Vec<String>,
+    props: Vec<Arc<Mutex<Props>>>,
+}
+
+impl PropSetter {
+    #[allow(clippy::unwrap_used)]
+    pub fn new(predicates: &[Predicate], conditional_data: &[ConditionalData]) -> Self {
+        let mut expected: Vec<String> = Vec::new();
+        let mut props = vec![];
+        for predicate in predicates {
+            let arc = predicate.expression.response_props.clone();
+            expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+            props.push(arc);
+        }
+        for data in conditional_data {
+            for predicate in &data.predicates {
+                let arc = predicate.expression.response_props.clone();
+                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+                props.push(arc);
+            }
+            for item in &data.data {
+                let arc = item.value.response_props.clone();
+                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+                props.push(arc);
+            }
+        }
+        expected.dedup();
+        Self { expected, props }
+    }
+
+    pub fn expected_props(&self) -> &[String] {
+        &self.expected
+    }
+
+    pub fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        let key = key.into();
+        let value = value.into();
+        for prop in self.props.iter_mut() {
+            if let Ok(mut prop) = prop.lock() {
+                prop.set_prop(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+impl From<Vec<String>> for Props {
+    fn from(value: Vec<String>) -> Self {
+        Self {
+            props: value.into_iter().map(|s| (s, None)).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
+    response_props: Arc<Mutex<Props>>,
     expression: CelExpression,
     extended: bool,
 }
@@ -131,7 +225,13 @@ impl Expression {
         let expression = parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
-        properties(&expression, &mut props, &mut Vec::default());
+        let mut response_props = Vec::with_capacity(1);
+        properties(
+            &expression,
+            &mut props,
+            &mut response_props,
+            &mut Vec::default(),
+        );
 
         let mut attributes: Vec<Attribute> = props
             .into_iter()
@@ -148,6 +248,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
+            response_props: Arc::new(Mutex::new(response_props.into())),
             expression,
             extended,
         })
@@ -188,6 +289,11 @@ impl Expression {
             );
         }
 
+        #[allow(clippy::unwrap_used)]
+        let values = self.response_props.lock().unwrap().clone().values();
+        ctx.add_variable_from_value(RESPONSE_BODY_JSON_DATA, Value::Map(values.into()));
+        ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
+
         let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
         Ok(AttributeState::Available(result))
     }
@@ -198,7 +304,35 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
+        #[allow(clippy::unwrap_used)]
+        if self.response_props.deref().lock().unwrap().pending() {
+            return Ok(AttributeState::Pending);
+        }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
+    }
+}
+
+const RESPONSE_BODY_JSON_DATA: &str = "@responseBodyJSON";
+const RESPONSE_BODY_JSON_FN: &str = "responseBodyJSON";
+
+pub fn response_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
+    let key: Result<Key, Value> = arg.try_into();
+    match key {
+        Ok(key) => match ftx.ptx.get_variable(RESPONSE_BODY_JSON_DATA) {
+            Ok(Value::Map(map)) => match map.get(&key) {
+                None => Ok(Value::Null),
+                Some(value) => Ok(value.clone()),
+            },
+            Err(e) => Err(e),
+            _ => Err(ExecutionError::FunctionError {
+                function: RESPONSE_BODY_JSON_FN.to_string(),
+                message: "Bad internal state!".to_string(),
+            }),
+        },
+        Err(e) => Err(ExecutionError::UnexpectedType {
+            got: format!("{e:?}"),
+            want: "Key".to_string(),
+        }),
     }
 }
 
@@ -559,48 +693,66 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     ])
 }
 
-fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mut Vec<&'e str>) {
+fn properties<'e>(
+    exp: &'e CelExpression,
+    all: &mut Vec<Vec<&'e str>>,
+    response_props: &mut Vec<String>,
+    path: &mut Vec<&'e str>,
+) {
     match exp {
         CelExpression::Arithmetic(e1, _, e2)
         | CelExpression::Relation(e1, _, e2)
         | CelExpression::Or(e1, e2)
         | CelExpression::And(e1, e2) => {
-            properties(e1, all, path);
-            properties(e2, all, path);
+            properties(e1, all, response_props, path);
+            properties(e2, all, response_props, path);
         }
         CelExpression::Ternary(e1, e2, e3) => {
-            properties(e1, all, path);
-            properties(e2, all, path);
-            properties(e3, all, path);
+            properties(e1, all, response_props, path);
+            properties(e2, all, response_props, path);
+            properties(e3, all, response_props, path);
         }
         CelExpression::Unary(_, e) => {
-            properties(e, all, path);
+            properties(e, all, response_props, path);
         }
         CelExpression::Member(e, a) => {
             if let Member::Attribute(attr) = &**a {
                 path.insert(0, attr.as_str())
             }
-            properties(e, all, path);
+            properties(e, all, response_props, path);
+        }
+        CelExpression::FunctionCall(ident, None, args) => {
+            path.clear();
+            if let CelExpression::Ident(ident) = ident.as_ref() {
+                if ident.as_str() == "responseBodyJSON" && args.len() == 1 {
+                    if let CelExpression::Atom(Atom::String(prop)) = &args[0] {
+                        response_props.push(prop.to_string());
+                    }
+                }
+            }
+            for e in args {
+                properties(e, all, response_props, path);
+            }
         }
         CelExpression::FunctionCall(_, target, args) => {
             // The attributes of the values returned by functions are skipped.
             path.clear();
             if let Some(target) = target {
-                properties(target, all, path);
+                properties(target, all, response_props, path);
             }
             for e in args {
-                properties(e, all, path);
+                properties(e, all, response_props, path);
             }
         }
         CelExpression::List(e) => {
             for e in e {
-                properties(e, all, path);
+                properties(e, all, response_props, path);
             }
         }
         CelExpression::Map(v) => {
             for (e1, e2) in v {
-                properties(e1, all, path);
-                properties(e2, all, path);
+                properties(e1, all, response_props, path);
+                properties(e2, all, response_props, path);
             }
         }
         CelExpression::Atom(_) => {}
@@ -782,11 +934,13 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
-    use crate::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate, PropSetter, Props};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
+    use std::collections::HashMap;
+    use std::ops::Deref;
     use std::sync::Arc;
 
     #[test]
@@ -818,6 +972,18 @@ mod tests {
         let value = Expression::new("my_func(foo.bar).a.b > 3").expect("This is valid CEL!");
         assert_eq!(value.attributes.len(), 1);
         assert_eq!(value.attributes[0].path, "foo.bar".into());
+    }
+
+    #[test]
+    fn expressions_captures_response_props() {
+        let value = Expression::new(
+            "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
+        )
+        .expect("This is valid CEL!");
+        assert_eq!(
+            value.response_props.deref().lock().unwrap().props,
+            [("foo.bar".to_string(), None)].into()
+        );
     }
 
     #[test]
@@ -944,6 +1110,18 @@ mod tests {
         assert_eq!(
             predicate.test(&ctx).expect("This must evaluate properly!"),
             AttributeState::Available(true)
+        );
+    }
+
+    #[test]
+    fn response_body_json() {
+        let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
+        expr.response_props.lock().unwrap().set_prop("bar", 42);
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr.eval(&ctx).unwrap()
         );
     }
 
@@ -1187,6 +1365,43 @@ mod tests {
             result,
             AttributeState::Pending,
             "Ternary expression with Pending condition should return Pending"
+        );
+    }
+
+    #[test]
+    fn test_props() {
+        let mut props: Props = vec!["foo".to_string(), "bar".to_string()].into();
+        assert!(props.pending());
+        assert!(props.set_prop("foo", 1));
+        assert!(!props.set_prop("baz", 1));
+        assert!(props.pending());
+        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.clone().values().get("baz").cloned(), None);
+        assert_eq!(props.clone().values().len(), 1);
+        assert!(props.set_prop("bar", 2));
+        assert!(!props.pending());
+        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.clone().values().get("bar").cloned(), Some(2.into()));
+        assert_eq!(props.clone().values().get("baz").cloned(), None);
+        assert_eq!(props.clone().values().len(), 2);
+    }
+
+    #[test]
+    fn test_prop_setter() {
+        let predicates = &[Predicate::new("responseBodyJSON('foo') == 42").unwrap()];
+        let mut setter = PropSetter::new(predicates, &[]);
+        setter.set_prop("foo", 42);
+        let expected: HashMap<String, Value> = HashMap::from([("foo".into(), 42.into())]);
+        assert_eq!(
+            predicates[0]
+                .expression
+                .response_props
+                .deref()
+                .lock()
+                .unwrap()
+                .clone()
+                .values(),
+            expected
         );
     }
 }

@@ -112,6 +112,7 @@ impl RateLimitTask {
         pauses_filter: bool,
     ) -> Self {
         // Warming up the cache
+        let _ = ctx.get_attribute::<Headers>("request.headers");
         let _ = predicates.apply(ctx);
         let _ = conditional_data_sets.iter().map(|conditional_data| {
             let _ = conditional_data.predicates.apply(ctx);
@@ -140,7 +141,16 @@ impl RateLimitTask {
         let mut entries: Vec<Entry> = Vec::new();
         for conditional_data in &self.conditional_data_sets {
             match conditional_data.predicates.apply(ctx)? {
-                AttributeState::Pending => return Ok(AttributeState::Pending),
+                AttributeState::Pending => {
+                    for data_item in &conditional_data.data {
+                        let _ = DescriptorEntryBuilder::new(
+                            data_item.key.clone(),
+                            data_item.value.clone(),
+                        )
+                        .evaluate(ctx);
+                    }
+                    return Ok(AttributeState::Pending);
+                }
                 AttributeState::Available(false) => continue,
                 AttributeState::Available(true) => {
                     for data_item in &conditional_data.data {
@@ -298,7 +308,7 @@ impl Task for RateLimitTask {
             token_id,
             pending: Box::new(PendingTask {
                 task_id: self.task_id,
-                pauses_filter: self.pauses_filter,
+                pauses_filter: true,
                 process_response: Box::new(move |ctx| match ctx.get_grpc_response_data() {
                     Ok((status_code, response_size)) => {
                         if status_code != proxy_wasm::types::Status::Ok as u32 {
