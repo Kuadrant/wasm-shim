@@ -1,16 +1,12 @@
 extern crate core;
 
-mod action_set_index;
-mod auth_action;
 mod configuration;
 mod data;
+#[allow(unused_imports)]
 mod envoy;
 mod filter;
-mod ratelimit_action;
-mod runtime_action;
-mod runtime_action_set;
-mod runtime_config;
-mod service;
+mod kuadrant;
+mod services;
 
 #[cfg_attr(
     all(
@@ -30,7 +26,7 @@ mod service;
 )]
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
-    use crate::filter::root_context::FilterRoot;
+    use filter::FilterRoot;
     use log::info;
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
@@ -41,10 +37,7 @@ extern "C" fn start() {
     }));
     proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
         info!("#{} set_root_context", context_id);
-        Box::new(FilterRoot {
-            context_id,
-            action_set_index: Default::default(),
-        })
+        Box::new(FilterRoot::new(context_id))
     });
 }
 

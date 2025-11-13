@@ -1,5 +1,4 @@
 ---
-
 name: Release
 
 on:
@@ -21,9 +20,10 @@ jobs:
           toolchain: stable
           override: true
           target: wasm32-unknown-unknown
-      - uses: arduino/setup-protoc@v1
+      - uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: "3.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions-rs/cargo@v1
         with:
           command: build

@@ -1,111 +1,61 @@
-use crate::data::cel::errors::{EvaluationError, PredicateResultError};
-use crate::data::property::{host_get_map, Path};
-use crate::data::{get_attribute, PropertyError};
+use crate::data::attribute::{AttributeError, AttributeState, Path};
+use crate::data::cel::errors::{CelError, EvaluationError};
+use crate::data::Headers;
+use crate::kuadrant::ConditionalData;
+use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
-use cel_parser::{parse, Expression as CelExpression, Member, ParseError};
+use cel_parser::{parse, Atom, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
-use errors::TransientError;
-use lazy_static::lazy_static;
 #[cfg(feature = "debug-host-behaviour")]
 use log::debug;
 use log::warn;
-use proxy_wasm::types::{Bytes, Status};
-use serde_json::Result as JsonResult;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::{Arc, OnceLock};
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, OnceLock};
 use urlencoding::decode;
 
-pub(super) mod errors {
-    use crate::data::{Expression, PropertyError};
-    use cel_interpreter::objects::ValueType;
+pub(crate) mod errors {
+    use crate::data::attribute::AttributeError;
+    use crate::data::Expression;
     use cel_interpreter::ExecutionError;
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
-    pub struct PredicateResultError {
-        got: ValueType,
-    }
-
-    impl Display for PredicateResultError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(
-                f,
-                "PredicateResultError {{ expected boolean value, got {} }}",
-                self.got
-            )
-        }
-    }
-
-    impl Debug for PredicateResultError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            std::fmt::Display::fmt(self, f)
-        }
-    }
-
-    impl PredicateResultError {
-        pub fn new(value_type: ValueType) -> Self {
-            PredicateResultError { got: value_type }
-        }
-    }
-
-    impl Error for PredicateResultError {}
-
-    // TransientError holds transient errors that occurred because evaluation was
-    // attempted in a premature phase. These errors are expected to be
-    // resolved automatically upon re-evaluation in a subsequent, correct phase.
-    #[derive(Debug)]
-    pub struct TransientError {
-        attr: String,
-    }
-
-    impl Display for TransientError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "TransientError {{ attr: {:?} }}", self.attr)
-        }
-    }
-
-    impl TransientError {
-        pub fn new(attr: String) -> Self {
-            TransientError { attr }
-        }
-    }
-
-    impl Error for TransientError {}
-
     #[derive(Debug)]
     pub struct EvaluationError {
         expression: Box<Expression>,
-        /// Box the contents of source to avoid large error variants
-        source: Box<CelError>,
+        message: String,
     }
 
-    #[derive(Debug)]
+    impl PartialEq for EvaluationError {
+        fn eq(&self, other: &Self) -> bool {
+            self.message == other.message
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
     pub enum CelError {
-        Property(PropertyError),
+        Property(AttributeError),
         Resolve(ExecutionError),
-        Predicate(PredicateResultError),
-        TransientPropertyMissing(TransientError),
     }
 
     impl Error for CelError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match self {
-                Self::Property(err) => Some(err),
-                Self::Resolve(err) => Some(err),
-                Self::Predicate(err) => Some(err),
-                Self::TransientPropertyMissing(err) => Some(err),
+                CelError::Property(err) => Some(err),
+                CelError::Resolve(err) => Some(err),
             }
         }
     }
 
-    impl From<PropertyError> for CelError {
-        fn from(e: PropertyError) -> Self {
+    impl From<AttributeError> for CelError {
+        fn from(e: AttributeError) -> Self {
             CelError::Property(e)
         }
     }
@@ -113,18 +63,6 @@ pub(super) mod errors {
     impl From<ExecutionError> for CelError {
         fn from(e: ExecutionError) -> Self {
             CelError::Resolve(e)
-        }
-    }
-
-    impl From<PredicateResultError> for CelError {
-        fn from(e: PredicateResultError) -> Self {
-            CelError::Predicate(e)
-        }
-    }
-
-    impl From<TransientError> for CelError {
-        fn from(e: TransientError) -> Self {
-            CelError::TransientPropertyMissing(e)
         }
     }
 
@@ -137,33 +75,15 @@ pub(super) mod errors {
                 CelError::Resolve(e) => {
                     write!(f, "CelError::Resolve {{ {e:?} }}")
                 }
-                CelError::Predicate(e) => {
-                    write!(f, "CelError::Predicate {{ {e:?} }}")
-                }
-                CelError::TransientPropertyMissing(e) => {
-                    write!(f, "CelError::TransientPropertyMissing {{ {e:?} }}")
-                }
             }
         }
     }
 
     impl EvaluationError {
-        pub fn new(expression: Expression, source: CelError) -> Self {
-            Self {
+        pub fn new(expression: Expression, message: String) -> EvaluationError {
+            EvaluationError {
                 expression: Box::new(expression),
-                source: Box::new(source),
-            }
-        }
-
-        pub fn is_transient(&self) -> bool {
-            matches!(&*self.source, CelError::TransientPropertyMissing(_))
-        }
-
-        pub fn transient_property(&self) -> Option<&str> {
-            if let CelError::TransientPropertyMissing(err) = &*self.source {
-                Some(err.attr.as_str())
-            } else {
-                None
+                message,
             }
         }
     }
@@ -173,39 +93,112 @@ pub(super) mod errors {
             write!(
                 f,
                 "EvaluationError {{ expression: {:?}, message: {} }}",
-                self.expression, self.source
+                self.expression, self.message
             )
-        }
-    }
-
-    impl Error for EvaluationError {
-        fn source(&self) -> Option<&(dyn Error + 'static)> {
-            Some(&*self.source)
         }
     }
 }
 
-lazy_static! {
-    // Each function can be called directly within a CEL expression.
-    // The associated attribute name, however, is kept private and cannot be directly referenced in the expression.
-    // Instead, the attribute name serves as the key for a transient value
-    // that can be referenced later when building the CEL context data map
-    static ref TransientAttributeMap: HashMap<&'static str, &'static str> = vec![
-        ("requestBodyJSON", "request_body"),
-        ("responseBodyJSON", "response_body"),
-    ]
-    .into_iter()
-    .collect();
+#[derive(Clone, Debug)]
+struct Props {
+    props: HashMap<String, Option<Value>>,
+}
+
+impl Props {
+    fn is_empty(&self) -> bool {
+        self.props.is_empty()
+    }
+
+    fn pending(&self) -> bool {
+        !self.is_empty() && self.props.iter().any(|(_, value)| value.is_none())
+    }
+
+    fn values(self) -> HashMap<String, Value> {
+        self.props
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect()
+    }
+
+    fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) -> bool {
+        match self.props.entry(key.into()) {
+            Entry::Occupied(mut e) => {
+                if e.get().is_none() {
+                    e.get_mut().replace(value.into());
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PropSetter {
+    expected: Vec<String>,
+    props: Vec<Arc<Mutex<Props>>>,
+}
+
+impl PropSetter {
+    #[allow(clippy::unwrap_used)]
+    pub fn new(predicates: &[Predicate], conditional_data: &[ConditionalData]) -> Self {
+        let mut expected: Vec<String> = Vec::new();
+        let mut props = vec![];
+        for predicate in predicates {
+            let arc = predicate.expression.response_props.clone();
+            expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+            props.push(arc);
+        }
+        for data in conditional_data {
+            for predicate in &data.predicates {
+                let arc = predicate.expression.response_props.clone();
+                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+                props.push(arc);
+            }
+            for item in &data.data {
+                let arc = item.value.response_props.clone();
+                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
+                props.push(arc);
+            }
+        }
+        expected.dedup();
+        Self { expected, props }
+    }
+
+    pub fn expected_props(&self) -> &[String] {
+        &self.expected
+    }
+
+    pub fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        let key = key.into();
+        let value = value.into();
+        for prop in self.props.iter_mut() {
+            if let Ok(mut prop) = prop.lock() {
+                prop.set_prop(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+impl From<Vec<String>> for Props {
+    fn from(value: Vec<String>) -> Self {
+        Self {
+            props: value.into_iter().map(|s| (s, None)).collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Expression {
-    src: String,
     attributes: Vec<Attribute>,
+    response_props: Arc<Mutex<Props>>,
     expression: CelExpression,
     extended: bool,
-    transient_attrs: Vec<String>,
 }
+
+pub type EvalResult = Result<AttributeState<Value>, CelError>;
 
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -229,11 +222,16 @@ impl PartialEq for Expression {
 
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseError> {
-        let src = expression.to_string();
         let expression = parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
-        properties(&expression, &mut props, &mut Vec::default());
+        let mut response_props = Vec::with_capacity(1);
+        properties(
+            &expression,
+            &mut props,
+            &mut response_props,
+            &mut Vec::default(),
+        );
 
         let mut attributes: Vec<Attribute> = props
             .into_iter()
@@ -246,22 +244,13 @@ impl Expression {
             })
             .collect();
 
-        let mut transient_attrs = Vec::default();
-        for (&transient_func_name, &transient_attr) in TransientAttributeMap.iter() {
-            if expression.references().has_function(transient_func_name) {
-                transient_attrs.push(transient_attr);
-            }
-        }
-        let transient_attrs = transient_attrs.into_iter().map(String::from).collect();
-
         attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
 
         Ok(Self {
-            src,
             attributes,
+            response_props: Arc::new(Mutex::new(response_props.into())),
             expression,
             extended,
-            transient_attrs,
         })
     }
 
@@ -269,26 +258,29 @@ impl Expression {
         Self::new_expression(expression, false)
     }
 
+    #[cfg(test)]
     pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
         Self::new_expression(expression, true)
     }
 
-    /// Evaluates the given expression using the provided resolver.
-    pub fn eval<T>(&self, resolver: &mut T) -> Result<Value, EvaluationError>
-    where
-        T: AttributeResolver,
-    {
+    pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
         let mut ctx = create_context();
         if self.extended {
             Self::add_extended_capabilities(&mut ctx)
         }
-        let Map { map } = self
-            .build_data_map(resolver)
-            .map_err(|e| EvaluationError::new(self.clone(), e.into()))?;
 
-        ctx.add_function("getHostProperty", get_host_property);
-        ctx.add_function("requestBodyJSON", request_body_json);
-        ctx.add_function("responseBodyJSON", response_body_json);
+        // Eagerly cache all attributes used by this expression
+        let paths: Vec<Path> = self
+            .attributes
+            .iter()
+            .map(|attr| attr.path.clone())
+            .collect();
+        req_ctx.ensure_attributes(&paths);
+
+        let Map { map } = match self.build_data_map(req_ctx)? {
+            AttributeState::Pending => return Ok(AttributeState::Pending),
+            AttributeState::Available(m) => m,
+        };
 
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             ctx.add_variable_from_value(
@@ -297,20 +289,13 @@ impl Expression {
             );
         }
 
-        let transient_map = self
-            .build_transient_data_map(resolver)
-            .map_err(|e| EvaluationError::new(self.clone(), e.into()))?;
+        #[allow(clippy::unwrap_used)]
+        let values = self.response_props.lock().unwrap().clone().values();
+        ctx.add_variable_from_value(RESPONSE_BODY_JSON_DATA, Value::Map(values.into()));
+        ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
 
-        // Injects attributes intentionally not exposed as a top-level variables.
-        // They cannot be directly referenced in the CEL expression.
-        ctx.add_variable_from_value("@kuadrant", Value::Map(transient_map));
-
-        Value::resolve(&self.expression, &ctx)
-            .map_err(|e| EvaluationError::new(self.clone(), e.into()))
-    }
-
-    pub fn source(&self) -> &str {
-        self.src.as_str()
+        let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
+        Ok(AttributeState::Available(result))
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]
@@ -318,27 +303,36 @@ impl Expression {
         ctx.add_function("queryMap", decode_query_string);
     }
 
-    fn build_data_map<T>(&self, resolver: &mut T) -> Result<Map, PropertyError>
-    where
-        T: AttributeResolver,
-    {
-        data::AttributeMap::new(self.attributes.clone(), resolver).into()
-    }
-
-    fn build_transient_data_map<T>(&self, resolver: &mut T) -> Result<Map, TransientError>
-    where
-        T: AttributeResolver,
-    {
-        let mut out: HashMap<Key, Value> = HashMap::default();
-        for transient_attr in self.transient_attrs.iter() {
-            let transient_val = resolver.transient(transient_attr.as_str()).ok_or(
-                // Getting here means evaluating CEL expression in a premature phase.
-                // resolved automatically upon re-evaluation in a correct phase.
-                TransientError::new(transient_attr.clone()),
-            )?;
-            out.insert(transient_attr.as_str().into(), transient_val);
+    fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
+        #[allow(clippy::unwrap_used)]
+        if self.response_props.deref().lock().unwrap().pending() {
+            return Ok(AttributeState::Pending);
         }
-        Ok(out.into())
+        data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
+    }
+}
+
+const RESPONSE_BODY_JSON_DATA: &str = "@responseBodyJSON";
+const RESPONSE_BODY_JSON_FN: &str = "responseBodyJSON";
+
+pub fn response_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
+    let key: Result<Key, Value> = arg.try_into();
+    match key {
+        Ok(key) => match ftx.ptx.get_variable(RESPONSE_BODY_JSON_DATA) {
+            Ok(Value::Map(map)) => match map.get(&key) {
+                None => Ok(Value::Null),
+                Some(value) => Ok(value.clone()),
+            },
+            Err(e) => Err(e),
+            _ => Err(ExecutionError::FunctionError {
+                function: RESPONSE_BODY_JSON_FN.to_string(),
+                message: "Bad internal state!".to_string(),
+            }),
+        },
+        Err(e) => Err(ExecutionError::UnexpectedType {
+            got: format!("{e:?}"),
+            want: "Key".to_string(),
+        }),
     }
 }
 
@@ -410,98 +404,6 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
     Ok(map.into())
 }
 
-fn request_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
-    eval_body_json(BodyRef::Request, ftx, json_pointer)
-}
-
-fn response_body_json(ftx: &FunctionContext, json_pointer: Arc<String>) -> ResolveResult {
-    eval_body_json(BodyRef::Response, ftx, json_pointer)
-}
-
-enum BodyRef {
-    Request,
-    Response,
-}
-
-impl BodyRef {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            BodyRef::Request => "request_body",
-            BodyRef::Response => "response_body",
-        }
-    }
-}
-
-fn eval_body_json(
-    body_ref: BodyRef,
-    ftx: &FunctionContext,
-    json_pointer: Arc<String>,
-) -> ResolveResult {
-    let body_ref = body_ref.as_str();
-    match ftx.ptx.get_variable("@kuadrant")? {
-        Value::Map(map) => match map.get(&body_ref.into()) {
-            None => Err(ftx.error(
-                "Not supposed to get here! processing request body when it is not available",
-            )),
-            Some(Value::String(s)) => {
-                let json_value: JsonResult<JsonValue> = serde_json::from_str(s.as_str());
-                match json_value {
-                    Err(err) => {
-                        Err(ftx.error(format!("failed to parse {body_ref} as JSON: {err}",)))
-                    }
-                    Ok(json_value) => match json_value.pointer(json_pointer.as_str()) {
-                        Some(value) => Ok(json_value_to_cel(value.clone())),
-                        None => Err(ftx.error(format!(
-                            "JSON Pointer '{json_pointer}' not found in {body_ref}",
-                        ))),
-                    },
-                }
-            }
-            Some(v) => Err(ftx.error(format!(
-                "found {body_ref} of type {}, expected String",
-                v.type_of()
-            ))),
-        },
-        _ => Err(ftx.error("Not supposed to get here! @kuadrant internal variable is not a Map")),
-    }
-}
-
-#[cfg(test)]
-pub fn inner_host_get_property(path: Vec<&str>) -> Result<Option<Bytes>, Status> {
-    super::property::host_get_property(&Path::new(path))
-}
-
-#[cfg(not(test))]
-pub fn inner_host_get_property(path: Vec<&str>) -> Result<Option<Bytes>, Status> {
-    proxy_wasm::hostcalls::get_property(path)
-}
-
-fn get_host_property(This(this): This<Value>) -> ResolveResult {
-    match this {
-        Value::List(ref items) => {
-            let mut tokens = Vec::with_capacity(items.len());
-            for item in items.iter() {
-                match item {
-                    Value::String(token) => tokens.push(token.as_str()),
-                    _ => return Err(this.error_expected_type(ValueType::String)),
-                }
-            }
-
-            match inner_host_get_property(tokens) {
-                Ok(data) => match data {
-                    None => Ok(Value::Null),
-                    Some(bytes) => Ok(Value::Bytes(bytes.into())),
-                },
-                Err(err) => Err(ExecutionError::FunctionError {
-                    function: "hostcalls::get_property".to_string(),
-                    message: format!("Status: {err:?}"),
-                }),
-            }
-        }
-        _ => Err(this.error_expected_type(ValueType::List)),
-    }
-}
-
 fn create_context<'a>() -> Context<'a> {
     let mut ctx = Context::default();
     ctx.add_function("charAt", strings::char_at);
@@ -517,14 +419,14 @@ fn create_context<'a>() -> Context<'a> {
     ctx
 }
 
-mod strings;
+pub mod strings;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Predicate {
     expression: Expression,
 }
 
-pub type PredicateResult = Result<bool, EvaluationError>;
+pub type PredicateResult = Result<AttributeState<bool>, EvaluationError>;
 
 impl Predicate {
     pub fn new(predicate: &str) -> Result<Self, ParseError> {
@@ -536,48 +438,61 @@ impl Predicate {
     /// Unlike with [`Predicate::new`], a `Predicate::route_rule` is backed by an
     /// `Expression` that has extended capabilities enabled.
     /// See [`Expression::add_extended_capabilities`]
+    #[cfg(test)]
     pub fn route_rule(predicate: &str) -> Result<Self, ParseError> {
         Ok(Self {
             expression: Expression::new_extended(predicate)?,
         })
     }
 
-    pub fn test<T>(&self, resolver: &mut T) -> PredicateResult
-    where
-        T: AttributeResolver,
-    {
-        let value = self.expression.eval(resolver)?;
-        match value {
-            Value::Bool(result) => Ok(result),
-            _ => Err(EvaluationError::new(
+    pub fn test(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
+        match self.expression.eval(req_ctx) {
+            Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
+            Ok(AttributeState::Available(value)) => match value {
+                Value::Bool(result) => Ok(AttributeState::Available(result)),
+                _ => Err(EvaluationError::new(
+                    self.expression.clone(),
+                    format!("Expected boolean value, got {value:?}"),
+                )),
+            },
+            Err(err) => Err(EvaluationError::new(
                 self.expression.clone(),
-                PredicateResultError::new(value.type_of()).into(),
+                err.to_string(),
             )),
         }
     }
 }
 
 pub trait PredicateVec {
-    fn apply<T>(&self, resolver: &mut T) -> PredicateResult
-    where
-        T: AttributeResolver;
+    fn apply(&self, req_ctx: &ReqRespCtx) -> PredicateResult;
 }
 
 impl PredicateVec for Vec<Predicate> {
-    fn apply<T>(&self, resolver: &mut T) -> PredicateResult
-    where
-        T: AttributeResolver,
-    {
+    fn apply(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
         if self.is_empty() {
-            return Ok(true);
+            return Ok(AttributeState::Available(true));
         }
+
+        let paths: Vec<Path> = self
+            .iter()
+            .flat_map(|p| &p.expression.attributes)
+            .map(|attr| attr.path.clone())
+            .collect();
+        req_ctx.ensure_attributes(&paths);
+
         for predicate in self.iter() {
-            // if it does not apply or errors exit early
-            if !predicate.test(resolver)? {
-                return Ok(false);
+            match predicate.test(req_ctx)? {
+                AttributeState::Pending => {
+                    return Ok(AttributeState::Pending);
+                }
+                AttributeState::Available(false) => {
+                    return Ok(AttributeState::Available(false));
+                }
+                AttributeState::Available(true) => continue,
             }
         }
-        Ok(true)
+
+        Ok(AttributeState::Available(true))
     }
 }
 
@@ -615,40 +530,44 @@ impl PartialEq for Attribute {
 }
 
 impl Attribute {
-    pub fn get(&self) -> Result<Value, PropertyError> {
+    pub fn get(&self, ctx: &ReqRespCtx) -> Result<AttributeState<Value>, AttributeError> {
         match &self.cel_type {
             Some(t) => match t {
-                ValueType::String => Ok(get_attribute::<String>(&self.path)?
-                    .map(|v| Value::String(v.into()))
-                    .unwrap_or(Value::Null)),
-                ValueType::Int => Ok(get_attribute::<i64>(&self.path)?
-                    .map(Value::Int)
-                    .unwrap_or(Value::Null)),
-                ValueType::UInt => Ok(get_attribute::<u64>(&self.path)?
-                    .map(Value::UInt)
-                    .unwrap_or(Value::Null)),
-                ValueType::Float => Ok(get_attribute::<f64>(&self.path)?
-                    .map(Value::Float)
-                    .unwrap_or(Value::Null)),
-                ValueType::Bool => Ok(get_attribute::<bool>(&self.path)?
-                    .map(Value::Bool)
-                    .unwrap_or(Value::Null)),
-                ValueType::Bytes => Ok(get_attribute::<Vec<u8>>(&self.path)?
-                    .map(|v| Value::Bytes(v.into()))
-                    .unwrap_or(Value::Null)),
-                ValueType::Timestamp => Ok(get_attribute::<DateTime<FixedOffset>>(&self.path)?
-                    .map(Value::Timestamp)
-                    .unwrap_or(Value::Null)),
-                ValueType::Map => Ok(host_get_map(&self.path)
-                    .map(cel_interpreter::objects::Map::from)
-                    .map(Value::Map)
-                    .unwrap_or(Value::Null)),
+                ValueType::String => Ok(ctx
+                    .get_attribute_ref::<String>(&self.path)?
+                    .map(|opt| opt.map(|s| Value::String(s.into())).unwrap_or(Value::Null))),
+                ValueType::Int => Ok(ctx
+                    .get_attribute_ref::<i64>(&self.path)?
+                    .map(|opt| opt.map(Value::Int).unwrap_or(Value::Null))),
+                ValueType::UInt => Ok(ctx
+                    .get_attribute_ref::<u64>(&self.path)?
+                    .map(|opt| opt.map(Value::UInt).unwrap_or(Value::Null))),
+                ValueType::Float => Ok(ctx
+                    .get_attribute_ref::<f64>(&self.path)?
+                    .map(|opt| opt.map(Value::Float).unwrap_or(Value::Null))),
+                ValueType::Bool => Ok(ctx
+                    .get_attribute_ref::<bool>(&self.path)?
+                    .map(|opt| opt.map(Value::Bool).unwrap_or(Value::Null))),
+                ValueType::Bytes => Ok(ctx
+                    .get_attribute_ref::<Vec<u8>>(&self.path)?
+                    .map(|opt| opt.map(|v| Value::Bytes(v.into())).unwrap_or(Value::Null))),
+                ValueType::Timestamp => Ok(ctx
+                    .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
+                    .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
+                ValueType::Map => Ok(ctx.get_attribute_ref::<Headers>(&self.path)?.map(|opt| {
+                    //todo(refactor/pull/245): We should think about and handle other types of maps
+                    // other than Headers / Vec<(String, String)>
+                    opt.map(|headers| {
+                        let map: HashMap<String, String> = headers.into();
+                        Value::Map(cel_interpreter::objects::Map::from(map))
+                    })
+                    .unwrap_or(Value::Null)
+                })),
                 _ => todo!("Need support for `{t}`s!"),
             },
-            None => match get_attribute::<String>(&self.path)? {
-                None => Ok(Value::Null),
-                Some(json) => Ok(json_to_cel(&json)),
-            },
+            None => Ok(ctx
+                .get_attribute_ref::<String>(&self.path)?
+                .map(|opt| opt.map(|s| json_to_cel(&s)).unwrap_or(Value::Null))),
         }
     }
 }
@@ -664,29 +583,25 @@ pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
         })
 }
 
-fn json_value_to_cel(json_value: JsonValue) -> Value {
-    match json_value {
-        JsonValue::Null => Value::Null,
-        JsonValue::Bool(b) => b.into(),
-        #[allow(clippy::expect_used)]
-        JsonValue::Number(n) => {
-            if n.is_u64() {
-                n.as_u64().expect("Unreachable: number must be u64").into()
-            } else if n.is_i64() {
-                n.as_i64().expect("Unreachable: number must be i64").into()
-            } else {
-                n.as_f64().expect("Unreachable: number must be f64").into()
-            }
-        }
-        JsonValue::String(str) => str.into(),
-        _ => todo!("Need support for more Json!"),
-    }
-}
-
 fn json_to_cel(json: &str) -> Value {
     let json_value: Result<JsonValue, _> = serde_json::from_str(json);
     match json_value {
-        Ok(json) => json_value_to_cel(json),
+        Ok(json) => match json {
+            JsonValue::Null => Value::Null,
+            JsonValue::Bool(b) => b.into(),
+            #[allow(clippy::expect_used)]
+            JsonValue::Number(n) => {
+                if n.is_u64() {
+                    n.as_u64().expect("Unreachable: number must be u64").into()
+                } else if n.is_i64() {
+                    n.as_i64().expect("Unreachable: number must be i64").into()
+                } else {
+                    n.as_f64().expect("Unreachable: number must be f64").into()
+                }
+            }
+            JsonValue::String(str) => str.into(),
+            _ => todo!("Need support for more Json!"),
+        },
         _ => json.into(),
     }
 }
@@ -778,44 +693,66 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     ])
 }
 
-fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mut Vec<&'e str>) {
+fn properties<'e>(
+    exp: &'e CelExpression,
+    all: &mut Vec<Vec<&'e str>>,
+    response_props: &mut Vec<String>,
+    path: &mut Vec<&'e str>,
+) {
     match exp {
         CelExpression::Arithmetic(e1, _, e2)
         | CelExpression::Relation(e1, _, e2)
-        | CelExpression::Ternary(e1, _, e2)
         | CelExpression::Or(e1, e2)
         | CelExpression::And(e1, e2) => {
-            properties(e1, all, path);
-            properties(e2, all, path);
+            properties(e1, all, response_props, path);
+            properties(e2, all, response_props, path);
+        }
+        CelExpression::Ternary(e1, e2, e3) => {
+            properties(e1, all, response_props, path);
+            properties(e2, all, response_props, path);
+            properties(e3, all, response_props, path);
         }
         CelExpression::Unary(_, e) => {
-            properties(e, all, path);
+            properties(e, all, response_props, path);
         }
         CelExpression::Member(e, a) => {
             if let Member::Attribute(attr) = &**a {
                 path.insert(0, attr.as_str())
             }
-            properties(e, all, path);
+            properties(e, all, response_props, path);
+        }
+        CelExpression::FunctionCall(ident, None, args) => {
+            path.clear();
+            if let CelExpression::Ident(ident) = ident.as_ref() {
+                if ident.as_str() == "responseBodyJSON" && args.len() == 1 {
+                    if let CelExpression::Atom(Atom::String(prop)) = &args[0] {
+                        response_props.push(prop.to_string());
+                    }
+                }
+            }
+            for e in args {
+                properties(e, all, response_props, path);
+            }
         }
         CelExpression::FunctionCall(_, target, args) => {
             // The attributes of the values returned by functions are skipped.
             path.clear();
             if let Some(target) = target {
-                properties(target, all, path);
+                properties(target, all, response_props, path);
             }
             for e in args {
-                properties(e, all, path);
+                properties(e, all, response_props, path);
             }
         }
         CelExpression::List(e) => {
             for e in e {
-                properties(e, all, path);
+                properties(e, all, response_props, path);
             }
         }
         CelExpression::Map(v) => {
             for (e1, e2) in v {
-                properties(e1, all, path);
-                properties(e2, all, path);
+                properties(e1, all, response_props, path);
+                properties(e2, all, response_props, path);
             }
         }
         CelExpression::Atom(_) => {}
@@ -830,6 +767,7 @@ fn properties<'e>(exp: &'e CelExpression, all: &mut Vec<Vec<&'e str>>, path: &mu
 }
 
 #[cfg(feature = "debug-host-behaviour")]
+#[allow(dead_code)]
 pub fn debug_all_well_known_attributes() {
     let attributes = new_well_known_attribute_map();
     attributes.iter().for_each(|(key, value_type)| {
@@ -846,8 +784,9 @@ pub fn debug_all_well_known_attributes() {
 }
 
 pub mod data {
-    use crate::data::cel::{Attribute, AttributeResolver};
-    use crate::data::PropertyError;
+    use crate::data::attribute::{AttributeError, AttributeState};
+    use crate::data::cel::Attribute;
+    use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::{Key, Map};
     use cel_interpreter::Value;
     use std::collections::HashMap;
@@ -859,16 +798,12 @@ pub mod data {
         Value(Attribute),
     }
 
-    pub struct AttributeMap<'a, T: AttributeResolver> {
+    pub struct AttributeMap {
         data: HashMap<String, Token>,
-        resolver: &'a mut T,
     }
 
-    impl<'a, T> AttributeMap<'a, T>
-    where
-        T: AttributeResolver,
-    {
-        pub fn new(attributes: Vec<Attribute>, resolver: &'a mut T) -> Self {
+    impl AttributeMap {
+        pub fn new(attributes: Vec<Attribute>) -> Self {
             let mut root = HashMap::default();
             for attr in attributes {
                 let mut node = &mut root;
@@ -889,47 +824,50 @@ pub mod data {
                     }
                 }
             }
-            Self {
-                data: root,
-                resolver,
-            }
+            Self { data: root }
         }
     }
 
-    impl<'a, T> From<AttributeMap<'a, T>> for Result<Map, PropertyError>
-    where
-        T: AttributeResolver,
-    {
-        fn from(value: AttributeMap<'a, T>) -> Self {
-            map_to_value(value.data, value.resolver)
+    impl AttributeMap {
+        pub fn into(self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
+            map_to_value(self.data, req_ctx)
         }
     }
 
-    fn map_to_value<T>(map: HashMap<String, Token>, resolver: &mut T) -> Result<Map, PropertyError>
-    where
-        T: AttributeResolver,
-    {
+    fn map_to_value(
+        map: HashMap<String, Token>,
+        req_ctx: &ReqRespCtx,
+    ) -> Result<AttributeState<Map>, AttributeError> {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
             let k = key.into();
             let v = match value {
-                Token::Value(v) => resolver.resolve(&v)?,
-                Token::Node(map) => Value::Map(map_to_value(map, resolver)?),
+                Token::Value(attr) => match attr.get(req_ctx)? {
+                    AttributeState::Available(val) => val,
+                    AttributeState::Pending => {
+                        return Ok(AttributeState::Pending);
+                    }
+                },
+                Token::Node(nested_map) => match map_to_value(nested_map, req_ctx)? {
+                    AttributeState::Available(m) => Value::Map(m),
+                    AttributeState::Pending => {
+                        return Ok(AttributeState::Pending);
+                    }
+                },
             };
             out.insert(k, v);
         }
-        Ok(Map { map: Arc::new(out) })
+
+        Ok(AttributeState::Available(Map { map: Arc::new(out) }))
     }
 
     #[cfg(test)]
     mod tests {
         use crate::data::cel::data::{AttributeMap, Token};
         use crate::data::cel::known_attribute_for;
-        use crate::data::cel::PathCache;
 
         #[test]
         fn it_works() {
-            let mut resolver = PathCache::default();
             let map = AttributeMap::new(
                 [
                     known_attribute_for(&"request.method".into())
@@ -942,8 +880,9 @@ pub mod data {
                         .expect("destination.port known attribute exists"),
                 ]
                 .into(),
-                &mut resolver,
             );
+
+            println!("{:#?}", map.data);
 
             assert_eq!(3, map.data.len());
             assert!(map.data.contains_key("source"));
@@ -992,183 +931,28 @@ pub mod data {
     }
 }
 
-pub type AttributeResolverResult = Result<Value, PropertyError>;
-
-pub trait AttributeResolver {
-    fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult;
-    fn transient(&mut self, attr: &str) -> Option<Value>;
-}
-
-#[derive(Default)]
-pub struct PathCache {
-    value_map: std::collections::HashMap<Path, Value>,
-    transient_map: std::collections::HashMap<String, Value>,
-}
-
-impl PathCache {
-    pub fn add_transient(&mut self, attr: &str, value: Value) {
-        self.transient_map.insert(attr.into(), value);
-    }
-}
-
-impl AttributeResolver for PathCache {
-    fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
-        match self.value_map.entry(attribute.path.clone()) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
-            Entry::Vacant(entry) => {
-                let value = attribute.get()?;
-                if !matches!(value, Value::Null) {
-                    entry.insert(value.clone());
-                }
-                Ok(value)
-            }
-        }
-    }
-
-    fn transient(&mut self, attr: &str) -> Option<Value> {
-        self.transient_map.get(attr).cloned()
-    }
-}
-
-pub trait AttributeOwner {
-    fn request_attributes(&self) -> Vec<&Attribute>;
-}
-
-impl AttributeOwner for Expression {
-    fn request_attributes(&self) -> Vec<&Attribute> {
-        self.attributes
-            .iter()
-            .filter(|&a| a.path.is_request())
-            .collect()
-    }
-}
-
-impl AttributeOwner for Predicate {
-    fn request_attributes(&self) -> Vec<&Attribute> {
-        self.expression.request_attributes()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::data::cel::errors::CelError;
-    use crate::data::property::Path;
-    use crate::data::{property, PropError};
+    use crate::data::attribute::{AttributeState, Path};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate, PropSetter, Props};
+    use crate::kuadrant::MockWasmHost;
+    use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
-    use cel_interpreter::{ExecutionError, Value};
+    use cel_interpreter::Value;
     use std::collections::HashMap;
-    use std::error::Error;
+    use std::ops::Deref;
     use std::sync::Arc;
-
-    // Always fails to resolve
-    #[derive(Default)]
-    pub struct FailResolver;
-
-    impl AttributeResolver for FailResolver {
-        fn resolve(&mut self, _attribute: &Attribute) -> AttributeResolverResult {
-            Err(PropertyError::Get(PropError::new(
-                "property not found".into(),
-            )))
-        }
-
-        fn transient(&mut self, _attr: &str) -> Option<Value> {
-            unreachable!("Not supposed to get here!")
-        }
-    }
-
-    // Verifies that provided paths perfectly match the requested ones: no extras, no omissions.
-    // It is allowed to request the same path multiple times, though.
-    #[derive(Default)]
-    pub struct TestResolver {
-        expected_map: std::collections::HashMap<Path, Value>,
-        called_paths: Vec<Path>,
-        expected_transient_map: std::collections::HashMap<String, Value>,
-        called_transients: Vec<String>,
-    }
-
-    impl TestResolver {
-        fn with_paths(mut self, map: HashMap<Path, Value>) -> Self {
-            self.expected_map = map;
-            self
-        }
-
-        fn with_transient(mut self, attr: &str, val: Value) -> Self {
-            self.expected_transient_map.insert(attr.into(), val);
-            self
-        }
-
-        fn verify(self) {
-            // Remove duplicated called paths
-            let set: std::collections::HashSet<_> = self.called_paths.into_iter().collect();
-            let uniq_paths: Vec<Path> = set.into_iter().collect();
-            // A previous check guarantees that we only have expected paths.
-            // Therefore, we can verify all paths were called by simply comparing the counts.
-            assert_eq!(uniq_paths.len(), self.expected_map.len());
-
-            // Remove duplicated called transient attrs
-            let set: std::collections::HashSet<_> = self.called_transients.into_iter().collect();
-            let uniq_transients: Vec<String> = set.into_iter().collect();
-            // A previous check guarantees that we only have expected transient attributes.
-            // Therefore, we can verify all paths were called by simply comparing the counts.
-            assert_eq!(uniq_transients.len(), self.expected_transient_map.len())
-        }
-    }
-
-    impl AttributeResolver for TestResolver {
-        fn resolve(&mut self, attribute: &Attribute) -> AttributeResolverResult {
-            let path = attribute.path.clone();
-            let res = self.expected_map.get(&path);
-            assert!(
-                res.is_some(),
-                "TestResolver called with unexpected path {path}"
-            );
-            let val = res.unwrap();
-            self.called_paths.push(path);
-            Ok(val.clone())
-        }
-
-        fn transient(&mut self, attr: &str) -> Option<Value> {
-            let res = self.expected_transient_map.get(attr);
-            assert!(
-                res.is_some(),
-                "TestResolver called with unexpected transient attr {attr}"
-            );
-            let val = res.unwrap();
-            self.called_transients.push(attr.into());
-            Some(val.clone())
-        }
-    }
-
-    fn build_resolver(elems: Vec<(Path, Value)>) -> TestResolver {
-        let test_resolver: TestResolver = Default::default();
-
-        let mut map: HashMap<Path, Value> = HashMap::default();
-        for (path, value) in elems {
-            map.insert(path, value);
-        }
-
-        test_resolver.with_paths(map)
-    }
-
-    fn build_resolver_with_request_body(body: String) -> TestResolver {
-        let test_resolver = build_resolver(vec![]);
-        test_resolver.with_transient("request_body", body.into())
-    }
-
-    fn build_resolver_with_response_body(body: String) -> TestResolver {
-        let test_resolver = build_resolver(vec![]);
-        test_resolver.with_transient("response_body", body.into())
-    }
 
     #[test]
     fn predicates() {
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
-        let mut resolver = build_resolver(vec![("source.port".into(), 65432_i64.into())]);
-        assert!(predicate
-            .test(&mut resolver)
-            .expect("This must evaluate properly!"));
-        resolver.verify();
+        assert_eq!(
+            predicate.test(&ctx).expect("This must evaluate properly!"),
+            AttributeState::Available(true)
+        );
     }
 
     #[test]
@@ -1191,111 +975,105 @@ mod tests {
     }
 
     #[test]
-    fn attribute_to_json_resolve() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec![
+    fn expressions_captures_response_props() {
+        let value = Expression::new(
+            "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
+        )
+        .expect("This is valid CEL!");
+        assert_eq!(
+            value.response_props.deref().lock().unwrap().props,
+            [("foo.bar".to_string(), None)].into()
+        );
+    }
+
+    #[test]
+    fn expressions_to_json_resolve() {
+        // Test boolean value
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec![
                 "filter_state",
                 "wasm.kuadrant.auth.identity.anonymous",
             ]),
             "true".bytes().collect(),
-        )));
-        let value = Attribute {
-            path: "auth.identity.anonymous".into(),
-            cel_type: None,
-        }
-        .get()
-        .expect("This must resolve!");
-        assert_eq!(value, true.into());
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let value = Expression::new("auth.identity.anonymous")
+            .expect("This is valid CEL!")
+            .eval(&ctx)
+            .expect("This must evaluate!");
+        assert_eq!(value, AttributeState::Available(true.into()));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+        // Test integer value
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42".bytes().collect(),
-        )));
-        let value = Attribute {
-            path: "auth.identity.age".into(),
-            cel_type: None,
-        }
-        .get()
-        .expect("This must evaluate!");
-        assert_eq!(value, 42.into());
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let value = Expression::new("auth.identity.age")
+            .expect("This is valid CEL!")
+            .eval(&ctx)
+            .expect("This must evaluate!");
+        assert_eq!(value, AttributeState::Available(Value::UInt(42)));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+        // Test float value
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "42.3".bytes().collect(),
-        )));
-        let value = Attribute {
-            path: "auth.identity.age".into(),
-            cel_type: None,
-        }
-        .get()
-        .expect("This must evaluate!");
-        assert_eq!(value, 42.3.into());
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let value = Expression::new("auth.identity.age")
+            .expect("This is valid CEL!")
+            .eval(&ctx)
+            .expect("This must evaluate!");
+        assert_eq!(value, AttributeState::Available(Value::Float(42.3)));
 
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
             "\"John\"".bytes().collect(),
-        )));
-        let value = Attribute {
-            path: "auth.identity.name".into(),
-            cel_type: None,
-        }
-        .get()
-        .expect("This must evaluate!");
-        assert_eq!(value, "John".into());
-
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "-42".bytes().collect(),
-        )));
-        let value = Attribute {
-            path: "auth.identity.age".into(),
-            cel_type: None,
-        }
-        .get()
-        .expect("This must evaluate!");
-        assert_eq!(value, (-42).into());
-
-        // let's fall back to strings, as that's what we read and set in store_metadata
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "some random crap".bytes().collect(),
-        )));
-        let value = Attribute {
-            path: "auth.identity.age".into(),
-            cel_type: None,
-        }
-        .get()
-        .expect("This must evaluate!");
-        assert_eq!(value, "some random crap".into());
-    }
-
-    #[test]
-    fn attribute_to_map_resolve() {
-        property::test::TEST_MAP_VALUE.set(Some((
-            "request.headers".into(),
-            HashMap::from([
-                ("key_a".into(), "val_a".into()),
-                ("key_b".into(), "val_b".into()),
-            ]),
-        )));
-        let value = known_attribute_for(&"request.headers".into())
-            .expect("This is valid attribute")
-            .get()
-            .expect("This must resolve!");
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let value = Expression::new("auth.identity.age")
+            .expect("This is valid CEL!")
+            .eval(&ctx)
+            .expect("This must evaluate!");
         assert_eq!(
             value,
-            HashMap::<String, String>::from([
-                ("key_a".into(), "val_a".into()),
-                ("key_b".into(), "val_b".into()),
-            ])
-            .into()
+            AttributeState::Available(Value::String("John".to_string().into()))
+        );
+
+        // Test negative integer
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
+            "-42".bytes().collect(),
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let value = Expression::new("auth.identity.name")
+            .expect("This is valid CEL!")
+            .eval(&ctx)
+            .expect("This must evaluate!");
+        assert_eq!(value, AttributeState::Available(Value::Int(-42)));
+
+        // Test fallback to string for non-JSON
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
+            "some random crap".bytes().collect(),
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let value = Expression::new("auth.identity.age")
+            .expect("This is valid CEL!")
+            .eval(&ctx)
+            .expect("This must evaluate!");
+        assert_eq!(
+            value,
+            AttributeState::Available(Value::String("some random crap".to_string().into()))
         );
     }
 
     #[test]
     fn decodes_query_string() {
-        let mut resolver =
-            build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::route_rule(
             "queryMap(request.query, true)['param1'] == '👾 ' && \
             queryMap(request.query, true)['param2'] == 'Exterminate!' && \
@@ -1305,73 +1083,89 @@ mod tests {
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate
-            .test(&mut resolver)
-            .expect("This must evaluate properly!"));
-        resolver.verify();
+        assert_eq!(
+            predicate.test(&ctx).expect("This must evaluate properly!"),
+            AttributeState::Available(true)
+        );
 
-        let mut resolver =
-            build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::route_rule(
             "queryMap(request.query, false)['param2'] == 'Exterminate!' && \
             queryMap(request.query, false)['👾'] == '123' \
                         ",
         )
         .expect("This is valid!");
-        assert!(predicate
-            .test(&mut resolver)
-            .expect("This must evaluate properly!"));
-        resolver.verify();
+        assert_eq!(
+            predicate.test(&ctx).expect("This must evaluate properly!"),
+            AttributeState::Available(true)
+        );
 
-        let mut resolver = build_resolver(vec![("request.query".into(), "%F0%9F%91%BE".into())]);
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =
             Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
-        assert!(predicate
-            .test(&mut resolver)
-            .expect("This must evaluate properly!"));
-        resolver.verify();
+        assert_eq!(
+            predicate.test(&ctx).expect("This must evaluate properly!"),
+            AttributeState::Available(true)
+        );
+    }
 
-        let mut resolver =
-            build_resolver(vec![("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".into())]);
-        let predicate = Predicate::route_rule(
-            "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
-        )
-        .expect("This is valid!");
-        let res = predicate.test(&mut resolver).expect("should evaluate!");
-        assert!(res);
-        resolver.verify();
+    #[test]
+    fn response_body_json() {
+        let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
+        expr.response_props.lock().unwrap().set_prop("bar", 42);
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr.eval(&ctx).unwrap()
+        );
     }
 
     #[test]
     fn kuadrant_generated_predicates() {
-        let headerr_value_map: HashMap<String, String> =
-            HashMap::from([("X-Auth".into(), "kuadrant".into())]);
-        let mut resolver =
-            build_resolver(vec![("request.headers".into(), headerr_value_map.into())]);
+        let mock_host = MockWasmHost::new()
+            .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate = Predicate::route_rule(
+            "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
+        )
+        .expect("This is valid!");
+        assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
+
+        let headers = vec![
+            ("X-Auth".to_string(), "kuadrant".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
+        let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert!(predicate.test(&mut resolver).expect("should evaluate!"));
-        resolver.verify();
+        assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
     }
 
     #[test]
     fn attribute_resolve() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            "destination.port".into(),
-            80_i64.to_le_bytes().into(),
-        )));
+        let mock_host = MockWasmHost::new()
+            .with_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = known_attribute_for(&"destination.port".into())
             .expect("destination.port known attribute exists")
-            .get()
+            .get(&ctx)
             .expect("There is no property error!");
-        assert_eq!(value, 80.into());
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("request.method".into(), "GET".bytes().collect())));
+        assert_eq!(value, AttributeState::Available(80.into()));
+
+        let mock_host =
+            MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let value = known_attribute_for(&"request.method".into())
             .expect("request.method known attribute exists")
-            .get()
+            .get(&ctx)
             .expect("There is no property error!");
-        assert_eq!(value, "GET".into());
+        assert_eq!(value, AttributeState::Available("GET".into()));
     }
 
     #[test]
@@ -1386,460 +1180,228 @@ mod tests {
     }
 
     #[test]
-    fn expression_access_host() {
-        property::test::TEST_PROPERTY_VALUE.set(Some((
-            property::Path::new(vec!["foo", "bar.baz"]),
-            b"\xCA\xFE".to_vec(),
-        )));
-        let mut resolver = build_resolver(vec![]);
-        let value = Expression::new("getHostProperty(['foo', 'bar.baz'])")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, Value::Bytes(Arc::new(b"\xCA\xFE".to_vec())));
-        resolver.verify();
+    fn test_attribute_get_returns_pending() {
+        let mock_host = MockWasmHost::new().with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let attr = known_attribute_for(&"destination.port".into())
+            .expect("destination.port known attribute exists");
+        let result = attr.get(&ctx).expect("No property error should occur");
+
+        assert_eq!(result, AttributeState::Pending);
     }
 
     #[test]
-    fn expression_attribute_does_not_resolve() {
-        let mut resolver = FailResolver;
-        let err = Expression::new("unknown.attribute")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body not available!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Property(PropertyError::Get(_))
-        ));
+    fn test_expression_eval_handles_pending_from_build_data_map() {
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new("source.port == 65432 && destination.port == 80")
+            .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+
+        assert_eq!(result, AttributeState::Pending);
     }
 
     #[test]
-    fn expression_request_body_json_only_string_as_arg() {
-        let mut resolver = build_resolver_with_request_body("{}".into());
-        let err = Expression::new("requestBodyJSON()")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! func arg is missing!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
-        ));
-        resolver.verify();
+    fn test_predicate_test_returns_pending() {
+        let mock_host = MockWasmHost::new().with_pending_property("source.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
 
-        let mut resolver = build_resolver_with_request_body("{}".into());
-        let err = Expression::new("requestBodyJSON(['a', 'b'])")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! arrays not allowed as func arg!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::UnexpectedType { .. })
-        ));
-        resolver.verify();
-
-        let mut resolver = build_resolver_with_request_body("{}".into());
-        let err = Expression::new("requestBodyJSON(123435)")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! nums not allowed as func arg!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::UnexpectedType { .. })
-        ));
-        resolver.verify();
-
-        let mut resolver = build_resolver_with_request_body("{}".into());
-        let err = Expression::new("requestBodyJSON(true)")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! bools not allowed as func arg!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::UnexpectedType { .. })
-        ));
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_request_body_json_body_wrong_type() {
-        let mut resolver = build_resolver(vec![]).with_transient("request_body", 1.into());
-        let err = Expression::new("requestBodyJSON('/foo')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body has unexpected type!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::FunctionError { .. })
-        ));
-        if let CelError::Resolve(ExecutionError::FunctionError {
-            function: f,
-            message: m,
-        }) = cel_err
-        {
-            assert_eq!(*f, String::from("requestBodyJSON"));
-            assert!(m.contains("found request_body of type int, expected String"));
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_request_body_json_when_body_is_not_json() {
-        let mut resolver = build_resolver_with_request_body("some crab".into());
-        let err = Expression::new("requestBodyJSON('/foo')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body has unexpected type!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::FunctionError { .. })
-        ));
-        if let CelError::Resolve(ExecutionError::FunctionError {
-            function: f,
-            message: m,
-        }) = cel_err
-        {
-            assert_eq!(*f, String::from("requestBodyJSON"));
-            assert!(m.contains("failed to parse request_body as JSON"));
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_request_body_json_when_pointer_does_not_exist() {
-        let mut resolver = build_resolver_with_request_body("{}".into());
-        let err = Expression::new("requestBodyJSON('/foo')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body not available!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::FunctionError { .. })
-        ));
-        if let CelError::Resolve(ExecutionError::FunctionError {
-            function: f,
-            message: m,
-        }) = cel_err
-        {
-            assert_eq!(*f, String::from("requestBodyJSON"));
-            assert_eq!(
-                *m,
-                String::from("JSON Pointer '/foo' not found in request_body")
-            );
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_request_body_json_body_exists() {
-        let body = r#"
-        {
-            "name": "John Doe",
-            "age": 43,
-            "phones": [
-                "+44 1234567",
-                "+44 2345678"
-            ]
-        }"#;
-        let mut resolver = build_resolver_with_request_body(body.into());
-        let value = Expression::new("requestBodyJSON('/name')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, "John Doe".into());
-
-        let value = Expression::new("requestBodyJSON('/age')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, 43.into());
-
-        let value = Expression::new("requestBodyJSON('/phones/0')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, "+44 1234567".into());
-        resolver.verify();
-    }
-
-    #[test]
-    fn path_cache_resolve_not_existing_attribute() {
-        property::test::TEST_PROPERTY_VALUE
-            .set(Some(("request.method".into(), "GET".bytes().collect())));
-        let mut resolver = PathCache::default();
-        let attribute =
-            known_attribute_for(&"request.method".into()).expect("This is valid attribute");
-        // First time, entry not found,
-        // it should defer to attribute resolution (attribute.get())
-        let value = resolver
-            .resolve(&attribute)
-            .expect("This should not error!");
-        assert_eq!(value, "GET".into());
-
-        // Second time, finds entry
-        // TEST_PROPERTY_VALUE is not set,
-        // so if attribute.get() would be called, it would fail
-        let value = resolver
-            .resolve(&attribute)
-            .expect("This should not error!");
-        assert_eq!(value, "GET".into());
-    }
-
-    #[test]
-    fn path_cache_does_not_cache_null() {
-        let mut resolver = PathCache::default();
-        let attr = Attribute {
-            path: "auth.identity.userid".into(),
-            cel_type: Some(ValueType::String),
-        };
-
-        property::test::TEST_PROPERTY_MISS.set(Some(()));
-
-        let result = resolver.resolve(&attr).expect("should resolve to Null");
-        assert_eq!(result, Value::Null);
-        assert!(!resolver.value_map.contains_key(&attr.path));
-    }
-
-    #[test]
-    fn expression_request_attributes() {
-        let expression = Expression::new("source.port == 65432").expect("This is valid CEL!");
-        assert!(
-            expression.request_attributes().is_empty(),
-            "No request attributes expected!"
-        );
-
-        let expression =
-            Expression::new("request.host && request.path == '/path'").expect("This is valid CEL!");
-        assert_eq!(
-            expression.request_attributes().len(),
-            2,
-            "Two requests attributes expected!"
-        );
-
-        let expression = Expression::new("requestBodyJSON('/foo')").expect("This is valid CEL!");
-        assert!(
-            expression.request_attributes().is_empty(),
-            "No request attributes expected when requestBodyJSON func is used!"
-        );
-    }
-
-    #[test]
-    fn predicate_request_attributes() {
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
-        assert!(
-            predicate.request_attributes().is_empty(),
-            "No request attributes expected!"
-        );
+        let result = predicate.test(&ctx).expect("Test should succeed");
 
-        let predicate = Predicate::new("request.host== 'example.com'").expect("This is valid CEL!");
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_predicate_vec_short_circuits_on_pending() {
+        use crate::data::cel::PredicateVec;
+
+        // First pred is Pending
+        let mock_host = MockWasmHost::new()
+            .with_pending_property("source.port".into())
+            .with_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Pending);
+
+        // Second pred is Pending
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Pending);
+
+        // First is false, second is Pending
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 12345_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Available(false));
+
+        // First is Pending, second is false
+        let mock_host = MockWasmHost::new()
+            .with_pending_property("source.port".into())
+            .with_property("destination.port".into(), 443_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let predicates = vec![
+            Predicate::new("source.port == 65432").expect("valid CEL"),
+            Predicate::new("destination.port == 80").expect("valid CEL"),
+        ];
+
+        let result = predicates.apply(&ctx).expect("Apply should succeed");
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_attribute_none_converts_to_null() {
+        let mock_host = MockWasmHost::new(); // No properties set
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let attr = known_attribute_for(&"request.method".into())
+            .expect("request.method is a known attribute");
+        let result = attr.get(&ctx).expect("Should not error");
+
+        assert_eq!(result, AttributeState::Available(Value::Null));
+    }
+
+    #[test]
+    fn test_map_to_value_returns_pending_for_nested_attribute() {
+        use crate::data::cel::data::AttributeMap;
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.method".into(), "GET".bytes().collect())
+            .with_pending_property("source.address".into())
+            .with_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let attr_map = AttributeMap::new(vec![
+            known_attribute_for(&"request.method".into())
+                .expect("request.method known attribute exists"),
+            known_attribute_for(&"source.address".into())
+                .expect("source.address known attribute exists"),
+            known_attribute_for(&"destination.port".into())
+                .expect("destination.port known attribute exists"),
+        ]);
+
+        let result = attr_map
+            .into(&ctx)
+            .expect("Should not return AttributeError");
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn test_expression_eval_with_complex_mixed_states() {
+        // These tests evaluate the current behaviour but without eager data retrieval
+        // they should all be evaluateable
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new("source.port == 65432 || destination.port == 80")
+            .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+
         assert_eq!(
-            predicate.request_attributes().len(),
-            1,
-            "One request attributes expected!"
+            result,
+            AttributeState::Pending,
+            "Expression with Pending attribute should return Pending"
+        );
+
+        // Nested expressions
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into())
+            .with_property("request.method".into(), "GET".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new(
+            "(source.port == 65432 && destination.port == 80) || request.method == 'POST'",
+        )
+        .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+        assert_eq!(
+            result,
+            AttributeState::Pending,
+            "Complex expression with Pending in subexpression should return Pending"
+        );
+
+        // Ternary with Pending condition
+        let mock_host = MockWasmHost::new()
+            .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
+            .with_pending_property("destination.port".into());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let expression = Expression::new("source.port == 65432 ? 443 : destination.port")
+            .expect("This is valid CEL!");
+        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+
+        assert_eq!(
+            result,
+            AttributeState::Pending,
+            "Ternary expression with Pending condition should return Pending"
         );
     }
 
     #[test]
-    fn expression_response_body_json_only_string_as_arg() {
-        let mut resolver = build_resolver_with_response_body("{}".into());
-        let err = Expression::new("responseBodyJSON()")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! func arg is missing!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::InvalidArgumentCount { .. })
-        ));
-        resolver.verify();
-
-        let mut resolver = build_resolver_with_response_body("{}".into());
-        let err = Expression::new("responseBodyJSON(['a', 'b'])")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! arrays not allowed as func arg!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::UnexpectedType { .. })
-        ));
-        resolver.verify();
-
-        let mut resolver = build_resolver_with_response_body("{}".into());
-        let err = Expression::new("responseBodyJSON(123435)")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! nums not allowed as func arg!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::UnexpectedType { .. })
-        ));
-        resolver.verify();
-
-        let mut resolver = build_resolver_with_response_body("{}".into());
-        let err = Expression::new("responseBodyJSON(true)")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! bools not allowed as func arg!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::UnexpectedType { .. })
-        ));
-        resolver.verify();
+    fn test_props() {
+        let mut props: Props = vec!["foo".to_string(), "bar".to_string()].into();
+        assert!(props.pending());
+        assert!(props.set_prop("foo", 1));
+        assert!(!props.set_prop("baz", 1));
+        assert!(props.pending());
+        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.clone().values().get("baz").cloned(), None);
+        assert_eq!(props.clone().values().len(), 1);
+        assert!(props.set_prop("bar", 2));
+        assert!(!props.pending());
+        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
+        assert_eq!(props.clone().values().get("bar").cloned(), Some(2.into()));
+        assert_eq!(props.clone().values().get("baz").cloned(), None);
+        assert_eq!(props.clone().values().len(), 2);
     }
 
     #[test]
-    fn expression_response_body_json_body_wrong_type() {
-        let mut resolver = build_resolver(vec![]).with_transient("response_body", 1.into());
-        let err = Expression::new("responseBodyJSON('/foo')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body has unexpected type!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::FunctionError { .. })
-        ));
-        if let CelError::Resolve(ExecutionError::FunctionError {
-            function: f,
-            message: m,
-        }) = cel_err
-        {
-            assert_eq!(*f, String::from("responseBodyJSON"));
-            assert!(m.contains("found response_body of type int, expected String"));
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_response_body_json_when_body_is_not_json() {
-        let mut resolver = build_resolver_with_response_body("some crab".into());
-        let err = Expression::new("responseBodyJSON('/foo')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body has unexpected type!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::FunctionError { .. })
-        ));
-        if let CelError::Resolve(ExecutionError::FunctionError {
-            function: f,
-            message: m,
-        }) = cel_err
-        {
-            assert_eq!(*f, String::from("responseBodyJSON"));
-            assert!(m.contains("failed to parse response_body as JSON"));
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_response_body_json_when_pointer_does_not_exist() {
-        let mut resolver = build_resolver_with_response_body("{}".into());
-        let err = Expression::new("responseBodyJSON('/foo')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect_err("This must error! body not available!");
-        let e = err.source().expect("there should be a source");
-        assert!(e.is::<CelError>());
-        let cel_err: &CelError = e.downcast_ref().expect("it should be CelError");
-        assert!(matches!(
-            *cel_err,
-            CelError::Resolve(ExecutionError::FunctionError { .. })
-        ));
-        if let CelError::Resolve(ExecutionError::FunctionError {
-            function: f,
-            message: m,
-        }) = cel_err
-        {
-            assert_eq!(*f, String::from("responseBodyJSON"));
-            assert_eq!(
-                *m,
-                String::from("JSON Pointer '/foo' not found in response_body")
-            );
-        } else {
-            unreachable!("Not supposed to get here!");
-        }
-        resolver.verify();
-    }
-
-    #[test]
-    fn expression_response_body_json_body_exists() {
-        let body = r#"
-        {
-            "name": "John Doe",
-            "age": 43,
-            "phones": [
-                "+44 1234567",
-                "+44 2345678"
-            ]
-        }"#;
-        let mut resolver = build_resolver_with_response_body(body.into());
-        let value = Expression::new("responseBodyJSON('/name')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, "John Doe".into());
-
-        let value = Expression::new("responseBodyJSON('/age')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, 43.into());
-
-        let value = Expression::new("responseBodyJSON('/phones/0')")
-            .expect("This is valid CEL!")
-            .eval(&mut resolver)
-            .expect("This must evaluate!");
-        assert_eq!(value, "+44 1234567".into());
-        resolver.verify();
+    fn test_prop_setter() {
+        let predicates = &[Predicate::new("responseBodyJSON('foo') == 42").unwrap()];
+        let mut setter = PropSetter::new(predicates, &[]);
+        setter.set_prop("foo", 42);
+        let expected: HashMap<String, Value> = HashMap::from([("foo".into(), 42.into())]);
+        assert_eq!(
+            predicates[0]
+                .expression
+                .response_props
+                .deref()
+                .lock()
+                .unwrap()
+                .clone()
+                .values(),
+            expected
+        );
     }
 }

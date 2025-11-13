@@ -1,7 +1,6 @@
-use crate::action_set_index::ActionSetIndex;
+use super::kuadrant_filter::KuadrantFilter;
 use crate::configuration::PluginConfiguration;
-use crate::filter::kuadrant_filter::KuadrantFilter;
-use crate::service::HeaderResolver;
+use crate::kuadrant::PipelineFactory;
 use const_format::formatcp;
 use log::{debug, error, info};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -16,7 +15,16 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
 pub struct FilterRoot {
     pub context_id: u32,
-    pub action_set_index: Rc<ActionSetIndex>,
+    pub pipeline_factory: Rc<PipelineFactory>,
+}
+
+impl FilterRoot {
+    pub fn new(context_id: u32) -> Self {
+        Self {
+            context_id,
+            pipeline_factory: Rc::new(PipelineFactory::default()),
+        }
+    }
 }
 
 impl RootContext for FilterRoot {
@@ -36,8 +44,7 @@ impl RootContext for FilterRoot {
         debug!("#{} create_http_context", context_id);
         Some(Box::new(KuadrantFilter::new(
             context_id,
-            Rc::clone(&self.action_set_index),
-            HeaderResolver::new(),
+            Rc::clone(&self.pipeline_factory),
         )))
     }
 
@@ -49,22 +56,22 @@ impl RootContext for FilterRoot {
                 None => return false,
             },
             Err(status) => {
-                log::error!("#{} on_configure: {:?}", self.context_id, status);
+                error!("#{} on_configure: {:?}", self.context_id, status);
                 return false;
             }
         };
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 info!("plugin config parsed: {:?}", config);
-                let action_set_index =
-                    match <PluginConfiguration as TryInto<ActionSetIndex>>::try_into(config) {
-                        Ok(cfg) => cfg,
-                        Err(err) => {
-                            error!("failed to compile plugin config: {}", err);
-                            return false;
-                        }
-                    };
-                self.action_set_index = Rc::new(action_set_index);
+                match PipelineFactory::try_from(config) {
+                    Ok(factory) => {
+                        self.pipeline_factory = Rc::new(factory);
+                    }
+                    Err(err) => {
+                        error!("failed to compile plugin config: {:?}", err);
+                        return false;
+                    }
+                }
             }
             Err(e) => {
                 error!("failed to parse plugin config: {}", e);
@@ -80,3 +87,43 @@ impl RootContext for FilterRoot {
 }
 
 impl Context for FilterRoot {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::PluginConfiguration;
+
+    #[test]
+    fn invalid_json_fails_to_parse() {
+        let invalid_json = "{ invalid json }";
+        let result = serde_json::from_slice::<PluginConfiguration>(invalid_json.as_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_with_invalid_predicate_fails_factory_creation() {
+        let config_str = serde_json::json!({
+            "services": {
+                "test-service": {
+                    "type": "auth",
+                    "endpoint": "test-cluster",
+                    "failureMode": "deny",
+                    "timeout": "5s"
+                }
+            },
+            "actionSets": [{
+                "name": "test-action-set",
+                "routeRuleConditions": {
+                    "hostnames": ["example.com"],
+                    "predicates": ["invalid syntax !!!"]
+                },
+                "actions": []
+            }]
+        })
+        .to_string();
+
+        let config = serde_json::from_slice::<PluginConfiguration>(config_str.as_bytes()).unwrap();
+        let result = PipelineFactory::try_from(config);
+        assert!(result.is_err());
+    }
+}

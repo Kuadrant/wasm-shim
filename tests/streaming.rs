@@ -1,6 +1,6 @@
 use crate::util::common::wasm_module;
 use proxy_wasm_test_framework::tester;
-use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
+use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType, Status};
 use serial_test::serial;
 
 pub mod util;
@@ -84,23 +84,37 @@ fn it_processes_usage_event_across_chunks_until_done() {
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
+            Some("Getting property: `request.host`"),
+        )
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
         )
         // retrieving tracing headers
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
-        .returning(None)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("#2 pipeline built successfully"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpResponseHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(Status::BadArgument)
         // retrieving request attributes in advance
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property: path: [\"request\", \"method\"]"),
+            Some("Getting property: `request.method`"),
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(b"POST"))
@@ -110,12 +124,12 @@ fn it_processes_usage_event_across_chunks_until_done() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpResponseHeaders), Some("content-type"))
-        .returning(Some("text/event-stream"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 Content-Type: text/event-stream"),
+            Some("Getting map: `HttpResponseHeaders`"),
         )
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(Some(vec![("content-type", "text/event-stream")]))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -123,22 +137,9 @@ fn it_processes_usage_event_across_chunks_until_done() {
     let usage_chunk = b"data: {\"usage\":{\"total_tokens\":11}}\n\n";
     module
         .call_proxy_on_response_body(http_context, usage_chunk.len() as i32, false)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(
-                format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: false",
-                    usage_chunk.len()
-                )
-                .as_str(),
-            ),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(usage_chunk))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 handle_stream: processing chunk: data: {\"usage\":{\"total_tokens\":11}}\n\n"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -147,23 +148,13 @@ fn it_processes_usage_event_across_chunks_until_done() {
     let total_len = (usage_chunk.len() + done_chunk.len()) as i32;
     module
         .call_proxy_on_response_body(http_context, total_len, true)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(
-                format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: true",
-                    total_len
-                )
-                .as_str(),
-            ),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(done_chunk))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 handle_stream: processing chunk: data: [DONE]\n\n"),
+            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s")
         )
-        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster kuadrant.service.ratelimit.v1.RateLimitService Report 5s"))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
@@ -173,6 +164,7 @@ fn it_processes_usage_event_across_chunks_until_done() {
             Some(5000),
         )
         .returning(Ok(42))
+        .expect_log(Some(LogLevel::Debug), Some("gRPC call dispatched successfully, token_id: 42"))
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -183,12 +175,12 @@ fn it_processes_usage_event_across_chunks_until_done() {
             Some(LogLevel::Debug),
             Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
         )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_response(rl): received OK response"),
+            Some("Getting gRPC response, size: 2 bytes"),
         )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 }
@@ -271,21 +263,35 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_request_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some(":authority"))
-        .returning(Some("cars.toystore.com"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 action_set selected some-name"),
+            Some("Getting property: `request.host`"),
         )
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("traceparent"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("tracestate"))
-        .returning(None)
-        .expect_get_header_map_value(Some(MapType::HttpRequestHeaders), Some("baggage"))
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpRequestHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
         .expect_log(
             Some(LogLevel::Debug),
-            Some("get_property: path: [\"request\", \"method\"]"),
+            Some("#2 pipeline built successfully"),
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting map: `HttpResponseHeaders`"),
+        )
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(Status::BadArgument)
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Getting property: `request.method`"),
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(b"POST"))
@@ -295,12 +301,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
-        .expect_get_header_map_value(Some(MapType::HttpResponseHeaders), Some("content-type"))
-        .returning(Some("text/event-stream"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 Content-Type: text/event-stream"),
+            Some("Getting map: `HttpResponseHeaders`"),
         )
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(Some(vec![("content-type", "text/event-stream")]))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -308,22 +314,9 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let chunk1 = b"data: {\"id\":\"1\",\"content\":\"Hello\"}\n\n";
     module
         .call_proxy_on_response_body(http_context, chunk1.len() as i32, false)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(
-                format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: false",
-                    chunk1.len()
-                )
-                .as_str(),
-            ),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 handle_stream: processing chunk: data: {\"id\":\"1\",\"content\":\"Hello\"}\n\n"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -331,22 +324,9 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let chunk2 = b"data: {\"id\":\"2\",\"content\":\"World\"}\n\n";
     module
         .call_proxy_on_response_body(http_context, chunk2.len() as i32, false)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(
-                format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: false",
-                    chunk2.len()
-                )
-                .as_str(),
-            ),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk2))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 handle_stream: processing chunk: data: {\"id\":\"2\",\"content\":\"World\"}\n\n"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -354,22 +334,9 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let chunk3 = b"data: {\"usage\":{\"total_tokens\":42}}\n\n";
     module
         .call_proxy_on_response_body(http_context, chunk3.len() as i32, false)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(
-                format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: false",
-                    chunk3.len()
-                )
-                .as_str(),
-            ),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk3))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 handle_stream: processing chunk: data: {\"usage\":{\"total_tokens\":42}}\n\n"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
@@ -377,34 +344,20 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let chunk4 = b"data: [DONE]\n\n";
     module
         .call_proxy_on_response_body(http_context, chunk4.len() as i32, false)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(
-                format!(
-                    "#2 on_http_response_body: body_size: {}, end_of_stream: false",
-                    chunk4.len()
-                )
-                .as_str(),
-            ),
-        )
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk4))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 handle_stream: processing chunk: data: [DONE]\n\n"),
-        )
-        // Should NOT send gRPC yet - still waiting for end_of_stream
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
     // Finally: end_of_stream = true with 0 bytes (no new chunk) → NOW it should send the gRPC Report
     module
         .call_proxy_on_response_body(http_context, 0, true)
+        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("#2 on_http_response_body: body_size: 0, end_of_stream: true"),
+            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s"),
         )
-        .expect_log(Some(LogLevel::Debug), Some("#2 send_grpc_request: limitador-cluster kuadrant.service.ratelimit.v1.RateLimitService Report 5s"))
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
@@ -414,6 +367,7 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             Some(5000),
         )
         .returning(Ok(99))
+        .expect_log(Some(LogLevel::Debug), Some("gRPC call dispatched successfully, token_id: 99"))
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -424,12 +378,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             Some(LogLevel::Debug),
             Some("#2 on_grpc_call_response: received gRPC call response: token: 99, status: 0"),
         )
-        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("process_response(rl): received OK response"),
+            Some("Getting gRPC response, size: 2 bytes"),
         )
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 }

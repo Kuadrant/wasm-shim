@@ -1,3 +1,4 @@
-pub(crate) mod kuadrant_filter;
-pub(crate) mod operations;
-pub(crate) mod root_context;
+mod kuadrant_filter;
+mod root_context;
+
+pub use root_context::FilterRoot;
