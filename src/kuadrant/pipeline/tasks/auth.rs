@@ -239,7 +239,7 @@ fn process_metadata(s: &prost_types::Struct, prefix: String) -> Vec<(String, Vec
     let mut result = Vec::new();
 
     for (key, value) in &s.fields {
-        let current_path = format!("{}\\.{}", prefix, key);
+        let current_path = format!("{}.{}", prefix, key);
 
         match &value.kind {
             Some(Kind::StructValue(nested_struct)) => {
