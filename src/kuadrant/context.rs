@@ -137,7 +137,15 @@ impl ReqRespCtx {
     }
 
     fn store_attribute_bytes(&self, path: &Path, value: Vec<u8>) -> Result<(), AttributeError> {
-        self.backend.set_attribute(path, &value)?;
+        // We store in the filter escaped with the kuadrant namespace
+        // but in the cache it remains unchanged
+        const KUADRANT_NAMESPACE: &str = "kuadrant";
+
+        let escaped_path = path.tokens().join("\\.");
+        let host_path = format!("{}\\.{}", KUADRANT_NAMESPACE, escaped_path);
+
+        self.backend
+            .set_attribute(&host_path.as_str().into(), &value)?;
         self.cache
             .insert(path.clone(), CachedValue::Bytes(Some(value)))
     }
@@ -219,13 +227,7 @@ impl ReqRespCtx {
         attribute_path: &str,
         value: &[u8],
     ) -> Result<AttributeState<()>, AttributeError> {
-        const KUADRANT_NAMESPACE: &str = "kuadrant";
-
-        let escaped_path = attribute_path.replace('.', "\\.");
-        let full_path = format!("{}\\.{}", KUADRANT_NAMESPACE, escaped_path);
-        let path = Path::from(full_path.as_str());
-
-        match self.store_attribute_bytes(&path, value.to_vec()) {
+        match self.store_attribute_bytes(&attribute_path.into(), value.to_vec()) {
             Ok(()) => Ok(AttributeState::Available(())),
             Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
             Err(e) => Err(e),
