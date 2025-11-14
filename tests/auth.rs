@@ -178,14 +178,7 @@ fn it_auths() {
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
-    // TODO: response containing dynamic metadata
-    // set_property is panicking with proxy-wasm-test-framework
-    // because the `expect_set_property` is not yet implemented neither on original repo nor our fork
-    // let grpc_response: [u8; 41] = [
-    //     10, 0, 34, 35, 10, 33, 10, 8, 105, 100, 101, 110, 116, 105, 116, 121, 18, 21, 42, 19, 10,
-    //     17, 10, 6, 117, 115, 101, 114, 105, 100, 18, 7, 26, 5, 97, 108, 105, 99, 101, 26, 0,
-    // ];
-    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    let grpc_response = data::auth_response::WITH_METADATA_USERID_ALICE;
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
@@ -197,7 +190,15 @@ fn it_auths() {
             Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
+        .returning(Some(grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Setting property: `kuadrant\\.auth\\.identity\\.userid`"),
+        )
+        .expect_set_property(
+            Some(vec!["kuadrant.auth.identity.userid"]),
+            Some(b"\"alice\""),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -769,13 +770,6 @@ fn it_does_not_fold_auth_actions() {
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
-    // TODO: response containing dynamic metadata
-    // set_property is panicking with proxy-wasm-test-framework
-    // because the `expect_set_property` is not yet implemented neither on original repo nor our fork
-    // let grpc_response: [u8; 41] = [
-    //     10, 0, 34, 35, 10, 33, 10, 8, 105, 100, 101, 110, 116, 105, 116, 121, 18, 21, 42, 19, 10,
-    //     17, 10, 6, 117, 115, 101, 114, 105, 100, 18, 7, 26, 5, 97, 108, 105, 99, 101, 26, 0,
-    // ];
     let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
@@ -809,13 +803,6 @@ fn it_does_not_fold_auth_actions() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
-    // TODO: response containing dynamic metadata
-    // set_property is panicking with proxy-wasm-test-framework
-    // because the `expect_set_property` is not yet implemented neither on original repo nor our fork
-    // let grpc_response: [u8; 41] = [
-    //     10, 0, 34, 35, 10, 33, 10, 8, 105, 100, 101, 110, 116, 105, 116, 121, 18, 21, 42, 19, 10,
-    //     17, 10, 6, 117, 115, 101, 114, 105, 100, 18, 7, 26, 5, 97, 108, 105, 99, 101, 26, 0,
-    // ];
     let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
     module
         .call_proxy_on_grpc_receive(http_context, 43, grpc_response.len() as i32)
