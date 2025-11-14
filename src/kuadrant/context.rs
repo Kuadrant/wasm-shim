@@ -556,4 +556,53 @@ mod tests {
 
         assert!(tracing_headers.is_empty());
     }
+
+    #[test]
+    fn test_set_attribute_cache_consistency() {
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let value = b"test-user-id";
+        ctx.set_attribute("auth.identity.userid", value).unwrap();
+
+        assert!(ctx
+            .cache
+            .contains_key(&"auth.identity.userid".into())
+            .unwrap());
+
+        let result: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("auth.identity.userid");
+        assert!(matches!(
+            result,
+            Ok(AttributeState::Available(Some(ref s))) if s == "test-user-id"
+        ));
+    }
+
+    #[test]
+    fn test_get_attribute_from_host_when_not_in_cache() {
+        let mock_host = MockWasmHost::new().with_property(
+            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.userid"]),
+            b"external-user-id".to_vec(),
+        );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let cache_path: Path = "auth.identity.userid".into();
+        assert!(!ctx.cache.contains_key(&cache_path).unwrap());
+
+        let result: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("auth.identity.userid");
+        assert!(matches!(
+            result,
+            Ok(AttributeState::Available(Some(ref s))) if s == "external-user-id"
+        ));
+
+        assert!(ctx.cache.contains_key(&cache_path).unwrap());
+
+        let result2: Result<AttributeState<Option<String>>, _> =
+            ctx.get_attribute("auth.identity.userid");
+        assert!(matches!(
+            result2,
+            Ok(AttributeState::Available(Some(ref s))) if s == "external-user-id"
+        ));
+    }
 }
