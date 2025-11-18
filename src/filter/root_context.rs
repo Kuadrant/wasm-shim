@@ -6,6 +6,8 @@ use log::{debug, error, info, LevelFilter};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
 const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
@@ -32,6 +34,16 @@ impl RootContext for FilterRoot {
         let full_version: &'static str = formatcp!(
             "v{WASM_SHIM_VERSION} ({WASM_SHIM_GIT_HASH}) {WASM_SHIM_FEATURES} {WASM_SHIM_PROFILE}"
         );
+
+        // Initialize tracing with OTLP exporter
+        let _ = tracing_subscriber::registry()
+            .with(crate::tracing::otlp_layer(
+                "http://tempo.tempo.svc.cluster.local:4318/v1/traces",
+            ))
+            .try_init();
+
+        // Bridge log crate to tracing
+        tracing_log::LogTracer::init().ok();
 
         info!(
             "#{} {} {}: VM started",

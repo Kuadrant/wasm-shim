@@ -7,6 +7,7 @@ mod envoy;
 mod filter;
 mod kuadrant;
 mod services;
+pub mod tracing;
 
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "wasi"),
@@ -21,6 +22,7 @@ extern "C" fn start() {
     use proxy_wasm::types::LogLevel;
 
     proxy_wasm::set_log_level(LogLevel::Trace);
+
     std::panic::set_hook(Box::new(|panic_info| {
         let _ = proxy_wasm::hostcalls::log(LogLevel::Critical, &panic_info.to_string());
     }));
