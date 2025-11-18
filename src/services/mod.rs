@@ -72,7 +72,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                     service.endpoint.clone(),
                     service.timeout.0,
                     "kuadrant.service.ratelimit.v1.RateLimitService",
-                    "Check",
+                    "CheckRateLimit",
                     service.failure_mode,
                 ),
             ))),

@@ -150,12 +150,12 @@ fn it_checks_and_reports() {
         .returning(Some(data::request::method::POST))
         .expect_log(
             Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Check, timeout: 5s")
+            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.CheckRateLimit, timeout: 5s")
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
-            Some("Check"),
+            Some("CheckRateLimit"),
             Some(&[0, 0, 0, 0]),
             None,
             Some(5000),
