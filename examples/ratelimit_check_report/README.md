@@ -1,6 +1,67 @@
-## Wasm-shim configuration example: Support for Server Sent Events streaming format
+## Wasm-shim configuration example: Rate limit using check and report services
 
 ### Description
+
+The Wasm module configuration that performs gRPC call with descriptors populated
+from the upstream response body, json formatted, data.
+
+It supports two response body formats: 
+* json 
+* [SSE events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format).
+
+### JSON format
+
+It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
+Check *Makefile* at the root of the project to build the module. Usually running `make build`
+at the root of the project.
+
+```sh
+make run
+```
+
+* Send the request with expected body
+
+```sh
+curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000"/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "message": [
+      {
+        "role": "user",
+        "content": "Tell me a three sentence bedtime story about a unicorn."
+      }
+    ]
+  }'
+```
+
+It should return `200 OK`.
+
+Expected rate limiting service logs:
+
+```sh
+docker compose logs -f limitador
+```
+
+which contains the desired hits_addend value `hits_addend: 24`.
+
+> Note: the tokens value may be different
+
+* Inspect traffic Gateway - llm model
+
+Traffic between the gateway and llm model can be inspected looking at logs from `upstream` service
+
+```
+docker compose logs -f upstream
+```
+
+* Gateway logs
+
+```sh
+docker compose logs -f envoy
+```
+
+### Server Sent Events streaming format
 
 The Wasm module supports [SSE events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format).
 This example will setup upstream API sending responses in event stream format. 
@@ -28,12 +89,9 @@ data: {"id":"chatcmpl-fda5e419-5449-4cb1-9537-07523fe3b1a7","created":1758102619
 data: [DONE]
 ```
 
-### Run Manually
-
 It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
 Check *Makefile* at the root of the project to build the module. Usually running `make build`
 at the root of the project.
-
 
 Then run the system
 
@@ -67,10 +125,10 @@ It should return `200 OK`.
 * Rate limiting service logs:
 
 ```console
-docker compose -p sse_streaming logs -f limitador
+docker compose logs -f limitador
 ```
 
-which contains the desired descriptor entry `entries: [Entry { key: "tokens", value: "24" }]`.
+which contains the desired hits_addend value `hits_addend: 24`.
 
 > Note: the tokens value may be different
 
@@ -79,13 +137,13 @@ which contains the desired descriptor entry `entries: [Entry { key: "tokens", va
 Traffic between the gateway and llm model can be inspected looking at logs from `upstream` service
 
 ```
-docker compose -p sse_streaming logs -f upstream
+docker compose logs -f upstream
 ```
 
 * Gateway logs
 
 ```sh
-docker compose -p sse_streaming logs -f envoy
+docker compose logs -f envoy
 ```
 
 ### Clean up

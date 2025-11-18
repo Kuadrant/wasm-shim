@@ -2,32 +2,31 @@
 services:
   envoy:
     image: envoyproxy/envoy:v1.31-latest
-    container_name: envoy
     depends_on:
-    - limitador
-    - upstream
-    - llm-model
+      - limitador
+      - upstream
+      - talker-api
     command:
-    - /usr/local/bin/envoy
-    - --config-path
-    - /etc/envoy.yaml
-    - --log-level
-    - info
-    - --component-log-level
-    - wasm:debug,http:debug,router:debug
-    - --service-cluster
-    - proxy
+      - /usr/local/bin/envoy
+      - --config-path
+      - /etc/envoy.yaml
+      - --log-level
+      - info
+      - --component-log-level
+      - wasm:debug,http:debug,router:debug
+      - --service-cluster
+      - proxy
     expose:
-    - "80"
-    - "8001"
+      - "80"
+      - "8001"
     ports:
-    - "18000:80"
-    - "18001:8001"
+      - "18000:80"
+      - "18001:8001"
     volumes:
-    - ./envoy.yaml:/etc/envoy.yaml
-    - ../../target/wasm32-unknown-unknown/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
+      - ./envoy.yaml:/etc/envoy.yaml
+      - ../../target/wasm32-unknown-unknown/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
   limitador:
-    image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:latest}
+    image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:v2.2.0}
     container_name: limitador
     command:
       - limitador-server
@@ -56,26 +55,24 @@ services:
   upstream:
     image: quay.io/openshift-logging/alpine-socat:1.8.0.0
     container_name: upstream
-    command: "-d -d -v -d TCP-LISTEN:80,reuseaddr,fork TCP:llm-model:8000"
+    command: "-d -d -v -d TCP-LISTEN:80,reuseaddr,fork TCP:talker-api:3000"
     expose:
       - "80"
     restart: unless-stopped
-  llm-model:
-    image: ghcr.io/llm-d/llm-d-inference-sim:v0.1.1
-    container_name: llm-model
-    command:
-    - --model
-    - meta-llama/Llama-3.1-8B-Instruct
-    - --port
-    - "8000"
+  talker-api:
+    image: quay.io/kuadrant/authorino-examples:talker-api
+    container_name: talker-api
+    environment:
+      LOG_LEVEL: "debug"
+      PORT: "3000"
     ports:
-    - "8000:8000"
+      - "3000:3000"
     expose:
-    - "8000"
+      - "3000"
   start_services:
     image: alpine
     depends_on:
-    - envoy
+      - envoy
     command: >
       /bin/sh -c "
       while ! nc -z envoy 80;
