@@ -42,6 +42,13 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
+        if let Some(_request_id_header) = config.observability.http_header_identifier {
+            // todo: create a Task to add the header, and the required associated value
+            // - carry over the `x-request-id` or other existing value?
+            // - use the one we created...
+            // - make sure it's added to all blueprints
+            // - add a "default fallback" blueprint
+        }
         let services: HashMap<String, ServiceInstance> = config
             .services
             .iter()
@@ -239,6 +246,7 @@ mod tests {
                     conditional_data: vec![],
                 }],
             }],
+            observability: Default::default(),
         }
     }
 
@@ -301,6 +309,7 @@ mod tests {
                 },
                 actions: vec![],
             }],
+            observability: Default::default(),
         };
 
         let result = PipelineFactory::try_from(config);
@@ -526,6 +535,7 @@ mod tests {
             request_data,
             services,
             action_sets: vec![],
+            observability: Default::default(),
         };
 
         let factory = PipelineFactory::try_from(config).unwrap();
