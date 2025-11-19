@@ -13,7 +13,7 @@ RUN apk update \
     && apk add build-base binutils-gold openssl3-dev protoc curl \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- --no-modify-path --profile minimal --default-toolchain ${RUSTC_VERSION} \
-    -c rustfmt -t wasm32-unknown-unknown -y
+    -c rustfmt -t wasm32-wasip1 -y
 
 WORKDIR /usr/src/wasm-shim
 
@@ -25,7 +25,7 @@ COPY build.rs build.rs
 COPY vendor-protobufs vendor-protobufs
 
 RUN source $HOME/.cargo/env \
-    && cargo build --target=wasm32-unknown-unknown --release
+    && cargo build --target=wasm32-wasip1 --release
 
 # ------------------------------------------------------------------------------
 # Run Stage
@@ -33,4 +33,4 @@ RUN source $HOME/.cargo/env \
 
 FROM scratch
 
-COPY --from=wasm-shim-build /usr/src/wasm-shim/target/wasm32-unknown-unknown/release/wasm_shim.wasm /plugin.wasm
+COPY --from=wasm-shim-build /usr/src/wasm-shim/target/wasm32-wasip1/release/wasm_shim.wasm /plugin.wasm

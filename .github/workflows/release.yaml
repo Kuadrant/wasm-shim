@@ -19,7 +19,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v3
         with:
           version: "3.x"
@@ -27,10 +27,10 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target wasm32-unknown-unknown
+          args: --release --target wasm32-wasip1
       - uses: shogo82148/actions-upload-release-asset@v1
         with:
           upload_url: ${{ github.event.release.upload_url }}
-          asset_path: target/wasm32-unknown-unknown/release/wasm_shim.wasm
+          asset_path: target/wasm32-wasip1/release/wasm_shim.wasm
           asset_content_type: application/wasm
           asset_name: kuadrant-wasm-shim-${{ github.ref_name }}
