@@ -12,7 +12,7 @@ This is a Proxy-Wasm module written in Rust that acts as a shim between Envoy pr
 
 Install the WebAssembly target:
 ```bash
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32-wasip1
 ```
 
 ### Build Commands
@@ -28,7 +28,7 @@ make build BUILD=release
 make build FEATURES=debug-host-behaviour
 ```
 
-The built WASM module will be at: `target/wasm32-unknown-unknown/{debug|release}/wasm_shim.wasm`
+The built WASM module will be at: `target/wasm32-wasip1/{debug|release}/wasm_shim.wasm`
 
 ### Testing
 
@@ -53,7 +53,7 @@ cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 
 # Check code without building
-cargo check --release --target wasm32-unknown-unknown
+cargo check --release --target wasm32-wasip1
 ```
 
 ## Local Development Environment

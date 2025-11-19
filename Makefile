@@ -8,7 +8,7 @@ ifneq ($(FEATURES),)
 	FEATURE_CMD=--features $(FEATURES)
 endif
 
-WASM_RELEASE_BIN = $(PROJECT_PATH)/target/wasm32-unknown-unknown/$(BUILD)/wasm_shim.wasm
+WASM_RELEASE_BIN = $(PROJECT_PATH)/target/wasm32-wasip1/$(BUILD)/wasm_shim.wasm
 WASM_RELEASE_PATH = $(dir $(WASM_RELEASE_BIN))
 
 PROTOC_BIN=$(PROJECT_PATH)/bin/protoc
@@ -34,7 +34,7 @@ endif
 # builds the module and move to deploy folder
 build: $(PROTOC_BIN)
 	@echo "Building the wasm filter"
-	PATH=$(PROJECT_PATH)/bin:$$PATH cargo build --target=wasm32-unknown-unknown $(BUILD_OPTS) $(FEATURE_CMD)
+	PATH=$(PROJECT_PATH)/bin:$$PATH cargo build --target=wasm32-wasip1 $(BUILD_OPTS) $(FEATURE_CMD)
 
 # Remove old ones and fetch the latest third-party protobufs
 update-protobufs:

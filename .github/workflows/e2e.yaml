@@ -21,7 +21,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v3
         with:
           version: "3.x"
@@ -29,7 +29,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --target wasm32-unknown-unknown
+          args: --target wasm32-wasip1
       - name: Run docker compose
         run: |
           docker compose -f ./e2e/basic/docker-compose.yaml run start_services
@@ -46,7 +46,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v3
         with:
           version: "3.x"
@@ -54,7 +54,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --target wasm32-unknown-unknown
+          args: --target wasm32-wasip1
       - name: Run docker compose
         run: |
           docker compose -f ./e2e/remote-address/docker-compose.yaml run start_services
