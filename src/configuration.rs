@@ -89,6 +89,13 @@ pub enum ServiceType {
     RateLimitReport,
 }
 
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Observability {
+    pub http_header_identifier: Option<String>,
+    pub default_level: Option<String>,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
@@ -96,6 +103,8 @@ pub struct PluginConfiguration {
     pub request_data: HashMap<String, String>,
     pub services: HashMap<String, Service>,
     pub action_sets: Vec<ActionSet>,
+    #[serde(default)]
+    pub observability: Observability,
 }
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
