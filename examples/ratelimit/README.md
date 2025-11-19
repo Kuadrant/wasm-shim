@@ -6,7 +6,7 @@ The Wasm module configuration that performs gRPC call to the rate limiting servi
 
 ### Run Manually
 
-It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
+It requires Wasm module being built at `target/wasm32-wasip1/debug/wasm_shim.wasm`.
 Check *Makefile* at the root of the project to build the module. Usually running `make build`
 at the root of the project.
 

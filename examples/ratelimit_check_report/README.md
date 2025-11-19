@@ -11,7 +11,7 @@ It supports two response body formats:
 
 ### JSON format
 
-It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
+It requires Wasm module being built at `target/wasm32-wasip1/debug/wasm_shim.wasm`.
 Check *Makefile* at the root of the project to build the module. Usually running `make build`
 at the root of the project.
 
@@ -89,7 +89,7 @@ data: {"id":"chatcmpl-fda5e419-5449-4cb1-9537-07523fe3b1a7","created":1758102619
 data: [DONE]
 ```
 
-It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
+It requires Wasm module being built at `target/wasm32-wasip1/debug/wasm_shim.wasm`.
 Check *Makefile* at the root of the project to build the module. Usually running `make build`
 at the root of the project.
 
