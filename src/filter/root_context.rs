@@ -1,6 +1,7 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::configuration::PluginConfiguration;
 use crate::kuadrant::PipelineFactory;
+use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use log::{debug, error, info, LevelFilter};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -9,10 +10,6 @@ use std::rc::Rc;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
-const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
-const WASM_SHIM_FEATURES: &str = env!("WASM_SHIM_FEATURES");
-const WASM_SHIM_GIT_HASH: &str = env!("WASM_SHIM_GIT_HASH");
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
 pub struct FilterRoot {
@@ -38,7 +35,7 @@ impl RootContext for FilterRoot {
         // Initialize tracing with OTLP exporter
         let _ = tracing_subscriber::registry()
             .with(crate::tracing::otlp_layer(
-                "http://tempo.tempo.svc.cluster.local:4318/v1/traces",
+                "outbound|4317||jaeger-collector.istio-system.svc.cluster.local",
             ))
             .try_init();
 
