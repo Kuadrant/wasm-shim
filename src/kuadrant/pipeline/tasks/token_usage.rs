@@ -38,6 +38,7 @@ impl From<Box<Self>> for TokenUsageTask {
 }
 
 impl Task for TokenUsageTask {
+    #[tracing::instrument(name = "token_usage", skip(self, ctx))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         let mut task: TokenUsageTask = self.into();
 

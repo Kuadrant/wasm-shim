@@ -61,7 +61,7 @@ impl ReqRespCtx {
             });
         }
 
-        let span = tracing::info_span!("kuadrant_request");
+        let span = tracing::info_span!("kuadrant_filter");
         if let Err(e) = span.set_parent(self.otel_context.clone()) {
             debug!("failed to set parent span ctx: {e:?}");
         }
@@ -71,7 +71,7 @@ impl ReqRespCtx {
     }
 
     pub fn end_request_span(&mut self) {
-        self.request_span_guard.take();
+        std::mem::drop(self.request_span_guard.take());
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {

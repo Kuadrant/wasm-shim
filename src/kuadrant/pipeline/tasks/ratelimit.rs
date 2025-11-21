@@ -242,6 +242,7 @@ impl RateLimitTask {
 }
 
 impl Task for RateLimitTask {
+    #[tracing::instrument(name = "ratelimit", skip(self, ctx), fields(task_id = %self.task_id))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
             Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
@@ -288,19 +289,25 @@ impl Task for RateLimitTask {
         };
 
         // Dispatch the rate limit service message
-        let token_id = match self
-            .service
-            .dispatch_ratelimit(ctx, &domain, descriptors, hits_addend)
-        {
-            Ok(id) => id,
-            Err(e) => {
-                error!("Failed to dispatch rate limit: {}", e);
-                return TaskOutcome::Failed;
+        let token_id = {
+            let _span = tracing::debug_span!("ratelimit_request").entered();
+            match self
+                .service
+                .dispatch_ratelimit(ctx, &domain, descriptors, hits_addend)
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    error!("Failed to dispatch rate limit: {}", e);
+                    return TaskOutcome::Failed;
+                }
             }
         };
 
         // Prepare response processing
         let service = self.service.clone();
+
+        // Capture the current span context to link the response processing
+        let parent_span = tracing::Span::current();
 
         // Return deferred outcome with response processor
         TaskOutcome::Deferred {
@@ -308,23 +315,27 @@ impl Task for RateLimitTask {
             pending: Box::new(PendingTask {
                 task_id: self.task_id,
                 pauses_filter: true,
-                process_response: Box::new(move |ctx| match ctx.get_grpc_response_data() {
-                    Ok((status_code, response_size)) => {
-                        if status_code != proxy_wasm::types::Status::Ok as u32 {
-                            TaskOutcome::Failed
-                        } else {
-                            match service.get_response(ctx, response_size) {
-                                Ok(response) => process_rl_response(response),
-                                Err(e) => {
-                                    error!("Failed to get response: {e:?}");
-                                    TaskOutcome::Failed
+                process_response: Box::new(move |ctx| {
+                    let span = tracing::debug_span!(parent: parent_span.id(), "ratelimit_response");
+                    let _guard = span.enter();
+                    match ctx.get_grpc_response_data() {
+                        Ok((status_code, response_size)) => {
+                            if status_code != proxy_wasm::types::Status::Ok as u32 {
+                                TaskOutcome::Failed
+                            } else {
+                                match service.get_response(ctx, response_size) {
+                                    Ok(response) => process_rl_response(response),
+                                    Err(e) => {
+                                        error!("Failed to get response: {e:?}");
+                                        TaskOutcome::Failed
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        error!("Failed to get response: {e:?}");
-                        TaskOutcome::Failed
+                        Err(e) => {
+                            error!("Failed to get response: {e:?}");
+                            TaskOutcome::Failed
+                        }
                     }
                 }),
             }),
