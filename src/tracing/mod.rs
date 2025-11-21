@@ -1,8 +1,6 @@
-mod exporter;
 mod processor;
 mod propagation;
 
-pub use exporter::ProxyWasmOtlpExporter;
 pub use processor::{get_span_processor, BufferingSpanProcessor};
 pub use propagation::{HeadersExtractor, HeadersInjector};
 
