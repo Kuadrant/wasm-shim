@@ -3,9 +3,11 @@ use crate::kuadrant::ReqRespCtx;
 use std::{rc::Rc, time::Duration};
 
 mod auth;
+mod opentelemetry;
 pub mod rate_limit;
 
 pub use auth::AuthService;
+pub use opentelemetry::OpenTelemetryService;
 pub use rate_limit::RateLimitService;
 
 #[derive(Clone)]
