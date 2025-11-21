@@ -1,6 +1,8 @@
 mod exporter;
+mod processor;
 
 pub use exporter::ProxyWasmOtlpExporter;
+pub use processor::{get_span_processor, BufferingSpanProcessor};
 
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
