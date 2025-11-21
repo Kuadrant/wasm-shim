@@ -1,4 +1,4 @@
-use log::warn;
+use log::{debug, warn};
 use std::sync::Arc;
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -19,12 +19,14 @@ pub struct ReqRespCtx {
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
+    otel_context: opentelemetry::Context,
+    request_span_guard: Option<Arc<tracing::span::EnteredSpan>>,
 }
 
 impl Default for ReqRespCtx {
     fn default() -> Self {
-        let ctx = Self::new(Arc::new(ProxyWasmHost));
-        ctx.initialize_request_span();
+        let mut ctx = Self::new(Arc::new(ProxyWasmHost));
+        ctx.init_tracing();
         ctx
     }
 }
@@ -38,6 +40,8 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
+            otel_context: opentelemetry::Context::new(),
+            request_span_guard: None,
         }
     }
 
@@ -46,35 +50,28 @@ impl ReqRespCtx {
         self
     }
 
-    fn initialize_request_span(&self) {
-        let parent_context = self.extract_parent_context();
-
-        let span = tracing::info_span!("kuadrant_request");
-
-        if let Some(parent) = parent_context {
-            if let Err(e) = span.set_parent(parent) {
-                warn!("failed to set parent span ctx: {e:?}");
-            }
-        }
-
-        let _entered = span.entered();
-        std::mem::forget(_entered); // Keep the span active
-    }
-
-    fn extract_parent_context(&self) -> Option<opentelemetry::Context> {
+    fn init_tracing(&mut self) {
         let request_headers: Result<AttributeState<Option<Headers>>, _> =
             self.get_attribute("request.headers");
 
         if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
             let extractor = crate::tracing::HeadersExtractor::new(&header_map);
-
-            let context = opentelemetry::global::get_text_map_propagator(|propagator| {
+            self.otel_context = opentelemetry::global::get_text_map_propagator(|propagator| {
                 propagator.extract(&extractor)
             });
-
-            return Some(context);
         }
-        None
+
+        let span = tracing::info_span!("kuadrant_request");
+        if let Err(e) = span.set_parent(self.otel_context.clone()) {
+            debug!("failed to set parent span ctx: {e:?}");
+        }
+
+        let entered = span.entered();
+        self.request_span_guard = Some(Arc::new(entered));
+    }
+
+    pub fn end_request_span(&mut self) {
+        self.request_span_guard.take();
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
@@ -341,11 +338,15 @@ impl ReqRespCtx {
     fn get_tracing_headers(&self) -> Vec<(String, Vec<u8>)> {
         let mut headers = Vec::new();
 
-        let context = tracing::Span::current().context();
+        let context = if tracing::Span::current().is_none() {
+            &self.otel_context
+        } else {
+            &tracing::Span::current().context()
+        };
 
         opentelemetry::global::get_text_map_propagator(|propagator| {
             let mut injector = crate::tracing::HeadersInjector::new(&mut headers);
-            propagator.inject_context(&context, &mut injector);
+            propagator.inject_context(context, &mut injector);
         });
 
         headers
