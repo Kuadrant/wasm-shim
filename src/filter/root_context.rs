@@ -32,6 +32,14 @@ impl RootContext for FilterRoot {
             "v{WASM_SHIM_VERSION} ({WASM_SHIM_GIT_HASH}) {WASM_SHIM_FEATURES} {WASM_SHIM_PROFILE}"
         );
 
+        // Set up global text map propagators
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(opentelemetry_sdk::propagation::TraceContextPropagator::new()),
+                Box::new(opentelemetry_sdk::propagation::BaggagePropagator::new()),
+            ]),
+        );
+
         // Initialize tracing with OTLP exporter
         let _ = tracing_subscriber::registry()
             .with(crate::tracing::otlp_layer(

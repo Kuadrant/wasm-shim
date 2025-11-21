@@ -6,6 +6,7 @@ use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 type RequestData = ((String, String), Expression);
 
@@ -22,7 +23,9 @@ pub struct ReqRespCtx {
 
 impl Default for ReqRespCtx {
     fn default() -> Self {
-        Self::new(Arc::new(ProxyWasmHost))
+        let ctx = Self::new(Arc::new(ProxyWasmHost));
+        ctx.initialize_request_span();
+        ctx
     }
 }
 
@@ -41,6 +44,37 @@ impl ReqRespCtx {
     pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
         self.request_data = Some(request_data);
         self
+    }
+
+    fn initialize_request_span(&self) {
+        let parent_context = self.extract_parent_context();
+
+        let span = tracing::info_span!("kuadrant_request");
+
+        if let Some(parent) = parent_context {
+            if let Err(e) = span.set_parent(parent) {
+                warn!("failed to set parent span ctx: {e:?}");
+            }
+        }
+
+        let _entered = span.entered();
+        std::mem::forget(_entered); // Keep the span active
+    }
+
+    fn extract_parent_context(&self) -> Option<opentelemetry::Context> {
+        let request_headers: Result<AttributeState<Option<Headers>>, _> =
+            self.get_attribute("request.headers");
+
+        if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
+            let extractor = crate::tracing::HeadersExtractor::new(&header_map);
+
+            let context = opentelemetry::global::get_text_map_propagator(|propagator| {
+                propagator.extract(&extractor)
+            });
+
+            return Some(context);
+        }
+        None
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
@@ -278,7 +312,7 @@ impl ReqRespCtx {
         let tracing_headers = self.get_tracing_headers();
         let headers: Vec<(&str, &[u8])> = tracing_headers
             .iter()
-            .map(|(name, value)| (*name, value.as_slice()))
+            .map(|(name, value)| (name.as_str(), value.as_slice()))
             .collect();
 
         self.backend.dispatch_grpc_call(
@@ -304,20 +338,15 @@ impl ReqRespCtx {
         self.backend.send_http_reply(status_code, headers, body)
     }
 
-    fn get_tracing_headers(&self) -> Vec<(&'static str, Vec<u8>)> {
-        const TRACING_HEADERS: [&str; 3] = ["traceparent", "tracestate", "baggage"];
+    fn get_tracing_headers(&self) -> Vec<(String, Vec<u8>)> {
         let mut headers = Vec::new();
 
-        let request_headers: Result<AttributeState<Option<Headers>>, _> =
-            self.get_attribute("request.headers");
+        let context = tracing::Span::current().context();
 
-        if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
-            for header_name in &TRACING_HEADERS {
-                for header_value in header_map.get_all(header_name) {
-                    headers.push((*header_name, header_value.as_bytes().to_vec()));
-                }
-            }
-        }
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            let mut injector = crate::tracing::HeadersInjector::new(&mut headers);
+            propagator.inject_context(&context, &mut injector);
+        });
 
         headers
     }
