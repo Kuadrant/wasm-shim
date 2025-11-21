@@ -28,6 +28,7 @@ impl SendReplyTask {
 }
 
 impl Task for SendReplyTask {
+    #[tracing::instrument(name = "send_reply", skip(self, ctx), fields(status_code = %self.status_code))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         let headers_ref: Vec<(&str, &str)> = self
             .headers
