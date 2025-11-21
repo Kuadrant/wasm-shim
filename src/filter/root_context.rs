@@ -7,8 +7,6 @@ use log::{debug, error, info, LevelFilter};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
@@ -32,23 +30,12 @@ impl RootContext for FilterRoot {
             "v{WASM_SHIM_VERSION} ({WASM_SHIM_GIT_HASH}) {WASM_SHIM_FEATURES} {WASM_SHIM_PROFILE}"
         );
 
-        // Set up global text map propagators
         opentelemetry::global::set_text_map_propagator(
             opentelemetry::propagation::TextMapCompositePropagator::new(vec![
                 Box::new(opentelemetry_sdk::propagation::TraceContextPropagator::new()),
                 Box::new(opentelemetry_sdk::propagation::BaggagePropagator::new()),
             ]),
         );
-
-        // Initialize tracing with OTLP exporter
-        let _ = tracing_subscriber::registry()
-            .with(crate::tracing::otlp_layer(
-                "outbound|4317||jaeger-collector.istio-system.svc.cluster.local",
-            ))
-            .try_init();
-
-        // Bridge log crate to tracing
-        tracing_log::LogTracer::init().ok();
 
         info!(
             "#{} {} {}: VM started",

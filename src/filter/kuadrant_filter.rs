@@ -3,26 +3,21 @@ use log::{debug, error};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
 use std::rc::Rc;
-use tracing::Span;
 
 pub struct KuadrantFilter {
     context_id: u32,
     factory: Rc<PipelineFactory>,
     pipeline: Option<Pipeline>,
     in_response_phase: bool,
-    filter_span: Span,
 }
 
 impl KuadrantFilter {
     pub fn new(context_id: u32, factory: Rc<PipelineFactory>) -> Self {
-        let filter_span = tracing::info_span!("kuadrant_filter", context_id);
-
         Self {
             context_id,
             factory,
             pipeline: None,
             in_response_phase: false,
-            filter_span,
         }
     }
 
@@ -59,7 +54,6 @@ impl Context for KuadrantFilter {
 }
 
 impl HttpContext for KuadrantFilter {
-    #[tracing::instrument(skip(self), parent = &self.filter_span, fields(context_id = self.context_id))]
     fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
 
@@ -87,7 +81,6 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    #[tracing::instrument(skip(self), parent = &self.filter_span, fields(context_id = self.context_id))]
     fn on_http_request_body(&mut self, _buffer_size: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_body", self.context_id);
         if let Some(pipeline) = self.pipeline.take() {
@@ -100,7 +93,6 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    #[tracing::instrument(skip(self), parent = &self.filter_span, fields(context_id = self.context_id))]
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         self.in_response_phase = true;
@@ -114,7 +106,6 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    #[tracing::instrument(skip(self), parent = &self.filter_span, fields(context_id = self.context_id))]
     fn on_http_response_body(&mut self, buffer_size: usize, end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_body", self.context_id);
         if let Some(mut pipeline) = self.pipeline.take() {

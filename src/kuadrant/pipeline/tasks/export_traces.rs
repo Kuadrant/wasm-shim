@@ -1,28 +1,24 @@
 use crate::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
-use crate::services::{OpenTelemetryService, Service};
+use crate::services::OpenTelemetryService;
 use log::{debug, warn};
 use std::rc::Rc;
 
 pub struct ExportTracesTask {
     task_id: String,
     service: Rc<OpenTelemetryService>,
+    dependencies: Vec<String>,
 }
 
 impl ExportTracesTask {
-    pub fn new(task_id: String, service: Rc<OpenTelemetryService>) -> Self {
-        Self { task_id, service }
-    }
+    pub fn new(service: Rc<OpenTelemetryService>, dependencies: Vec<String>) -> Self {
+        crate::tracing::init_tracing();
 
-    pub fn new_if_pending(service: Rc<OpenTelemetryService>) -> Option<Self> {
-        let processor = crate::tracing::get_span_processor();
-
-        if !processor.has_pending_spans() {
-            return None;
+        Self {
+            task_id: "export_traces".to_string(),
+            service,
+            dependencies,
         }
-
-        let task_id = format!("export_traces_{}", processor.pending_count());
-        Some(Self::new(task_id, service))
     }
 }
 
@@ -36,10 +32,13 @@ impl Task for ExportTracesTask {
     }
 
     fn dependencies(&self) -> &[String] {
-        &[]
+        &self.dependencies
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        // End the request span so it gets added to the buffer
+        ctx.end_request_span();
+
         let processor = crate::tracing::get_span_processor();
         let spans = processor.take_pending_spans();
 

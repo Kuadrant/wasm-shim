@@ -8,18 +8,27 @@ pub use propagation::{HeadersExtractor, HeadersInjector};
 
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use std::sync::OnceLock;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
-pub fn otlp_layer<S>(endpoint: impl Into<String>) -> impl tracing_subscriber::Layer<S>
-where
-    S: ::tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
-{
-    let exporter = ProxyWasmOtlpExporter::new(endpoint);
+static TRACING_INITIALIZED: OnceLock<()> = OnceLock::new();
 
-    let provider = SdkTracerProvider::builder()
-        .with_simple_exporter(exporter)
-        .build();
+pub fn init_tracing() {
+    TRACING_INITIALIZED.get_or_init(|| {
+        let processor_handle = processor::SpanProcessorHandle;
 
-    let tracer = provider.tracer("wasm-shim");
+        let provider = SdkTracerProvider::builder()
+            .with_span_processor(processor_handle)
+            .build();
 
-    tracing_opentelemetry::layer().with_tracer(tracer)
+        let tracer = provider.tracer("wasm-shim");
+
+        let _ = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(tracer))
+            .try_init();
+
+        // Bridge log crate to tracing
+        tracing_log::LogTracer::init().ok();
+    });
 }

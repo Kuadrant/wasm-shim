@@ -11,6 +11,31 @@ pub fn get_span_processor() -> &'static BufferingSpanProcessor {
     SPAN_PROCESSOR.get_or_init(BufferingSpanProcessor::new)
 }
 
+#[derive(Debug, Clone)]
+pub struct SpanProcessorHandle;
+
+impl SpanProcessor for SpanProcessorHandle {
+    fn on_start(&self, span: &mut Span, cx: &opentelemetry::Context) {
+        get_span_processor().on_start(span, cx)
+    }
+
+    fn on_end(&self, span: SpanData) {
+        get_span_processor().on_end(span)
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        get_span_processor().force_flush()
+    }
+
+    fn shutdown(&self) -> OTelSdkResult {
+        get_span_processor().shutdown()
+    }
+
+    fn shutdown_with_timeout(&self, timeout: std::time::Duration) -> OTelSdkResult {
+        get_span_processor().shutdown_with_timeout(timeout)
+    }
+}
+
 #[derive(Debug)]
 pub struct BufferingSpanProcessor {
     buffer: Mutex<VecDeque<SpanData>>,
