@@ -1,4 +1,5 @@
 mod auth;
+mod export_traces;
 mod failure_mode;
 mod headers;
 mod ratelimit;
@@ -7,6 +8,7 @@ mod store_data;
 mod token_usage;
 
 pub use auth::AuthTask;
+pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use ratelimit::RateLimitTask;
