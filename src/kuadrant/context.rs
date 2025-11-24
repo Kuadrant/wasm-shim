@@ -483,7 +483,10 @@ mod tests {
     #[test]
     fn test_tracing_headers() {
         let headers = vec![
-            ("traceparent".to_string(), "00-trace-id-123".to_string()),
+            (
+                "traceparent".to_string(),
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string(),
+            ),
             ("tracestate".to_string(), "state=active".to_string()),
             ("baggage".to_string(), "userId=alice".to_string()),
             ("baggage".to_string(), "sessionId=xyz".to_string()),
@@ -491,30 +494,29 @@ mod tests {
         ];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.init_tracing();
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 4);
+        assert_eq!(tracing_headers.len(), 3);
 
         assert!(tracing_headers
             .iter()
-            .any(|(name, value)| *name == "traceparent" && value.as_slice() == b"00-trace-id-123"));
+            .any(|(name, value)| *name == "traceparent"
+                && value.as_slice() == b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
         assert!(tracing_headers
             .iter()
             .any(|(name, value)| *name == "tracestate" && value.as_slice() == b"state=active"));
 
-        let baggage_values: Vec<_> = tracing_headers
+        let baggage = tracing_headers
             .iter()
-            .filter(|(name, _)| *name == "baggage")
-            .collect();
-        assert_eq!(baggage_values.len(), 2);
-        assert!(baggage_values
-            .iter()
-            .any(|(_, value)| value.as_slice() == b"userId=alice"));
-        assert!(baggage_values
-            .iter()
-            .any(|(_, value)| value.as_slice() == b"sessionId=xyz"));
+            .find(|(name, _)| *name == "baggage")
+            .expect("baggage header should exist");
+
+        let baggage_value = std::str::from_utf8(&baggage.1).expect("valid UTF-8");
+        assert!(baggage_value.contains("userId=alice"));
+        assert!(baggage_value.contains("sessionId=xyz"));
 
         assert!(!tracing_headers
             .iter()
@@ -523,16 +525,23 @@ mod tests {
 
     #[test]
     fn test_tracing_headers_partial() {
-        let headers = vec![("traceparent".to_string(), "00-trace-id-456".to_string())];
+        let headers = vec![(
+            "traceparent".to_string(),
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string(),
+        )];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.init_tracing();
 
         let tracing_headers = ctx.get_tracing_headers();
 
         assert_eq!(tracing_headers.len(), 1);
         assert_eq!(tracing_headers[0].0, "traceparent");
-        assert_eq!(tracing_headers[0].1.as_slice(), b"00-trace-id-456");
+        assert_eq!(
+            tracing_headers[0].1.as_slice(),
+            b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        );
     }
 
     #[test]
@@ -540,7 +549,8 @@ mod tests {
         let headers: Vec<(String, String)> = vec![];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.init_tracing();
 
         let tracing_headers = ctx.get_tracing_headers();
 

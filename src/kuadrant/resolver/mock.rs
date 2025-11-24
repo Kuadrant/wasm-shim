@@ -16,6 +16,12 @@ pub struct MockWasmHost {
 
 impl MockWasmHost {
     pub fn new() -> Self {
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(opentelemetry_sdk::propagation::TraceContextPropagator::new()),
+                Box::new(opentelemetry_sdk::propagation::BaggagePropagator::new()),
+            ]),
+        );
         Self {
             properties: Mutex::new(HashMap::new()),
             maps: Mutex::new(HashMap::new()),
