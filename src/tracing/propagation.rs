@@ -1,27 +1,26 @@
 use crate::data::Headers;
 use opentelemetry::propagation::{Extractor, Injector};
+use std::collections::HashMap;
 
-pub struct HeadersExtractor<'a> {
-    headers: &'a Headers,
+pub struct HeadersExtractor {
+    headers_map: HashMap<String, String>,
 }
 
-impl<'a> HeadersExtractor<'a> {
-    pub fn new(headers: &'a Headers) -> Self {
-        Self { headers }
+impl HeadersExtractor {
+    pub fn new(headers: &Headers) -> Self {
+        Self {
+            headers_map: headers.clone().into(),
+        }
     }
 }
 
-impl<'a> Extractor for HeadersExtractor<'a> {
+impl Extractor for HeadersExtractor {
     fn get(&self, key: &str) -> Option<&str> {
-        self.headers.get(key)
+        self.headers_map.get(key).map(|s| s.as_str())
     }
 
     fn keys(&self) -> Vec<&str> {
-        self.headers
-            .inner()
-            .iter()
-            .map(|(k, _)| k.as_str())
-            .collect()
+        self.headers_map.keys().map(|k| k.as_str()).collect()
     }
 }
 
@@ -37,6 +36,8 @@ impl<'a> HeadersInjector<'a> {
 
 impl<'a> Injector for HeadersInjector<'a> {
     fn set(&mut self, key: &str, value: String) {
-        self.headers.push((key.to_string(), value.into_bytes()));
+        if !value.is_empty() {
+            self.headers.push((key.to_string(), value.into_bytes()));
+        }
     }
 }
