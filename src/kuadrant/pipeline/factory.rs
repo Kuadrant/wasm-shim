@@ -4,7 +4,7 @@ use crate::data::{
     cel::{Predicate, PredicateVec},
     Expression,
 };
-use crate::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
+use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError};
 use crate::kuadrant::pipeline::executor::Pipeline;
 use crate::kuadrant::pipeline::tasks::Task;
 use crate::kuadrant::ReqRespCtx;
@@ -42,13 +42,17 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        if let Some(_request_id_header) = config.observability.http_header_identifier {
-            // todo: create a Task to add the header, and the required associated value
-            // - carry over the `x-request-id` or other existing value?
-            // - use the one we created...
-            // - make sure it's added to all blueprints
-            // - add a "default fallback" blueprint
-        }
+        let dev_mode_action = config
+            .observability
+            .http_header_identifier
+            .map(|header| Action {
+                id: "kuadrant.devMode".to_string(),
+                service: ServiceInstance::Tracing,
+                scope: header,
+                predicates: vec![],
+                conditional_data: Default::default(),
+                dependencies: Default::default(),
+            });
         let services: HashMap<String, ServiceInstance> = config
             .services
             .iter()
@@ -61,8 +65,12 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
 
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
-            let blueprint = Rc::new(Blueprint::compile(config_action_set, &services)?);
+            let mut blueprint = Blueprint::compile(config_action_set, &services)?;
+            if let Some(dev_mode) = &dev_mode_action {
+                blueprint.actions.push(dev_mode.clone());
+            }
 
+            let blueprint = Rc::new(blueprint);
             for hostname in &config_action_set.route_rule_conditions.hostnames {
                 let key = reverse_subdomain(hostname);
                 index.map_with_default(
