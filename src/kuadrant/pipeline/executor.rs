@@ -121,16 +121,8 @@ impl Pipeline {
     }
 
     pub fn requires_pause(&self) -> bool {
-        let has_blocking_deferred_tasks = self
-            .deferred_tasks
-            .values()
-            .any(|task| task.pauses_filter(&self.ctx));
+        let has_blocking_queued_tasks = self.task_queue.iter().any(|task| task.pauses_filter());
 
-        let has_blocking_queued_tasks = self
-            .task_queue
-            .iter()
-            .any(|task| task.pauses_filter(&self.ctx));
-
-        has_blocking_deferred_tasks || has_blocking_queued_tasks
+        !self.deferred_tasks.is_empty() || has_blocking_queued_tasks
     }
 }

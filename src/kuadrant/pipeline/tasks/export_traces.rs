@@ -27,7 +27,7 @@ impl Task for ExportTracesTask {
         Some(self.task_id.clone())
     }
 
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+    fn pauses_filter(&self) -> bool {
         false
     }
 
@@ -63,7 +63,6 @@ impl Task for ExportTracesTask {
             token_id,
             pending: Box::new(PendingTask {
                 task_id: self.task_id,
-                pauses_filter: true,
                 process_response: Box::new(move |ctx| {
                     match ctx.get_grpc_response_data() {
                         Ok((status_code, _response_size)) => {

@@ -32,14 +32,13 @@ pub trait Task {
         &[]
     }
 
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+    fn pauses_filter(&self) -> bool {
         false
     }
 }
 
 pub struct PendingTask {
     task_id: String,
-    pauses_filter: bool,
     process_response: Box<ResponseProcessor>,
 }
 
@@ -50,8 +49,8 @@ impl Task for PendingTask {
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
     }
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
-        self.pauses_filter
+    fn pauses_filter(&self) -> bool {
+        true
     }
 }
 

@@ -314,7 +314,6 @@ impl Task for RateLimitTask {
             token_id,
             pending: Box::new(PendingTask {
                 task_id: self.task_id,
-                pauses_filter: true,
                 process_response: Box::new(move |ctx| {
                     let span = tracing::debug_span!(parent: parent_span.id(), "ratelimit_response");
                     let _guard = span.enter();
@@ -350,7 +349,7 @@ impl Task for RateLimitTask {
         self.dependencies.as_slice()
     }
 
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+    fn pauses_filter(&self) -> bool {
         self.pauses_filter
     }
 }
