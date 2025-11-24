@@ -21,6 +21,7 @@ type RequestData = ((String, String), Expression);
 pub struct PipelineFactory {
     index: Trie<String, Vec<Rc<Blueprint>>>,
     request_data: Arc<Vec<RequestData>>,
+    fallback_blueprint: Option<Rc<Blueprint>>,
 }
 
 #[derive(Debug)]
@@ -96,6 +97,14 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
         Ok(Self {
             index,
             request_data: Arc::new(request_data),
+            fallback_blueprint: dev_mode_action.map(|action| {
+                Blueprint {
+                    name: "kuadrant.devMode".to_string(),
+                    route_predicates: vec![],
+                    actions: vec![action],
+                }
+                .into()
+            }),
         })
     }
 }
@@ -105,6 +114,7 @@ impl Default for PipelineFactory {
         Self {
             index: Trie::new(),
             request_data: Arc::new(Vec::new()),
+            fallback_blueprint: None,
         }
     }
 }
@@ -148,7 +158,7 @@ impl PipelineFactory {
         }
 
         debug!("No matching blueprint found for hostname: {}", hostname);
-        Ok(None)
+        Ok(self.fallback_blueprint.as_ref())
     }
 
     fn get_hostname(&self, ctx: &ReqRespCtx) -> Result<String, BuildError> {
