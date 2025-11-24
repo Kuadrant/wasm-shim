@@ -11,6 +11,7 @@ pub use auth::AuthTask;
 pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
+use log::debug;
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
@@ -42,6 +43,15 @@ pub struct PendingTask {
     process_response: Box<ResponseProcessor>,
 }
 
+impl PendingTask {
+    pub fn new(task_id: String, process_response: Box<ResponseProcessor>) -> Self {
+        Self {
+            task_id,
+            process_response,
+        }
+    }
+}
+
 impl Task for PendingTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         (self.process_response)(ctx)
@@ -63,4 +73,35 @@ pub enum TaskOutcome {
     Requeued(Vec<Box<dyn Task>>),
     Failed,
     Terminate(Box<dyn Task>),
+}
+
+pub trait TeardownAction {
+    fn execute(self: Box<Self>, ctx: &mut ReqRespCtx) -> TeardownOutcome;
+}
+
+pub enum TeardownOutcome {
+    Done,
+    Deferred(u32),
+}
+
+pub fn noop_response_processor(token_id: u32) -> impl FnOnce(&mut ReqRespCtx) -> TaskOutcome {
+    move |ctx: &mut ReqRespCtx| {
+        match ctx.get_grpc_response_data() {
+            Ok((status_code, _response_size)) => {
+                if status_code != 0 {
+                    debug!(
+                        "gRPC request failed with status {} (token_id: {})",
+                        status_code, token_id
+                    );
+                }
+            }
+            Err(e) => {
+                debug!(
+                    "Failed to get gRPC response for token_id {}: {:?}",
+                    token_id, e
+                );
+            }
+        }
+        TaskOutcome::Done
+    }
 }

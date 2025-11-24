@@ -1,4 +1,5 @@
 use log::{debug, warn};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -20,7 +21,7 @@ pub struct ReqRespCtx {
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
     otel_context: opentelemetry::Context,
-    request_span_guard: Option<Arc<tracing::span::EnteredSpan>>,
+    request_span_guard: Option<Rc<tracing::span::EnteredSpan>>,
 }
 
 impl Default for ReqRespCtx {
@@ -62,12 +63,13 @@ impl ReqRespCtx {
         }
 
         let span = tracing::info_span!("kuadrant_filter");
-        if let Err(e) = span.set_parent(self.otel_context.clone()) {
-            debug!("failed to set parent span ctx: {e:?}");
+        if !span.is_disabled() {
+            if let Err(e) = span.set_parent(self.otel_context.clone()) {
+                debug!("failed to set parent span ctx: {e:?}");
+            }
+            let entered = span.entered();
+            self.request_span_guard = Some(Rc::new(entered));
         }
-
-        let entered = span.entered();
-        self.request_span_guard = Some(Arc::new(entered));
     }
 
     pub fn end_request_span(&mut self) {

@@ -6,7 +6,7 @@ use crate::data::{
 };
 use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError};
 use crate::kuadrant::pipeline::executor::Pipeline;
-use crate::kuadrant::pipeline::tasks::Task;
+
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use log::debug;
@@ -128,12 +128,16 @@ impl PipelineFactory {
             None => return Ok(None),
         };
 
-        let tasks: Vec<Box<dyn Task>> = blueprint.to_tasks(&ctx);
+        let (tasks, teardown_tasks) = blueprint.to_tasks(&ctx);
         if tasks.is_empty() {
             return Ok(None);
         }
 
-        Ok(Some(Pipeline::new(ctx).with_tasks(tasks)))
+        Ok(Some(
+            Pipeline::new(ctx)
+                .with_tasks(tasks)
+                .with_teardown_tasks(teardown_tasks),
+        ))
     }
 
     fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<&Rc<Blueprint>>, BuildError> {

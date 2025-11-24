@@ -1,7 +1,9 @@
 use log::error;
 
 use crate::kuadrant::{
-    pipeline::tasks::{Task, TaskOutcome},
+    pipeline::tasks::{
+        noop_response_processor, PendingTask, Task, TaskOutcome, TeardownAction, TeardownOutcome,
+    },
     ReqRespCtx,
 };
 use std::collections::{BTreeMap, HashSet};
@@ -11,6 +13,7 @@ pub struct Pipeline {
     task_queue: Vec<Box<dyn Task>>,
     deferred_tasks: BTreeMap<u32, Box<dyn Task>>,
     completed_tasks: HashSet<String>,
+    teardown_tasks: Vec<Box<dyn TeardownAction>>,
 }
 
 impl Pipeline {
@@ -20,12 +23,52 @@ impl Pipeline {
             task_queue: Vec::new(),
             deferred_tasks: BTreeMap::new(),
             completed_tasks: HashSet::new(),
+            teardown_tasks: Vec::new(),
         }
     }
 
     pub fn with_tasks(mut self, tasks: Vec<Box<dyn Task>>) -> Self {
         self.task_queue = tasks;
         self
+    }
+
+    pub fn with_teardown_tasks(mut self, tasks: Vec<Box<dyn TeardownAction>>) -> Self {
+        self.teardown_tasks = tasks;
+        self
+    }
+
+    fn replace_deferred_with_noop(&mut self) {
+        // map existing deferred tasks to no-op consumers
+        let deferred = std::mem::take(&mut self.deferred_tasks);
+        self.deferred_tasks = deferred
+            .into_iter()
+            .map(|(token_id, task)| {
+                // Create a new PendingTask with no-op processor
+                let pending = Box::new(PendingTask::new(
+                    task.id().unwrap_or_default(),
+                    Box::new(noop_response_processor(token_id)),
+                )) as Box<dyn Task>;
+                (token_id, pending)
+            })
+            .collect();
+    }
+
+    fn execute_teardown(&mut self) {
+        for action in self.teardown_tasks.drain(..) {
+            match action.execute(&mut self.ctx) {
+                TeardownOutcome::Done => {}
+                TeardownOutcome::Deferred(token_id) => {
+                    // Create a no-op PendingTask for this deferred teardown action
+                    let pending = Box::new(PendingTask::new(
+                        format!("teardown_{}", token_id),
+                        Box::new(noop_response_processor(token_id)),
+                    ));
+                    if self.deferred_tasks.insert(token_id, pending).is_some() {
+                        error!("Duplicate token_id during teardown: {}", token_id);
+                    }
+                }
+            }
+        }
     }
 
     pub fn eval(mut self) -> Option<Self> {
@@ -63,14 +106,25 @@ impl Pipeline {
                 TaskOutcome::Terminate(terminal_task) => {
                     terminal_task.apply(&mut self.ctx);
                     self.task_queue.clear();
-                    self.deferred_tasks.clear();
-                    return None;
+                    self.execute_teardown();
+                    return if self.deferred_tasks.is_empty() {
+                        None
+                    } else {
+                        Some(self)
+                    };
                 }
             }
         }
 
-        if self.deferred_tasks.is_empty() && self.task_queue.is_empty() {
-            None
+        if self.task_queue.is_empty() && self.deferred_tasks.is_empty() {
+            if !self.teardown_tasks.is_empty() {
+                self.execute_teardown();
+            }
+            if self.deferred_tasks.is_empty() {
+                None
+            } else {
+                Some(self)
+            }
         } else {
             Some(self)
         }
@@ -109,8 +163,10 @@ impl Pipeline {
                 TaskOutcome::Terminate(terminal_task) => {
                     terminal_task.apply(&mut self.ctx);
                     self.task_queue.clear();
-                    self.deferred_tasks.clear();
-                    return None;
+                    self.replace_deferred_with_noop();
+                    self.execute_teardown();
+
+                    return self.eval();
                 }
             }
         } else {

@@ -127,9 +127,9 @@ impl Task for AuthTask {
 
         TaskOutcome::Deferred {
             token_id,
-            pending: Box::new(PendingTask {
-                task_id: self.task_id,
-                process_response: Box::new(move |ctx| {
+            pending: Box::new(PendingTask::new(
+                self.task_id,
+                Box::new(move |ctx| {
                     let span = tracing::debug_span!(parent: parent_span.id(), "auth_response");
                     let _guard = span.enter();
                     match ctx.get_grpc_response_data() {
@@ -152,7 +152,7 @@ impl Task for AuthTask {
                         }
                     }
                 }),
-            }),
+            )),
         }
     }
 }

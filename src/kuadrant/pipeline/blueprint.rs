@@ -2,8 +2,8 @@ use crate::configuration;
 use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask, RateLimitTask,
-    Task, TokenUsageTask,
+    AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
+    RateLimitTask, Task, TeardownAction, TokenUsageTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -118,13 +118,15 @@ impl Blueprint {
     }
 }
 
+type TaskList = Vec<Box<dyn Task>>;
+type TeardownList = Vec<Box<dyn TeardownAction>>;
+
 impl Blueprint {
-    pub fn to_tasks(&self, ctx: &ReqRespCtx) -> Vec<Box<dyn Task>> {
-        let mut tasks: Vec<Box<dyn Task>> = Vec::new();
-        let mut last_task_id: Option<String> = None;
+    pub fn to_tasks(&self, ctx: &ReqRespCtx) -> (TaskList, TeardownList) {
+        let mut tasks: TaskList = Vec::new();
+        let mut teardown_tasks: TeardownList = Vec::new();
 
         for action in &self.actions {
-            last_task_id = Some(action.id.clone());
             let abort_on_failure =
                 action.service.failure_mode() == configuration::FailureMode::Deny;
 
@@ -185,16 +187,13 @@ impl Blueprint {
             }
         }
 
-        //todo(adam-cattermole): this is a placeholder service and task
         let service = Rc::new(crate::services::OpenTelemetryService::new(
             "outbound|4317||jaeger-collector.istio-system.svc.cluster.local".to_string(),
             std::time::Duration::from_secs(5),
         ));
-        let dependencies = last_task_id.into_iter().collect();
-        let task = crate::kuadrant::pipeline::tasks::ExportTracesTask::new(service, dependencies);
-        tasks.push(Box::new(task));
+        teardown_tasks.push(Box::new(ExportTracesTask::new(service)));
 
-        tasks
+        (tasks, teardown_tasks)
     }
 }
 
