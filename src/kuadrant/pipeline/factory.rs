@@ -92,11 +92,11 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
 
         let mut request_data: Vec<((String, String), Expression)> = config
             .request_data
-            .iter()
+            .into_iter()
             .filter_map(|(k, v)| {
-                Expression::new(v).ok().map(|expr| {
-                    let (domain, field) = domain_and_field_name(k);
-                    ((domain.to_string(), field.to_string()), expr)
+                Expression::new(&v).ok().map(|expr| {
+                    let (domain, field) = domain_and_field_name(&k);
+                    ((domain.to_owned(), field.to_owned()), expr)
                 })
             })
             .collect();
