@@ -170,7 +170,7 @@ fn process_auth_response(response: CheckResponse) -> TaskOutcome {
 
     match response.http_response {
         None => {
-            warn!("Auth response contained no http_response");
+            error!("Auth response contained no http_response");
             return TaskOutcome::Failed;
         }
         Some(check_response::HttpResponse::OkResponse(ok_response)) => {

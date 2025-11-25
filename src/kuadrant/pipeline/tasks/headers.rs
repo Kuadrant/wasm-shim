@@ -3,7 +3,7 @@ use crate::data::attribute::{AttributeState, Path};
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
-use log::debug;
+use log::{debug, error};
 
 #[derive(Clone)]
 pub enum HeadersType {
@@ -67,15 +67,18 @@ impl Task for ModifyHeadersTask {
                 match ctx.set_attribute_map(&path, existing_headers) {
                     Ok(AttributeState::Available(_)) => TaskOutcome::Done,
                     Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
-                    Err(_) => TaskOutcome::Failed,
+                    Err(e) => {
+                        error!("Failed to set attribute map: {e:?}");
+                        TaskOutcome::Failed
+                    }
                 }
             }
             Ok(AttributeState::Available(None)) => {
                 unreachable!("get_attribute_ref can't return AttributeState::Available(None)")
             }
             Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
-            Err(_) => {
-                // TODO: Error handling since this was a major failure.
+            Err(e) => {
+                error!("Failed to get attribute reference: {e:?}");
                 TaskOutcome::Failed
             }
         }
