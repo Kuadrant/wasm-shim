@@ -187,7 +187,7 @@ impl Blueprint {
             }
         }
 
-        let service = Rc::new(crate::services::OpenTelemetryService::new(
+        let service = Rc::new(crate::services::TracingService::new(
             "outbound|4317||jaeger-collector.istio-system.svc.cluster.local".to_string(),
             std::time::Duration::from_secs(5),
         ));

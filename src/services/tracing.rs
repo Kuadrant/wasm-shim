@@ -45,14 +45,14 @@ fn get_wasm_shim_proto_resource() -> &'static opentelemetry_proto::tonic::resour
     })
 }
 
-pub struct OpenTelemetryService {
+pub struct TracingService {
     upstream_name: String,
     service_name: String,
     method: String,
     timeout: Duration,
 }
 
-impl Service for OpenTelemetryService {
+impl Service for TracingService {
     type Response = ExportTraceServiceResponse;
 
     fn parse_message(&self, message: Vec<u8>) -> Result<Self::Response, ServiceError> {
@@ -61,7 +61,7 @@ impl Service for OpenTelemetryService {
     }
 }
 
-impl OpenTelemetryService {
+impl TracingService {
     pub fn new(endpoint: String, timeout: Duration) -> Self {
         Self {
             upstream_name: endpoint,

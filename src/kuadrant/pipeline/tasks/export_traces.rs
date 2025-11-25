@@ -1,15 +1,15 @@
 use crate::kuadrant::pipeline::tasks::{TeardownAction, TeardownOutcome};
 use crate::kuadrant::ReqRespCtx;
-use crate::services::OpenTelemetryService;
+use crate::services::TracingService;
 use log::{debug, warn};
 use std::rc::Rc;
 
 pub struct ExportTracesTask {
-    service: Rc<OpenTelemetryService>,
+    service: Rc<TracingService>,
 }
 
 impl ExportTracesTask {
-    pub fn new(service: Rc<OpenTelemetryService>) -> Self {
+    pub fn new(service: Rc<TracingService>) -> Self {
         crate::tracing::init_tracing();
 
         Self { service }
