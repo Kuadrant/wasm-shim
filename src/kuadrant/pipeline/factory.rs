@@ -42,14 +42,14 @@ impl Display for BuildError {
 impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
-    fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
+    fn try_from(mut config: PluginConfiguration) -> Result<Self, Self::Error> {
         let services: HashMap<String, ServiceInstance> = config
             .services
-            .iter()
+            .drain()
             .map(|(name, service_config)| {
                 let instance = ServiceInstance::try_from(service_config)
                     .map_err(|e| CompileError::ServiceCreationFailed(format!("{}", e)))?;
-                Ok((name.clone(), instance))
+                Ok((name, instance))
             })
             .collect::<Result<_, CompileError>>()?;
 
