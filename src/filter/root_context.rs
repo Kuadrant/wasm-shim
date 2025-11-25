@@ -2,7 +2,7 @@ use super::kuadrant_filter::KuadrantFilter;
 use crate::configuration::PluginConfiguration;
 use crate::kuadrant::PipelineFactory;
 use const_format::formatcp;
-use log::{debug, error, info};
+use log::{debug, error, info, LevelFilter};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
@@ -62,6 +62,18 @@ impl RootContext for FilterRoot {
         };
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
+                if let Some(level) = &config.observability.default_level {
+                    match level.as_str() {
+                        "TRACE" => log::set_max_level(LevelFilter::Trace),
+                        "DEBUG" => log::set_max_level(LevelFilter::Debug),
+                        "INFO" => log::set_max_level(LevelFilter::Info),
+                        "WARN" => log::set_max_level(LevelFilter::Warn),
+                        "ERROR" => log::set_max_level(LevelFilter::Error),
+
+                        "OFF" => log::set_max_level(LevelFilter::Off),
+                        _ => log::set_max_level(LevelFilter::Warn),
+                    }
+                }
                 info!("plugin config parsed: {:?}", config);
                 match PipelineFactory::try_from(config) {
                     Ok(factory) => {

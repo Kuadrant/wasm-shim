@@ -2,7 +2,8 @@ use crate::configuration;
 use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, FailureModeTask, RateLimitTask, Task, TokenUsageTask,
+    AuthTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask, RateLimitTask,
+    Task, TokenUsageTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -17,6 +18,7 @@ pub(crate) struct Blueprint {
     pub actions: Vec<Action>,
 }
 
+#[derive(Clone)]
 pub(crate) struct Action {
     pub id: String,
     pub service: ServiceInstance,
@@ -168,6 +170,15 @@ impl Blueprint {
                         action.conditional_data.as_slice(),
                     ))));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
+                }
+                ServiceInstance::Tracing => {
+                    // todo: read value for header from `ReqRespCtx`
+                    tasks.push(Box::new(ModifyHeadersTask::new(
+                        HeaderOperation::Append(
+                            vec![(action.scope.clone(), "Kuadrant was here!".to_string())].into(),
+                        ),
+                        HeadersType::HttpResponseHeaders,
+                    )));
                 }
             }
         }

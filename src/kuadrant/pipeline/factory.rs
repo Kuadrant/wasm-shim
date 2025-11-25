@@ -4,7 +4,7 @@ use crate::data::{
     cel::{Predicate, PredicateVec},
     Expression,
 };
-use crate::kuadrant::pipeline::blueprint::{Blueprint, CompileError};
+use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError};
 use crate::kuadrant::pipeline::executor::Pipeline;
 use crate::kuadrant::pipeline::tasks::Task;
 use crate::kuadrant::ReqRespCtx;
@@ -21,6 +21,7 @@ type RequestData = ((String, String), Expression);
 pub struct PipelineFactory {
     index: Trie<String, Vec<Rc<Blueprint>>>,
     request_data: Arc<Vec<RequestData>>,
+    fallback_blueprint: Option<Rc<Blueprint>>,
 }
 
 #[derive(Debug)]
@@ -42,6 +43,17 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
+        let dev_mode_action = config
+            .observability
+            .http_header_identifier
+            .map(|header| Action {
+                id: "kuadrant.devMode".to_string(),
+                service: ServiceInstance::Tracing,
+                scope: header,
+                predicates: vec![],
+                conditional_data: Default::default(),
+                dependencies: Default::default(),
+            });
         let services: HashMap<String, ServiceInstance> = config
             .services
             .iter()
@@ -54,8 +66,12 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
 
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
-            let blueprint = Rc::new(Blueprint::compile(config_action_set, &services)?);
+            let mut blueprint = Blueprint::compile(config_action_set, &services)?;
+            if let Some(dev_mode) = &dev_mode_action {
+                blueprint.actions.push(dev_mode.clone());
+            }
 
+            let blueprint = Rc::new(blueprint);
             for hostname in &config_action_set.route_rule_conditions.hostnames {
                 let key = reverse_subdomain(hostname);
                 index.map_with_default(
@@ -81,6 +97,14 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
         Ok(Self {
             index,
             request_data: Arc::new(request_data),
+            fallback_blueprint: dev_mode_action.map(|action| {
+                Blueprint {
+                    name: "kuadrant.devMode".to_string(),
+                    route_predicates: vec![],
+                    actions: vec![action],
+                }
+                .into()
+            }),
         })
     }
 }
@@ -90,6 +114,7 @@ impl Default for PipelineFactory {
         Self {
             index: Trie::new(),
             request_data: Arc::new(Vec::new()),
+            fallback_blueprint: None,
         }
     }
 }
@@ -133,7 +158,7 @@ impl PipelineFactory {
         }
 
         debug!("No matching blueprint found for hostname: {}", hostname);
-        Ok(None)
+        Ok(self.fallback_blueprint.as_ref())
     }
 
     fn get_hostname(&self, ctx: &ReqRespCtx) -> Result<String, BuildError> {
@@ -239,6 +264,7 @@ mod tests {
                     conditional_data: vec![],
                 }],
             }],
+            observability: Default::default(),
         }
     }
 
@@ -301,6 +327,7 @@ mod tests {
                 },
                 actions: vec![],
             }],
+            observability: Default::default(),
         };
 
         let result = PipelineFactory::try_from(config);
@@ -526,6 +553,7 @@ mod tests {
             request_data,
             services,
             action_sets: vec![],
+            observability: Default::default(),
         };
 
         let factory = PipelineFactory::try_from(config).unwrap();

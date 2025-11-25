@@ -14,6 +14,7 @@ pub enum ServiceInstance {
     RateLimit(Rc<RateLimitService>),
     RateLimitCheck(Rc<RateLimitService>),
     RateLimitReport(Rc<RateLimitService>),
+    Tracing,
 }
 
 impl ServiceInstance {
@@ -23,6 +24,7 @@ impl ServiceInstance {
             ServiceInstance::RateLimit(service) => service.failure_mode(),
             ServiceInstance::RateLimitCheck(service) => service.failure_mode(),
             ServiceInstance::RateLimitReport(service) => service.failure_mode(),
+            ServiceInstance::Tracing => FailureMode::Allow,
         }
     }
 }
