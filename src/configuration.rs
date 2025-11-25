@@ -87,6 +87,7 @@ pub enum ServiceType {
     RateLimitCheck,
     #[serde(rename = "ratelimit-report")]
     RateLimitReport,
+    Tracing,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -94,6 +95,12 @@ pub enum ServiceType {
 pub struct Observability {
     pub http_header_identifier: Option<String>,
     pub default_level: Option<String>,
+    pub tracing: Option<Tracing>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Tracing {
+    pub service: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]

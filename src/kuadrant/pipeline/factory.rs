@@ -43,17 +43,6 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        let dev_mode_action = config
-            .observability
-            .http_header_identifier
-            .map(|header| Action {
-                id: "kuadrant.devMode".to_string(),
-                service: ServiceInstance::Tracing,
-                scope: header,
-                predicates: vec![],
-                conditional_data: Default::default(),
-                dependencies: Default::default(),
-            });
         let services: HashMap<String, ServiceInstance> = config
             .services
             .iter()
@@ -64,6 +53,25 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
             })
             .collect::<Result<_, CompileError>>()?;
 
+        let tracing_service = config
+            .observability
+            .tracing
+            .as_ref()
+            .and_then(|tracing| services.get(&tracing.service))
+            .cloned()
+            .unwrap_or(ServiceInstance::Tracing(None));
+
+        let dev_mode_action = config
+            .observability
+            .http_header_identifier
+            .map(|header| Action {
+                id: "kuadrant.devMode".to_string(),
+                service: tracing_service.clone(),
+                scope: header,
+                predicates: vec![],
+                conditional_data: Default::default(),
+                dependencies: Default::default(),
+            });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
             let mut blueprint = Blueprint::compile(config_action_set, &services)?;

@@ -175,7 +175,7 @@ impl Blueprint {
                     ))));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
-                ServiceInstance::Tracing => {
+                ServiceInstance::Tracing(service) => {
                     // todo: read value for header from `ReqRespCtx`
                     tasks.push(Box::new(ModifyHeadersTask::new(
                         HeaderOperation::Append(
@@ -183,15 +183,12 @@ impl Blueprint {
                         ),
                         HeadersType::HttpResponseHeaders,
                     )));
+                    if let Some(service) = service {
+                        teardown_tasks.push(Box::new(ExportTracesTask::new(Rc::clone(service))));
+                    }
                 }
             }
         }
-
-        let service = Rc::new(crate::services::TracingService::new(
-            "outbound|4317||jaeger-collector.istio-system.svc.cluster.local".to_string(),
-            std::time::Duration::from_secs(5),
-        ));
-        teardown_tasks.push(Box::new(ExportTracesTask::new(service)));
 
         (tasks, teardown_tasks)
     }
