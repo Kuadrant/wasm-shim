@@ -149,7 +149,7 @@ impl PipelineFactory {
         ))
     }
 
-    fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<&Rc<Blueprint>>, BuildError> {
+    fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<Rc<Blueprint>>, BuildError> {
         let hostname = self.get_hostname(ctx)?;
 
         let candidates = match self.index.get_ancestor_value(&reverse_subdomain(&hostname)) {
@@ -166,12 +166,12 @@ impl PipelineFactory {
                     "Selected blueprint {} for hostname: {}",
                     blueprint.name, hostname
                 );
-                return Ok(Some(blueprint));
+                return Ok(Some(Rc::clone(blueprint)));
             }
         }
 
         debug!("No matching blueprint found for hostname: {}", hostname);
-        Ok(self.fallback_blueprint.as_ref())
+        Ok(self.fallback_blueprint.clone())
     }
 
     fn get_hostname(&self, ctx: &ReqRespCtx) -> Result<String, BuildError> {
