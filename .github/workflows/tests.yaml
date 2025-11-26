@@ -21,7 +21,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v3
         with:
           version: "3.x"
@@ -29,7 +29,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target wasm32-unknown-unknown
+          args: --release --target wasm32-wasip1
       - uses: actions-rs/cargo@v1
         with:
           command: test

@@ -80,7 +80,7 @@ The counter starts with `30`, so after the request, the counter should be `28`.
 
 ### Run Manually
 
-It requires Wasm module being built at `target/wasm32-unknown-unknown/debug/wasm_shim.wasm`.
+It requires Wasm module being built at `target/wasm32-wasip1/debug/wasm_shim.wasm`.
 Check *Makefile* at the root of the project to build the module.
 
 ```

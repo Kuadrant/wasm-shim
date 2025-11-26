@@ -23,7 +23,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v3
         with:
           version: "3.x"
@@ -31,7 +31,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
-          args: --release --target wasm32-unknown-unknown
+          args: --release --target wasm32-wasip1
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -42,14 +42,14 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v1
         with:
           version: "3.x"
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --target=wasm32-unknown-unknown --release
+          args: --target=wasm32-wasip1 --release
       - run: rustup component add rustfmt
       - uses: actions-rs/cargo@v1
         with:
@@ -65,7 +65,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: wasm32-unknown-unknown
+          target: wasm32-wasip1
       - uses: arduino/setup-protoc@v1
         with:
           version: "3.x"

@@ -24,7 +24,7 @@ services:
       - "18001:8001"
     volumes:
       - ./envoy.yaml:/etc/envoy.yaml
-      - ../../target/wasm32-unknown-unknown/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
+      - ../../target/wasm32-wasip1/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
   limitador:
     image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:v2.2.0}
     container_name: limitador

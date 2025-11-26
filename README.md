@@ -159,10 +159,10 @@ predicates:
 
 Prerequisites:
 
-* Install `wasm32-unknown-unknown` build target
+* Install `wasm32-wasip1` build target
 
 ```
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32-wasip1
 ```
 
 Build the WASM module

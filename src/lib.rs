@@ -9,21 +9,10 @@ mod kuadrant;
 mod services;
 
 #[cfg_attr(
-    all(
-        target_arch = "wasm32",
-        target_vendor = "unknown",
-        target_os = "unknown"
-    ),
+    all(target_arch = "wasm32", target_os = "wasi"),
     export_name = "_start"
 )]
-#[cfg_attr(
-    not(all(
-        target_arch = "wasm32",
-        target_vendor = "unknown",
-        target_os = "unknown"
-    )),
-    allow(dead_code)
-)]
+#[cfg_attr(not(all(target_arch = "wasm32", target_os = "wasi")), allow(dead_code))]
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
     use filter::FilterRoot;
