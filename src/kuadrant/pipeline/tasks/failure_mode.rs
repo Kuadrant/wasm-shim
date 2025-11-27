@@ -43,7 +43,7 @@ impl Task for FailureModeTask {
         self.task.dependencies()
     }
 
-    fn pauses_filter(&self, ctx: &ReqRespCtx) -> bool {
-        self.task.pauses_filter(ctx)
+    fn pauses_filter(&self) -> bool {
+        self.task.pauses_filter()
     }
 }

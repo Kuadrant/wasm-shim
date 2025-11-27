@@ -4,9 +4,11 @@ use std::{rc::Rc, time::Duration};
 
 mod auth;
 pub mod rate_limit;
+mod tracing;
 
 pub use auth::AuthService;
 pub use rate_limit::RateLimitService;
+pub use tracing::TracingService;
 
 #[derive(Clone)]
 pub enum ServiceInstance {
@@ -14,7 +16,7 @@ pub enum ServiceInstance {
     RateLimit(Rc<RateLimitService>),
     RateLimitCheck(Rc<RateLimitService>),
     RateLimitReport(Rc<RateLimitService>),
-    Tracing,
+    Tracing(Option<Rc<TracingService>>),
 }
 
 impl ServiceInstance {
@@ -24,7 +26,7 @@ impl ServiceInstance {
             ServiceInstance::RateLimit(service) => service.failure_mode(),
             ServiceInstance::RateLimitCheck(service) => service.failure_mode(),
             ServiceInstance::RateLimitReport(service) => service.failure_mode(),
-            ServiceInstance::Tracing => FailureMode::Allow,
+            ServiceInstance::Tracing(_) => FailureMode::Allow,
         }
     }
 }
@@ -87,6 +89,9 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                     service.failure_mode,
                 ),
             ))),
+            ServiceType::Tracing => Ok(ServiceInstance::Tracing(Some(Rc::new(
+                TracingService::new(service.endpoint.clone(), service.timeout.0),
+            )))),
         }
     }
 }

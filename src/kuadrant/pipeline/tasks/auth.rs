@@ -90,7 +90,7 @@ impl Task for AuthTask {
         Some(self.task_id.clone())
     }
 
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+    fn pauses_filter(&self) -> bool {
         self.pauses_filter
     }
 
@@ -98,6 +98,7 @@ impl Task for AuthTask {
         &self.dependencies
     }
 
+    #[tracing::instrument(name = "auth", skip(self, ctx), fields(task_id = %self.task_id))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
             Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
@@ -109,41 +110,49 @@ impl Task for AuthTask {
             }
         }
 
-        let token_id = match self.service.dispatch_auth(ctx, &self.scope) {
-            Ok(id) => id,
-            Err(e) => {
-                error!("Failed to dispatch auth: {e:?}");
-                return TaskOutcome::Failed;
+        let token_id = {
+            let _span = tracing::debug_span!("auth_request").entered();
+            match self.service.dispatch_auth(ctx, &self.scope) {
+                Ok(id) => id,
+                Err(e) => {
+                    error!("Failed to dispatch auth: {e:?}");
+                    return TaskOutcome::Failed;
+                }
             }
         };
 
         let service = self.service.clone();
 
+        let parent_span = tracing::Span::current();
+
         TaskOutcome::Deferred {
             token_id,
-            pending: Box::new(PendingTask {
-                task_id: self.task_id,
-                pauses_filter: self.pauses_filter,
-                process_response: Box::new(move |ctx| match ctx.get_grpc_response_data() {
-                    Ok((status_code, response_size)) => {
-                        if status_code != proxy_wasm::types::Status::Ok as u32 {
-                            TaskOutcome::Failed
-                        } else {
-                            match service.get_response(ctx, response_size) {
-                                Ok(parsed) => process_auth_response(parsed),
-                                Err(e) => {
-                                    error!("Failed to get response: {e:?}");
-                                    TaskOutcome::Failed
+            pending: Box::new(PendingTask::new(
+                self.task_id,
+                Box::new(move |ctx| {
+                    let span = tracing::debug_span!(parent: parent_span.id(), "auth_response");
+                    let _guard = span.enter();
+                    match ctx.get_grpc_response_data() {
+                        Ok((status_code, response_size)) => {
+                            if status_code != proxy_wasm::types::Status::Ok as u32 {
+                                TaskOutcome::Failed
+                            } else {
+                                match service.get_response(ctx, response_size) {
+                                    Ok(parsed) => process_auth_response(parsed),
+                                    Err(e) => {
+                                        error!("Failed to get response: {e:?}");
+                                        TaskOutcome::Failed
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        error!("Failed to get response: {e:?}");
-                        TaskOutcome::Failed
+                        Err(e) => {
+                            error!("Failed to get response: {e:?}");
+                            TaskOutcome::Failed
+                        }
                     }
                 }),
-            }),
+            )),
         }
     }
 }

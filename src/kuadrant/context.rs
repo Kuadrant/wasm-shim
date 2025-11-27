@@ -1,4 +1,5 @@
-use log::warn;
+use log::{debug, warn};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -6,6 +7,7 @@ use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 type RequestData = ((String, String), Expression);
 
@@ -18,6 +20,8 @@ pub struct ReqRespCtx {
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
+    otel_context: opentelemetry::Context,
+    request_span_guard: Option<Rc<tracing::span::EnteredSpan>>,
 }
 
 impl Default for ReqRespCtx {
@@ -35,12 +39,41 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
+            otel_context: opentelemetry::Context::new(),
+            request_span_guard: None,
         }
     }
 
     pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
         self.request_data = Some(request_data);
         self
+    }
+
+    pub fn extract_trace_context(&mut self) {
+        let request_headers: Result<AttributeState<Option<Headers>>, _> =
+            self.get_attribute("request.headers");
+
+        if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
+            let extractor = crate::tracing::HeadersExtractor::new(&header_map);
+            self.otel_context = opentelemetry::global::get_text_map_propagator(|propagator| {
+                propagator.extract(&extractor)
+            });
+        }
+    }
+
+    pub fn enter_request_span(&mut self) {
+        let span = tracing::info_span!("kuadrant_filter");
+        if !span.is_disabled() {
+            if let Err(e) = span.set_parent(self.otel_context.clone()) {
+                debug!("failed to set parent span ctx: {e:?}");
+            }
+            let entered = span.entered();
+            self.request_span_guard = Some(Rc::new(entered));
+        }
+    }
+
+    pub fn end_request_span(&mut self) {
+        std::mem::drop(self.request_span_guard.take());
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
@@ -278,7 +311,7 @@ impl ReqRespCtx {
         let tracing_headers = self.get_tracing_headers();
         let headers: Vec<(&str, &[u8])> = tracing_headers
             .iter()
-            .map(|(name, value)| (*name, value.as_slice()))
+            .map(|(name, value)| (name.as_str(), value.as_slice()))
             .collect();
 
         self.backend.dispatch_grpc_call(
@@ -304,20 +337,19 @@ impl ReqRespCtx {
         self.backend.send_http_reply(status_code, headers, body)
     }
 
-    fn get_tracing_headers(&self) -> Vec<(&'static str, Vec<u8>)> {
-        const TRACING_HEADERS: [&str; 3] = ["traceparent", "tracestate", "baggage"];
+    fn get_tracing_headers(&self) -> Vec<(String, Vec<u8>)> {
         let mut headers = Vec::new();
 
-        let request_headers: Result<AttributeState<Option<Headers>>, _> =
-            self.get_attribute("request.headers");
+        let context = if tracing::Span::current().is_none() {
+            &self.otel_context
+        } else {
+            &tracing::Span::current().context()
+        };
 
-        if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
-            for header_name in &TRACING_HEADERS {
-                for header_value in header_map.get_all(header_name) {
-                    headers.push((*header_name, header_value.as_bytes().to_vec()));
-                }
-            }
-        }
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            let mut injector = crate::tracing::HeadersInjector::new(&mut headers);
+            propagator.inject_context(context, &mut injector);
+        });
 
         headers
     }
@@ -451,7 +483,10 @@ mod tests {
     #[test]
     fn test_tracing_headers() {
         let headers = vec![
-            ("traceparent".to_string(), "00-trace-id-123".to_string()),
+            (
+                "traceparent".to_string(),
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string(),
+            ),
             ("tracestate".to_string(), "state=active".to_string()),
             ("baggage".to_string(), "userId=alice".to_string()),
             ("baggage".to_string(), "sessionId=xyz".to_string()),
@@ -459,30 +494,29 @@ mod tests {
         ];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.extract_trace_context();
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 4);
+        assert_eq!(tracing_headers.len(), 3);
 
         assert!(tracing_headers
             .iter()
-            .any(|(name, value)| *name == "traceparent" && value.as_slice() == b"00-trace-id-123"));
+            .any(|(name, value)| *name == "traceparent"
+                && value.as_slice() == b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
         assert!(tracing_headers
             .iter()
             .any(|(name, value)| *name == "tracestate" && value.as_slice() == b"state=active"));
 
-        let baggage_values: Vec<_> = tracing_headers
+        let baggage = tracing_headers
             .iter()
-            .filter(|(name, _)| *name == "baggage")
-            .collect();
-        assert_eq!(baggage_values.len(), 2);
-        assert!(baggage_values
-            .iter()
-            .any(|(_, value)| value.as_slice() == b"userId=alice"));
-        assert!(baggage_values
-            .iter()
-            .any(|(_, value)| value.as_slice() == b"sessionId=xyz"));
+            .find(|(name, _)| *name == "baggage")
+            .expect("baggage header should exist");
+
+        let baggage_value = std::str::from_utf8(&baggage.1).expect("valid UTF-8");
+        assert!(baggage_value.contains("userId=alice"));
+        assert!(baggage_value.contains("sessionId=xyz"));
 
         assert!(!tracing_headers
             .iter()
@@ -491,16 +525,23 @@ mod tests {
 
     #[test]
     fn test_tracing_headers_partial() {
-        let headers = vec![("traceparent".to_string(), "00-trace-id-456".to_string())];
+        let headers = vec![(
+            "traceparent".to_string(),
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string(),
+        )];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.extract_trace_context();
 
         let tracing_headers = ctx.get_tracing_headers();
 
         assert_eq!(tracing_headers.len(), 1);
         assert_eq!(tracing_headers[0].0, "traceparent");
-        assert_eq!(tracing_headers[0].1.as_slice(), b"00-trace-id-456");
+        assert_eq!(
+            tracing_headers[0].1.as_slice(),
+            b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        );
     }
 
     #[test]
@@ -508,7 +549,8 @@ mod tests {
         let headers: Vec<(String, String)> = vec![];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.extract_trace_context();
 
         let tracing_headers = ctx.get_tracing_headers();
 

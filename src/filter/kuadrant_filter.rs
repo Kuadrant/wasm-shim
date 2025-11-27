@@ -54,7 +54,7 @@ impl Context for KuadrantFilter {
 }
 
 impl HttpContext for KuadrantFilter {
-    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
+    fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
 
         let ctx = ReqRespCtx::default();
@@ -81,7 +81,7 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    fn on_http_request_body(&mut self, _body_size: usize, _end_of_stream: bool) -> Action {
+    fn on_http_request_body(&mut self, _buffer_size: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_body", self.context_id);
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.eval();
@@ -93,7 +93,7 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    fn on_http_response_headers(&mut self, _: usize, _: bool) -> Action {
+    fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
         self.in_response_phase = true;
         if let Some(pipeline) = self.pipeline.take() {
@@ -106,12 +106,12 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    fn on_http_response_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
+    fn on_http_response_body(&mut self, buffer_size: usize, end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_body", self.context_id);
         if let Some(mut pipeline) = self.pipeline.take() {
             pipeline
                 .ctx
-                .set_current_response_body_buffer_size(body_size, end_of_stream);
+                .set_current_response_body_buffer_size(buffer_size, end_of_stream);
             self.pipeline = pipeline.eval();
         }
         if self.should_pause() {

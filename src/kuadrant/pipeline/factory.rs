@@ -6,7 +6,7 @@ use crate::data::{
 };
 use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError};
 use crate::kuadrant::pipeline::executor::Pipeline;
-use crate::kuadrant::pipeline::tasks::Task;
+
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use log::debug;
@@ -43,17 +43,6 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
     fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
-        let dev_mode_action = config
-            .observability
-            .http_header_identifier
-            .map(|header| Action {
-                id: "kuadrant.devMode".to_string(),
-                service: ServiceInstance::Tracing,
-                scope: header,
-                predicates: vec![],
-                conditional_data: Default::default(),
-                dependencies: Default::default(),
-            });
         let services: HashMap<String, ServiceInstance> = config
             .services
             .iter()
@@ -64,6 +53,25 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
             })
             .collect::<Result<_, CompileError>>()?;
 
+        let tracing_service = config
+            .observability
+            .tracing
+            .as_ref()
+            .and_then(|tracing| services.get(&tracing.service))
+            .cloned()
+            .unwrap_or(ServiceInstance::Tracing(None));
+
+        let dev_mode_action = config
+            .observability
+            .http_header_identifier
+            .map(|header| Action {
+                id: "kuadrant.devMode".to_string(),
+                service: tracing_service.clone(),
+                scope: header,
+                predicates: vec![],
+                conditional_data: Default::default(),
+                dependencies: Default::default(),
+            });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
             let mut blueprint = Blueprint::compile(config_action_set, &services)?;
@@ -121,19 +129,24 @@ impl Default for PipelineFactory {
 
 impl PipelineFactory {
     pub fn build(&self, ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
-        let ctx = ctx.with_request_data(Arc::clone(&self.request_data));
-
         let blueprint = match self.select_blueprint(&ctx)? {
             Some(bp) => bp,
             None => return Ok(None),
         };
 
-        let tasks: Vec<Box<dyn Task>> = blueprint.to_tasks(&ctx);
+        let mut ctx = ctx.with_request_data(Arc::clone(&self.request_data));
+        ctx.extract_trace_context();
+
+        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx);
         if tasks.is_empty() {
             return Ok(None);
         }
 
-        Ok(Some(Pipeline::new(ctx).with_tasks(tasks)))
+        Ok(Some(
+            Pipeline::new(ctx)
+                .with_tasks(tasks)
+                .with_teardown_tasks(teardown_tasks),
+        ))
     }
 
     fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<&Rc<Blueprint>>, BuildError> {

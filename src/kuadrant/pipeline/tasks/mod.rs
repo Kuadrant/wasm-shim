@@ -1,4 +1,5 @@
 mod auth;
+mod export_traces;
 mod failure_mode;
 mod headers;
 mod ratelimit;
@@ -7,8 +8,10 @@ mod store_data;
 mod token_usage;
 
 pub use auth::AuthTask;
+pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
+use log::debug;
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
@@ -30,15 +33,23 @@ pub trait Task {
         &[]
     }
 
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
+    fn pauses_filter(&self) -> bool {
         false
     }
 }
 
 pub struct PendingTask {
     task_id: String,
-    pauses_filter: bool,
     process_response: Box<ResponseProcessor>,
+}
+
+impl PendingTask {
+    pub fn new(task_id: String, process_response: Box<ResponseProcessor>) -> Self {
+        Self {
+            task_id,
+            process_response,
+        }
+    }
 }
 
 impl Task for PendingTask {
@@ -48,8 +59,8 @@ impl Task for PendingTask {
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
     }
-    fn pauses_filter(&self, _ctx: &ReqRespCtx) -> bool {
-        self.pauses_filter
+    fn pauses_filter(&self) -> bool {
+        true
     }
 }
 
@@ -62,4 +73,35 @@ pub enum TaskOutcome {
     Requeued(Vec<Box<dyn Task>>),
     Failed,
     Terminate(Box<dyn Task>),
+}
+
+pub trait TeardownAction {
+    fn execute(self: Box<Self>, ctx: &mut ReqRespCtx) -> TeardownOutcome;
+}
+
+pub enum TeardownOutcome {
+    Done,
+    Deferred(u32),
+}
+
+pub fn noop_response_processor(token_id: u32) -> impl FnOnce(&mut ReqRespCtx) -> TaskOutcome {
+    move |ctx: &mut ReqRespCtx| {
+        match ctx.get_grpc_response_data() {
+            Ok((status_code, _response_size)) => {
+                if status_code != 0 {
+                    debug!(
+                        "gRPC request failed with status {} (token_id: {})",
+                        status_code, token_id
+                    );
+                }
+            }
+            Err(e) => {
+                debug!(
+                    "Failed to get gRPC response for token_id {}: {:?}",
+                    token_id, e
+                );
+            }
+        }
+        TaskOutcome::Done
+    }
 }

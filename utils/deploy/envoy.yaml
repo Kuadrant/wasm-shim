@@ -415,7 +415,7 @@ spec:
             - --component-log-level wasm:debug,filter:trace,http:debug,router:debug
           command:
             - /usr/local/bin/envoy
-          image: envoyproxy/envoy:v1.31-latest
+          image: envoyproxy/envoy:v1.35-latest
           name: envoy
           ports:
             - containerPort: 8000

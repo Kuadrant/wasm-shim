@@ -1,16 +1,13 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::configuration::PluginConfiguration;
 use crate::kuadrant::PipelineFactory;
+use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use log::{debug, error, info, LevelFilter};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
 
-const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
-const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
-const WASM_SHIM_FEATURES: &str = env!("WASM_SHIM_FEATURES");
-const WASM_SHIM_GIT_HASH: &str = env!("WASM_SHIM_GIT_HASH");
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
 pub struct FilterRoot {
@@ -31,6 +28,13 @@ impl RootContext for FilterRoot {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         let full_version: &'static str = formatcp!(
             "v{WASM_SHIM_VERSION} ({WASM_SHIM_GIT_HASH}) {WASM_SHIM_FEATURES} {WASM_SHIM_PROFILE}"
+        );
+
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(opentelemetry_sdk::propagation::TraceContextPropagator::new()),
+                Box::new(opentelemetry_sdk::propagation::BaggagePropagator::new()),
+            ]),
         );
 
         info!(

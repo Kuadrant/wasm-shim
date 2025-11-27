@@ -2,8 +2,8 @@ use crate::configuration;
 use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask, RateLimitTask,
-    Task, TokenUsageTask,
+    AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
+    RateLimitTask, Task, TeardownAction, TokenUsageTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -118,9 +118,13 @@ impl Blueprint {
     }
 }
 
+type TaskList = Vec<Box<dyn Task>>;
+type TeardownList = Vec<Box<dyn TeardownAction>>;
+
 impl Blueprint {
-    pub fn to_tasks(&self, ctx: &ReqRespCtx) -> Vec<Box<dyn Task>> {
-        let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+    pub fn to_tasks(&self, ctx: &mut ReqRespCtx) -> (TaskList, TeardownList) {
+        let mut tasks: TaskList = Vec::new();
+        let mut teardown_tasks: TeardownList = Vec::new();
 
         for action in &self.actions {
             let abort_on_failure =
@@ -171,7 +175,7 @@ impl Blueprint {
                     ))));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
-                ServiceInstance::Tracing => {
+                ServiceInstance::Tracing(service) => {
                     // todo: read value for header from `ReqRespCtx`
                     tasks.push(Box::new(ModifyHeadersTask::new(
                         HeaderOperation::Append(
@@ -179,11 +183,15 @@ impl Blueprint {
                         ),
                         HeadersType::HttpResponseHeaders,
                     )));
+                    if let Some(service) = service {
+                        teardown_tasks
+                            .push(Box::new(ExportTracesTask::new(ctx, Rc::clone(service))));
+                    }
                 }
             }
         }
 
-        tasks
+        (tasks, teardown_tasks)
     }
 }
 
