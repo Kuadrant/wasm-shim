@@ -26,9 +26,7 @@ pub struct ReqRespCtx {
 
 impl Default for ReqRespCtx {
     fn default() -> Self {
-        let mut ctx = Self::new(Arc::new(ProxyWasmHost));
-        ctx.init_tracing();
-        ctx
+        Self::new(Arc::new(ProxyWasmHost))
     }
 }
 
@@ -51,7 +49,7 @@ impl ReqRespCtx {
         self
     }
 
-    fn init_tracing(&mut self) {
+    pub fn init_tracing(&mut self) {
         let request_headers: Result<AttributeState<Option<Headers>>, _> =
             self.get_attribute("request.headers");
 

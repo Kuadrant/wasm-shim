@@ -129,12 +129,13 @@ impl Default for PipelineFactory {
 
 impl PipelineFactory {
     pub fn build(&self, ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
-        let ctx = ctx.with_request_data(Arc::clone(&self.request_data));
-
         let blueprint = match self.select_blueprint(&ctx)? {
             Some(bp) => bp,
             None => return Ok(None),
         };
+
+        let mut ctx = ctx.with_request_data(Arc::clone(&self.request_data));
+        ctx.init_tracing();
 
         let (tasks, teardown_tasks) = blueprint.to_tasks(&ctx);
         if tasks.is_empty() {
