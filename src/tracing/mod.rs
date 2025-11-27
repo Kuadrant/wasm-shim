@@ -12,7 +12,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 static TRACING_INITIALIZED: OnceLock<()> = OnceLock::new();
 
-pub fn init_tracing() {
+pub fn init_tracing(ctx: &mut crate::kuadrant::ReqRespCtx) {
     TRACING_INITIALIZED.get_or_init(|| {
         let processor_handle = processor::SpanProcessorHandle;
 
@@ -29,4 +29,6 @@ pub fn init_tracing() {
         // Bridge log crate to tracing
         tracing_log::LogTracer::init().ok();
     });
+
+    ctx.enter_request_span();
 }

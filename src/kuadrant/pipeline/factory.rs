@@ -135,9 +135,9 @@ impl PipelineFactory {
         };
 
         let mut ctx = ctx.with_request_data(Arc::clone(&self.request_data));
-        ctx.init_tracing();
+        ctx.extract_trace_context();
 
-        let (tasks, teardown_tasks) = blueprint.to_tasks(&ctx);
+        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx);
         if tasks.is_empty() {
             return Ok(None);
         }

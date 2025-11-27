@@ -49,7 +49,7 @@ impl ReqRespCtx {
         self
     }
 
-    pub fn init_tracing(&mut self) {
+    pub fn extract_trace_context(&mut self) {
         let request_headers: Result<AttributeState<Option<Headers>>, _> =
             self.get_attribute("request.headers");
 
@@ -59,7 +59,9 @@ impl ReqRespCtx {
                 propagator.extract(&extractor)
             });
         }
+    }
 
+    pub fn enter_request_span(&mut self) {
         let span = tracing::info_span!("kuadrant_filter");
         if !span.is_disabled() {
             if let Err(e) = span.set_parent(self.otel_context.clone()) {
@@ -493,7 +495,7 @@ mod tests {
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.init_tracing();
+        ctx.extract_trace_context();
 
         let tracing_headers = ctx.get_tracing_headers();
 
@@ -530,7 +532,7 @@ mod tests {
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.init_tracing();
+        ctx.extract_trace_context();
 
         let tracing_headers = ctx.get_tracing_headers();
 
@@ -548,7 +550,7 @@ mod tests {
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.init_tracing();
+        ctx.extract_trace_context();
 
         let tracing_headers = ctx.get_tracing_headers();
 

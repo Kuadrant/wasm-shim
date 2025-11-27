@@ -9,8 +9,8 @@ pub struct ExportTracesTask {
 }
 
 impl ExportTracesTask {
-    pub fn new(service: Rc<TracingService>) -> Self {
-        crate::tracing::init_tracing();
+    pub fn new(ctx: &mut ReqRespCtx, service: Rc<TracingService>) -> Self {
+        crate::tracing::init_tracing(ctx);
 
         Self { service }
     }

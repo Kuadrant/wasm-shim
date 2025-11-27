@@ -122,7 +122,7 @@ type TaskList = Vec<Box<dyn Task>>;
 type TeardownList = Vec<Box<dyn TeardownAction>>;
 
 impl Blueprint {
-    pub fn to_tasks(&self, ctx: &ReqRespCtx) -> (TaskList, TeardownList) {
+    pub fn to_tasks(&self, ctx: &mut ReqRespCtx) -> (TaskList, TeardownList) {
         let mut tasks: TaskList = Vec::new();
         let mut teardown_tasks: TeardownList = Vec::new();
 
@@ -184,7 +184,8 @@ impl Blueprint {
                         HeadersType::HttpResponseHeaders,
                     )));
                     if let Some(service) = service {
-                        teardown_tasks.push(Box::new(ExportTracesTask::new(Rc::clone(service))));
+                        teardown_tasks
+                            .push(Box::new(ExportTracesTask::new(ctx, Rc::clone(service))));
                     }
                 }
             }
