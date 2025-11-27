@@ -1,15 +1,15 @@
-use log::warn;
-use std::sync::Arc;
-
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
+use log::warn;
+use std::cell::LazyCell;
+use std::sync::Arc;
+use uuid::Uuid;
 
 type RequestData = ((String, String), Expression);
 
-#[derive(Clone)]
 pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
@@ -18,6 +18,7 @@ pub struct ReqRespCtx {
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
+    request_id: LazyCell<Uuid>,
 }
 
 impl Default for ReqRespCtx {
@@ -35,6 +36,7 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
+            request_id: LazyCell::new(Uuid::new_v4),
         }
     }
 
@@ -320,6 +322,10 @@ impl ReqRespCtx {
         }
 
         headers
+    }
+
+    pub fn request_id(&self) -> String {
+        self.request_id.to_string()
     }
 }
 
