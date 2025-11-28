@@ -42,10 +42,13 @@ const CONFIG: &str = r#"{
             "scope": "RLS-domain",
             "conditionalData": [
             {
+                "predicates": [
+                    "auth.identity.userid == 'alice'"
+                ],
                 "data": [
                 {
                     "static": {
-                        "key": "admin",
+                        "key": "limit.alice_limit",
                         "value": "1"
                     }
                 }]
@@ -198,7 +201,7 @@ fn it_performs_authenticated_rate_limiting() {
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
-    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    let grpc_response = data::auth_response::WITH_METADATA_USERID_ALICE;
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_log(
@@ -210,7 +213,12 @@ fn it_performs_authenticated_rate_limiting() {
             Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
-        .returning(Some(&grpc_response))
+        .returning(Some(grpc_response))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("Setting property: `kuadrant\\.auth\\.identity\\.userid`"),
+        )
+        .expect_set_property(Some(vec!["kuadrant.auth.identity.userid"]),  Some(b"\"alice\""))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),

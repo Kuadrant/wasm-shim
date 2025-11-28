@@ -110,10 +110,19 @@ impl AttributeResolver for MockWasmHost {
     }
 
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError> {
+        assert_eq!(
+            path.tokens().len(),
+            1,
+            "set_attribute should only be called with a single escaped token"
+        );
+
+        let token = &path.tokens()[0];
+        let storage_path = Path::new(vec!["filter_state", &format!("wasm.{}", token)]);
+
         self.properties
             .lock()
             .expect("properties mutex poisoned")
-            .insert(path.clone(), value.to_vec());
+            .insert(storage_path, value.to_vec());
         Ok(())
     }
 
