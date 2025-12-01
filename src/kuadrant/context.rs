@@ -1,4 +1,5 @@
 use log::{debug, warn};
+use std::cell::LazyCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -8,10 +9,10 @@ use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use uuid::Uuid;
 
 type RequestData = ((String, String), Expression);
 
-#[derive(Clone)]
 pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
@@ -22,6 +23,7 @@ pub struct ReqRespCtx {
     grpc_response_data: Option<(u32, usize)>,
     otel_context: opentelemetry::Context,
     request_span_guard: Option<Rc<tracing::span::EnteredSpan>>,
+    request_id: LazyCell<Uuid>,
 }
 
 impl Default for ReqRespCtx {
@@ -39,6 +41,7 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
+            request_id: LazyCell::new(Uuid::new_v4),
             otel_context: opentelemetry::Context::new(),
             request_span_guard: None,
         }
@@ -352,6 +355,10 @@ impl ReqRespCtx {
         });
 
         headers
+    }
+
+    pub fn request_id(&self) -> String {
+        self.request_id.to_string()
     }
 }
 

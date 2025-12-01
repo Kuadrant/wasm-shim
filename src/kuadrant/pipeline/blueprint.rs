@@ -176,10 +176,9 @@ impl Blueprint {
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::Tracing(service) => {
-                    // todo: read value for header from `ReqRespCtx`
                     tasks.push(Box::new(ModifyHeadersTask::new(
                         HeaderOperation::Append(
-                            vec![(action.scope.clone(), "Kuadrant was here!".to_string())].into(),
+                            vec![(action.scope.clone(), ctx.request_id())].into(),
                         ),
                         HeadersType::HttpResponseHeaders,
                     )));
