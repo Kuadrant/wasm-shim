@@ -176,6 +176,7 @@ impl Blueprint {
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::Tracing(service) => {
+                    ctx.set_public_tracker_id(action.scope.clone());
                     tasks.push(Box::new(ModifyHeadersTask::new(
                         HeaderOperation::Append(
                             vec![(action.scope.clone(), ctx.request_id())].into(),

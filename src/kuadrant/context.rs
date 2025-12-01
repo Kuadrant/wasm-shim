@@ -23,7 +23,7 @@ pub struct ReqRespCtx {
     grpc_response_data: Option<(u32, usize)>,
     otel_context: opentelemetry::Context,
     request_span_guard: Option<Rc<tracing::span::EnteredSpan>>,
-    request_id: LazyCell<Uuid>,
+    tracker: Tracker,
 }
 
 impl Default for ReqRespCtx {
@@ -41,9 +41,9 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
-            request_id: LazyCell::new(Uuid::new_v4),
             otel_context: opentelemetry::Context::new(),
             request_span_guard: None,
+            tracker: Tracker::default(),
         }
     }
 
@@ -357,8 +357,33 @@ impl ReqRespCtx {
         headers
     }
 
+    pub fn set_public_tracker_id(&mut self, id: String) {
+        self.tracker.downstream_identifier = Some(id);
+    }
+
     pub fn request_id(&self) -> String {
-        self.request_id.to_string()
+        self.tracker.id.to_string()
+    }
+
+    pub fn tracker(&self) -> Option<(&str, String)> {
+        match &self.tracker.downstream_identifier {
+            None => None,
+            Some(id) => Some((id.as_str(), self.request_id())),
+        }
+    }
+}
+
+struct Tracker {
+    id: LazyCell<Uuid>,
+    downstream_identifier: Option<String>,
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self {
+            id: LazyCell::new(Uuid::new_v4),
+            downstream_identifier: None,
+        }
     }
 }
 

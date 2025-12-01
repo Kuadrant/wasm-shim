@@ -30,11 +30,16 @@ impl SendReplyTask {
 impl Task for SendReplyTask {
     #[tracing::instrument(name = "send_reply", skip(self, ctx), fields(status_code = %self.status_code))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        let headers_ref: Vec<(&str, &str)> = self
+        let mut headers_ref: Vec<(&str, &str)> = self
             .headers
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
+
+        let tracker = ctx.tracker();
+        if let Some((tracker, value)) = &tracker {
+            headers_ref.push((tracker, value.as_str()));
+        }
 
         let body_bytes = self.body.as_ref().map(|s| s.as_bytes());
         match ctx.send_http_reply(self.status_code, headers_ref, body_bytes) {
