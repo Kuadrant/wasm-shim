@@ -1,6 +1,5 @@
 use log::{debug, warn};
 use std::cell::LazyCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -22,7 +21,7 @@ pub struct ReqRespCtx {
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
     otel_context: opentelemetry::Context,
-    request_span_guard: Option<Rc<tracing::span::EnteredSpan>>,
+    request_span_guard: Option<tracing::span::EnteredSpan>,
     tracker: Tracker,
 }
 
@@ -71,8 +70,7 @@ impl ReqRespCtx {
                 debug!("failed to set parent span ctx: {e:?}");
             }
             span.record("request_id", self.request_id());
-            let entered = span.entered();
-            self.request_span_guard = Some(Rc::new(entered));
+            self.request_span_guard = Some(span.entered());
         }
     }
 
