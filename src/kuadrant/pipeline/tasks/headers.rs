@@ -3,7 +3,7 @@ use crate::data::attribute::{AttributeState, Path};
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
-use log::debug;
+use log::{debug, error};
 
 #[derive(Clone)]
 pub enum HeadersType {
@@ -67,15 +67,21 @@ impl Task for ModifyHeadersTask {
                 match ctx.set_attribute_map(&path, existing_headers) {
                     Ok(AttributeState::Available(_)) => TaskOutcome::Done,
                     Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
-                    Err(_) => TaskOutcome::Failed,
+                    Err(e) => {
+                        error!("Failed to set attribute map: {e:?}");
+                        TaskOutcome::Failed
+                    }
                 }
             }
             Ok(AttributeState::Available(None)) => {
-                unreachable!("get_attribute_ref can't return AttributeState::Available(None)")
+                error!(
+                    "Unexpected state: getting headers returned AttributeState::Available(None)"
+                );
+                TaskOutcome::Failed
             }
             Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
-            Err(_) => {
-                // TODO: Error handling since this was a major failure.
+            Err(e) => {
+                error!("Failed to get attribute reference: {e:?}");
                 TaskOutcome::Failed
             }
         }
@@ -109,12 +115,11 @@ mod tests {
         let result: Result<AttributeState<Option<Headers>>, _> =
             ctx.get_attribute_ref(&Path::from(&HeadersType::HttpRequestHeaders));
 
+        assert!(matches!(result, Ok(AttributeState::Available(Some(_)))));
         if let Ok(AttributeState::Available(Some(headers))) = result {
             assert_eq!(headers.len(), 2);
             assert_eq!(headers.get("API-Key"), Some("API-Value"));
             assert_eq!(headers.get("New-Key"), Some("New-Value"));
-        } else {
-            unreachable!("Expected AttributeState::Available(Some(headers))");
         }
     }
 
@@ -143,12 +148,11 @@ mod tests {
         let result: Result<AttributeState<Option<Headers>>, _> =
             ctx.get_attribute_ref(&Path::from(&HeadersType::HttpRequestHeaders));
 
+        assert!(matches!(result, Ok(AttributeState::Available(Some(_)))));
         if let Ok(AttributeState::Available(Some(headers))) = result {
             assert_eq!(headers.len(), 2);
             assert_eq!(headers.get("Content-Type"), Some("application/json"));
             assert_eq!(headers.get("X-Custom"), Some("value1"));
-        } else {
-            unreachable!("Expected AttributeState::Available(Some(headers))");
         }
     }
 
@@ -176,11 +180,10 @@ mod tests {
         let result: Result<AttributeState<Option<Headers>>, _> =
             ctx.get_attribute_ref(&Path::from(&HeadersType::HttpResponseHeaders));
 
+        assert!(matches!(result, Ok(AttributeState::Available(Some(_)))));
         if let Ok(AttributeState::Available(Some(headers))) = result {
             assert_eq!(headers.len(), 1);
             assert_eq!(headers.get("X-Origin"), Some("Kuadrant"));
-        } else {
-            unreachable!("Expected AttributeState::Available(Some(headers))");
         }
     }
 }

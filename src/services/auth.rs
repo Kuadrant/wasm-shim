@@ -41,7 +41,7 @@ impl Service for AuthService {
 impl AuthService {
     pub fn new(endpoint: String, timeout: Duration, failure_mode: FailureMode) -> Self {
         Self {
-            upstream_name: endpoint.clone(),
+            upstream_name: endpoint,
             service_name: "envoy.service.auth.v3.Authorization".to_string(),
             method: "Check".to_string(),
             timeout,

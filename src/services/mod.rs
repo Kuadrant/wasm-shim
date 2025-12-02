@@ -52,19 +52,19 @@ impl std::fmt::Display for ServiceError {
 
 impl std::error::Error for ServiceError {}
 
-impl TryFrom<&ServiceConfig> for ServiceInstance {
+impl TryFrom<ServiceConfig> for ServiceInstance {
     type Error = ServiceError;
 
-    fn try_from(service: &ServiceConfig) -> Result<Self, Self::Error> {
+    fn try_from(service: ServiceConfig) -> Result<Self, Self::Error> {
         match service.service_type {
             ServiceType::Auth => Ok(ServiceInstance::Auth(Rc::new(AuthService::new(
-                service.endpoint.clone(),
+                service.endpoint,
                 service.timeout.0,
                 service.failure_mode,
             )))),
             ServiceType::RateLimit => {
                 Ok(ServiceInstance::RateLimit(Rc::new(RateLimitService::new(
-                    service.endpoint.clone(),
+                    service.endpoint,
                     service.timeout.0,
                     "envoy.service.ratelimit.v3.RateLimitService",
                     "ShouldRateLimit",
@@ -73,7 +73,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
             }
             ServiceType::RateLimitCheck => Ok(ServiceInstance::RateLimitCheck(Rc::new(
                 RateLimitService::new(
-                    service.endpoint.clone(),
+                    service.endpoint,
                     service.timeout.0,
                     "kuadrant.service.ratelimit.v1.RateLimitService",
                     "CheckRateLimit",
@@ -82,7 +82,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
             ))),
             ServiceType::RateLimitReport => Ok(ServiceInstance::RateLimitReport(Rc::new(
                 RateLimitService::new(
-                    service.endpoint.clone(),
+                    service.endpoint,
                     service.timeout.0,
                     "kuadrant.service.ratelimit.v1.RateLimitService",
                     "Report",
@@ -90,7 +90,7 @@ impl TryFrom<&ServiceConfig> for ServiceInstance {
                 ),
             ))),
             ServiceType::Tracing => Ok(ServiceInstance::Tracing(Some(Rc::new(
-                TracingService::new(service.endpoint.clone(), service.timeout.0),
+                TracingService::new(service.endpoint, service.timeout.0),
             )))),
         }
     }

@@ -42,14 +42,14 @@ impl Display for BuildError {
 impl TryFrom<PluginConfiguration> for PipelineFactory {
     type Error = CompileError;
 
-    fn try_from(config: PluginConfiguration) -> Result<Self, Self::Error> {
+    fn try_from(mut config: PluginConfiguration) -> Result<Self, Self::Error> {
         let services: HashMap<String, ServiceInstance> = config
             .services
-            .iter()
+            .drain()
             .map(|(name, service_config)| {
                 let instance = ServiceInstance::try_from(service_config)
                     .map_err(|e| CompileError::ServiceCreationFailed(format!("{}", e)))?;
-                Ok((name.clone(), instance))
+                Ok((name, instance))
             })
             .collect::<Result<_, CompileError>>()?;
 
@@ -92,11 +92,11 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
 
         let mut request_data: Vec<((String, String), Expression)> = config
             .request_data
-            .iter()
+            .into_iter()
             .filter_map(|(k, v)| {
-                Expression::new(v).ok().map(|expr| {
-                    let (domain, field) = domain_and_field_name(k);
-                    ((domain.to_string(), field.to_string()), expr)
+                Expression::new(&v).ok().map(|expr| {
+                    let (domain, field) = domain_and_field_name(&k);
+                    ((domain.to_owned(), field.to_owned()), expr)
                 })
             })
             .collect();
@@ -149,7 +149,7 @@ impl PipelineFactory {
         ))
     }
 
-    fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<&Rc<Blueprint>>, BuildError> {
+    fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<Rc<Blueprint>>, BuildError> {
         let hostname = self.get_hostname(ctx)?;
 
         let candidates = match self.index.get_ancestor_value(&reverse_subdomain(&hostname)) {
@@ -166,12 +166,12 @@ impl PipelineFactory {
                     "Selected blueprint {} for hostname: {}",
                     blueprint.name, hostname
                 );
-                return Ok(Some(blueprint));
+                return Ok(Some(Rc::clone(blueprint)));
             }
         }
 
         debug!("No matching blueprint found for hostname: {}", hostname);
-        Ok(self.fallback_blueprint.as_ref())
+        Ok(self.fallback_blueprint.clone())
     }
 
     fn get_hostname(&self, ctx: &ReqRespCtx) -> Result<String, BuildError> {
