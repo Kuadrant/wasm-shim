@@ -142,12 +142,12 @@ impl Blueprint {
                         action.dependencies.clone(),
                         true, // pauses_filter = true for auth tasks
                     ));
-                    let task = Box::new(TracingDecoratorTask::new(
+                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                    tasks.push(Box::new(TracingDecoratorTask::new(
                         "auth",
                         task,
                         action.sources.clone(),
-                    ));
-                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
+                    )));
                 }
                 ServiceInstance::RateLimit(ratelimit_service)
                 | ServiceInstance::RateLimitCheck(ratelimit_service) => {
@@ -161,12 +161,12 @@ impl Blueprint {
                         action.conditional_data.clone(),
                         true, // pauses_filter = true for regular ratelimit and check tasks
                     ));
-                    let task = Box::new(TracingDecoratorTask::new(
+                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                    tasks.push(Box::new(TracingDecoratorTask::new(
                         "ratelimit",
                         task,
                         action.sources.clone(),
-                    ));
-                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
+                    )));
                 }
                 ServiceInstance::RateLimitReport(ratelimit_service) => {
                     // parse token usage from response

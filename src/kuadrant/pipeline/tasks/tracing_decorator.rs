@@ -24,7 +24,9 @@ impl TracingDecoratorTask {
                 "task_wrapper",
                 task_id = ?self.task.id(),
                 sources = ?self.sources,
-                otel.name = tracing::field::Empty
+                otel.name = tracing::field::Empty,
+                otel.status_code = tracing::field::Empty,
+                otel.status_message = tracing::field::Empty
             );
             span.record("otel.name", self.span_name);
             span
