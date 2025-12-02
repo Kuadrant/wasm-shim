@@ -23,7 +23,7 @@ pub struct ReqRespCtx {
     grpc_response_data: Option<(u32, usize)>,
     otel_context: opentelemetry::Context,
     request_span_guard: Option<Rc<tracing::span::EnteredSpan>>,
-    request_id: LazyCell<Uuid>,
+    tracker: Tracker,
 }
 
 impl Default for ReqRespCtx {
@@ -41,9 +41,9 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
-            request_id: LazyCell::new(Uuid::new_v4),
             otel_context: opentelemetry::Context::new(),
             request_span_guard: None,
+            tracker: Tracker::default(),
         }
     }
 
@@ -65,11 +65,12 @@ impl ReqRespCtx {
     }
 
     pub fn enter_request_span(&mut self) {
-        let span = tracing::info_span!("kuadrant_filter");
+        let span = tracing::info_span!("kuadrant_filter", request_id = tracing::field::Empty);
         if !span.is_disabled() {
             if let Err(e) = span.set_parent(self.otel_context.clone()) {
                 debug!("failed to set parent span ctx: {e:?}");
             }
+            span.record("request_id", self.request_id());
             let entered = span.entered();
             self.request_span_guard = Some(Rc::new(entered));
         }
@@ -357,8 +358,33 @@ impl ReqRespCtx {
         headers
     }
 
-    pub fn request_id(&self) -> String {
-        self.request_id.to_string()
+    pub fn set_public_tracker_id(&mut self, id: String) {
+        self.tracker.downstream_identifier = Some(id);
+    }
+
+    pub fn request_id(&self) -> &str {
+        self.tracker.id.as_str()
+    }
+
+    pub fn tracker(&self) -> Option<(&str, &str)> {
+        match &self.tracker.downstream_identifier {
+            None => None,
+            Some(id) => Some((id.as_str(), self.request_id())),
+        }
+    }
+}
+
+struct Tracker {
+    id: LazyCell<String>,
+    downstream_identifier: Option<String>,
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self {
+            id: LazyCell::new(|| Uuid::new_v4().to_string()),
+            downstream_identifier: None,
+        }
     }
 }
 
