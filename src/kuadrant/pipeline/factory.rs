@@ -129,11 +129,12 @@ impl Default for PipelineFactory {
 }
 
 impl PipelineFactory {
-    pub fn build(&self, ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
-        let blueprint = match self.select_blueprint(&ctx)? {
+    pub fn build(&self, mut ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
+        let blueprint = match self.select_blueprint(&mut ctx)? {
             Some(bp) => bp,
             None => return Ok(None),
         };
+        ctx.set_action_set_name(blueprint.name.clone());
 
         let mut ctx = ctx.with_request_data(Arc::clone(&self.request_data));
         ctx.extract_trace_context();
@@ -150,8 +151,9 @@ impl PipelineFactory {
         ))
     }
 
-    fn select_blueprint(&self, ctx: &ReqRespCtx) -> Result<Option<Rc<Blueprint>>, BuildError> {
+    fn select_blueprint(&self, ctx: &mut ReqRespCtx) -> Result<Option<Rc<Blueprint>>, BuildError> {
         let hostname = self.get_hostname(ctx)?;
+        ctx.set_hostname(hostname.clone());
 
         let candidates = match self.index.get_ancestor_value(&reverse_subdomain(&hostname)) {
             Some(blueprints) => blueprints,
