@@ -26,6 +26,7 @@ pub(crate) struct Action {
     pub predicates: Vec<Predicate>,
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
+    pub sources: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -229,6 +230,7 @@ impl Action {
             predicates,
             conditional_data,
             dependencies,
+            sources: config.sources.clone(),
         })
     }
 }
@@ -364,6 +366,7 @@ mod tests {
                 "request.path.startsWith('/api')".to_string(),
             ],
             conditional_data: vec![],
+            sources: vec![],
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -384,6 +387,7 @@ mod tests {
             scope: "test-scope".to_string(),
             predicates: vec!["bad syntax ***".to_string()],
             conditional_data: vec![],
+            sources: vec![],
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -402,6 +406,7 @@ mod tests {
             scope: "test-scope".to_string(),
             predicates: vec![],
             conditional_data: vec![],
+            sources: vec![],
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -522,6 +527,7 @@ mod tests {
                         },
                     ],
                 }],
+                sources: vec![],
             }],
         };
 

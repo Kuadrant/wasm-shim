@@ -71,6 +71,7 @@ impl TryFrom<PluginConfiguration> for PipelineFactory {
                 predicates: vec![],
                 conditional_data: Default::default(),
                 dependencies: Default::default(),
+                sources: vec![],
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
@@ -275,6 +276,7 @@ mod tests {
                     scope: "test-scope".to_string(),
                     predicates: vec![],
                     conditional_data: vec![],
+                    sources: vec![],
                 }],
             }],
             observability: Default::default(),
