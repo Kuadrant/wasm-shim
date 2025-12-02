@@ -65,11 +65,12 @@ impl ReqRespCtx {
     }
 
     pub fn enter_request_span(&mut self) {
-        let span = tracing::info_span!("kuadrant_filter");
+        let span = tracing::info_span!("kuadrant_filter", request_id = tracing::field::Empty);
         if !span.is_disabled() {
             if let Err(e) = span.set_parent(self.otel_context.clone()) {
                 debug!("failed to set parent span ctx: {e:?}");
             }
+            span.record("request_id", &self.request_id());
             let entered = span.entered();
             self.request_span_guard = Some(Rc::new(entered));
         }
