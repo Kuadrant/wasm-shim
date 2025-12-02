@@ -3,7 +3,7 @@ use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
-    RateLimitTask, Task, TeardownAction, TokenUsageTask,
+    RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -142,6 +142,11 @@ impl Blueprint {
                         action.dependencies.clone(),
                         true, // pauses_filter = true for auth tasks
                     ));
+                    let task = Box::new(TracingDecoratorTask::new(
+                        "auth",
+                        task,
+                        action.sources.clone(),
+                    ));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::RateLimit(ratelimit_service)
@@ -155,6 +160,11 @@ impl Blueprint {
                         action.predicates.clone(),
                         action.conditional_data.clone(),
                         true, // pauses_filter = true for regular ratelimit and check tasks
+                    ));
+                    let task = Box::new(TracingDecoratorTask::new(
+                        "ratelimit",
+                        task,
+                        action.sources.clone(),
                     ));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
@@ -174,6 +184,11 @@ impl Blueprint {
                         action.predicates.as_slice(),
                         action.conditional_data.as_slice(),
                     ))));
+                    let task = Box::new(TracingDecoratorTask::new(
+                        "ratelimit_report",
+                        task,
+                        action.sources.clone(),
+                    ));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::Tracing(service) => {
