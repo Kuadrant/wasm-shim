@@ -32,3 +32,15 @@ pub fn init_tracing(ctx: &mut crate::kuadrant::ReqRespCtx) {
 
     ctx.enter_request_span();
 }
+
+/// Records an error on the current span and logs it.
+#[macro_export]
+macro_rules! record_error {
+    ($($arg:tt)*) => {{
+        use tracing::field;
+        log::error!($($arg)*);
+        let span = tracing::Span::current();
+        span.record("otel.status_code", "ERROR");
+        span.record("otel.status_message", &field::display(format_args!($($arg)*)));
+    }};
+}

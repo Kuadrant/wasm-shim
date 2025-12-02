@@ -459,6 +459,7 @@ fn it_fails_on_first_action_grpc_response() {
             Some(LogLevel::Debug),
             Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 14"),
         )
+        .expect_log(Some(LogLevel::Error), Some("gRPC status code is not OK"))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Sending local reply, status code: 500"),
@@ -663,6 +664,10 @@ fn it_fails_on_second_action_grpc_response() {
             Some(format!(
                 "#2 on_grpc_call_response: received gRPC call response: token: {second_call_token_id}, status: {status_code}"
             ).as_str()),
+        )
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("gRPC status code is not OK"),
         )
         .expect_log(
             Some(LogLevel::Debug),

@@ -151,6 +151,10 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {first_call_token_id}, status: {status_code}").as_str()),
         )
         .expect_log(
+            Some(LogLevel::Error),
+            Some("gRPC status code is not OK"),
+        )
+        .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
         )
@@ -338,6 +342,10 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         .expect_log(
             Some(LogLevel::Debug),
             Some(format!("#2 on_grpc_call_response: received gRPC call response: token: 42, status: {status_code}").as_str()),
+        )
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("gRPC status code is not OK"),
         )
         .expect_log(
             Some(LogLevel::Debug),

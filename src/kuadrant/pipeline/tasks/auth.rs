@@ -7,6 +7,7 @@ use crate::kuadrant::pipeline::tasks::{
     Task, TaskOutcome,
 };
 use crate::kuadrant::ReqRespCtx;
+use crate::record_error;
 use crate::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
 use log::{error, warn};
@@ -98,7 +99,6 @@ impl Task for AuthTask {
         &self.dependencies
     }
 
-    #[tracing::instrument(name = "auth", skip(self, ctx), fields(task_id = %self.task_id))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
             Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
@@ -111,7 +111,9 @@ impl Task for AuthTask {
         }
 
         let token_id = {
-            let _span = tracing::debug_span!("auth_request").entered();
+            let _span =
+                tracing::debug_span!("auth_request", task_id = self.task_id, scope = self.scope)
+                    .entered();
             match self.service.dispatch_auth(ctx, &self.scope) {
                 Ok(id) => id,
                 Err(e) => {
@@ -122,32 +124,40 @@ impl Task for AuthTask {
         };
 
         let service = self.service.clone();
-
-        let parent_span = tracing::Span::current();
+        let task_id = self.task_id.clone();
 
         TaskOutcome::Deferred {
             token_id,
             pending: Box::new(PendingTask::new(
                 self.task_id,
                 Box::new(move |ctx| {
-                    let span = tracing::debug_span!(parent: parent_span.id(), "auth_response");
-                    let _guard = span.enter();
+                    let span = tracing::debug_span!(
+                        "auth_response",
+                        task_id = task_id,
+                        token_id = token_id,
+                        grpc_status_code = tracing::field::Empty,
+                        otel.status_code = tracing::field::Empty,
+                        otel.status_message = tracing::field::Empty
+                    )
+                    .entered();
                     match ctx.get_grpc_response_data() {
                         Ok((status_code, response_size)) => {
+                            span.record("grpc_status_code", status_code);
                             if status_code != proxy_wasm::types::Status::Ok as u32 {
+                                record_error!("gRPC status code is not OK");
                                 TaskOutcome::Failed
                             } else {
                                 match service.get_response(ctx, response_size) {
                                     Ok(parsed) => process_auth_response(parsed),
                                     Err(e) => {
-                                        error!("Failed to get response: {e:?}");
+                                        record_error!("Failed to get response: {e:?}");
                                         TaskOutcome::Failed
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Failed to get response: {e:?}");
+                            record_error!("Failed to get response: {e:?}");
                             TaskOutcome::Failed
                         }
                     }
