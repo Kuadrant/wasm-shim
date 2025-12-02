@@ -36,9 +36,8 @@ impl Task for SendReplyTask {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        let tracker = ctx.tracker();
-        if let Some((tracker, value)) = &tracker {
-            headers_ref.push((tracker, value.as_str()));
+        if let Some((tracker, value)) = ctx.tracker() {
+            headers_ref.push((tracker, value));
         }
 
         let body_bytes = self.body.as_ref().map(|s| s.as_bytes());
