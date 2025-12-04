@@ -1,7 +1,9 @@
 use crate::util::common::wasm_module;
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
-use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
+use proxy_wasm_test_framework::types::{
+    Action, BufferType, LogLevel, MapType, MetricType, ReturnType,
+};
 use serial_test::serial;
 
 pub mod util;
@@ -60,6 +62,19 @@ fn it_auths() {
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(CONFIG.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -158,6 +173,7 @@ fn it_auths() {
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
+        .expect_increment_metric(Some(2), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -205,6 +221,7 @@ fn it_auths() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -267,6 +284,19 @@ fn it_passes_request_data() {
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -371,6 +401,7 @@ fn it_passes_request_data() {
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
+        .expect_increment_metric(Some(2), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Adding data: `io.kuadrant` with entries: [\"bar\", \"foo\"]")
@@ -414,6 +445,7 @@ fn it_passes_request_data() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
@@ -444,6 +476,19 @@ fn it_denies() {
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(CONFIG.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -542,6 +587,7 @@ fn it_denies() {
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
+        .expect_increment_metric(Some(2), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -582,6 +628,7 @@ fn it_denies() {
         )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
+        .expect_increment_metric(Some(5), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Sending local reply, status code: 401"),
@@ -596,12 +643,6 @@ fn it_denies() {
             None,
         )
         .execute_and_expect(ReturnType::None)
-        .unwrap();
-
-    module
-        .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
-        .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
 
@@ -659,6 +700,19 @@ fn it_does_not_fold_auth_actions() {
     module
         .call_proxy_on_configure(root_context, 0)
         .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
         .expect_log(Some(LogLevel::Info), None)
@@ -750,6 +804,7 @@ fn it_does_not_fold_auth_actions() {
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
+        .expect_increment_metric(Some(2), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -822,6 +877,7 @@ fn it_does_not_fold_auth_actions() {
     module
         .call_proxy_on_response_headers(http_context, 0, false)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
+        .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }

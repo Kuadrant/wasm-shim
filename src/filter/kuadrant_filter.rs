@@ -1,4 +1,5 @@
 use crate::kuadrant::{Pipeline, PipelineFactory, ReqRespCtx};
+use crate::metrics::METRICS;
 use log::{debug, error};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
@@ -62,6 +63,7 @@ impl HttpContext for KuadrantFilter {
         match self.factory.build(ctx) {
             Ok(Some(pipeline)) => {
                 debug!("#{} pipeline built successfully", self.context_id);
+                METRICS.hits().increment();
                 self.pipeline = pipeline.eval();
                 if self.should_pause() {
                     Action::Pause
@@ -71,10 +73,12 @@ impl HttpContext for KuadrantFilter {
             }
             Ok(None) => {
                 debug!("#{} no matching route found", self.context_id);
+                METRICS.misses().increment();
                 Action::Continue
             }
             Err(e) => {
                 error!("#{} failed to build pipeline: {:?}", self.context_id, e);
+                METRICS.errors().increment();
                 // todo(adam-cattermole): we should deny the request
                 Action::Continue
             }
@@ -95,6 +99,7 @@ impl HttpContext for KuadrantFilter {
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_headers", self.context_id);
+        METRICS.allowed().increment();
         self.in_response_phase = true;
         if let Some(pipeline) = self.pipeline.take() {
             self.pipeline = pipeline.eval();
