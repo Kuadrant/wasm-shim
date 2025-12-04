@@ -3,7 +3,7 @@ use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
-    RateLimitTask, Task, TeardownAction, TokenUsageTask,
+    RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -26,6 +26,7 @@ pub(crate) struct Action {
     pub predicates: Vec<Predicate>,
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
+    pub sources: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +142,12 @@ impl Blueprint {
                         action.dependencies.clone(),
                         true, // pauses_filter = true for auth tasks
                     ));
-                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
+                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                    tasks.push(Box::new(TracingDecoratorTask::new(
+                        "auth",
+                        task,
+                        action.sources.clone(),
+                    )));
                 }
                 ServiceInstance::RateLimit(ratelimit_service)
                 | ServiceInstance::RateLimitCheck(ratelimit_service) => {
@@ -155,7 +161,12 @@ impl Blueprint {
                         action.conditional_data.clone(),
                         true, // pauses_filter = true for regular ratelimit and check tasks
                     ));
-                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
+                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                    tasks.push(Box::new(TracingDecoratorTask::new(
+                        "ratelimit",
+                        task,
+                        action.sources.clone(),
+                    )));
                 }
                 ServiceInstance::RateLimitReport(ratelimit_service) => {
                     // parse token usage from response
@@ -173,6 +184,11 @@ impl Blueprint {
                         action.predicates.as_slice(),
                         action.conditional_data.as_slice(),
                     ))));
+                    let task = Box::new(TracingDecoratorTask::new(
+                        "ratelimit_report",
+                        task,
+                        action.sources.clone(),
+                    ));
                     tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
                 }
                 ServiceInstance::Tracing(service) => {
@@ -229,6 +245,7 @@ impl Action {
             predicates,
             conditional_data,
             dependencies,
+            sources: config.sources.clone(),
         })
     }
 }
@@ -364,6 +381,7 @@ mod tests {
                 "request.path.startsWith('/api')".to_string(),
             ],
             conditional_data: vec![],
+            sources: vec![],
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -384,6 +402,7 @@ mod tests {
             scope: "test-scope".to_string(),
             predicates: vec!["bad syntax ***".to_string()],
             conditional_data: vec![],
+            sources: vec![],
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -402,6 +421,7 @@ mod tests {
             scope: "test-scope".to_string(),
             predicates: vec![],
             conditional_data: vec![],
+            sources: vec![],
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -522,6 +542,7 @@ mod tests {
                         },
                     ],
                 }],
+                sources: vec![],
             }],
         };
 

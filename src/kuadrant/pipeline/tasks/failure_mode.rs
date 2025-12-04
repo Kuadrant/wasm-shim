@@ -19,6 +19,8 @@ impl Task for FailureModeTask {
         match self.task.apply(ctx) {
             TaskOutcome::Failed => {
                 if self.abort {
+                    let span = tracing::Span::current();
+                    span.record("otel.status_code", "ERROR");
                     TaskOutcome::Terminate(Box::new(SendReplyTask::default()))
                 } else {
                     TaskOutcome::Done

@@ -14,6 +14,7 @@ impl StoreDataTask {
 }
 
 impl Task for StoreDataTask {
+    #[tracing::instrument(name = "store_data", skip(self, ctx), level = tracing::Level::TRACE)]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         let mut had_failure = false;
 

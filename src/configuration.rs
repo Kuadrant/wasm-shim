@@ -25,6 +25,8 @@ pub struct Action {
     pub predicates: Vec<String>,
     #[serde(default)]
     pub conditional_data: Vec<ConditionalData>,
+    #[serde(default)]
+    pub sources: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]

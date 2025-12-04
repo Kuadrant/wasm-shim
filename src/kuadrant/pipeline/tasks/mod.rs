@@ -6,6 +6,7 @@ mod ratelimit;
 mod send_reply;
 mod store_data;
 mod token_usage;
+mod tracing_decorator;
 
 pub use auth::AuthTask;
 pub use export_traces::ExportTracesTask;
@@ -16,6 +17,7 @@ pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
 pub use token_usage::TokenUsageTask;
+pub use tracing_decorator::TracingDecoratorTask;
 
 use crate::kuadrant::ReqRespCtx;
 

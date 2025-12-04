@@ -1,4 +1,3 @@
-#[allow(dead_code)]
 use crate::data::attribute::{AttributeState, Path};
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};

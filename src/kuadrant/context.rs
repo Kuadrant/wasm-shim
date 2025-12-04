@@ -20,8 +20,7 @@ pub struct ReqRespCtx {
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
-    otel_context: opentelemetry::Context,
-    request_span_guard: Option<tracing::span::EnteredSpan>,
+    tracing: TracingContext,
     tracker: Tracker,
 }
 
@@ -40,8 +39,7 @@ impl ReqRespCtx {
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
-            otel_context: opentelemetry::Context::new(),
-            request_span_guard: None,
+            tracing: TracingContext::default(),
             tracker: Tracker::default(),
         }
     }
@@ -57,25 +55,45 @@ impl ReqRespCtx {
 
         if let Ok(AttributeState::Available(Some(header_map))) = request_headers {
             let extractor = crate::tracing::HeadersExtractor::new(&header_map);
-            self.otel_context = opentelemetry::global::get_text_map_propagator(|propagator| {
-                propagator.extract(&extractor)
-            });
+            self.tracing.otel_context =
+                opentelemetry::global::get_text_map_propagator(|propagator| {
+                    propagator.extract(&extractor)
+                });
         }
     }
 
     pub fn enter_request_span(&mut self) {
-        let span = tracing::info_span!("kuadrant_filter", request_id = tracing::field::Empty);
+        let span = tracing::info_span!(
+            "kuadrant_filter",
+            action_set = tracing::field::Empty,
+            hostname = tracing::field::Empty,
+            request_id = tracing::field::Empty
+        );
         if !span.is_disabled() {
-            if let Err(e) = span.set_parent(self.otel_context.clone()) {
+            if let Err(e) = span.set_parent(self.tracing.otel_context.clone()) {
                 debug!("failed to set parent span ctx: {e:?}");
             }
             span.record("request_id", self.request_id());
-            self.request_span_guard = Some(span.entered());
+            if let Some(action_set) = &self.tracing.action_set_name {
+                span.record("action_set", action_set.as_str());
+            }
+            if let Some(hostname) = &self.tracing.hostname {
+                span.record("hostname", hostname.as_str());
+            }
+            self.tracing.request_span_guard = Some(span.entered());
         }
     }
 
     pub fn end_request_span(&mut self) {
-        std::mem::drop(self.request_span_guard.take());
+        std::mem::drop(self.tracing.request_span_guard.take());
+    }
+
+    pub fn set_action_set_name(&mut self, name: String) {
+        self.tracing.action_set_name = Some(name);
+    }
+
+    pub fn set_hostname(&mut self, hostname: String) {
+        self.tracing.hostname = Some(hostname);
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
@@ -343,7 +361,7 @@ impl ReqRespCtx {
         let mut headers = Vec::new();
 
         let context = if tracing::Span::current().is_none() {
-            &self.otel_context
+            &self.tracing.otel_context
         } else {
             &tracing::Span::current().context()
         };
@@ -382,6 +400,24 @@ impl Default for Tracker {
         Self {
             id: LazyCell::new(|| Uuid::new_v4().to_string()),
             downstream_identifier: None,
+        }
+    }
+}
+
+struct TracingContext {
+    otel_context: opentelemetry::Context,
+    request_span_guard: Option<tracing::span::EnteredSpan>,
+    action_set_name: Option<String>,
+    hostname: Option<String>,
+}
+
+impl Default for TracingContext {
+    fn default() -> Self {
+        Self {
+            otel_context: opentelemetry::Context::new(),
+            request_span_guard: None,
+            action_set_name: None,
+            hostname: None,
         }
     }
 }
