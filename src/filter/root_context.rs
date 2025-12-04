@@ -1,6 +1,7 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::configuration::PluginConfiguration;
 use crate::kuadrant::PipelineFactory;
+use crate::metrics::METRICS;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use log::{debug, error, info, LevelFilter};
@@ -54,6 +55,7 @@ impl RootContext for FilterRoot {
 
     fn on_configure(&mut self, _config_size: usize) -> bool {
         info!("#{} on_configure", self.context_id);
+        METRICS.configs().increment();
         let configuration: Vec<u8> = match self.get_plugin_configuration() {
             Ok(cfg) => match cfg {
                 Some(c) => c,

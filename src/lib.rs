@@ -6,6 +6,7 @@ mod data;
 mod envoy;
 mod filter;
 mod kuadrant;
+pub mod metrics;
 mod services;
 pub mod tracing;
 
