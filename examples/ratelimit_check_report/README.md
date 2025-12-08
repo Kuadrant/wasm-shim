@@ -106,7 +106,7 @@ curl --resolve sse-streaming.example.com:18000:127.0.0.1 "http://sse-streaming.e
   -H "Content-Type: application/json" \
   -d '{
     "model": "meta-llama/Llama-3.1-8B-Instruct",
-    "max_tokens": 100,
+    "max_tokens": 30,
     "stream": true,
     "stream_options": {
         "include_usage": true
