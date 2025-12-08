@@ -133,6 +133,13 @@ impl Props {
             Entry::Vacant(_) => false,
         }
     }
+
+    /// Resets all property values to None, allowing them to be set again for a new request
+    fn reset(&mut self) {
+        for value in self.props.values_mut() {
+            *value = None;
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -164,7 +171,12 @@ impl PropSetter {
             }
         }
         expected.dedup();
-        Self { expected, props }
+        let mut setter = Self { expected, props };
+        // Reset all props to None to ensure fresh values for each request
+        // This is necessary because the Props are shared via Arc with the Blueprint's
+        // expressions and may contain stale values from previous requests
+        setter.reset();
+        setter
     }
 
     pub fn expected_props(&self) -> &[String] {
@@ -177,6 +189,15 @@ impl PropSetter {
         for prop in self.props.iter_mut() {
             if let Ok(mut prop) = prop.lock() {
                 prop.set_prop(key.clone(), value.clone());
+            }
+        }
+    }
+
+    /// Resets all property values to None, allowing them to be set again for a new request
+    fn reset(&mut self) {
+        for prop in self.props.iter() {
+            if let Ok(mut prop) = prop.lock() {
+                prop.reset();
             }
         }
     }
@@ -1402,6 +1423,59 @@ mod tests {
                 .clone()
                 .values(),
             expected
+        );
+    }
+
+    #[test]
+    fn test_prop_setter_resets_props_on_new_request() {
+        // This test verifies that creating a new PropSetter resets the props,
+        // simulating the behavior across multiple requests where the same
+        // Blueprint (and its predicates) are reused.
+        let predicates = &[Predicate::new("responseBodyJSON('/usage/total_tokens') > 0").unwrap()];
+
+        // First "request" - set value to 42
+        let mut setter1 = PropSetter::new(predicates, &[]);
+        setter1.set_prop("/usage/total_tokens", 42_u64);
+        let values1 = predicates[0]
+            .expression
+            .response_props
+            .deref()
+            .lock()
+            .unwrap()
+            .clone()
+            .values();
+        assert_eq!(
+            values1.get("/usage/total_tokens").cloned(),
+            Some(Value::UInt(42))
+        );
+
+        // Second "request" - create new PropSetter (simulating new request)
+        // This should reset the props and allow setting a new value
+        let mut setter2 = PropSetter::new(predicates, &[]);
+
+        // Verify that props were reset (should be pending/None)
+        assert!(predicates[0]
+            .expression
+            .response_props
+            .deref()
+            .lock()
+            .unwrap()
+            .pending());
+
+        // Set new value for second request
+        setter2.set_prop("/usage/total_tokens", 100_u64);
+        let values2 = predicates[0]
+            .expression
+            .response_props
+            .deref()
+            .lock()
+            .unwrap()
+            .clone()
+            .values();
+        assert_eq!(
+            values2.get("/usage/total_tokens").cloned(),
+            Some(Value::UInt(100)),
+            "Second request should have its own value, not the cached value from first request"
         );
     }
 }
