@@ -20,6 +20,15 @@ services:
     type: ratelimit
     endpoint: ratelimit-cluster
     failureMode: allow
+  tracing-service:
+    type: tracing
+    endpoint: tracing-cluster
+    failureMode: allow
+observability:
+  httpHeaderIdentifier: x-request-id
+  defaultLevel: INFO
+  tracing:
+    service: tracing-service
 actionSets:
   - name: rlp-ns-A/rlp-name-A
     routeRuleConditions:
@@ -154,6 +163,21 @@ predicates:
 | [Envoy Attributes](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes) | Contextual properties provided by Envoy during request and connection processing                                                                                                                                               |
 | `source.remote_address`                                                                                 | This attribute evaluates to the `trusted client address` (IP address without port) as it is being defined by [Envoy Doc](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-for) |
 | `auth.*`                                                                                                | Data made available by the authentication service to the `ActionSet`'s pipeline                                                                                                                                                |
+
+### Metrics
+
+The WASM module exposes the following Prometheus-compatible metrics via Envoy:
+
+| Metric Name           | Type    | Description                                                      |
+|-----------------------|---------|------------------------------------------------------------------|
+| `kuadrant.configs`    | Counter | Number of times the plugin configuration has been loaded         |
+| `kuadrant.hits`       | Counter | Number of requests that matched an action set                    |
+| `kuadrant.misses`     | Counter | Number of requests that did not match any action set             |
+| `kuadrant.allowed`    | Counter | Number of requests allowed after evaluation                      |
+| `kuadrant.denied`     | Counter | Number of requests denied as a result of actions                 |
+| `kuadrant.errors`     | Counter | Number of errors encountered during request processing           |
+
+These metrics are automatically exposed through Envoy's stats endpoint and can be scraped by Prometheus or other monitoring systems. To view metrics, access Envoy's admin interface (typically at `:8001/stats/prometheus`).
 
 ## Building
 
