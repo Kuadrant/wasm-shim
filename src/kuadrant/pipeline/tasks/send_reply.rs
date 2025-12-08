@@ -1,6 +1,7 @@
 use crate::envoy::StatusCode;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
+use crate::metrics::METRICS;
 use log::error;
 
 pub struct SendReplyTask {
@@ -11,6 +12,7 @@ pub struct SendReplyTask {
 
 impl SendReplyTask {
     pub fn new(status_code: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
+        METRICS.denied().increment();
         Self {
             status_code,
             headers,

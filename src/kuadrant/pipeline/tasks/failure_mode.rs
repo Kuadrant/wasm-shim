@@ -2,6 +2,7 @@ use crate::kuadrant::{
     pipeline::tasks::{SendReplyTask, Task, TaskOutcome},
     ReqRespCtx,
 };
+use crate::metrics::METRICS;
 
 pub struct FailureModeTask {
     task: Box<dyn Task>,
@@ -18,6 +19,7 @@ impl Task for FailureModeTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.task.apply(ctx) {
             TaskOutcome::Failed => {
+                METRICS.errors().increment();
                 if self.abort {
                     let span = tracing::Span::current();
                     span.record("otel.status_code", "ERROR");
