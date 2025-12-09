@@ -28,7 +28,7 @@ Expected rate limiting service logs:
 docker compose logs -f limitador
 ```
 
-which contains the desired descriptor entry `entries: [Entry { key: "tokens", value: "24" }]`.
+which contains the desired descriptor entry `entries: [Entry { key: "a", value: "1" }]`.
 
 > Note: the tokens value may be different
 
