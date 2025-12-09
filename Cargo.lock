@@ -2561,7 +2561,6 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tracing",
- "tracing-log",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "urlencoding",
