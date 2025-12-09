@@ -25,9 +25,6 @@ pub fn init_tracing(ctx: &mut crate::kuadrant::ReqRespCtx) {
         let _ = tracing_subscriber::registry()
             .with(tracing_opentelemetry::layer().with_tracer(tracer))
             .try_init();
-
-        // Bridge log crate to tracing
-        tracing_log::LogTracer::init().ok();
     });
 
     ctx.enter_request_span();
