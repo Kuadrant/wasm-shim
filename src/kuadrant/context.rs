@@ -1,6 +1,6 @@
-use log::{debug, warn};
 use std::cell::LazyCell;
 use std::sync::Arc;
+use tracing::{debug, warn};
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::{Expression, Headers};

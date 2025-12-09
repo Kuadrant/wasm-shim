@@ -105,7 +105,7 @@ impl SpanProcessor for BufferingSpanProcessor {
 
         // FIFO
         if buffer.len() >= self.max_buffer_size {
-            log::warn!(
+            tracing::warn!(
                 "Span buffer full ({}), dropping oldest span",
                 self.max_buffer_size
             );

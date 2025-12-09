@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use log::{debug, info};
 use prost::Message;
+use tracing::{debug, info};
 
 use super::{Service, ServiceError};
 use crate::kuadrant::ReqRespCtx;
