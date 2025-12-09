@@ -5,6 +5,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     set_git_hash("WASM_SHIM_GIT_HASH");
     set_profile("WASM_SHIM_PROFILE");
     set_features("WASM_SHIM_FEATURES");
+
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=vendor-protobufs");
     generate_protobuf()
 }
 
@@ -52,12 +55,12 @@ fn set_git_hash(env: &str) {
 
 #[allow(clippy::expect_used)]
 fn generate_protobuf() -> Result<(), Box<dyn Error>> {
-    println!("cargo:warning=Starting protobuf generation...");
+    println!("Starting protobuf generation...");
 
     let mut prost_build = prost_build::Config::new();
     prost_build.out_dir("src/envoy");
 
-    println!("cargo:warning=Compiling protos...");
+    println!("Compiling protos...");
     let result = prost_build.compile_protos(
         &[
             "vendor-protobufs/data-plane-api/envoy/service/auth/v3/external_auth.proto",
@@ -102,8 +105,8 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
     );
 
     match &result {
-        Ok(_) => println!("cargo:warning=Protobuf generation completed successfully!"),
-        Err(e) => println!("cargo:warning=Protobuf generation failed: {}", e),
+        Ok(_) => println!("Protobuf generation completed successfully!"),
+        Err(e) => println!("cargo:error=Protobuf generation failed: {}", e),
     }
 
     result?;
