@@ -3,8 +3,8 @@ use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use event_parser::Event;
-use log::{debug, error, warn};
 use serde_json::Value;
+use tracing::{debug, error, warn};
 
 mod event_parser;
 

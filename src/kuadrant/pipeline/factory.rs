@@ -9,12 +9,12 @@ use crate::kuadrant::pipeline::executor::Pipeline;
 
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
-use log::debug;
 use radix_trie::Trie;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::Arc;
+use tracing::debug;
 
 type RequestData = ((String, String), Expression);
 

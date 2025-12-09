@@ -35,7 +35,7 @@ pub fn init_tracing(ctx: &mut crate::kuadrant::ReqRespCtx) {
 macro_rules! record_error {
     ($($arg:tt)*) => {{
         use tracing::field;
-        log::error!($($arg)*);
+        tracing::error!($($arg)*);
         let span = tracing::Span::current();
         span.record("otel.status_code", "ERROR");
         span.record("otel.status_message", &field::display(format_args!($($arg)*)));

@@ -60,7 +60,7 @@ impl Default for Metrics {
                 Ok(id) => {
                     counters.insert(metric.to_string(), Counter(Some(id)));
                 }
-                Err(_) => log::error!("failed to add metric: {}", metric),
+                Err(_) => tracing::error!("failed to add metric: {}", metric),
             }
         }
 

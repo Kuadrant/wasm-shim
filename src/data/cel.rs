@@ -7,15 +7,15 @@ use cel_interpreter::objects::{Key, Map, ValueType};
 use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use cel_parser::{parse, Atom, Expression as CelExpression, Member, ParseError};
 use chrono::{DateTime, FixedOffset};
-#[cfg(feature = "debug-host-behaviour")]
-use log::debug;
-use log::warn;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
+#[cfg(feature = "debug-host-behaviour")]
+use tracing::debug;
+use tracing::warn;
 use urlencoding::decode;
 
 pub(crate) mod errors {
