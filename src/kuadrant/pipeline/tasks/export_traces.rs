@@ -1,8 +1,8 @@
 use crate::kuadrant::pipeline::tasks::{TeardownAction, TeardownOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::services::TracingService;
-use log::{debug, warn};
 use std::rc::Rc;
+use tracing::{debug, warn};
 
 pub struct ExportTracesTask {
     service: Rc<TracingService>,

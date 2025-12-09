@@ -12,11 +12,11 @@ pub use auth::AuthTask;
 pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
-use log::debug;
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
 pub use token_usage::TokenUsageTask;
+use tracing::debug;
 pub use tracing_decorator::TracingDecoratorTask;
 
 use crate::kuadrant::ReqRespCtx;

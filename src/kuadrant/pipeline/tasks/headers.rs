@@ -2,7 +2,7 @@ use crate::data::attribute::{AttributeState, Path};
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
-use log::{debug, error};
+use tracing::{debug, error};
 
 #[derive(Clone)]
 pub enum HeadersType {

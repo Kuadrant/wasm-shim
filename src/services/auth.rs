@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use cel_interpreter::Value;
 use chrono::{DateTime, FixedOffset};
-use log::{debug, log_enabled};
 use prost::Message;
 use prost_types::{Struct, Timestamp};
+use tracing::{debug, enabled, Level};
 
 use super::{Service, ServiceError};
 use crate::configuration::FailureMode;
@@ -157,7 +157,7 @@ fn build_metadata(ctx: &mut ReqRespCtx) -> Result<Metadata, AttributeError> {
             format!("{KUADRANT_METADATA_PREFIX}.{domain}")
         };
 
-        if log_enabled!(log::Level::Debug) {
+        if enabled!(Level::DEBUG) {
             let mut field_names = fields.fields.keys().collect::<Vec<_>>();
             field_names.sort();
             debug!("Adding data: `{data_key}` with entries: {field_names:?}");
