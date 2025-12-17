@@ -11,6 +11,8 @@ use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
+use crate::kuadrant;
+use crate::kuadrant::resolver;
 
 const X_REQUEST_ID_HEADER: &str = "x-request-id";
 
@@ -31,7 +33,11 @@ pub struct ReqRespCtx {
 
 impl Default for ReqRespCtx {
     fn default() -> Self {
-        Self::new(Arc::new(ProxyWasmHost))
+        if cfg!(test) {
+            Self::new(super::MOCK.take().expect("No mock host set!"))
+        } else {
+            Self::new(Arc::new(ProxyWasmHost))
+        }
     }
 }
 
