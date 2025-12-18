@@ -177,8 +177,133 @@ impl Pipeline {
     }
 
     pub fn requires_pause(&self) -> bool {
-        let has_blocking_queued_tasks = self.task_queue.iter().any(|task| task.pauses_filter());
+        let has_deferred = !self.deferred_tasks.is_empty();
+        let has_blocking = self.task_queue.iter().any(|task| {
+            // Only consider tasks whose dependencies are met.
+            // Tasks with unmet deps shouldn't block the filter since they're
+            // waiting for other tasks to complete first.
+            let deps_met = task
+                .dependencies()
+                .iter()
+                .all(|dep| self.completed_tasks.contains(dep));
+            deps_met && task.pauses_filter()
+        });
 
-        !self.deferred_tasks.is_empty() || has_blocking_queued_tasks
+        has_deferred || has_blocking
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kuadrant::MockWasmHost;
+    use std::sync::Arc;
+
+    fn create_test_context() -> ReqRespCtx {
+        let mock_host = MockWasmHost::new();
+        ReqRespCtx::new(Arc::new(mock_host))
+    }
+
+    /// A simple test task for testing requires_pause behavior
+    struct TestTask {
+        id: String,
+        dependencies: Vec<String>,
+        pauses_filter: bool,
+    }
+
+    impl TestTask {
+        fn new(id: &str, dependencies: Vec<&str>, pauses_filter: bool) -> Self {
+            Self {
+                id: id.to_string(),
+                dependencies: dependencies.into_iter().map(|s| s.to_string()).collect(),
+                pauses_filter,
+            }
+        }
+    }
+
+    impl Task for TestTask {
+        fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+            TaskOutcome::Done
+        }
+
+        fn id(&self) -> Option<String> {
+            Some(self.id.clone())
+        }
+
+        fn dependencies(&self) -> &[String] {
+            &self.dependencies
+        }
+
+        fn pauses_filter(&self) -> bool {
+            self.pauses_filter
+        }
+    }
+
+    #[test]
+    fn requires_pause_ignores_tasks_with_unmet_deps() {
+        // Task with pauses_filter=true but depends on "auth" which hasn't completed
+        let blocking_task = TestTask::new("blocker", vec!["auth"], true);
+
+        let ctx = create_test_context();
+        let mut pipeline = Pipeline::new(ctx);
+        pipeline.task_queue.push(Box::new(blocking_task));
+
+        // requires_pause should return FALSE because the task's deps are not met
+        assert!(
+            !pipeline.requires_pause(),
+            "requires_pause() should ignore tasks with unmet deps"
+        );
+    }
+
+    #[test]
+    fn requires_pause_considers_tasks_with_met_deps() {
+        // Task with pauses_filter=true and deps are met (auth is in completed_tasks)
+        let blocking_task = TestTask::new("blocker", vec!["auth"], true);
+
+        let ctx = create_test_context();
+        let mut pipeline = Pipeline::new(ctx);
+        pipeline.completed_tasks.insert("auth".to_string());
+        pipeline.task_queue.push(Box::new(blocking_task));
+
+        // requires_pause should return TRUE because task's deps are met and it pauses
+        assert!(
+            pipeline.requires_pause(),
+            "requires_pause() should consider tasks with met deps"
+        );
+    }
+
+    #[test]
+    fn requires_pause_returns_true_for_deferred_tasks() {
+        // Even with blocking task that has unmet deps, deferred tasks cause pause
+        let blocking_task = TestTask::new("blocker", vec!["auth"], true);
+        let deferred_task = TestTask::new("auth", vec![], false);
+
+        let ctx = create_test_context();
+        let mut pipeline = Pipeline::new(ctx);
+        pipeline.task_queue.push(Box::new(blocking_task));
+        pipeline.deferred_tasks.insert(42, Box::new(deferred_task));
+
+        // requires_pause should return TRUE because there's a deferred task
+        assert!(
+            pipeline.requires_pause(),
+            "requires_pause() should return true when deferred tasks exist"
+        );
+    }
+
+    #[test]
+    fn requires_pause_ignores_non_blocking_tasks_with_met_deps() {
+        // Task with pauses_filter=false and deps met - should not cause pause
+        let non_blocking_task = TestTask::new("report", vec!["auth"], false);
+
+        let ctx = create_test_context();
+        let mut pipeline = Pipeline::new(ctx);
+        pipeline.completed_tasks.insert("auth".to_string());
+        pipeline.task_queue.push(Box::new(non_blocking_task));
+
+        // requires_pause should return FALSE because task doesn't pause filter
+        assert!(
+            !pipeline.requires_pause(),
+            "requires_pause() should ignore tasks with pauses_filter=false"
+        );
     }
 }
