@@ -15,7 +15,7 @@ type RequestData = ((String, String), Expression);
 pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
-    request_data: Option<Arc<Vec<RequestData>>>,
+    request_data: Option<Vec<RequestData>>,
     response_body_size: usize,
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
@@ -44,7 +44,7 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn with_request_data(mut self, request_data: Arc<Vec<RequestData>>) -> Self {
+    pub fn with_request_data(mut self, request_data: Vec<RequestData>) -> Self {
         self.request_data = Some(request_data);
         self
     }
@@ -519,7 +519,7 @@ mod tests {
         assert!(results_empty.is_empty());
 
         // With request_data
-        let ctx = ReqRespCtx::new(backend).with_request_data(Arc::new(request_data));
+        let ctx = ReqRespCtx::new(backend).with_request_data(request_data);
         let results = ctx.eval_request_data();
         assert_eq!(results.len(), 2);
 

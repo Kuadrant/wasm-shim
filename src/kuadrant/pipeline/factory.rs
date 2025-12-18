@@ -136,10 +136,18 @@ impl PipelineFactory {
         };
         ctx.set_action_set_name(blueprint.name.clone());
 
-        let mut ctx = ctx.with_request_data(Arc::clone(&self.request_data));
+        // Clone request_data with fresh expressions for this request
+        // This ensures each concurrent request has its own response_props state
+        let request_data: Vec<RequestData> = self
+            .request_data
+            .iter()
+            .map(|((domain, field), expr)| ((domain.clone(), field.clone()), expr.clone_fresh()))
+            .collect();
+
+        let mut ctx = ctx.with_request_data(request_data.clone());
         ctx.extract_trace_context();
 
-        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx);
+        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx, &request_data);
         if tasks.is_empty() {
             return Ok(None);
         }

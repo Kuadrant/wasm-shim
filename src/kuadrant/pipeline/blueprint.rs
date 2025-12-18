@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
 
+pub type RequestData = ((String, String), Expression);
+
 pub(crate) struct Blueprint {
     pub name: String,
     pub route_predicates: Vec<Predicate>,
@@ -123,7 +125,11 @@ type TaskList = Vec<Box<dyn Task>>;
 type TeardownList = Vec<Box<dyn TeardownAction>>;
 
 impl Blueprint {
-    pub fn to_tasks(&self, ctx: &mut ReqRespCtx) -> (TaskList, TeardownList) {
+    pub fn to_tasks(
+        &self,
+        ctx: &mut ReqRespCtx,
+        request_data: &[RequestData],
+    ) -> (TaskList, TeardownList) {
         let mut tasks: TaskList = Vec::new();
         let mut teardown_tasks: TeardownList = Vec::new();
 
@@ -183,6 +189,7 @@ impl Blueprint {
                     tasks.push(Box::new(TokenUsageTask::with_prop_setter(PropSetter::new(
                         action.predicates.as_slice(),
                         action.conditional_data.as_slice(),
+                        request_data,
                     ))));
                     let task = Box::new(TracingDecoratorTask::new(
                         "ratelimit_report",
