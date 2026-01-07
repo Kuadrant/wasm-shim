@@ -1042,6 +1042,43 @@ mod tests {
     }
 
     #[test]
+    fn response_body_json_returns_pending_when_not_set() {
+        let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+
+        let expr =
+            Expression::new("responseBodyJSON('foo') + responseBodyJSON('bar') == 100").unwrap();
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_body_value("foo", 58);
+        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+    }
+
+    #[test]
+    fn multiple_expressions_share_body_values_from_context() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_body_value("tokens", 100);
+        ctx.set_body_value("model", "gpt-4");
+
+        let expr1 = Expression::new("responseBodyJSON('tokens') > 50").unwrap();
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr1.eval(&ctx).unwrap()
+        );
+        let expr2 = Expression::new(
+            "responseBodyJSON('tokens') > 0 && responseBodyJSON('model') == 'gpt-4'",
+        )
+        .unwrap();
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr2.eval(&ctx).unwrap()
+        );
+    }
+
+    #[test]
     fn kuadrant_generated_predicates() {
         let mock_host = MockWasmHost::new()
             .with_property("request.query".into(), "param1=%F0%9F%91%BE%20&param2=Exterminate%21&%F0%9F%91%BE=123&%F0%9F%91%BE=456&%F0%9F%91%BE".bytes().collect());
