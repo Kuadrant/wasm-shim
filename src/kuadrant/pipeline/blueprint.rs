@@ -1,5 +1,4 @@
 use crate::configuration;
-use crate::data::cel::PropSetter;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
@@ -29,6 +28,30 @@ pub(crate) struct Action {
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
     pub sources: Vec<String>,
+}
+
+impl Action {
+    pub fn collect_body_values(&self, request_data: &[RequestData]) -> Vec<String> {
+        let mut fields = Vec::new();
+
+        for predicate in &self.predicates {
+            fields.extend(predicate.body_values().iter().cloned());
+        }
+        for data in &self.conditional_data {
+            for predicate in &data.predicates {
+                fields.extend(predicate.body_values().iter().cloned());
+            }
+            for item in &data.data {
+                fields.extend(item.value.body_values().iter().cloned());
+            }
+        }
+        for (_, expr) in request_data {
+            fields.extend(expr.body_values().iter().cloned());
+        }
+
+        fields.dedup();
+        fields
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -186,11 +209,10 @@ impl Blueprint {
                         action.conditional_data.clone(),
                         false, // pauses_filter = false for ratelimit report tasks
                     ));
-                    tasks.push(Box::new(TokenUsageTask::with_prop_setter(PropSetter::new(
-                        action.predicates.as_slice(),
-                        action.conditional_data.as_slice(),
-                        request_data,
-                    ))));
+
+                    tasks.push(Box::new(TokenUsageTask::with_expected_fields(
+                        action.collect_body_values(request_data),
+                    )));
                     let task = Box::new(TracingDecoratorTask::new(
                         "ratelimit_report",
                         task,

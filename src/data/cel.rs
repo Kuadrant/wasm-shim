@@ -347,6 +347,10 @@ impl Expression {
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
+
+    pub fn body_values(&self) -> &[String] {
+        &self.body_values
+    }
 }
 
 const RESPONSE_BODY_JSON_DATA: &str = "@responseBodyJSON";
@@ -497,6 +501,10 @@ impl Predicate {
                 err.to_string(),
             )),
         }
+    }
+
+    pub fn body_values(&self) -> &[String] {
+        self.expression.body_values()
     }
 }
 

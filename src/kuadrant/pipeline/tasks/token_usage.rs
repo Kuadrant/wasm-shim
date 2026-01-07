@@ -1,5 +1,4 @@
 use crate::data::attribute::AttributeState;
-use crate::data::cel::PropSetter;
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
@@ -11,19 +10,19 @@ mod event_parser;
 
 pub struct TokenUsageTask {
     strategy: Option<Box<dyn ExtractionStrategy>>,
-    prop_setter: PropSetter,
+    expected_fields: Vec<String>,
 }
 
 impl TokenUsageTask {
     #[cfg(test)]
     pub fn new() -> Self {
-        Self::with_prop_setter(Default::default())
+        Self::with_expected_fields(Vec::new())
     }
 
-    pub fn with_prop_setter(prop_setter: PropSetter) -> Self {
+    pub fn with_expected_fields(expected_fields: Vec<String>) -> Self {
         Self {
             strategy: None,
-            prop_setter,
+            expected_fields,
         }
     }
 }
@@ -32,7 +31,7 @@ impl From<Box<Self>> for TokenUsageTask {
     fn from(value: Box<Self>) -> Self {
         Self {
             strategy: value.strategy,
-            prop_setter: value.prop_setter,
+            expected_fields: value.expected_fields,
         }
     }
 }
@@ -82,28 +81,26 @@ impl Task for TokenUsageTask {
         }
 
         if ctx.is_end_of_stream() {
-            let props: Vec<String> = task.prop_setter.expected_props().to_vec();
-
-            for prop in props {
-                if let Some(json_value) = strategy.extract_property(&prop) {
+            for field in &task.expected_fields {
+                if let Some(json_value) = strategy.extract_property(field) {
                     match json_value {
-                        Value::Bool(b) => task.prop_setter.set_prop(prop, b),
+                        Value::Bool(b) => ctx.set_body_value(field, b),
                         Value::Number(n) => {
                             if let Some(u) = n.as_u64() {
-                                task.prop_setter.set_prop(prop, u);
+                                ctx.set_body_value(field, u);
                             } else if let Some(i) = n.as_i64() {
-                                task.prop_setter.set_prop(prop, i);
+                                ctx.set_body_value(field, i);
                             } else if let Some(f) = n.as_f64() {
-                                task.prop_setter.set_prop(prop, f);
+                                ctx.set_body_value(field, f);
                             }
                         }
-                        Value::String(s) => task.prop_setter.set_prop(prop, s),
+                        Value::String(s) => ctx.set_body_value(field, s),
                         Value::Null | Value::Array(_) | Value::Object(_) => {
                             warn!("Unsupported json value type: {:?}", json_value);
                         }
                     }
                 } else {
-                    warn!("Missing json property: {}", prop);
+                    warn!("Missing json property: {}", field);
                 }
             }
             return TaskOutcome::Done;
