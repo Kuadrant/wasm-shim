@@ -224,7 +224,7 @@ impl From<Vec<String>> for Props {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
-    response_props: Arc<Mutex<Props>>,
+    body_values: Vec<String>,
     expression: CelExpression,
     extended: bool,
 }
@@ -279,7 +279,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
-            response_props: Arc::new(Mutex::new(response_props.into())),
+            body_values: response_props,
             expression,
             extended,
         })
@@ -292,23 +292,6 @@ impl Expression {
     #[cfg(test)]
     pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
         Self::new_expression(expression, true)
-    }
-
-    pub fn clone_fresh(&self) -> Self {
-        let mut response_props_keys = Vec::with_capacity(1);
-        properties(
-            &self.expression,
-            &mut Vec::default(),
-            &mut response_props_keys,
-            &mut Vec::default(),
-        );
-
-        Self {
-            attributes: self.attributes.clone(),
-            response_props: Arc::new(Mutex::new(response_props_keys.into())),
-            expression: self.expression.clone(),
-            extended: self.extended,
-        }
     }
 
     pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
@@ -1023,15 +1006,12 @@ mod tests {
     }
 
     #[test]
-    fn expressions_captures_response_props() {
+    fn expressions_captures_response_fields() {
         let value = Expression::new(
             "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
         )
         .expect("This is valid CEL!");
-        assert_eq!(
-            value.response_props.deref().lock().unwrap().props,
-            [("foo.bar".to_string(), None)].into()
-        );
+        assert_eq!(value.body_values, vec!["foo.bar".to_string()]);
     }
 
     #[test]
