@@ -320,9 +320,19 @@ impl Expression {
             );
         }
 
-        #[allow(clippy::unwrap_used)]
-        let values = self.response_props.lock().unwrap().clone().values();
-        ctx.add_variable_from_value(RESPONSE_BODY_JSON_DATA, Value::Map(values.into()));
+        let mut response_json_map = HashMap::new();
+        for field_key in &self.body_values {
+            match req_ctx.get_body_value(field_key) {
+                Some(value) => {
+                    response_json_map.insert(field_key.clone(), value.clone());
+                }
+                None => return Ok(AttributeState::Pending),
+            }
+        }
+        ctx.add_variable_from_value(
+            RESPONSE_BODY_JSON_DATA,
+            Value::Map(response_json_map.into()),
+        );
         ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
 
         let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
@@ -335,10 +345,6 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-        #[allow(clippy::unwrap_used)]
-        if self.response_props.deref().lock().unwrap().pending() {
-            return Ok(AttributeState::Pending);
-        }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
 }
@@ -1144,9 +1150,9 @@ mod tests {
     #[test]
     fn response_body_json() {
         let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
-        expr.response_props.lock().unwrap().set_prop("bar", 42);
         let mock_host = MockWasmHost::new();
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_body_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
             expr.eval(&ctx).unwrap()
