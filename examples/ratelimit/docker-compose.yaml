@@ -32,7 +32,6 @@ services:
     image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:v2.2.0}
     container_name: limitador
     command:
-      - limitador-server
       - --rls-ip
       - 0.0.0.0
       - --rls-port
