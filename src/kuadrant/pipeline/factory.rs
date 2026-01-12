@@ -141,7 +141,7 @@ impl PipelineFactory {
         let request_data: Vec<RequestData> = self
             .request_data
             .iter()
-            .map(|((domain, field), expr)| ((domain.clone(), field.clone()), expr.clone_fresh()))
+            .map(|((domain, field), expr)| ((domain.clone(), field.clone()), expr.clone()))
             .collect();
 
         let mut ctx = ctx.with_request_data(request_data.clone());

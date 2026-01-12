@@ -1,5 +1,7 @@
+use cel_interpreter::Value;
 use log::{debug, warn};
 use std::cell::LazyCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -22,6 +24,7 @@ pub struct ReqRespCtx {
     grpc_response_data: Option<(u32, usize)>,
     tracing: TracingContext,
     tracker: Tracker,
+    body_values: HashMap<String, Value>,
 }
 
 impl Default for ReqRespCtx {
@@ -41,6 +44,7 @@ impl ReqRespCtx {
             grpc_response_data: None,
             tracing: TracingContext::default(),
             tracker: Tracker::default(),
+            body_values: HashMap::new(),
         }
     }
 
@@ -387,6 +391,14 @@ impl ReqRespCtx {
             None => None,
             Some(id) => Some((id.as_str(), self.request_id())),
         }
+    }
+
+    pub fn set_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        self.body_values.insert(key.into(), value.into());
+    }
+
+    pub fn get_body_value(&self, key: &str) -> Option<&Value> {
+        self.body_values.get(key)
     }
 }
 

@@ -1,7 +1,6 @@
 use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::Headers;
-use crate::kuadrant::ConditionalData;
 use crate::kuadrant::ReqRespCtx;
 use cel_interpreter::extractors::{Arguments, This};
 use cel_interpreter::objects::{Key, Map, ValueType};
@@ -16,8 +15,7 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::ops::Deref;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use urlencoding::decode;
 
 pub(crate) mod errors {
@@ -100,131 +98,9 @@ pub(crate) mod errors {
 }
 
 #[derive(Clone, Debug)]
-struct Props {
-    props: HashMap<String, Option<Value>>,
-}
-
-impl Props {
-    fn is_empty(&self) -> bool {
-        self.props.is_empty()
-    }
-
-    fn pending(&self) -> bool {
-        !self.is_empty() && self.props.iter().any(|(_, value)| value.is_none())
-    }
-
-    fn values(self) -> HashMap<String, Value> {
-        self.props
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|v| (k, v)))
-            .collect()
-    }
-
-    fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) -> bool {
-        match self.props.entry(key.into()) {
-            Entry::Occupied(mut e) => {
-                if e.get().is_none() {
-                    e.get_mut().replace(value.into());
-                    true
-                } else {
-                    false
-                }
-            }
-            Entry::Vacant(_) => false,
-        }
-    }
-
-    /// Resets all property values to None, allowing them to be set again for a new request
-    fn reset(&mut self) {
-        for value in self.props.values_mut() {
-            *value = None;
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct PropSetter {
-    expected: Vec<String>,
-    props: Vec<Arc<Mutex<Props>>>,
-}
-
-impl PropSetter {
-    #[allow(clippy::unwrap_used)]
-    pub fn new(
-        predicates: &[Predicate],
-        conditional_data: &[ConditionalData],
-        request_data: &[((String, String), Expression)],
-    ) -> Self {
-        let mut expected: Vec<String> = Vec::new();
-        let mut props = vec![];
-        for predicate in predicates {
-            let arc = predicate.expression.response_props.clone();
-            expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
-            props.push(arc);
-        }
-        for data in conditional_data {
-            for predicate in &data.predicates {
-                let arc = predicate.expression.response_props.clone();
-                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
-                props.push(arc);
-            }
-            for item in &data.data {
-                let arc = item.value.response_props.clone();
-                expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
-                props.push(arc);
-            }
-        }
-        // Also include request_data expressions so their response_props get populated
-        for (_, expr) in request_data {
-            let arc = expr.response_props.clone();
-            expected.extend(arc.deref().lock().unwrap().props.keys().cloned());
-            props.push(arc);
-        }
-        expected.dedup();
-        let mut setter = Self { expected, props };
-        // Reset all props to None to ensure fresh values for each request
-        // This is necessary because the Props are shared via Arc with the Blueprint's
-        // expressions and may contain stale values from previous requests
-        setter.reset();
-        setter
-    }
-
-    pub fn expected_props(&self) -> &[String] {
-        &self.expected
-    }
-
-    pub fn set_prop<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
-        let key = key.into();
-        let value = value.into();
-        for prop in self.props.iter_mut() {
-            if let Ok(mut prop) = prop.lock() {
-                prop.set_prop(key.clone(), value.clone());
-            }
-        }
-    }
-
-    /// Resets all property values to None, allowing them to be set again for a new request
-    fn reset(&mut self) {
-        for prop in self.props.iter() {
-            if let Ok(mut prop) = prop.lock() {
-                prop.reset();
-            }
-        }
-    }
-}
-
-impl From<Vec<String>> for Props {
-    fn from(value: Vec<String>) -> Self {
-        Self {
-            props: value.into_iter().map(|s| (s, None)).collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
-    response_props: Arc<Mutex<Props>>,
+    body_values: Vec<String>,
     expression: CelExpression,
     extended: bool,
 }
@@ -279,7 +155,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
-            response_props: Arc::new(Mutex::new(response_props.into())),
+            body_values: response_props,
             expression,
             extended,
         })
@@ -292,23 +168,6 @@ impl Expression {
     #[cfg(test)]
     pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
         Self::new_expression(expression, true)
-    }
-
-    pub fn clone_fresh(&self) -> Self {
-        let mut response_props_keys = Vec::with_capacity(1);
-        properties(
-            &self.expression,
-            &mut Vec::default(),
-            &mut response_props_keys,
-            &mut Vec::default(),
-        );
-
-        Self {
-            attributes: self.attributes.clone(),
-            response_props: Arc::new(Mutex::new(response_props_keys.into())),
-            expression: self.expression.clone(),
-            extended: self.extended,
-        }
     }
 
     pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
@@ -337,9 +196,19 @@ impl Expression {
             );
         }
 
-        #[allow(clippy::unwrap_used)]
-        let values = self.response_props.lock().unwrap().clone().values();
-        ctx.add_variable_from_value(RESPONSE_BODY_JSON_DATA, Value::Map(values.into()));
+        let mut response_json_map = HashMap::new();
+        for field_key in &self.body_values {
+            match req_ctx.get_body_value(field_key) {
+                Some(value) => {
+                    response_json_map.insert(field_key.clone(), value.clone());
+                }
+                None => return Ok(AttributeState::Pending),
+            }
+        }
+        ctx.add_variable_from_value(
+            RESPONSE_BODY_JSON_DATA,
+            Value::Map(response_json_map.into()),
+        );
         ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
 
         let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
@@ -352,11 +221,11 @@ impl Expression {
     }
 
     fn build_data_map(&self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-        #[allow(clippy::unwrap_used)]
-        if self.response_props.deref().lock().unwrap().pending() {
-            return Ok(AttributeState::Pending);
-        }
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
+    }
+
+    pub fn body_values(&self) -> &[String] {
+        &self.body_values
     }
 }
 
@@ -508,6 +377,10 @@ impl Predicate {
                 err.to_string(),
             )),
         }
+    }
+
+    pub fn body_values(&self) -> &[String] {
+        self.expression.body_values()
     }
 }
 
@@ -982,13 +855,11 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
-    use crate::data::cel::{known_attribute_for, Expression, Predicate, PropSetter, Props};
+    use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel_interpreter::objects::ValueType;
     use cel_interpreter::Value;
-    use std::collections::HashMap;
-    use std::ops::Deref;
     use std::sync::Arc;
 
     #[test]
@@ -1023,15 +894,12 @@ mod tests {
     }
 
     #[test]
-    fn expressions_captures_response_props() {
+    fn expressions_captures_response_fields() {
         let value = Expression::new(
             "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
         )
         .expect("This is valid CEL!");
-        assert_eq!(
-            value.response_props.deref().lock().unwrap().props,
-            [("foo.bar".to_string(), None)].into()
-        );
+        assert_eq!(value.body_values, vec!["foo.bar".to_string()]);
     }
 
     #[test]
@@ -1164,12 +1032,49 @@ mod tests {
     #[test]
     fn response_body_json() {
         let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
-        expr.response_props.lock().unwrap().set_prop("bar", 42);
         let mock_host = MockWasmHost::new();
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_body_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
             expr.eval(&ctx).unwrap()
+        );
+    }
+
+    #[test]
+    fn response_body_json_returns_pending_when_not_set() {
+        let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+
+        let expr =
+            Expression::new("responseBodyJSON('foo') + responseBodyJSON('bar') == 100").unwrap();
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_body_value("foo", 58);
+        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+    }
+
+    #[test]
+    fn multiple_expressions_share_body_values_from_context() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_body_value("tokens", 100);
+        ctx.set_body_value("model", "gpt-4");
+
+        let expr1 = Expression::new("responseBodyJSON('tokens') > 50").unwrap();
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr1.eval(&ctx).unwrap()
+        );
+        let expr2 = Expression::new(
+            "responseBodyJSON('tokens') > 0 && responseBodyJSON('model') == 'gpt-4'",
+        )
+        .unwrap();
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr2.eval(&ctx).unwrap()
         );
     }
 
@@ -1413,343 +1318,6 @@ mod tests {
             result,
             AttributeState::Pending,
             "Ternary expression with Pending condition should return Pending"
-        );
-    }
-
-    #[test]
-    fn test_props() {
-        let mut props: Props = vec!["foo".to_string(), "bar".to_string()].into();
-        assert!(props.pending());
-        assert!(props.set_prop("foo", 1));
-        assert!(!props.set_prop("baz", 1));
-        assert!(props.pending());
-        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
-        assert_eq!(props.clone().values().get("baz").cloned(), None);
-        assert_eq!(props.clone().values().len(), 1);
-        assert!(props.set_prop("bar", 2));
-        assert!(!props.pending());
-        assert_eq!(props.clone().values().get("foo").cloned(), Some(1.into()));
-        assert_eq!(props.clone().values().get("bar").cloned(), Some(2.into()));
-        assert_eq!(props.clone().values().get("baz").cloned(), None);
-        assert_eq!(props.clone().values().len(), 2);
-    }
-
-    #[test]
-    fn test_prop_setter() {
-        let predicates = &[Predicate::new("responseBodyJSON('foo') == 42").unwrap()];
-        let mut setter = PropSetter::new(predicates, &[], &[]);
-        setter.set_prop("foo", 42);
-        let expected: HashMap<String, Value> = HashMap::from([("foo".into(), 42.into())]);
-        assert_eq!(
-            predicates[0]
-                .expression
-                .response_props
-                .deref()
-                .lock()
-                .unwrap()
-                .clone()
-                .values(),
-            expected
-        );
-    }
-
-    #[test]
-    fn test_prop_setter_resets_props_on_new_request() {
-        // This test verifies that creating a new PropSetter resets the props,
-        // simulating the behavior across multiple requests where the same
-        // Blueprint (and its predicates) are reused.
-        let predicates = &[Predicate::new("responseBodyJSON('/usage/total_tokens') > 0").unwrap()];
-
-        // First "request" - set value to 42
-        let mut setter1 = PropSetter::new(predicates, &[], &[]);
-        setter1.set_prop("/usage/total_tokens", 42_u64);
-        let values1 = predicates[0]
-            .expression
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .clone()
-            .values();
-        assert_eq!(
-            values1.get("/usage/total_tokens").cloned(),
-            Some(Value::UInt(42))
-        );
-
-        // Second "request" - create new PropSetter (simulating new request)
-        // This should reset the props and allow setting a new value
-        let mut setter2 = PropSetter::new(predicates, &[], &[]);
-
-        // Verify that props were reset (should be pending/None)
-        assert!(predicates[0]
-            .expression
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .pending());
-
-        // Set new value for second request
-        setter2.set_prop("/usage/total_tokens", 100_u64);
-        let values2 = predicates[0]
-            .expression
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .clone()
-            .values();
-        assert_eq!(
-            values2.get("/usage/total_tokens").cloned(),
-            Some(Value::UInt(100)),
-            "Second request should have its own value, not the cached value from first request"
-        );
-    }
-
-    #[test]
-    fn test_prop_setter_with_request_data() {
-        // Test that PropSetter::new connects request_data expressions
-        // so that responseBodyJSON() values are available when evaluating those expressions
-        let predicates = &[Predicate::new("responseBodyJSON('/usage/total_tokens') > 0").unwrap()];
-
-        // Create a request_data expression (simulating TelemetryPolicy label)
-        let request_data_expr = Expression::new("responseBodyJSON('/model')").unwrap();
-        let request_data: Vec<((String, String), Expression)> = vec![(
-            ("metrics.labels".to_string(), "model".to_string()),
-            request_data_expr,
-        )];
-
-        // Create PropSetter with request_data
-        let mut setter = PropSetter::new(predicates, &[], &request_data);
-
-        // Set both props
-        setter.set_prop("/usage/total_tokens", 100_u64);
-        setter.set_prop("/model", "gpt-4");
-
-        // Verify that predicate expression got the value
-        let pred_values = predicates[0]
-            .expression
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .clone()
-            .values();
-        assert_eq!(
-            pred_values.get("/usage/total_tokens").cloned(),
-            Some(Value::UInt(100))
-        );
-
-        // Verify that request_data expression also got the value
-        let request_data_values = request_data[0]
-            .1
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .clone()
-            .values();
-        assert_eq!(
-            request_data_values.get("/model").cloned(),
-            Some(Value::String(Arc::new("gpt-4".to_string()))),
-            "request_data expressions should have responseBodyJSON values set"
-        );
-    }
-
-    #[test]
-    fn test_prop_setter_with_request_data_resets_on_new_request() {
-        // This test verifies that creating a new PropSetter with request_data resets the props,
-        // simulating the behavior across multiple requests where the same expressions are reused.
-        let predicates = &[Predicate::new("responseBodyJSON('/tokens') > 0").unwrap()];
-
-        // Create a request_data expression (simulating TelemetryPolicy label)
-        let request_data_expr = Expression::new("responseBodyJSON('/model')").unwrap();
-        let request_data: Vec<((String, String), Expression)> = vec![(
-            ("metrics.labels".to_string(), "model".to_string()),
-            request_data_expr,
-        )];
-
-        // First "request" - set values
-        let mut setter1 = PropSetter::new(predicates, &[], &request_data);
-        setter1.set_prop("/tokens", 50_u64);
-        setter1.set_prop("/model", "gpt-3.5");
-
-        // Verify first request values
-        let request_data_values1 = request_data[0]
-            .1
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .clone()
-            .values();
-        assert_eq!(
-            request_data_values1.get("/model").cloned(),
-            Some(Value::String(Arc::new("gpt-3.5".to_string())))
-        );
-
-        // Second "request" - create new PropSetter (simulating new request)
-        let mut setter2 = PropSetter::new(predicates, &[], &request_data);
-
-        // Verify that request_data props were reset (should be pending/None)
-        assert!(
-            request_data[0]
-                .1
-                .response_props
-                .deref()
-                .lock()
-                .unwrap()
-                .pending(),
-            "request_data props should be reset when creating new PropSetter"
-        );
-
-        // Set new value for second request
-        setter2.set_prop("/model", "gpt-4");
-        let request_data_values2 = request_data[0]
-            .1
-            .response_props
-            .deref()
-            .lock()
-            .unwrap()
-            .clone()
-            .values();
-        assert_eq!(
-            request_data_values2.get("/model").cloned(),
-            Some(Value::String(Arc::new("gpt-4".to_string()))),
-            "Second request should have its own value for request_data expressions"
-        );
-    }
-
-    #[test]
-    fn test_clone_fresh_creates_independent_response_props() {
-        // This test verifies that clone_fresh() creates a new Expression with independent
-        // response_props that don't share state with the original expression.
-        // This is critical for preventing race conditions with concurrent requests.
-
-        let expr1 = Expression::new("responseBodyJSON('/usage/total_tokens')").unwrap();
-
-        // Set a value on the original expression's response_props
-        expr1
-            .response_props
-            .lock()
-            .unwrap()
-            .set_prop("/usage/total_tokens", 42_u64);
-
-        // Verify original has the value
-        assert_eq!(
-            expr1
-                .response_props
-                .lock()
-                .unwrap()
-                .clone()
-                .values()
-                .get("/usage/total_tokens")
-                .cloned(),
-            Some(Value::UInt(42))
-        );
-
-        // Create a fresh clone
-        let expr2 = expr1.clone_fresh();
-
-        // Verify the fresh clone has the same keys but no values set (pending)
-        assert!(
-            expr2.response_props.lock().unwrap().pending(),
-            "clone_fresh should create expression with pending (unset) props"
-        );
-
-        // Set a different value on the fresh clone
-        expr2
-            .response_props
-            .lock()
-            .unwrap()
-            .set_prop("/usage/total_tokens", 100_u64);
-
-        // Verify the fresh clone has its own value
-        assert_eq!(
-            expr2
-                .response_props
-                .lock()
-                .unwrap()
-                .clone()
-                .values()
-                .get("/usage/total_tokens")
-                .cloned(),
-            Some(Value::UInt(100)),
-            "Fresh clone should have its own independent value"
-        );
-
-        // Verify the original still has its original value (not affected by the fresh clone)
-        assert_eq!(
-            expr1
-                .response_props
-                .lock()
-                .unwrap()
-                .clone()
-                .values()
-                .get("/usage/total_tokens")
-                .cloned(),
-            Some(Value::UInt(42)),
-            "Original expression should not be affected by changes to the fresh clone"
-        );
-    }
-
-    #[test]
-    fn test_clone_fresh_simulates_concurrent_requests() {
-        // This test simulates the concurrent request scenario:
-        // 1. Request A clones expression, sets value
-        // 2. Request B clones SAME source expression, sets different value
-        // 3. Both should have their own independent values
-
-        // Shared source expression (like what PipelineFactory stores)
-        let source_expr = Expression::new("responseBodyJSON('/model')").unwrap();
-
-        // Request A gets a fresh clone
-        let request_a_expr = source_expr.clone_fresh();
-        request_a_expr
-            .response_props
-            .lock()
-            .unwrap()
-            .set_prop("/model", "gpt-3.5");
-
-        // Request B gets a fresh clone (from the same source)
-        let request_b_expr = source_expr.clone_fresh();
-        request_b_expr
-            .response_props
-            .lock()
-            .unwrap()
-            .set_prop("/model", "gpt-4");
-
-        // Verify both requests have their own independent values
-        assert_eq!(
-            request_a_expr
-                .response_props
-                .lock()
-                .unwrap()
-                .clone()
-                .values()
-                .get("/model")
-                .cloned(),
-            Some(Value::String(Arc::new("gpt-3.5".to_string()))),
-            "Request A should have its own value"
-        );
-
-        assert_eq!(
-            request_b_expr
-                .response_props
-                .lock()
-                .unwrap()
-                .clone()
-                .values()
-                .get("/model")
-                .cloned(),
-            Some(Value::String(Arc::new("gpt-4".to_string()))),
-            "Request B should have its own value"
-        );
-
-        // Source expression should still be pending (never modified directly)
-        assert!(
-            source_expr.response_props.lock().unwrap().pending(),
-            "Source expression should remain unmodified"
         );
     }
 }
