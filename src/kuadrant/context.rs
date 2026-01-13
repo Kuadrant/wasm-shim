@@ -333,7 +333,7 @@ impl ReqRespCtx {
         message: Vec<u8>,
         timeout: std::time::Duration,
     ) -> Result<u32, ServiceError> {
-        let tracing_headers: Vec<(String, Vec<u8>)> = self.get_tracing_headers();
+        let tracing_headers = self.get_tracing_headers();
         let headers: Vec<(&str, &[u8])> = tracing_headers
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_slice()))
@@ -600,7 +600,10 @@ mod tests {
             ("baggage".to_string(), "userId=alice".to_string()),
             ("baggage".to_string(), "sessionId=xyz".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
-            ("x-request-id".to_string(), "12345".to_string()),
+            (
+                "x-request-id".to_string(),
+                "e1fc297a-a8a3-4360-8f41-af57b4a861e1".to_string(),
+            ),
         ];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
@@ -630,7 +633,8 @@ mod tests {
 
         assert!(tracing_headers
             .iter()
-            .any(|(name, value)| *name == "x-request-id" && value.as_slice() == b"12345"));
+            .any(|(name, value)| *name == "x-request-id"
+                && value.as_slice() == b"e1fc297a-a8a3-4360-8f41-af57b4a861e1"));
 
         assert!(!tracing_headers
             .iter()
