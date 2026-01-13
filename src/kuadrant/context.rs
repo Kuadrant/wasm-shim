@@ -1,6 +1,6 @@
 use cel_interpreter::Value;
 use log::{debug, warn};
-use std::cell::LazyCell;
+use std::cell::{LazyCell, OnceCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -36,26 +36,6 @@ impl Default for ReqRespCtx {
 
 impl ReqRespCtx {
     pub fn new(backend: Arc<dyn AttributeResolver + 'static>) -> Self {
-        let header_request_id =
-            match backend.get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders) {
-                Ok(headers) => headers
-                    .iter()
-                    .find_map(|(k, v)| (k == X_REQUEST_ID_HEADER).then(|| v.clone())),
-                Err(_) => None,
-            };
-
-        if let Some(x_request_id) = &header_request_id {
-            debug!(
-                "found {} header in request headers, using as request id: {}",
-                X_REQUEST_ID_HEADER, x_request_id
-            );
-        } else {
-            debug!(
-                "no {} header found in request headers, request id will be generated.",
-                X_REQUEST_ID_HEADER
-            );
-        }
-
         Self {
             backend,
             cache: Arc::new(AttributeCache::new()),
@@ -64,10 +44,7 @@ impl ReqRespCtx {
             response_end_of_stream: false,
             grpc_response_data: None,
             tracing: TracingContext::default(),
-            tracker: Tracker {
-                header_request_id,
-                ..Default::default()
-            },
+            tracker: Tracker::default(),
             body_values: HashMap::new(),
         }
     }
@@ -413,8 +390,7 @@ impl ReqRespCtx {
 
     pub fn request_id(&self) -> &str {
         self.tracker
-            .header_request_id
-            .as_deref()
+            .get_header_request_id(self)
             .unwrap_or_else(|| self.tracker.generated_id.as_str())
     }
 
@@ -435,7 +411,7 @@ impl ReqRespCtx {
 }
 
 struct Tracker {
-    header_request_id: Option<String>,
+    header_request_id: OnceCell<Option<String>>,
     generated_id: LazyCell<String>,
     downstream_identifier: Option<String>,
 }
@@ -443,10 +419,30 @@ struct Tracker {
 impl Default for Tracker {
     fn default() -> Self {
         Self {
-            header_request_id: None,
+            header_request_id: OnceCell::new(),
             generated_id: LazyCell::new(|| Uuid::new_v4().to_string()),
             downstream_identifier: None,
         }
+    }
+}
+
+impl Tracker {
+    fn get_header_request_id(&self, ctx: &ReqRespCtx) -> Option<&str> {
+        self.header_request_id
+            .get_or_init(|| match ctx.get_attribute::<Headers>("request.headers") {
+                Ok(AttributeState::Available(Some(headers))) => {
+                    let header_id = headers.get(X_REQUEST_ID_HEADER).map(|v| v.to_string());
+                    if let Some(ref x_request_id) = header_id {
+                        debug!(
+                            "found {} header in request headers, using as request id: {}",
+                            X_REQUEST_ID_HEADER, x_request_id
+                        );
+                    }
+                    header_id
+                }
+                _ => None,
+            })
+            .as_deref()
     }
 }
 
@@ -604,6 +600,7 @@ mod tests {
             ("baggage".to_string(), "userId=alice".to_string()),
             ("baggage".to_string(), "sessionId=xyz".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
+            ("x-request-id".to_string(), "12345".to_string()),
         ];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
@@ -633,7 +630,7 @@ mod tests {
 
         assert!(tracing_headers
             .iter()
-            .any(|(name, _)| *name == "x-request-id"));
+            .any(|(name, value)| *name == "x-request-id" && value.as_slice() == b"12345"));
 
         assert!(!tracing_headers
             .iter()

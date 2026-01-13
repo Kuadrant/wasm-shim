@@ -205,7 +205,7 @@ fn it_performs_authenticated_rate_limiting() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -243,7 +243,7 @@ fn it_performs_authenticated_rate_limiting() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -425,7 +425,7 @@ fn unauthenticated_does_not_ratelimit() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -689,7 +689,7 @@ fn authenticated_one_ratelimit_action_matches() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -722,7 +722,7 @@ fn authenticated_one_ratelimit_action_matches() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

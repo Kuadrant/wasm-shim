@@ -182,7 +182,7 @@ fn it_auths() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -414,7 +414,7 @@ fn it_passes_request_data() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -596,7 +596,7 @@ fn it_denies() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -813,7 +813,7 @@ fn it_does_not_fold_auth_actions() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -846,7 +846,7 @@ fn it_does_not_fold_auth_actions() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

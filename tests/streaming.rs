@@ -176,7 +176,7 @@ fn it_processes_usage_event_across_chunks_until_done() {
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
             Some("Report"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -394,7 +394,7 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
             Some("Report"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

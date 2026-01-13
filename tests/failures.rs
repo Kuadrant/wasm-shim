@@ -124,7 +124,7 @@ fn it_fails_on_first_action_grpc_call() {
             Some("does-not-exist"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
                 101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
@@ -297,7 +297,7 @@ fn it_fails_on_second_action_grpc_call() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
                 101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
@@ -333,7 +333,7 @@ fn it_fails_on_second_action_grpc_call() {
             Some("does-not-exist"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
                 101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
@@ -483,7 +483,7 @@ fn it_fails_on_first_action_grpc_response() {
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
                 101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
@@ -662,7 +662,7 @@ fn it_fails_on_second_action_grpc_response() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
                 101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,
@@ -703,7 +703,7 @@ fn it_fails_on_second_action_grpc_response() {
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 1, 97, 18, 28, 10, 26, 10, 21, 108, 105, 109, 105, 116, 95, 116, 111, 95, 98,
                 101, 95, 97, 99, 116, 105, 118, 97, 116, 101, 100, 18, 1, 49, 24, 1,

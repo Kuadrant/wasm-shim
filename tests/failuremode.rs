@@ -146,7 +146,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -179,7 +179,7 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -356,7 +356,7 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

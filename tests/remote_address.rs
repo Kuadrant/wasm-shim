@@ -137,7 +137,7 @@ fn it_limits_based_on_source_address() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             Some(&[
                 10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 36, 10, 34, 10, 21, 115,
                 111, 117, 114, 99, 101, 46, 114, 101, 109, 111, 116, 101, 95, 97, 100, 100, 114,

@@ -224,7 +224,7 @@ fn it_limits() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -398,7 +398,7 @@ fn it_resolved_and_passes_request_data() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             // 53 at the end, is ASCII 5, i.e. string(3 + 2)
             Some(&[10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97, 100, 109, 105, 110, 18, 1, 49, 18, 10, 10, 8, 10, 3, 98, 97, 114, 18, 1, 53, 24, 1]),
             Some(5000),
@@ -570,7 +570,7 @@ fn it_passes_additional_headers() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -741,7 +741,7 @@ fn it_rate_limits_with_empty_predicates() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

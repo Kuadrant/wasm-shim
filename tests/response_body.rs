@@ -172,7 +172,7 @@ fn it_checks_and_reports() {
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
             Some("CheckRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -262,7 +262,7 @@ fn it_checks_and_reports() {
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
             Some("Report"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -478,7 +478,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
             Some("Report"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
