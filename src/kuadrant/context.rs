@@ -9,6 +9,7 @@ use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
+use crate::X_REQUEST_ID_HEADER;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
@@ -35,6 +36,26 @@ impl Default for ReqRespCtx {
 
 impl ReqRespCtx {
     pub fn new(backend: Arc<dyn AttributeResolver + 'static>) -> Self {
+        let header_request_id =
+            match backend.get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders) {
+                Ok(headers) => headers
+                    .iter()
+                    .find_map(|(k, v)| (k == X_REQUEST_ID_HEADER).then(|| v.clone())),
+                Err(_) => None,
+            };
+
+        if let Some(x_request_id) = &header_request_id {
+            debug!(
+                "found {} header in request headers, using as request id: {}",
+                X_REQUEST_ID_HEADER, x_request_id
+            );
+        } else {
+            debug!(
+                "no {} header found in request headers, request id will be generated.",
+                X_REQUEST_ID_HEADER
+            );
+        }
+
         Self {
             backend,
             cache: Arc::new(AttributeCache::new()),
@@ -43,7 +64,10 @@ impl ReqRespCtx {
             response_end_of_stream: false,
             grpc_response_data: None,
             tracing: TracingContext::default(),
-            tracker: Tracker::default(),
+            tracker: Tracker {
+                header_request_id,
+                ..Default::default()
+            },
             body_values: HashMap::new(),
         }
     }
@@ -332,7 +356,7 @@ impl ReqRespCtx {
         message: Vec<u8>,
         timeout: std::time::Duration,
     ) -> Result<u32, ServiceError> {
-        let tracing_headers = self.get_tracing_headers();
+        let tracing_headers: Vec<(String, Vec<u8>)> = self.get_tracing_headers();
         let headers: Vec<(&str, &[u8])> = tracing_headers
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_slice()))
@@ -375,6 +399,11 @@ impl ReqRespCtx {
             propagator.inject_context(context, &mut injector);
         });
 
+        headers.push((
+            X_REQUEST_ID_HEADER.to_string(),
+            self.request_id().as_bytes().to_vec(),
+        ));
+
         headers
     }
 
@@ -383,7 +412,10 @@ impl ReqRespCtx {
     }
 
     pub fn request_id(&self) -> &str {
-        self.tracker.id.as_str()
+        self.tracker
+            .header_request_id
+            .as_deref()
+            .unwrap_or_else(|| self.tracker.generated_id.as_str())
     }
 
     pub fn tracker(&self) -> Option<(&str, &str)> {
@@ -403,14 +435,16 @@ impl ReqRespCtx {
 }
 
 struct Tracker {
-    id: LazyCell<String>,
+    header_request_id: Option<String>,
+    generated_id: LazyCell<String>,
     downstream_identifier: Option<String>,
 }
 
 impl Default for Tracker {
     fn default() -> Self {
         Self {
-            id: LazyCell::new(|| Uuid::new_v4().to_string()),
+            header_request_id: None,
+            generated_id: LazyCell::new(|| Uuid::new_v4().to_string()),
             downstream_identifier: None,
         }
     }
@@ -578,7 +612,7 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 3);
+        assert_eq!(tracing_headers.len(), 4);
 
         assert!(tracing_headers
             .iter()
@@ -596,6 +630,10 @@ mod tests {
         let baggage_value = std::str::from_utf8(&baggage.1).expect("valid UTF-8");
         assert!(baggage_value.contains("userId=alice"));
         assert!(baggage_value.contains("sessionId=xyz"));
+
+        assert!(tracing_headers
+            .iter()
+            .any(|(name, _)| *name == "x-request-id"));
 
         assert!(!tracing_headers
             .iter()
@@ -615,12 +653,16 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 1);
-        assert_eq!(tracing_headers[0].0, "traceparent");
-        assert_eq!(
-            tracing_headers[0].1.as_slice(),
-            b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-        );
+        assert_eq!(tracing_headers.len(), 2);
+
+        assert!(tracing_headers
+            .iter()
+            .any(|(name, value)| *name == "traceparent"
+                && value.as_slice() == b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
+
+        assert!(tracing_headers
+            .iter()
+            .any(|(name, _)| *name == "x-request-id"));
     }
 
     #[test]
@@ -633,7 +675,10 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert!(tracing_headers.is_empty());
+        assert_eq!(tracing_headers.len(), 1);
+        assert!(tracing_headers
+            .iter()
+            .any(|(name, _)| *name == "x-request-id"));
     }
 
     #[test]

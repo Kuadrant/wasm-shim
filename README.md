@@ -270,7 +270,7 @@ curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "my-custom-head
 Check limitador logs for received descriptor entries.
 
 ```sh
-kubectl logs -f deployment/limitador-sample -n kuadrant-system
+kubectl logs -f deployment/limitador-limitador -n kuadrant-system
 ```
 
 The expected descriptor entries:
