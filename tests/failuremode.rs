@@ -352,6 +352,7 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),

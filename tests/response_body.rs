@@ -164,6 +164,7 @@ fn it_checks_and_reports() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
@@ -471,6 +472,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),

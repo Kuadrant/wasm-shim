@@ -168,6 +168,7 @@ fn it_processes_usage_event_across_chunks_until_done() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(done_chunk))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
@@ -387,6 +388,7 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_response_body(http_context, 0, true)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),

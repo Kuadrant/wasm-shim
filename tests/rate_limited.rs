@@ -394,6 +394,7 @@ fn it_resolved_and_passes_request_data() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
@@ -567,6 +568,7 @@ fn it_passes_additional_headers() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
@@ -738,6 +740,7 @@ fn it_rate_limits_with_empty_predicates() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
         .expect_log(Some(LogLevel::Debug), None)
         // retrieving tracing headers
         .expect_log(

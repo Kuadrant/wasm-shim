@@ -642,11 +642,11 @@ mod tests {
         let tracing_headers = ctx.get_tracing_headers();
 
         assert_eq!(tracing_headers.len(), 1);
-
-        assert!(tracing_headers
-            .iter()
-            .any(|(name, value)| *name == "traceparent"
-                && value.as_slice() == b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
+        assert_eq!(tracing_headers[0].0, "traceparent");
+        assert_eq!(
+            tracing_headers[0].1.as_slice(),
+            b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        );
     }
 
     #[test]
@@ -659,7 +659,7 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 0);
+        assert!(tracing_headers.is_empty());
     }
 
     #[test]
