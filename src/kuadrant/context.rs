@@ -1,6 +1,6 @@
 use cel_interpreter::Value;
 use log::{debug, warn};
-use std::cell::{LazyCell, OnceCell};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,9 +9,10 @@ use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
-use crate::X_REQUEST_ID_HEADER;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
+
+const X_REQUEST_ID_HEADER: &str = "x-request-id";
 
 type RequestData = ((String, String), Expression);
 
@@ -334,10 +335,12 @@ impl ReqRespCtx {
         timeout: std::time::Duration,
     ) -> Result<u32, ServiceError> {
         let tracing_headers = self.get_tracing_headers();
-        let headers: Vec<(&str, &[u8])> = tracing_headers
+        let mut headers: Vec<(&str, &[u8])> = tracing_headers
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_slice()))
             .collect();
+
+        headers.push((X_REQUEST_ID_HEADER, self.request_id().as_bytes()));
 
         self.backend.dispatch_grpc_call(
             upstream_name,
@@ -376,11 +379,6 @@ impl ReqRespCtx {
             propagator.inject_context(context, &mut injector);
         });
 
-        headers.push((
-            X_REQUEST_ID_HEADER.to_string(),
-            self.request_id().as_bytes().to_vec(),
-        ));
-
         headers
     }
 
@@ -389,9 +387,7 @@ impl ReqRespCtx {
     }
 
     pub fn request_id(&self) -> &str {
-        self.tracker
-            .get_header_request_id(self)
-            .unwrap_or_else(|| self.tracker.generated_id.as_str())
+        self.tracker.get_id(self)
     }
 
     pub fn tracker(&self) -> Option<(&str, &str)> {
@@ -411,38 +407,38 @@ impl ReqRespCtx {
 }
 
 struct Tracker {
-    header_request_id: OnceCell<Option<String>>,
-    generated_id: LazyCell<String>,
+    id: OnceCell<String>,
     downstream_identifier: Option<String>,
 }
 
 impl Default for Tracker {
     fn default() -> Self {
         Self {
-            header_request_id: OnceCell::new(),
-            generated_id: LazyCell::new(|| Uuid::new_v4().to_string()),
+            id: OnceCell::new(),
             downstream_identifier: None,
         }
     }
 }
 
 impl Tracker {
-    fn get_header_request_id(&self, ctx: &ReqRespCtx) -> Option<&str> {
-        self.header_request_id
-            .get_or_init(|| match ctx.get_attribute::<Headers>("request.headers") {
-                Ok(AttributeState::Available(Some(headers))) => {
-                    let header_id = headers.get(X_REQUEST_ID_HEADER).map(|v| v.to_string());
-                    if let Some(ref x_request_id) = header_id {
-                        debug!(
-                            "found {} header in request headers, using as request id: {}",
-                            X_REQUEST_ID_HEADER, x_request_id
-                        );
-                    }
-                    header_id
+    fn get_id(&self, ctx: &ReqRespCtx) -> &str {
+        self.id.get_or_init(|| {
+            if let Ok(AttributeState::Available(Some(headers))) =
+                ctx.get_attribute::<Headers>("request.headers")
+            {
+                if let Some(header_id) = headers.get(X_REQUEST_ID_HEADER) {
+                    debug!(
+                        "found {} header in request headers, using as request id: {}",
+                        X_REQUEST_ID_HEADER, header_id
+                    );
+                    return header_id.to_string();
                 }
-                _ => None,
-            })
-            .as_deref()
+            }
+
+            let generated_id = Uuid::new_v4().to_string();
+            debug!("generated request id: {}", generated_id);
+            generated_id
+        })
     }
 }
 
@@ -600,10 +596,6 @@ mod tests {
             ("baggage".to_string(), "userId=alice".to_string()),
             ("baggage".to_string(), "sessionId=xyz".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
-            (
-                "x-request-id".to_string(),
-                "e1fc297a-a8a3-4360-8f41-af57b4a861e1".to_string(),
-            ),
         ];
 
         let mock_host = MockWasmHost::new().with_map("request.headers".to_string(), headers);
@@ -612,7 +604,7 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 4);
+        assert_eq!(tracing_headers.len(), 3);
 
         assert!(tracing_headers
             .iter()
@@ -630,11 +622,6 @@ mod tests {
         let baggage_value = std::str::from_utf8(&baggage.1).expect("valid UTF-8");
         assert!(baggage_value.contains("userId=alice"));
         assert!(baggage_value.contains("sessionId=xyz"));
-
-        assert!(tracing_headers
-            .iter()
-            .any(|(name, value)| *name == "x-request-id"
-                && value.as_slice() == b"e1fc297a-a8a3-4360-8f41-af57b4a861e1"));
 
         assert!(!tracing_headers
             .iter()
@@ -654,16 +641,12 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 2);
+        assert_eq!(tracing_headers.len(), 1);
 
         assert!(tracing_headers
             .iter()
             .any(|(name, value)| *name == "traceparent"
                 && value.as_slice() == b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
-
-        assert!(tracing_headers
-            .iter()
-            .any(|(name, _)| *name == "x-request-id"));
     }
 
     #[test]
@@ -676,10 +659,7 @@ mod tests {
 
         let tracing_headers = ctx.get_tracing_headers();
 
-        assert_eq!(tracing_headers.len(), 1);
-        assert!(tracing_headers
-            .iter()
-            .any(|(name, _)| *name == "x-request-id"));
+        assert_eq!(tracing_headers.len(), 0);
     }
 
     #[test]

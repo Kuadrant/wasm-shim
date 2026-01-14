@@ -197,6 +197,7 @@ fn it_performs_authenticated_rate_limiting() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -417,6 +418,7 @@ fn unauthenticated_does_not_ratelimit() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -627,7 +629,7 @@ fn authenticated_one_ratelimit_action_matches() {
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(None)
+        .returning(Some(vec![("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1")]))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Getting property: `request.scheme`"),
@@ -681,6 +683,10 @@ fn authenticated_one_ratelimit_action_matches() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("found x-request-id header in request headers, using as request id: e1fc297a-a8a3-4360-8f41-af57b4a861e1")
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),

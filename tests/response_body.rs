@@ -164,6 +164,7 @@ fn it_checks_and_reports() {
         )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.CheckRateLimit, timeout: 5s")
@@ -470,6 +471,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s")

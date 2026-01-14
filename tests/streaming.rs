@@ -168,6 +168,7 @@ fn it_processes_usage_event_across_chunks_until_done() {
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(done_chunk))
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s")
@@ -386,6 +387,7 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     module
         .call_proxy_on_response_body(http_context, 0, true)
         .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s"),
