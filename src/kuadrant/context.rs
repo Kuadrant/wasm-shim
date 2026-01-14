@@ -1,6 +1,6 @@
 use cel_interpreter::Value;
 use log::{debug, warn};
-use std::cell::LazyCell;
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -11,6 +11,8 @@ use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
+
+const X_REQUEST_ID_HEADER: &str = "x-request-id";
 
 type RequestData = ((String, String), Expression);
 
@@ -333,10 +335,12 @@ impl ReqRespCtx {
         timeout: std::time::Duration,
     ) -> Result<u32, ServiceError> {
         let tracing_headers = self.get_tracing_headers();
-        let headers: Vec<(&str, &[u8])> = tracing_headers
+        let mut headers: Vec<(&str, &[u8])> = tracing_headers
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_slice()))
             .collect();
+
+        headers.push((X_REQUEST_ID_HEADER, self.request_id().as_bytes()));
 
         self.backend.dispatch_grpc_call(
             upstream_name,
@@ -383,7 +387,7 @@ impl ReqRespCtx {
     }
 
     pub fn request_id(&self) -> &str {
-        self.tracker.id.as_str()
+        self.tracker.get_id(self)
     }
 
     pub fn tracker(&self) -> Option<(&str, &str)> {
@@ -403,16 +407,38 @@ impl ReqRespCtx {
 }
 
 struct Tracker {
-    id: LazyCell<String>,
+    id: OnceCell<String>,
     downstream_identifier: Option<String>,
 }
 
 impl Default for Tracker {
     fn default() -> Self {
         Self {
-            id: LazyCell::new(|| Uuid::new_v4().to_string()),
+            id: OnceCell::new(),
             downstream_identifier: None,
         }
+    }
+}
+
+impl Tracker {
+    fn get_id(&self, ctx: &ReqRespCtx) -> &str {
+        self.id.get_or_init(|| {
+            if let Ok(AttributeState::Available(Some(headers))) =
+                ctx.get_attribute::<Headers>("request.headers")
+            {
+                if let Some(header_id) = headers.get(X_REQUEST_ID_HEADER) {
+                    debug!(
+                        "found {} header in request headers, using as request id: {}",
+                        X_REQUEST_ID_HEADER, header_id
+                    );
+                    return header_id.to_string();
+                }
+            }
+
+            let generated_id = Uuid::new_v4().to_string();
+            debug!("generated request id: {}", generated_id);
+            generated_id
+        })
     }
 }
 

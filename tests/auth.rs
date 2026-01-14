@@ -120,7 +120,7 @@ fn it_auths() {
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(None)
+        .returning(Some(vec![("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1")]))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Getting property: `request.scheme`"),
@@ -176,13 +176,17 @@ fn it_auths() {
         .expect_increment_metric(Some(2), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
+            Some("found x-request-id header in request headers, using as request id: e1fc297a-a8a3-4360-8f41-af57b4a861e1")
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
         )
         .expect_grpc_call(
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -406,6 +410,8 @@ fn it_passes_request_data() {
             Some(LogLevel::Debug),
             Some("Adding data: `io.kuadrant` with entries: [\"bar\", \"foo\"]")
         )
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -414,7 +420,7 @@ fn it_passes_request_data() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -588,6 +594,8 @@ fn it_denies() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -596,7 +604,7 @@ fn it_denies() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -805,6 +813,8 @@ fn it_does_not_fold_auth_actions() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -813,7 +823,7 @@ fn it_does_not_fold_auth_actions() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -846,7 +856,7 @@ fn it_does_not_fold_auth_actions() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

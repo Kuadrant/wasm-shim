@@ -210,12 +210,16 @@ fn it_limits() {
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(None)
+        .returning(Some(vec![("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1")]))
         .expect_log(
             Some(LogLevel::Debug),
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        .expect_log(
+            Some(LogLevel::Debug),
+            Some("found x-request-id header in request headers, using as request id: e1fc297a-a8a3-4360-8f41-af57b4a861e1")
+        )
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s")
@@ -224,7 +228,7 @@ fn it_limits() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -390,6 +394,8 @@ fn it_resolved_and_passes_request_data() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -398,7 +404,7 @@ fn it_resolved_and_passes_request_data() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             // 53 at the end, is ASCII 5, i.e. string(3 + 2)
             Some(&[10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97, 100, 109, 105, 110, 18, 1, 49, 18, 10, 10, 8, 10, 3, 98, 97, 114, 18, 1, 53, 24, 1]),
             Some(5000),
@@ -562,6 +568,8 @@ fn it_passes_additional_headers() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
@@ -570,7 +578,7 @@ fn it_passes_additional_headers() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -732,6 +740,8 @@ fn it_rate_limits_with_empty_predicates() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         // retrieving tracing headers
         .expect_log(
             Some(LogLevel::Debug),
@@ -741,7 +751,7 @@ fn it_rate_limits_with_empty_predicates() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )

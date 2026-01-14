@@ -197,6 +197,8 @@ fn it_performs_authenticated_rate_limiting() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -205,7 +207,7 @@ fn it_performs_authenticated_rate_limiting() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -243,7 +245,7 @@ fn it_performs_authenticated_rate_limiting() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -417,6 +419,8 @@ fn unauthenticated_does_not_ratelimit() {
             Some("#2 pipeline built successfully"),
         )
         .expect_increment_metric(Some(2), Some(1))
+        // debug log about using generated id due to missing `x-request-id` header in request
+        .expect_log(Some(LogLevel::Debug), None)
         .expect_log(
             Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
@@ -425,7 +429,7 @@ fn unauthenticated_does_not_ratelimit() {
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -627,7 +631,7 @@ fn authenticated_one_ratelimit_action_matches() {
             Some("Getting map: `HttpRequestHeaders`"),
         )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(None)
+        .returning(Some(vec![("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1")]))
         .expect_log(
             Some(LogLevel::Debug),
             Some("Getting property: `request.scheme`"),
@@ -683,13 +687,17 @@ fn authenticated_one_ratelimit_action_matches() {
         .expect_increment_metric(Some(2), Some(1))
         .expect_log(
             Some(LogLevel::Debug),
+            Some("found x-request-id header in request headers, using as request id: e1fc297a-a8a3-4360-8f41-af57b4a861e1")
+        )
+        .expect_log(
+            Some(LogLevel::Debug),
             Some("Dispatching gRPC call to authorino-cluster/envoy.service.auth.v3.Authorization.Check, timeout: 5s"),
         )
         .expect_grpc_call(
             Some("authorino-cluster"),
             Some("envoy.service.auth.v3.Authorization"),
             Some("Check"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
@@ -722,7 +730,7 @@ fn authenticated_one_ratelimit_action_matches() {
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
-            Some(&[0, 0, 0, 0]),
+            None,
             None,
             Some(5000),
         )
