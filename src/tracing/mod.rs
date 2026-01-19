@@ -9,45 +9,77 @@ use log_layer::LogLayer;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::sync::OnceLock;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{reload, Layer};
 
-static TRACING_INITIALIZED: OnceLock<()> = OnceLock::new();
+type OtelFilterHandle = reload::Handle<Option<LevelFilter>, tracing_subscriber::Registry>;
+
+type LogFilterHandle = reload::Handle<
+    LevelFilter,
+    tracing_subscriber::layer::Layered<
+        tracing_subscriber::filter::Filtered<
+            tracing_opentelemetry::OpenTelemetryLayer<
+                tracing_subscriber::Registry,
+                opentelemetry_sdk::trace::Tracer,
+            >,
+            reload::Layer<Option<LevelFilter>, tracing_subscriber::Registry>,
+            tracing_subscriber::Registry,
+        >,
+        tracing_subscriber::Registry,
+    >,
+>;
+
+static RELOAD_HANDLES: OnceLock<(OtelFilterHandle, LogFilterHandle)> = OnceLock::new();
 
 pub fn init_tracing(use_exporter: bool, log_level: Option<&str>) {
-    TRACING_INITIALIZED.get_or_init(|| {
-        let filter = match log_level {
-            Some("TRACE") => tracing_subscriber::filter::LevelFilter::TRACE,
-            Some("DEBUG") => tracing_subscriber::filter::LevelFilter::DEBUG,
-            Some("INFO") => tracing_subscriber::filter::LevelFilter::INFO,
-            Some("WARN") => tracing_subscriber::filter::LevelFilter::WARN,
-            Some("ERROR") => tracing_subscriber::filter::LevelFilter::ERROR,
-            Some("OFF") => tracing_subscriber::filter::LevelFilter::OFF,
-            _ => tracing_subscriber::filter::LevelFilter::WARN,
-        };
+    let level = match log_level {
+        Some("TRACE") => LevelFilter::TRACE,
+        Some("DEBUG") => LevelFilter::DEBUG,
+        Some("INFO") => LevelFilter::INFO,
+        Some("WARN") => LevelFilter::WARN,
+        Some("ERROR") => LevelFilter::ERROR,
+        Some("OFF") => LevelFilter::OFF,
+        _ => LevelFilter::WARN,
+    };
 
-        if use_exporter {
-            let processor_handle = processor::SpanProcessorHandle;
+    let (otel_filter, log_filter) = if use_exporter {
+        (Some(level), LevelFilter::OFF)
+    } else {
+        (None, level)
+    };
 
-            let provider = SdkTracerProvider::builder()
-                .with_span_processor(processor_handle)
-                .build();
-
-            let tracer = provider.tracer("wasm-shim");
-
-            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-            let _ = tracing_subscriber::registry()
-                .with(filter)
-                .with(otel_layer)
-                .try_init();
-        } else {
-            let log_layer = LogLayer;
-            let _ = tracing_subscriber::registry()
-                .with(filter)
-                .with(log_layer)
-                .try_init();
+    if let Some((otel_handle, log_handle)) = RELOAD_HANDLES.get() {
+        // handles already set, reload the layers
+        if let Err(e) = otel_handle.reload(otel_filter) {
+            log::error!("Failed to reload OpenTelemetry filter: {:?}", e);
         }
-    });
+        if let Err(e) = log_handle.reload(log_filter) {
+            log::error!("Failed to reload LogLayer filter: {:?}", e);
+        }
+    } else {
+        // initialise global tracing subscriber and store handles to the filters
+        let processor_handle = processor::SpanProcessorHandle;
+        let provider = SdkTracerProvider::builder()
+            .with_span_processor(processor_handle)
+            .build();
+        let tracer = provider.tracer("wasm-shim");
+
+        let (otel_filter_layer, otel_filter_handle) = reload::Layer::new(otel_filter);
+        let (log_filter_layer, log_filter_handle) = reload::Layer::new(log_filter);
+
+        let _ = tracing_subscriber::registry()
+            .with(
+                tracing_opentelemetry::layer()
+                    .with_tracer(tracer)
+                    .with_filter(otel_filter_layer),
+            )
+            .with(LogLayer.with_filter(log_filter_layer))
+            .try_init();
+
+        let _ = RELOAD_HANDLES.set((otel_filter_handle, log_filter_handle));
+    }
 }
 
 /// Records an error on the current span and logs it.
