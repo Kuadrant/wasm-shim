@@ -58,6 +58,9 @@ impl HttpContext for KuadrantFilter {
     fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
 
+        #[cfg(feature = "debug-host-behaviour")]
+        crate::data::debug_all_well_known_attributes();
+
         let ctx = ReqRespCtx::default();
 
         match self.factory.build(ctx) {
