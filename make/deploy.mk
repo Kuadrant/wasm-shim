@@ -4,16 +4,16 @@
 
 NAMESPACE ?= kuadrant-system
 KIND = $(PROJECT_PATH)/bin/kind
-KIND_VERSION = v0.23.0
+KIND_VERSION = v0.31.0
 $(KIND):
 	$(call go-install-tool,$(KIND),sigs.k8s.io/kind@$(KIND_VERSION))
 
 kind: $(KIND) ## Download kind locally if necessary.
 
-KIND_CLUSTER_NAME ?= wasm-auth-local
+KIND_CLUSTER_NAME ?= wasm-local
 
 kind-create-cluster: WASM_PATH=$(subst /,\/,$(WASM_RELEASE_PATH))
-kind-create-cluster: kind ## Create the "wasm-auth-local" kind cluster.
+kind-create-cluster: kind ## Create the "wasm-local" kind cluster.
 	@{ \
   	TEMP_FILE=/tmp/kind-cluster-$$(openssl rand -hex 4).yaml ;\
   	cp $(PROJECT_PATH)/utils/kind/cluster.yaml $$TEMP_FILE ;\
@@ -22,7 +22,7 @@ kind-create-cluster: kind ## Create the "wasm-auth-local" kind cluster.
 	rm -rf $$TEMP_FILE ;\
 	}
 
-kind-delete-cluster: ## Delete the "wasm-auth-local" kind cluster.
+kind-delete-cluster: ## Delete the "wasm-local" kind cluster.
 	- KIND_EXPERIMENTAL_PROVIDER=$(CONTAINER_ENGINE) $(KIND) delete cluster --name $(KIND_CLUSTER_NAME)
 
 KUSTOMIZE = $(PROJECT_PATH)/bin/kustomize
@@ -62,7 +62,6 @@ deploy-limitador:
 ##@ User Apps
 
 .PHONY: user-apps
-
 user-apps: ## Deploys talker API and envoy
 	kubectl -n $(NAMESPACE) apply -f https://raw.githubusercontent.com/kuadrant/authorino-examples/main/talker-api/talker-api-deploy.yaml
 	kubectl -n $(NAMESPACE) apply -f $(PROJECT_PATH)/utils/deploy/envoy.yaml
@@ -90,7 +89,7 @@ local-env-setup: $(WASM_RELEASE_BIN)
 	$(MAKE) deploy-limitador
 	$(MAKE) user-apps
 
-local-cleanup: kind ## Delete the "wasm-auth-local" kind cluster.
+local-cleanup: kind ## Delete the "wasm-local" kind cluster.
 	$(MAKE) kind-delete-cluster
 
 local-rollout:

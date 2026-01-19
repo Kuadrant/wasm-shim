@@ -248,23 +248,25 @@ curl -H "Host: test.a.auth.com" -H "Authorization: APIKEY IAMALICE" http://127.0
 
 And some rate limit action sets defined for e2e testing:
 
-* `rlp-a`: Only one data item. Data selector should not generate return any value. Thus, descriptor should be empty and
-  rate limiting service should **not** be called.
+* `rlp-a`: Invalid expression looking up unknown host property. As failure mode is `deny`, expect a `500 Internal Server Error`.
 
 ```sh
 curl -H "Host: test.a.rlp.com" http://127.0.0.1:8000/get -i
+# HTTP/1.1 500 Internal Server Error
 ```
 
 * `rlp-b`: Conditions do not match. Hence, rate limiting service should **not** be called.
 
 ```sh
 curl -H "Host: test.b.rlp.com" http://127.0.0.1:8000/get -i
+# HTTP/1.1 200 OK
 ```
 
 * `rlp-c`: Descriptor entries from multiple data items should be generated. Hence, rate limiting service should be called.
 
 ```sh
 curl -H "Host: test.c.rlp.com" -H "x-forwarded-for: 50.0.0.1" -H "my-custom-header-01: my-custom-header-value-01" -H "x-dyn-user-id: bob" http://127.0.0.1:8000/get -i
+# HTTP/1.1 200 OK
 ```
 
 Check limitador logs for received descriptor entries.
@@ -287,8 +289,16 @@ Entry { key: "source.address", value: "50.0.0.1:0" }
 Entry { key: "request.headers.my-custom-header-01", value: "my-custom-header-value-01" }
 ```
 
+* `rlp-d`: source.address is rate limited appropriately.
+
+Alice (IP: 40.0.0.1) has 2 requests per 10 seconds:
 ```
-Entry { key: "user_id", value: "bob" }
+while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null  -H "X-Forwarded-For: 40.0.0.1" -H "Host: test.d.rlp.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
+```
+
+Bob (IP: 50.0.0.1) with privileged IP 50.0.0.1 does not get rate limited:
+```
+while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null  -H "X-Forwarded-For: 50.0.0.1" -H "Host: test.d.rlp.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
 * `multi-a` which defines two actions for authenticated ratelimiting.
