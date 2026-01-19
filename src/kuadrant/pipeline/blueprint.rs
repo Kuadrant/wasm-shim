@@ -156,6 +156,11 @@ impl Blueprint {
         let mut tasks: TaskList = Vec::new();
         let mut teardown_tasks: TeardownList = Vec::new();
 
+        let tracing_enabled = self
+            .actions
+            .iter()
+            .any(|action| matches!(action.service, ServiceInstance::Tracing(Some(_))));
+
         for action in &self.actions {
             let abort_on_failure =
                 action.service.failure_mode() == configuration::FailureMode::Deny;
@@ -172,11 +177,15 @@ impl Blueprint {
                         true, // pauses_filter = true for auth tasks
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    tasks.push(Box::new(TracingDecoratorTask::new(
-                        "auth",
-                        task,
-                        action.sources.clone(),
-                    )));
+                    if tracing_enabled {
+                        tasks.push(Box::new(TracingDecoratorTask::new(
+                            "auth",
+                            task,
+                            action.sources.clone(),
+                        )));
+                    } else {
+                        tasks.push(task);
+                    }
                 }
                 ServiceInstance::RateLimit(ratelimit_service)
                 | ServiceInstance::RateLimitCheck(ratelimit_service) => {
@@ -191,11 +200,15 @@ impl Blueprint {
                         true, // pauses_filter = true for regular ratelimit and check tasks
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    tasks.push(Box::new(TracingDecoratorTask::new(
-                        "ratelimit",
-                        task,
-                        action.sources.clone(),
-                    )));
+                    if tracing_enabled {
+                        tasks.push(Box::new(TracingDecoratorTask::new(
+                            "ratelimit",
+                            task,
+                            action.sources.clone(),
+                        )));
+                    } else {
+                        tasks.push(task);
+                    }
                 }
                 ServiceInstance::RateLimitReport(ratelimit_service) => {
                     // parse token usage from response
@@ -209,16 +222,21 @@ impl Blueprint {
                         action.conditional_data.clone(),
                         false, // pauses_filter = false for ratelimit report tasks
                     ));
+                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
 
                     tasks.push(Box::new(TokenUsageTask::with_expected_fields(
                         action.collect_body_values(request_data),
                     )));
-                    let task = Box::new(TracingDecoratorTask::new(
-                        "ratelimit_report",
-                        task,
-                        action.sources.clone(),
-                    ));
-                    tasks.push(Box::new(FailureModeTask::new(task, abort_on_failure)));
+
+                    if tracing_enabled {
+                        tasks.push(Box::new(TracingDecoratorTask::new(
+                            "ratelimit_report",
+                            task,
+                            action.sources.clone(),
+                        )));
+                    } else {
+                        tasks.push(task);
+                    }
                 }
                 ServiceInstance::Tracing(service) => {
                     ctx.set_public_tracker_id(action.scope.clone());
