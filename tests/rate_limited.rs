@@ -1,4 +1,4 @@
-use crate::util::common::wasm_module;
+use crate::util::common::{wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -52,38 +52,29 @@ fn it_loads() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("No matching blueprint found for hostname: cars.toystore.com"),
-        )
         .expect_increment_metric(Some(3), Some(1))
-        .expect_log(Some(LogLevel::Debug), Some("#2 no matching route found"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -167,63 +158,35 @@ fn it_limits() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
         // retrieving properties for conditions
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.url_path`"),
-        )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.method`"),
-        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
         // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(Some(vec![("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1")]))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
+        .returning(Some(vec![(
+            "x-request-id",
+            "e1fc297a-a8a3-4360-8f41-af57b4a861e1",
+        )]))
         .expect_increment_metric(Some(2), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("found x-request-id header in request headers, using as request id: e1fc297a-a8a3-4360-8f41-af57b4a861e1")
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s")
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -233,24 +196,12 @@ fn it_limits() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 42"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
@@ -258,7 +209,6 @@ fn it_limits() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -344,90 +294,51 @@ fn it_resolved_and_passes_request_data() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
         // retrieving properties for conditions
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.url_path`"),
-        )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
-
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.method`"),
-        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
         // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        // debug log about using generated id due to missing `x-request-id` header in request
-        .expect_log(Some(LogLevel::Debug), None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
             Some("ShouldRateLimit"),
             None,
             // 53 at the end, is ASCII 5, i.e. string(3 + 2)
-            Some(&[10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97, 100, 109, 105, 110, 18, 1, 49, 18, 10, 10, 8, 10, 3, 98, 97, 114, 18, 1, 53, 24, 1]),
+            Some(&[
+                10, 10, 82, 76, 83, 45, 100, 111, 109, 97, 105, 110, 18, 12, 10, 10, 10, 5, 97,
+                100, 109, 105, 110, 18, 1, 49, 18, 10, 10, 8, 10, 3, 98, 97, 114, 18, 1, 53, 24, 1,
+            ]),
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 42"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
@@ -435,7 +346,6 @@ fn it_resolved_and_passes_request_data() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -519,61 +429,32 @@ fn it_passes_additional_headers() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
         // retrieving properties for conditions
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.url_path`"),
-        )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.method`"),
-        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
         // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        // debug log about using generated id due to missing `x-request-id` header in request
-        .expect_log(Some(LogLevel::Debug), None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -583,10 +464,6 @@ fn it_passes_additional_headers() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 42"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -597,20 +474,8 @@ fn it_passes_additional_headers() {
     ];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(Status::BadArgument)
         .execute_and_expect(ReturnType::None)
@@ -618,15 +483,9 @@ fn it_passes_additional_headers() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .returning(None)
-        .expect_log(Some(LogLevel::Debug), Some("Appending 2 headers"))
         .expect_set_header_map_pairs(None, None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -705,48 +564,26 @@ fn it_rate_limits_with_empty_predicates() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        // debug log about using generated id due to missing `x-request-id` header in request
-        .expect_log(Some(LogLevel::Debug), None)
-        // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -756,24 +593,12 @@ fn it_rate_limits_with_empty_predicates() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 42"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
@@ -781,7 +606,6 @@ fn it_rate_limits_with_empty_predicates() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -856,55 +680,34 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
         // retrieving properties for conditions
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.url_path`"),
-        )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN))
-        .expect_log(Some(LogLevel::Debug), Some("No descriptors to rate limit"))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();

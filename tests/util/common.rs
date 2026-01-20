@@ -1,5 +1,9 @@
 use std::path::Path;
 
+use proxy_wasm_test_framework::types::LogLevel;
+
+pub const LOG_LEVEL: LogLevel = LogLevel::Warn;
+
 #[allow(clippy::unwrap_used)]
 pub fn wasm_module() -> String {
     let wasm_file = Path::new("target/wasm32-wasip1/release/wasm_shim.wasm");

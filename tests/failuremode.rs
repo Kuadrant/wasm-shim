@@ -1,4 +1,4 @@
-use crate::util::common::wasm_module;
+use crate::util::common::{wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -102,50 +102,30 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     let first_call_token_id = 42;
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
-        .returning(Some(vec![("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1")]))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
+        .returning(Some(vec![(
+            "x-request-id",
+            "e1fc297a-a8a3-4360-8f41-af57b4a861e1",
+        )]))
         .expect_increment_metric(Some(2), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("found x-request-id header in request headers, using as request id: e1fc297a-a8a3-4360-8f41-af57b4a861e1")
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
-        )
         .expect_grpc_call(
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -155,10 +135,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(first_call_token_id))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("gRPC call dispatched successfully, token_id: {}", first_call_token_id).as_str()),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
@@ -166,19 +142,8 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
     let second_call_token_id = 43;
     module
         .proxy_on_grpc_close(http_context, first_call_token_id as i32, status_code)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {first_call_token_id}, status: {status_code}").as_str()),
-        )
-        .expect_log(
-            Some(LogLevel::Error),
-            Some("gRPC status code is not OK"),
-        )
+        .expect_log(Some(LogLevel::Error), Some("gRPC status code is not OK"))
         .expect_increment_metric(Some(6), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -188,10 +153,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             Some(5000),
         )
         .returning(Ok(second_call_token_id))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("gRPC call dispatched successfully, token_id: {}", second_call_token_id).as_str()),
-        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
@@ -202,14 +163,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
             second_call_token_id as i32,
             grpc_response.len() as i32,
         )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("#2 on_grpc_call_response: received gRPC call response: token: {second_call_token_id}, status: 0").as_str()),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
@@ -217,7 +170,6 @@ fn it_runs_next_action_on_failure_when_failuremode_is_allow() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
@@ -317,47 +269,26 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        // debug log about using generated id due to missing `x-request-id` header in request
-        .expect_log(Some(LogLevel::Debug), None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to unreachable-cluster/envoy.service.ratelimit.v3.RateLimitService.ShouldRateLimit, timeout: 5s"),
-        )
         .expect_grpc_call(
             Some("unreachable-cluster"),
             Some("envoy.service.ratelimit.v3.RateLimitService"),
@@ -367,30 +298,15 @@ fn it_stops_on_failure_when_failuremode_is_deny() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 42"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     let status_code = 14;
     module
         .proxy_on_grpc_close(http_context, 42, status_code)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("#2 on_grpc_call_response: received gRPC call response: token: 42, status: {status_code}").as_str()),
-        )
-        .expect_log(
-            Some(LogLevel::Error),
-            Some("gRPC status code is not OK"),
-        )
+        .expect_log(Some(LogLevel::Error), Some("gRPC status code is not OK"))
         .expect_increment_metric(Some(6), Some(1))
         .expect_increment_metric(Some(5), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Sending local reply, status code: 500"),
-        )
         .expect_send_local_response(Some(500), None, None, None)
         .execute_and_expect(ReturnType::None)
         .unwrap();
