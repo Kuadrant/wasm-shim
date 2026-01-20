@@ -48,6 +48,7 @@ impl RootContext for FilterRoot {
     }
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
+        crate::tracing::update_log_level();
         debug!("#{} create_http_context", context_id);
         Some(Box::new(KuadrantFilter::new(
             context_id,
@@ -71,7 +72,7 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 let use_tracing_exporter = config.observability.tracing.is_some();
-                crate::tracing::init_tracing(
+                crate::tracing::init_observability(
                     use_tracing_exporter,
                     config.observability.default_level.as_deref(),
                 );
