@@ -1599,7 +1599,7 @@ dependencies = [
 [[package]]
 name = "proxy-wasm-test-framework"
 version = "0.1.0"
-source = "git+https://github.com/Kuadrant/wasm-test-framework.git?branch=kuadrant#213bc2a8c5fe645c37cebc2b4dad44adfc85a418"
+source = "git+https://github.com/Kuadrant/wasm-test-framework.git?branch=kuadrant#33b318b5e110a6514e1021530c84a8fa50362e45"
 dependencies = [
  "anyhow",
  "lazy_static",
