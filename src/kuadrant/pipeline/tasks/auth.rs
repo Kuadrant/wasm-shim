@@ -10,9 +10,9 @@ use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
 use crate::services::{AuthService, Service};
 use chrono::{DateTime, FixedOffset};
-use log::{error, warn};
 use prost_types::value::Kind;
 use std::rc::Rc;
+use tracing::{error, warn};
 
 pub struct AuthTask {
     task_id: String,

@@ -1,9 +1,9 @@
 use crate::kuadrant::{Pipeline, PipelineFactory, ReqRespCtx};
 use crate::metrics::METRICS;
-use log::{debug, error};
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
 use std::rc::Rc;
+use tracing::{debug, error};
 
 pub struct KuadrantFilter {
     context_id: u32,
@@ -57,6 +57,9 @@ impl Context for KuadrantFilter {
 impl HttpContext for KuadrantFilter {
     fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_headers", self.context_id);
+
+        #[cfg(feature = "debug-host-behaviour")]
+        crate::data::debug_all_well_known_attributes();
 
         let ctx = ReqRespCtx::default();
 

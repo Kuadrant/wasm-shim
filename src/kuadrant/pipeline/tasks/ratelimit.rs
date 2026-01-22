@@ -13,8 +13,8 @@ use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
 use crate::services::{RateLimitService, Service};
 use cel_interpreter::Value;
-use log::{debug, error};
 use std::rc::Rc;
+use tracing::{debug, error};
 
 /// Builds individual descriptor entries from CEL expressions
 struct DescriptorEntryBuilder {

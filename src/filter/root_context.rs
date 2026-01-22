@@ -4,10 +4,10 @@ use crate::kuadrant::PipelineFactory;
 use crate::metrics::METRICS;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
-use log::{debug, error, info, LevelFilter};
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;
+use tracing::{debug, error, info};
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
@@ -38,14 +38,17 @@ impl RootContext for FilterRoot {
             ]),
         );
 
-        info!(
+        log::info!(
             "#{} {} {}: VM started",
-            self.context_id, WASM_SHIM_HEADER, full_version
+            self.context_id,
+            WASM_SHIM_HEADER,
+            full_version
         );
         true
     }
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
+        crate::tracing::update_log_level();
         debug!("#{} create_http_context", context_id);
         Some(Box::new(KuadrantFilter::new(
             context_id,
@@ -54,7 +57,7 @@ impl RootContext for FilterRoot {
     }
 
     fn on_configure(&mut self, _config_size: usize) -> bool {
-        info!("#{} on_configure", self.context_id);
+        log::info!("#{} on_configure", self.context_id);
         METRICS.configs().increment();
         let configuration: Vec<u8> = match self.get_plugin_configuration() {
             Ok(cfg) => match cfg {
@@ -68,18 +71,12 @@ impl RootContext for FilterRoot {
         };
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
-                if let Some(level) = &config.observability.default_level {
-                    match level.as_str() {
-                        "TRACE" => log::set_max_level(LevelFilter::Trace),
-                        "DEBUG" => log::set_max_level(LevelFilter::Debug),
-                        "INFO" => log::set_max_level(LevelFilter::Info),
-                        "WARN" => log::set_max_level(LevelFilter::Warn),
-                        "ERROR" => log::set_max_level(LevelFilter::Error),
+                let use_tracing_exporter = config.observability.tracing.is_some();
+                crate::tracing::init_observability(
+                    use_tracing_exporter,
+                    config.observability.default_level.as_deref(),
+                );
 
-                        "OFF" => log::set_max_level(LevelFilter::Off),
-                        _ => log::set_max_level(LevelFilter::Warn),
-                    }
-                }
                 info!("plugin config parsed: {:?}", config);
                 match PipelineFactory::try_from(config) {
                     Ok(factory) => {

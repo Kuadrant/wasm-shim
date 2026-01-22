@@ -2,7 +2,7 @@ use crate::envoy::StatusCode;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::metrics::METRICS;
-use log::error;
+use tracing::error;
 
 pub struct SendReplyTask {
     status_code: u32,

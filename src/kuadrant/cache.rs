@@ -1,6 +1,6 @@
-use log::warn;
 use radix_trie::Trie;
 use std::sync::Mutex;
+use tracing::warn;
 
 use crate::data::attribute::{AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::Headers;

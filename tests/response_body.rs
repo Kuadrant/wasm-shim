@@ -1,4 +1,4 @@
-use crate::util::common::wasm_module;
+use crate::util::common::{wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -115,61 +115,32 @@ fn it_checks_and_reports() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
         // retrieving properties for conditions
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.url_path`"),
-        )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
         // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.method`"),
-        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
-        // debug log about using generated id due to missing `x-request-id` header in request
-        .expect_log(Some(LogLevel::Debug), None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.CheckRateLimit, timeout: 5s")
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
@@ -179,14 +150,6 @@ fn it_checks_and_reports() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 42"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Pause))
@@ -195,20 +158,8 @@ fn it_checks_and_reports() {
     let grpc_response: [u8; 2] = [8, 1];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
         .execute_and_expect(ReturnType::None)
@@ -216,11 +167,6 @@ fn it_checks_and_reports() {
 
     module
         .call_proxy_on_request_body(http_context, 25i32, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_body"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -228,12 +174,7 @@ fn it_checks_and_reports() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .returning(None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -253,13 +194,8 @@ fn it_checks_and_reports() {
     .as_bytes();
     module
         .call_proxy_on_response_body(http_context, response_body.len() as i32, true)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s")
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
@@ -269,23 +205,11 @@ fn it_checks_and_reports() {
             Some(5000),
         )
         .returning(Ok(43))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("gRPC call dispatched successfully, token_id: 43"),
-        )
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     module
         .call_proxy_on_grpc_receive(http_context, 43, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 43, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
@@ -373,58 +297,31 @@ fn it_reads_request_attr_in_advance_when_response_body() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
         // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.url_path`"),
-        )
         .expect_get_property(Some(vec!["request", "url_path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.method`"),
-        )
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::POST))
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -432,11 +329,6 @@ fn it_reads_request_attr_in_advance_when_response_body() {
 
     module
         .call_proxy_on_request_body(http_context, 25i32, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_body"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -444,12 +336,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .returning(None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -469,15 +356,8 @@ fn it_reads_request_attr_in_advance_when_response_body() {
     .as_bytes();
     module
         .call_proxy_on_response_body(http_context, response_body.len() as i32, true)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
-        // debug log about using generated id due to missing `x-request-id` header in request
-        .expect_log(Some(LogLevel::Debug), None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Dispatching gRPC call to limitador-cluster/kuadrant.service.ratelimit.v1.RateLimitService.Report, timeout: 5s")
-        )
         .expect_grpc_call(
             Some("limitador-cluster"),
             Some("kuadrant.service.ratelimit.v1.RateLimitService"),
@@ -487,21 +367,12 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             Some(5000),
         )
         .returning(Ok(42))
-        .expect_log(Some(LogLevel::Debug), Some("gRPC call dispatched successfully, token_id: 42"))
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
     let grpc_response: [u8; 2] = [8, 1];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 on_grpc_call_response: received gRPC call response: token: 42, status: 0"),
-        )
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some(format!("Getting gRPC response, size: {} bytes", grpc_response.len()).as_str()),
-        )
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(&grpc_response))
         .execute_and_expect(ReturnType::None)
@@ -589,46 +460,27 @@ fn it_handles_errors_on_response_body() {
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
-        .expect_log(Some(LogLevel::Info), None)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
         .unwrap();
 
     let http_context = 2;
     module
         .call_proxy_on_context_create(http_context, root_context)
-        .expect_log(Some(LogLevel::Debug), Some("#2 create_http_context"))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
     module
         .call_proxy_on_request_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_headers"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting property: `request.host`"),
-        )
         .expect_get_property(Some(vec!["request", "host"]))
         .returning(Some(data::request::HOST))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Selected blueprint some-name for hostname: cars.toystore.com"),
-        )
         // retrieving tracing headers
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpRequestHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("#2 pipeline built successfully"),
-        )
         .expect_increment_metric(Some(2), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -636,11 +488,6 @@ fn it_handles_errors_on_response_body() {
 
     module
         .call_proxy_on_request_body(http_context, 25i32, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_request_body"))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -648,12 +495,7 @@ fn it_handles_errors_on_response_body() {
 
     module
         .call_proxy_on_response_headers(http_context, 0, false)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_headers"))
         .expect_increment_metric(Some(4), Some(1))
-        .expect_log(
-            Some(LogLevel::Debug),
-            Some("Getting map: `HttpResponseHeaders`"),
-        )
         .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
         .returning(None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
@@ -662,7 +504,6 @@ fn it_handles_errors_on_response_body() {
     let response_body = "some crap that cannot be JSON parsed".as_bytes();
     module
         .call_proxy_on_response_body(http_context, response_body.len() as i32, true)
-        .expect_log(Some(LogLevel::Debug), Some("#2 on_http_response_body"))
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
         .expect_log(

@@ -36,7 +36,6 @@ lazy_static = "1.5.0"
 nom = { version = "8", default-features = false }
 uuid = { version = "1.18.1", features = ["v4", "js"]}
 tracing = "0.1.41"
-tracing-log = "0.2.0"
 tracing-subscriber = "0.3.20"
 tracing-opentelemetry = "0.32"
 opentelemetry = "0.31"

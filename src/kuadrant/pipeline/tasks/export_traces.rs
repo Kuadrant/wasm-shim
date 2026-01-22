@@ -1,8 +1,8 @@
 use crate::kuadrant::pipeline::tasks::{TeardownAction, TeardownOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::services::TracingService;
-use log::{debug, warn};
 use std::rc::Rc;
+use tracing::{debug, warn};
 
 pub struct ExportTracesTask {
     service: Rc<TracingService>,
@@ -10,8 +10,7 @@ pub struct ExportTracesTask {
 
 impl ExportTracesTask {
     pub fn new(ctx: &mut ReqRespCtx, service: Rc<TracingService>) -> Self {
-        crate::tracing::init_tracing(ctx);
-
+        ctx.enter_request_span();
         Self { service }
     }
 }
