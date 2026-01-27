@@ -12,7 +12,7 @@ use crate::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
 use crate::services::{RateLimitService, Service};
-use cel_interpreter::Value;
+use cel::Value;
 use std::rc::Rc;
 use tracing::{debug, error};
 

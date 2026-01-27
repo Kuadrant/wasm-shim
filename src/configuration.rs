@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
-use cel_interpreter::functions::time::duration;
-use cel_interpreter::Value;
+use cel::functions::time::duration;
+use cel::Value;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
