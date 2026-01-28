@@ -131,7 +131,9 @@ impl PartialEq for Expression {
 
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseErrors> {
-        let expression = Parser::new().parse(expression)?;
+        let expression = Parser::new()
+            .enable_optional_syntax(true)
+            .parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
         let mut response_props = Vec::with_capacity(1);
