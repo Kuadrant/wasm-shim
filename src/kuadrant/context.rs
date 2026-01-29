@@ -1,4 +1,4 @@
-use cel_interpreter::Value;
+use cel::Value;
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -568,7 +568,7 @@ mod tests {
         assert!(user_result.is_some());
         let entry = user_result.unwrap();
         assert!(entry.result.is_ok());
-        if let Ok(AttributeState::Available(cel_interpreter::Value::String(user))) = &entry.result {
+        if let Ok(AttributeState::Available(cel::Value::String(user))) = &entry.result {
             assert_eq!(user.as_ref(), "alice");
         }
 
@@ -579,8 +579,7 @@ mod tests {
         assert!(group_result.is_some());
         let entry = group_result.unwrap();
         assert!(entry.result.is_ok());
-        if let Ok(AttributeState::Available(cel_interpreter::Value::String(group))) = &entry.result
-        {
+        if let Ok(AttributeState::Available(cel::Value::String(group))) = &entry.result {
             assert_eq!(group.as_ref(), "admin");
         }
     }

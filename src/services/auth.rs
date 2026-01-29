@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::time::Duration;
 
-use cel_interpreter::Value;
+use cel::Value;
 use chrono::{DateTime, FixedOffset};
 use prost::Message;
 use prost_types::{Struct, Timestamp};

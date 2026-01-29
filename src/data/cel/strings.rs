@@ -1,5 +1,5 @@
-use cel_interpreter::extractors::{Arguments, This};
-use cel_interpreter::{ExecutionError, ResolveResult, Value};
+use cel::extractors::{Arguments, This};
+use cel::{ExecutionError, ResolveResult, Value};
 use std::sync::Arc;
 
 pub fn char_at(This(this): This<Arc<String>>, arg: i64) -> ResolveResult {
@@ -273,7 +273,7 @@ mod tests {
 
     use crate::data::{attribute::AttributeState, cel::Expression};
     use crate::kuadrant::{MockWasmHost, ReqRespCtx};
-    use cel_interpreter::Value;
+    use cel::Value;
 
     #[test]
     fn extended_string_fn() {
@@ -344,7 +344,7 @@ mod tests {
             Ok(AttributeState::Available("TACOCÆT XII".into()))
         );
 
-        let e = Expression::new("'  \ttrim\n    '.trim()").expect("This must be valid CEL");
+        let e = Expression::new("'  \ttrim\t    '.trim()").expect("This must be valid CEL");
         assert_eq!(e.eval(&ctx), Ok(AttributeState::Available("trim".into())));
 
         let e =

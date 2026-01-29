@@ -2,10 +2,12 @@ use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::Headers;
 use crate::kuadrant::ReqRespCtx;
-use cel_interpreter::extractors::{Arguments, This};
-use cel_interpreter::objects::{Key, Map, ValueType};
-use cel_interpreter::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
-use cel_parser::{parse, Atom, Expression as CelExpression, Member, ParseError};
+use cel::common::ast::{EntryExpr, Expr, IdedExpr};
+use cel::common::value::CelVal;
+use cel::extractors::{Arguments, This};
+use cel::objects::{Key, Map, ValueType};
+use cel::parser::{Expression as CelExpression, ParseErrors, Parser};
+use cel::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
@@ -21,7 +23,7 @@ use urlencoding::decode;
 pub(crate) mod errors {
     use crate::data::attribute::AttributeError;
     use crate::data::Expression;
-    use cel_interpreter::ExecutionError;
+    use cel::ExecutionError;
     use std::error::Error;
     use std::fmt::{Debug, Display, Formatter};
 
@@ -128,8 +130,10 @@ impl PartialEq for Expression {
 }
 
 impl Expression {
-    pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseError> {
-        let expression = parse(expression)?;
+    pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseErrors> {
+        let expression = Parser::new()
+            .enable_optional_syntax(true)
+            .parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
         let mut response_props = Vec::with_capacity(1);
@@ -161,12 +165,12 @@ impl Expression {
         })
     }
 
-    pub fn new(expression: &str) -> Result<Self, ParseError> {
+    pub fn new(expression: &str) -> Result<Self, ParseErrors> {
         Self::new_expression(expression, false)
     }
 
     #[cfg(test)]
-    pub fn new_extended(expression: &str) -> Result<Self, ParseError> {
+    pub fn new_extended(expression: &str) -> Result<Self, ParseErrors> {
         Self::new_expression(expression, true)
     }
 
@@ -346,7 +350,7 @@ pub struct Predicate {
 pub type PredicateResult = Result<AttributeState<bool>, EvaluationError>;
 
 impl Predicate {
-    pub fn new(predicate: &str) -> Result<Self, ParseError> {
+    pub fn new(predicate: &str) -> Result<Self, ParseErrors> {
         Ok(Self {
             expression: Expression::new(predicate)?,
         })
@@ -356,7 +360,7 @@ impl Predicate {
     /// `Expression` that has extended capabilities enabled.
     /// See [`Expression::add_extended_capabilities`]
     #[cfg(test)]
-    pub fn route_rule(predicate: &str) -> Result<Self, ParseError> {
+    pub fn route_rule(predicate: &str) -> Result<Self, ParseErrors> {
         Ok(Self {
             expression: Expression::new_extended(predicate)?,
         })
@@ -480,7 +484,7 @@ impl Attribute {
                     // other than Headers / Vec<(String, String)>
                     opt.map(|headers| {
                         let map: HashMap<String, String> = headers.into();
-                        Value::Map(cel_interpreter::objects::Map::from(map))
+                        Value::Map(cel::objects::Map::from(map))
                     })
                     .unwrap_or(Value::Null)
                 })),
@@ -541,6 +545,7 @@ fn copy(value_type: &ValueType) -> ValueType {
         ValueType::Duration => ValueType::Duration,
         ValueType::Timestamp => ValueType::Timestamp,
         ValueType::Null => ValueType::Null,
+        ValueType::Opaque => ValueType::Opaque,
     }
 }
 
@@ -615,75 +620,72 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
 }
 
 fn properties<'e>(
-    exp: &'e CelExpression,
+    ided_exp: &'e IdedExpr,
     all: &mut Vec<Vec<&'e str>>,
     response_props: &mut Vec<String>,
     path: &mut Vec<&'e str>,
 ) {
-    match exp {
-        CelExpression::Arithmetic(e1, _, e2)
-        | CelExpression::Relation(e1, _, e2)
-        | CelExpression::Or(e1, e2)
-        | CelExpression::And(e1, e2) => {
-            properties(e1, all, response_props, path);
-            properties(e2, all, response_props, path);
-        }
-        CelExpression::Ternary(e1, e2, e3) => {
-            properties(e1, all, response_props, path);
-            properties(e2, all, response_props, path);
-            properties(e3, all, response_props, path);
-        }
-        CelExpression::Unary(_, e) => {
-            properties(e, all, response_props, path);
-        }
-        CelExpression::Member(e, a) => {
-            if let Member::Attribute(attr) = &**a {
-                path.insert(0, attr.as_str())
-            }
-            properties(e, all, response_props, path);
-        }
-        CelExpression::FunctionCall(ident, None, args) => {
-            path.clear();
-            if let CelExpression::Ident(ident) = ident.as_ref() {
-                if ident.as_str() == "responseBodyJSON" && args.len() == 1 {
-                    if let CelExpression::Atom(Atom::String(prop)) = &args[0] {
-                        response_props.push(prop.to_string());
-                    }
+    match &ided_exp.expr {
+        Expr::Call(call) => {
+            if call.target.is_none() && call.func_name == "responseBodyJSON" && call.args.len() == 1
+            {
+                if let Expr::Literal(CelVal::String(prop)) = &call.args[0].expr {
+                    response_props.push(prop.to_string());
                 }
             }
-            for e in args {
-                properties(e, all, response_props, path);
-            }
-        }
-        CelExpression::FunctionCall(_, target, args) => {
-            // The attributes of the values returned by functions are skipped.
-            path.clear();
-            if let Some(target) = target {
+            if let Some(target) = &call.target {
                 properties(target, all, response_props, path);
+            } else {
+                path.clear();
             }
-            for e in args {
-                properties(e, all, response_props, path);
-            }
-        }
-        CelExpression::List(e) => {
-            for e in e {
-                properties(e, all, response_props, path);
+            for arg in &call.args {
+                properties(arg, all, response_props, path);
             }
         }
-        CelExpression::Map(v) => {
-            for (e1, e2) in v {
-                properties(e1, all, response_props, path);
-                properties(e2, all, response_props, path);
-            }
+        Expr::Select(select) => {
+            path.insert(0, select.field.as_str());
+            properties(&select.operand, all, response_props, path);
         }
-        CelExpression::Atom(_) => {}
-        CelExpression::Ident(v) => {
+        Expr::Ident(name) => {
             if !path.is_empty() {
-                path.insert(0, v.as_str());
+                path.insert(0, name.as_str());
                 all.push(path.clone());
                 path.clear();
             }
         }
+        Expr::List(list) => {
+            for elem in &list.elements {
+                properties(elem, all, response_props, path);
+            }
+        }
+        Expr::Map(map) => {
+            for entry in &map.entries {
+                match &entry.expr {
+                    EntryExpr::MapEntry(map_entry) => {
+                        properties(&map_entry.key, all, response_props, path);
+                        properties(&map_entry.value, all, response_props, path);
+                    }
+                    EntryExpr::StructField(field) => {
+                        properties(&field.value, all, response_props, path);
+                    }
+                }
+            }
+        }
+        Expr::Struct(struct_expr) => {
+            for entry in &struct_expr.entries {
+                if let EntryExpr::StructField(field) = &entry.expr {
+                    properties(&field.value, all, response_props, path);
+                }
+            }
+        }
+        Expr::Comprehension(comp) => {
+            properties(&comp.iter_range, all, response_props, path);
+            properties(&comp.accu_init, all, response_props, path);
+            properties(&comp.loop_cond, all, response_props, path);
+            properties(&comp.loop_step, all, response_props, path);
+            properties(&comp.result, all, response_props, path);
+        }
+        Expr::Literal(_) | Expr::Unspecified => {}
     }
 }
 
@@ -708,8 +710,8 @@ pub mod data {
     use crate::data::attribute::{AttributeError, AttributeState};
     use crate::data::cel::Attribute;
     use crate::kuadrant::ReqRespCtx;
-    use cel_interpreter::objects::{Key, Map};
-    use cel_interpreter::Value;
+    use cel::objects::{Key, Map};
+    use cel::Value;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -858,8 +860,8 @@ mod tests {
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
-    use cel_interpreter::objects::ValueType;
-    use cel_interpreter::Value;
+    use cel::objects::ValueType;
+    use cel::Value;
     use std::sync::Arc;
 
     #[test]

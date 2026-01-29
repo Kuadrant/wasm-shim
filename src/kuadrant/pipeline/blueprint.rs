@@ -6,7 +6,7 @@ use crate::kuadrant::pipeline::tasks::{
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
-use cel_parser::ParseError;
+use cel::ParseErrors;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
@@ -76,8 +76,8 @@ pub enum CompileError {
     ServiceCreationFailed(String),
 }
 
-impl From<ParseError> for CompileError {
-    fn from(e: ParseError) -> Self {
+impl From<ParseErrors> for CompileError {
+    fn from(e: ParseErrors) -> Self {
         CompileError::InvalidDataExpression(e.to_string())
     }
 }

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use cel_interpreter::Value;
+use cel::Value;
 use prost::Message;
 
 use crate::configuration::FailureMode;
