@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-shim"
-version = "0.13.0-dev"
+version = "0.12.3"
 dependencies = [
  "cel",
  "chrono",
