@@ -155,7 +155,7 @@ impl Expression {
             })
             .collect();
 
-        attributes.sort_by(|a, b| a.path.tokens().len().cmp(&b.path.tokens().len()));
+        attributes.sort_by_key(|a| a.path.tokens().len());
 
         Ok(Self {
             attributes,
