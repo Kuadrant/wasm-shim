@@ -1,8 +1,8 @@
 use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
-    RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    AuthTask, DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
+    ModifyHeadersTask, RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -28,15 +28,12 @@ pub(crate) struct Action {
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
     pub sources: Vec<String>,
-    #[allow(dead_code)]
     pub message_builder: Option<String>,
-    #[allow(dead_code)]
     pub on_reply: Vec<TypedAction>,
 }
 
 // todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
 #[derive(Clone)]
-#[allow(dead_code)]
 pub(crate) struct TypedAction {
     pub predicate: Predicate,
     pub terminal: bool,
@@ -44,7 +41,6 @@ pub(crate) struct TypedAction {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub(crate) enum Operation {
     Deny {
         deny_with: String,
@@ -286,8 +282,33 @@ impl Blueprint {
                             .push(Box::new(ExportTracesTask::new(ctx, Rc::clone(service))));
                     }
                 }
-                ServiceInstance::Dynamic(_) => {
-                    todo!("DynamicTask not yet implemented")
+                ServiceInstance::Dynamic(dynamic_service) => {
+                    let message_builder = match &action.message_builder {
+                        Some(mb) => mb.clone(),
+                        None => {
+                            tracing::error!("Dynamic action missing message_builder");
+                            continue;
+                        }
+                    };
+                    let task: Box<dyn Task> = Box::new(DynamicTask::new(
+                        action.id.clone(),
+                        Rc::clone(dynamic_service),
+                        action.scope.clone(),
+                        message_builder,
+                        action.on_reply.clone(),
+                        action.predicates.clone(),
+                        action.dependencies.clone(),
+                    ));
+                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                    if tracing_enabled {
+                        tasks.push(Box::new(TracingDecoratorTask::new(
+                            "dynamic",
+                            task,
+                            action.sources.clone(),
+                        )));
+                    } else {
+                        tasks.push(task);
+                    }
                 }
             }
         }

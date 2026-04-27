@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "cel"
 version = "0.13.0"
-source = "git+https://github.com/cel-rust/cel-rust.git?branch=master#212f441dbf3fa41289bfdb9f0a8c234e6db7125a"
+source = "git+https://github.com/cel-rust/cel-rust.git?branch=master#cc7c3781d2a6d9bdefa736103be56fd439d98330"
 dependencies = [
  "antlr4rust",
  "chrono",
