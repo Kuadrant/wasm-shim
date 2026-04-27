@@ -1,5 +1,6 @@
 use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
+use crate::data::grpc::{is_grpc_content_type, parse_grpc_path};
 use crate::data::Headers;
 use crate::kuadrant::ReqRespCtx;
 use cel::common::ast::{EntryExpr, Expr, IdedExpr, LiteralValue};
@@ -104,6 +105,7 @@ pub struct Expression {
     body_values: Vec<String>,
     expression: CelExpression,
     extended: bool,
+    needs_grpc: bool,
 }
 
 pub type EvalResult = Result<AttributeState<Value>, CelError>;
@@ -112,8 +114,8 @@ impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Expression {{ expression: {:?}, attributes: {:?}, extended: {} }}",
-            self.expression, self.attributes, self.extended
+            "Expression {{ expression: {:?}, attributes: {:?}, extended: {}, needs_grpc: {} }}",
+            self.expression, self.attributes, self.extended, self.needs_grpc
         )
     }
 }
@@ -122,9 +124,10 @@ impl PartialEq for Expression {
     fn eq(&self, other: &Self) -> bool {
         let attributes_match = self.attributes == other.attributes;
         let extended_match = self.extended == other.extended;
+        let needs_grpc_match = self.needs_grpc == other.needs_grpc;
         let expressions_match =
             format!("{:?}", self.expression) == format!("{:?}", other.expression);
-        attributes_match && extended_match && expressions_match
+        attributes_match && extended_match && needs_grpc_match && expressions_match
     }
 }
 
@@ -155,9 +158,16 @@ impl Expression {
             &mut Vec::default(),
         );
 
+        let needs_grpc = props
+            .iter()
+            .any(|tokens| tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc");
+
         let mut attributes: Vec<Attribute> = props
             .into_iter()
             .filter_map(|tokens| {
+                if tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc" {
+                    return None;
+                }
                 let root = tokens.first()?;
                 if !HOST_PROPERTY_ROOTS.contains(root) {
                     return None;
@@ -177,6 +187,7 @@ impl Expression {
             body_values: response_props,
             expression,
             extended,
+            needs_grpc,
         })
     }
 
@@ -213,7 +224,21 @@ impl Expression {
             AttributeState::Available(m) => m,
         };
 
-        for binding in ["request", "metadata", "source", "destination", "auth"] {
+        let request_key: Key = "request".into();
+        let mut request_value = map.get(&request_key).cloned().unwrap_or(Value::Null);
+        if self.needs_grpc {
+            let mut request_map: HashMap<Key, Value> = match request_value {
+                Value::Map(ref m) => m.map.as_ref().clone(),
+                _ => HashMap::new(),
+            };
+            if let Some(grpc_map) = self.resolve_grpc(req_ctx) {
+                request_map.insert(Key::String(Arc::new("grpc".to_string())), grpc_map);
+            }
+            request_value = Value::Map(request_map.into());
+        }
+        cel_ctx.add_variable_from_value("request", request_value);
+
+        for binding in ["metadata", "source", "destination", "auth"] {
             let key: Key = binding.into();
             cel_ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
         }
@@ -248,6 +273,41 @@ impl Expression {
 
     pub fn body_values(&self) -> &[String] {
         &self.body_values
+    }
+
+    fn resolve_grpc(&self, req_ctx: &ReqRespCtx) -> Option<Value> {
+        let content_type: Option<String> = req_ctx
+            .get_attribute::<Headers>("request.headers")
+            .ok()
+            .and_then(|state| match state {
+                AttributeState::Available(Some(headers)) => {
+                    headers.get("content-type").map(|s| s.to_string())
+                }
+                _ => None,
+            });
+
+        if !content_type.as_deref().is_some_and(is_grpc_content_type) {
+            return None;
+        }
+
+        let url_path: Option<String> = req_ctx
+            .get_attribute::<String>("request.url_path")
+            .ok()
+            .and_then(|state| match state {
+                AttributeState::Available(opt) => opt,
+                _ => None,
+            });
+
+        let (service, method) = match url_path.as_deref().and_then(parse_grpc_path) {
+            Some((s, m)) => (Value::String(s.into()), Value::String(m.into())),
+            None => return None,
+        };
+
+        let map: HashMap<Key, Value> = HashMap::from([
+            (Key::String(Arc::new("service".to_string())), service),
+            (Key::String(Arc::new("method".to_string())), method),
+        ]);
+        Some(Value::Map(map.into()))
     }
 }
 
@@ -1318,6 +1378,120 @@ mod tests {
             .into(&ctx)
             .expect("Should not return AttributeError");
         assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn grpc_properties_filtered_from_attributes() {
+        let expr = Expression::new("request.grpc.service == 'UserService'").expect("valid CEL");
+        // request.grpc.* paths should be filtered; only non-grpc request attrs remain
+        assert!(
+            !expr.attributes.iter().any(|a| {
+                let tokens = a.path.tokens();
+                tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc"
+            }),
+            "request.grpc.* paths should be filtered from attributes: {:?}",
+            expr.attributes
+        );
+    }
+
+    #[test]
+    fn grpc_service_matches() {
+        let headers = vec![("content-type".to_string(), "application/grpc".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property(
+                "request.url_path".into(),
+                "/UserService/GetUser".bytes().collect(),
+            );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate = Predicate::new("request.grpc.service == 'UserService'").expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(true)
+        );
+    }
+
+    #[test]
+    fn grpc_method_matches() {
+        let headers = vec![(
+            "content-type".to_string(),
+            "application/grpc+proto".to_string(),
+        )];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property(
+                "request.url_path".into(),
+                "/UserService/GetUser".bytes().collect(),
+            );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate = Predicate::new("request.grpc.method == 'GetUser'").expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(true)
+        );
+    }
+
+    #[test]
+    fn grpc_not_set_for_http_request() {
+        let headers = vec![("content-type".to_string(), "application/json".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property("request.url_path".into(), "/api/users".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate = Predicate::new("has(request.grpc)").expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(false)
+        );
+    }
+
+    #[test]
+    fn grpc_not_set_for_malformed_path() {
+        let headers = vec![("content-type".to_string(), "application/grpc".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property("request.url_path".into(), "/malformed".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate = Predicate::new("has(request.grpc)").expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(false)
+        );
+    }
+
+    #[test]
+    fn grpc_has_guard_with_service_match() {
+        let headers = vec![("content-type".to_string(), "application/grpc".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property(
+                "request.url_path".into(),
+                "/UserService/GetUser".bytes().collect(),
+            );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate =
+            Predicate::new("has(request.grpc) && request.grpc.service == 'UserService'")
+                .expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(true)
+        );
+    }
+
+    #[test]
+    fn grpc_has_guard_false_on_http() {
+        let headers = vec![("content-type".to_string(), "application/json".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property("request.url_path".into(), "/api/users".bytes().collect());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate =
+            Predicate::new("has(request.grpc) && request.grpc.service == 'UserService'")
+                .expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(false)
+        );
     }
 
     #[test]
