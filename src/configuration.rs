@@ -31,7 +31,6 @@ pub struct Action {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub struct TypedAction {
     pub predicate: String,
     pub terminal: bool,
@@ -41,7 +40,6 @@ pub struct TypedAction {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
-#[allow(dead_code)]
 pub enum Operation {
     Grpc(GrpcOperation),
     Deny(DenyOperation),
@@ -52,7 +50,6 @@ pub enum Operation {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub struct GrpcOperation {
     pub var: String,
     pub service: String,
@@ -63,7 +60,6 @@ pub struct GrpcOperation {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub struct DenyOperation {
     pub deny_with: String,
 }
@@ -77,7 +73,6 @@ pub enum HeadersTarget {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub struct HeadersOperation {
     pub target: HeadersTarget,
     pub headers: String,
@@ -85,13 +80,11 @@ pub struct HeadersOperation {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub struct StoreOperation {
     pub data: Vec<StoreItem>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[allow(dead_code)]
 pub struct StoreItem {
     pub path: String,
     pub value: String,
@@ -679,7 +672,7 @@ mod test {
     }
 
     #[test]
-    fn parse_grpc_action_with_on_reply() {q
+    fn parse_grpc_action_with_on_reply() {
         let config = r#"{
             "services": {
                 "limitador": {

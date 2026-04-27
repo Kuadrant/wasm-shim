@@ -84,6 +84,8 @@ impl PipelineFactory {
                 conditional_data: Default::default(),
                 dependencies: Default::default(),
                 sources: vec![],
+                message_builder: None,
+                on_reply: vec![],
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
