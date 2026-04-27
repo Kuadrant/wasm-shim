@@ -28,6 +28,34 @@ pub(crate) struct Action {
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
     pub sources: Vec<String>,
+    #[allow(dead_code)]
+    pub message_builder: Option<String>,
+    #[allow(dead_code)]
+    pub on_reply: Vec<TypedAction>,
+}
+
+// todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
+#[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) struct TypedAction {
+    pub predicate: Predicate,
+    pub terminal: bool,
+    pub operation: Operation,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) enum Operation {
+    Deny {
+        deny_with: String,
+    },
+    Headers {
+        target: HeadersType,
+        headers: String,
+    },
+    Store {
+        data: Vec<(String, String)>,
+    },
 }
 
 impl Action {
@@ -136,8 +164,8 @@ impl Blueprint {
                     configuration::ActionConfig::Legacy(action) => {
                         Action::compile(action, services, id, dependencies)
                     }
-                    configuration::ActionConfig::Typed(_typed) => {
-                        todo!("Typed action compilation not yet implemented")
+                    configuration::ActionConfig::Typed(typed) => {
+                        Action::compile_typed(typed, services, id, dependencies)
                     }
                 }
             })
@@ -303,6 +331,110 @@ impl Action {
             conditional_data,
             dependencies,
             sources: config.sources.clone(),
+            message_builder: None,
+            on_reply: vec![],
+        })
+    }
+
+    fn compile_typed(
+        typed: &configuration::TypedAction,
+        services: &HashMap<String, ServiceInstance>,
+        id: String,
+        dependencies: Vec<String>,
+    ) -> Result<Self, CompileError> {
+        match &typed.operation {
+            configuration::Operation::Grpc(grpc) => {
+                let service_instance = services
+                    .get(&grpc.service)
+                    .ok_or_else(|| CompileError::UnknownService(grpc.service.clone()))?;
+
+                if !matches!(service_instance, ServiceInstance::Dynamic(_)) {
+                    return Err(CompileError::ServiceCreationFailed(format!(
+                        "Service '{}' is not a dynamic service type",
+                        grpc.service
+                    )));
+                }
+
+                let predicate = Predicate::new(&typed.predicate).map_err(|e| {
+                    CompileError::InvalidActionPredicate {
+                        service: grpc.service.clone(),
+                        error: e.to_string(),
+                    }
+                })?;
+
+                let on_reply: Vec<TypedAction> = grpc
+                    .on_reply
+                    .iter()
+                    .map(TypedAction::compile)
+                    .collect::<Result<_, _>>()?;
+
+                Ok(Self {
+                    id,
+                    service: service_instance.clone(),
+                    scope: grpc.name.clone(),
+                    predicates: vec![predicate],
+                    conditional_data: vec![],
+                    dependencies,
+                    sources: vec![],
+                    message_builder: Some(grpc.message_builder.clone()),
+                    on_reply,
+                })
+            }
+            _ => Err(CompileError::InvalidDataExpression(
+                "Only gRPC typed actions are currently supported as top-level actions".to_string(),
+            )),
+        }
+    }
+}
+
+impl TypedAction {
+    fn compile(config: &configuration::TypedAction) -> Result<Self, CompileError> {
+        let predicate = Predicate::new(&config.predicate).map_err(|e| {
+            CompileError::InvalidActionPredicate {
+                service: match &config.operation {
+                    configuration::Operation::Deny(_) => "deny",
+                    configuration::Operation::Headers(_) => "headers",
+                    configuration::Operation::Store(_) => "store",
+                    configuration::Operation::Grpc(_) => "grpc",
+                }
+                .to_string(),
+                error: e.to_string(),
+            }
+        })?;
+
+        let operation = match &config.operation {
+            configuration::Operation::Deny(deny) => Operation::Deny {
+                deny_with: deny.deny_with.clone(),
+            },
+            configuration::Operation::Headers(headers) => {
+                let target = match headers.target {
+                    configuration::HeadersTarget::Request => HeadersType::HttpRequestHeaders,
+                    configuration::HeadersTarget::Response => HeadersType::HttpResponseHeaders,
+                };
+                Operation::Headers {
+                    target,
+                    headers: headers.headers.clone(),
+                }
+            }
+            configuration::Operation::Store(store) => {
+                let data = store
+                    .data
+                    .iter()
+                    .map(|item| (item.path.clone(), item.value.clone()))
+                    .collect();
+                Operation::Store { data }
+            }
+            configuration::Operation::Grpc(_) => {
+                return Err(CompileError::InvalidDataExpression(
+                    "gRPC actions cannot be nested inside 'onReply' blocks".to_string(),
+                ));
+            }
+        };
+
+        Ok(TypedAction {
+            predicate,
+            terminal: config.terminal,
+            operation,
         })
     }
 }
@@ -349,9 +481,12 @@ mod tests {
     use crate::configuration::FailureMode;
     use crate::configuration::{
         Action as ConfigAction, ActionConfig, ActionSet, ConditionalData as ConfigConditionalData,
-        DataItem as ConfigDataItem, DataType, ExpressionItem, RouteRuleConditions, StaticItem,
+        DataItem as ConfigDataItem, DataType, DenyOperation, ExpressionItem, GrpcOperation,
+        HeadersOperation, HeadersTarget, Operation as ConfigOperation, RouteRuleConditions,
+        StaticItem, StoreItem, StoreOperation, TypedAction as ConfigTypedAction,
     };
-    use crate::services::{AuthService, ServiceInstance};
+    use crate::filter::DescriptorManager;
+    use crate::services::{AuthService, DynamicService, ServiceInstance};
     use std::collections::HashMap;
     use std::rc::Rc;
 
@@ -362,6 +497,21 @@ mod tests {
                 "test-cluster".to_string(),
                 std::time::Duration::from_secs(10),
                 FailureMode::Deny,
+            ))),
+        )
+    }
+
+    fn build_dynamic_service(name: &str) -> (String, ServiceInstance) {
+        let descriptor_manager = Rc::new(DescriptorManager::default());
+        (
+            name.to_string(),
+            ServiceInstance::Dynamic(Rc::new(DynamicService::new(
+                "test-cluster".to_string(),
+                "test.Service".to_string(),
+                "TestMethod".to_string(),
+                std::time::Duration::from_secs(10),
+                FailureMode::Deny,
+                descriptor_manager,
             ))),
         )
     }
@@ -612,5 +762,260 @@ mod tests {
         assert_eq!(blueprint.actions[0].predicates.len(), 1);
         assert_eq!(blueprint.actions[0].conditional_data.len(), 1);
         assert_eq!(blueprint.actions[0].conditional_data[0].data.len(), 2);
+    }
+
+    #[test]
+    fn grpc_typed_action_compiles() {
+        let services = HashMap::from([build_dynamic_service("my-dynamic")]);
+
+        let typed = ConfigTypedAction {
+            predicate: "request.method == 'GET'".to_string(),
+            terminal: false,
+            operation: ConfigOperation::Grpc(GrpcOperation {
+                name: "rl_check".to_string(),
+                service: "my-dynamic".to_string(),
+                message_builder: "envoy.service.ratelimit.v3.RateLimitRequest{}".to_string(),
+                on_reply: vec![
+                    ConfigTypedAction {
+                        predicate: "rl_check.overall_code == 2".to_string(),
+                        terminal: true,
+                        operation: ConfigOperation::Deny(DenyOperation {
+                            deny_with: "DenyResponse{status: 429u}".to_string(),
+                        }),
+                    },
+                    ConfigTypedAction {
+                        predicate: "true".to_string(),
+                        terminal: false,
+                        operation: ConfigOperation::Headers(HeadersOperation {
+                            target: HeadersTarget::Request,
+                            headers: "result.headers".to_string(),
+                        }),
+                    },
+                    ConfigTypedAction {
+                        predicate: "true".to_string(),
+                        terminal: false,
+                        operation: ConfigOperation::Store(StoreOperation {
+                            data: vec![StoreItem {
+                                path: "rl.remaining".to_string(),
+                                value: "result.remaining".to_string(),
+                            }],
+                        }),
+                    },
+                ],
+            }),
+        };
+
+        let result = Action::compile_typed(&typed, &services, "0".to_string(), vec![]);
+        assert!(result.is_ok());
+        let action = result.unwrap();
+        assert_eq!(action.id, "0");
+        assert_eq!(action.scope, "rl_check");
+        assert!(matches!(action.service, ServiceInstance::Dynamic(_)));
+        assert_eq!(action.predicates.len(), 1);
+        assert!(action.message_builder.is_some());
+        assert_eq!(action.on_reply.len(), 3);
+        assert!(action.conditional_data.is_empty());
+    }
+
+    #[test]
+    fn grpc_typed_action_fails_on_unknown_service() {
+        let services = HashMap::new();
+
+        let typed = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            operation: ConfigOperation::Grpc(GrpcOperation {
+                name: "check".to_string(),
+                service: "nonexistent".to_string(),
+                message_builder: "test.Request{}".to_string(),
+                on_reply: vec![],
+            }),
+        };
+
+        let result = Action::compile_typed(&typed, &services, "0".to_string(), vec![]);
+        assert!(matches!(result, Err(CompileError::UnknownService(ref s)) if s == "nonexistent"));
+    }
+
+    #[test]
+    fn grpc_typed_action_fails_on_non_dynamic_service() {
+        let services = HashMap::from([build_test_service("auth-svc")]);
+
+        let typed = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            operation: ConfigOperation::Grpc(GrpcOperation {
+                name: "check".to_string(),
+                service: "auth-svc".to_string(),
+                message_builder: "test.Request{}".to_string(),
+                on_reply: vec![],
+            }),
+        };
+
+        let result = Action::compile_typed(&typed, &services, "0".to_string(), vec![]);
+        assert!(matches!(
+            result,
+            Err(CompileError::ServiceCreationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn grpc_in_on_reply_block_is_rejected() {
+        let nested_grpc = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            operation: ConfigOperation::Grpc(GrpcOperation {
+                name: "nested".to_string(),
+                service: "svc".to_string(),
+                message_builder: "test.Request{}".to_string(),
+                on_reply: vec![],
+            }),
+        };
+
+        let result = TypedAction::compile(&nested_grpc);
+        assert!(matches!(
+            result,
+            Err(CompileError::InvalidDataExpression(ref msg)) if msg.contains("cannot be nested")
+        ));
+    }
+
+    #[test]
+    fn typed_actions_compile() {
+        let deny_config = ConfigTypedAction {
+            predicate: "result.code == 2".to_string(),
+            terminal: true,
+            operation: ConfigOperation::Deny(DenyOperation {
+                deny_with: "DenyResponse{status: 429u}".to_string(),
+            }),
+        };
+        let deny_result = TypedAction::compile(&deny_config);
+        assert!(deny_result.is_ok());
+        let deny = deny_result.unwrap();
+        assert!(deny.terminal);
+        assert!(matches!(deny.operation, Operation::Deny { .. }));
+
+        let headers_config = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            operation: ConfigOperation::Headers(HeadersOperation {
+                target: HeadersTarget::Response,
+                headers: "result.resp_headers".to_string(),
+            }),
+        };
+        let headers_result = TypedAction::compile(&headers_config);
+        assert!(headers_result.is_ok());
+        let headers = headers_result.unwrap();
+        assert!(!headers.terminal);
+        assert!(matches!(
+            headers.operation,
+            Operation::Headers {
+                ref target,
+                ..
+            } if matches!(target, HeadersType::HttpResponseHeaders)
+        ));
+
+        let store_config = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            operation: ConfigOperation::Store(StoreOperation {
+                data: vec![
+                    StoreItem {
+                        path: "a.b".to_string(),
+                        value: "result.x".to_string(),
+                    },
+                    StoreItem {
+                        path: "c.d".to_string(),
+                        value: "result.y".to_string(),
+                    },
+                ],
+            }),
+        };
+        let store_result = TypedAction::compile(&store_config);
+        assert!(store_result.is_ok());
+        let store = store_result.unwrap();
+        assert!(!store.terminal);
+        assert!(matches!(
+            store.operation,
+            Operation::Store { ref data, .. }
+                if data.len() == 2
+                && data[0].0 == "a.b"
+        ));
+    }
+
+    #[test]
+    fn typed_action_fails_on_invalid_predicate() {
+        let config = ConfigTypedAction {
+            predicate: "bad syntax !!".to_string(),
+            terminal: true,
+            operation: ConfigOperation::Deny(DenyOperation {
+                deny_with: "DenyResponse{status: 429u}".to_string(),
+            }),
+        };
+        let result = TypedAction::compile(&config);
+        assert!(matches!(
+            result,
+            Err(CompileError::InvalidActionPredicate { .. })
+        ));
+    }
+
+    #[test]
+    fn mixed_legacy_and_typed_actions_compile() {
+        let services = HashMap::from([
+            build_test_service("auth-svc"),
+            build_dynamic_service("dyn-svc"),
+        ]);
+
+        let config = ActionSet {
+            name: "mixed-set".to_string(),
+            route_rule_conditions: RouteRuleConditions {
+                hostnames: vec!["example.com".to_string()],
+                predicates: vec![],
+            },
+            actions: vec![
+                ActionConfig::Legacy(ConfigAction {
+                    service: "auth-svc".to_string(),
+                    scope: "auth-scope".to_string(),
+                    predicates: vec![],
+                    conditional_data: vec![],
+                    sources: vec![],
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        name: "rl_check".to_string(),
+                        service: "dyn-svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![ConfigTypedAction {
+                            predicate: "rl_check.code == 2".to_string(),
+                            terminal: true,
+                            operation: ConfigOperation::Deny(DenyOperation {
+                                deny_with: "DenyResponse{status: 429u}".to_string(),
+                            }),
+                        }],
+                    }),
+                }),
+            ],
+        };
+
+        let result = Blueprint::compile(&config, &services);
+        assert!(result.is_ok());
+        let blueprint = result.unwrap();
+        assert_eq!(blueprint.actions.len(), 2);
+
+        assert!(matches!(
+            blueprint.actions[0].service,
+            ServiceInstance::Auth(_)
+        ));
+        assert!(blueprint.actions[0].message_builder.is_none());
+        assert!(blueprint.actions[0].on_reply.is_empty());
+        assert!(blueprint.actions[0].dependencies.is_empty());
+
+        assert!(matches!(
+            blueprint.actions[1].service,
+            ServiceInstance::Dynamic(_)
+        ));
+        assert!(blueprint.actions[1].message_builder.is_some());
+        assert_eq!(blueprint.actions[1].on_reply.len(), 1);
+        assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
     }
 }
