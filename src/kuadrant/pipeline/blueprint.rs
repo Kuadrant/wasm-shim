@@ -125,14 +125,21 @@ impl Blueprint {
             .actions
             .iter()
             .enumerate()
-            .map(|(i, action)| {
+            .map(|(i, action_config)| {
                 let id = i.to_string();
                 let dependencies = if i > 0 {
                     vec![(i - 1).to_string()]
                 } else {
                     vec![]
                 };
-                Action::compile(action, services, id, dependencies)
+                match action_config {
+                    configuration::ActionConfig::Legacy(action) => {
+                        Action::compile(action, services, id, dependencies)
+                    }
+                    configuration::ActionConfig::Typed(_typed) => {
+                        todo!("Typed action compilation not yet implemented")
+                    }
+                }
             })
             .collect::<Result<_, _>>()?;
 
@@ -341,7 +348,7 @@ mod tests {
     use super::*;
     use crate::configuration::FailureMode;
     use crate::configuration::{
-        Action as ConfigAction, ActionSet, ConditionalData as ConfigConditionalData,
+        Action as ConfigAction, ActionConfig, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, ExpressionItem, RouteRuleConditions, StaticItem,
     };
     use crate::services::{AuthService, ServiceInstance};
@@ -571,7 +578,7 @@ mod tests {
                 hostnames: vec!["*.example.com".to_string()],
                 predicates: vec!["request.path.startsWith('/api')".to_string()],
             },
-            actions: vec![ConfigAction {
+            actions: vec![ActionConfig::Legacy(ConfigAction {
                 service: "auth-service".to_string(),
                 scope: "api-scope".to_string(),
                 predicates: vec!["request.method == 'POST'".to_string()],
@@ -593,7 +600,7 @@ mod tests {
                     ],
                 }],
                 sources: vec![],
-            }],
+            })],
         };
 
         let result = Blueprint::compile(&config, &services);
