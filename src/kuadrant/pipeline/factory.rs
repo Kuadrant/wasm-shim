@@ -252,7 +252,8 @@ fn domain_and_field_name(name: &str) -> (&str, &str) {
 mod tests {
     use super::*;
     use crate::configuration::{
-        Action, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType, Timeout,
+        Action, ActionConfig, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType,
+        Timeout,
     };
     use crate::filter::DescriptorManager;
     use crate::kuadrant::MockWasmHost;
@@ -283,13 +284,13 @@ mod tests {
                     hostnames,
                     predicates,
                 },
-                actions: vec![Action {
+                actions: vec![ActionConfig::Legacy(Action {
                     service: service_name.to_string(),
                     scope: "test-scope".to_string(),
                     predicates: vec![],
                     conditional_data: vec![],
                     sources: vec![],
-                }],
+                })],
             }],
         )
     }
