@@ -15,7 +15,7 @@ use crate::kuadrant::ReqRespCtx;
 
 pub mod converters;
 
-use converters::{DescriptorConverter, MessageConverter};
+use converters::{deny_response_struct_def, DescriptorConverter, MessageConverter};
 
 pub struct DynamicService {
     upstream_name: String,
@@ -91,6 +91,7 @@ impl DynamicService {
                     .map_err(|e| {
                         ServiceError::Dispatch(format!("Failed to register message types: {}", e))
                     })?;
+                new_env.add_struct(deny_response_struct_def());
                 let env_arc = Arc::new(new_env);
                 let _ = self.cel_env.set(Arc::clone(&env_arc));
                 env_arc
@@ -125,6 +126,26 @@ impl DynamicService {
             message_bytes,
             self.timeout,
         )
+    }
+
+    pub fn response_cel_context(
+        &self,
+        ctx: &mut ReqRespCtx,
+        response_size: usize,
+        name: &str,
+    ) -> Result<Context<'_>, ServiceError> {
+        let response = self.get_response(ctx, response_size)?;
+        let cel_value = MessageConverter::dynamic_message_to_cel(&response);
+
+        let env = self.cel_env.get().cloned().unwrap_or_else(|| {
+            let mut env = Env::stdlib();
+            env.add_struct(deny_response_struct_def());
+            Arc::new(env)
+        });
+
+        let mut cel_ctx = Context::with_env(env);
+        cel_ctx.add_variable_from_value(name, cel_value);
+        Ok(cel_ctx)
     }
 }
 

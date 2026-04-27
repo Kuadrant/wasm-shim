@@ -140,7 +140,6 @@ impl DescriptorConverter {
     }
 }
 
-#[allow(dead_code)]
 pub fn deny_response_struct_def() -> StructDef {
     StructDef::new("DenyResponse".to_string())
         .add_field("status".to_string(), UINT_TYPE)
@@ -148,7 +147,6 @@ pub fn deny_response_struct_def() -> StructDef {
         .add_field_with_default("headers".to_string(), Box::new(CelList::from(vec![])))
 }
 
-#[allow(dead_code)]
 pub fn cel_value_to_header_pairs(value: &Value) -> Vec<(String, String)> {
     let Value::List(items) = value else {
         return vec![];
@@ -211,7 +209,6 @@ impl MessageConverter {
         }
     }
 
-    #[allow(dead_code)]
     pub fn dynamic_message_to_cel(message: &DynamicMessage) -> Value {
         let descriptor = message.descriptor();
         let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
