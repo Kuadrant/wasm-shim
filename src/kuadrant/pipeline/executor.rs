@@ -122,6 +122,9 @@ impl Pipeline {
                     }
                 }
                 TaskOutcome::Requeued(tasks) => {
+                    if let Some(id) = task_id {
+                        self.completed_tasks.insert(id);
+                    }
                     self.task_queue.extend(tasks);
                 }
                 TaskOutcome::Failed => {

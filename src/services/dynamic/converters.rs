@@ -167,6 +167,62 @@ impl MessageConverter {
         Value::Struct(Arc::new(cel_struct))
     }
 
+    /// Converts a DynamicMessage to a CEL Value::Map, avoiding the need
+    /// to register the message type in the CEL environment.
+    pub fn dynamic_message_to_map(message: &DynamicMessage) -> Value {
+        let descriptor = message.descriptor();
+        let mut map = HashMap::new();
+
+        for field in descriptor.fields() {
+            let field_value = message.get_field(&field);
+            let cel_value = Self::proto_value_to_cel_value(field_value.as_ref());
+            map.insert(
+                cel::objects::Key::from(field.name()),
+                cel_value,
+            );
+        }
+
+        Value::Map(cel::objects::Map::from(map))
+    }
+
+    fn proto_value_to_cel_value(proto_value: &ProtoValue) -> Value {
+        match proto_value {
+            ProtoValue::Bool(b) => Value::Bool(*b),
+            ProtoValue::I32(i) => Value::Int(*i as i64),
+            ProtoValue::I64(i) => Value::Int(*i),
+            ProtoValue::U32(u) => Value::UInt(*u as u64),
+            ProtoValue::U64(u) => Value::UInt(*u),
+            ProtoValue::F32(f) => Value::Float(*f as f64),
+            ProtoValue::F64(f) => Value::Float(*f),
+            ProtoValue::String(s) => Value::String(Arc::new(s.clone())),
+            ProtoValue::Bytes(b) => Value::Bytes(Arc::new(b.to_vec())),
+            ProtoValue::EnumNumber(n) => Value::Int(*n as i64),
+            ProtoValue::Message(m) => Self::dynamic_message_to_map(m),
+            ProtoValue::List(items) => {
+                let cel_items: Vec<Value> = items
+                    .iter()
+                    .map(|item| Self::proto_value_to_cel_value(item))
+                    .collect();
+                Value::List(Arc::new(cel_items))
+            }
+            ProtoValue::Map(entries) => {
+                let mut map = HashMap::new();
+                for (key, value) in entries.iter() {
+                    let cel_key = match key {
+                        MapKey::Bool(b) => cel::objects::Key::Bool(*b),
+                        MapKey::I32(i) => cel::objects::Key::Int(*i as i64),
+                        MapKey::I64(i) => cel::objects::Key::Int(*i),
+                        MapKey::U32(u) => cel::objects::Key::Uint(*u as u64),
+                        MapKey::U64(u) => cel::objects::Key::Uint(*u),
+                        MapKey::String(s) => cel::objects::Key::String(Arc::new(s.clone())),
+                    };
+                    map.insert(cel_key, Self::proto_value_to_cel_value(value));
+                }
+                Value::Map(cel::objects::Map::from(map))
+            }
+        }
+    }
+
     fn proto_value_to_cel_val(proto_value: &ProtoValue) -> Box<dyn cel::common::value::Val> {
         match proto_value {
             ProtoValue::Bool(b) => Box::new(CelBool::from(*b)),

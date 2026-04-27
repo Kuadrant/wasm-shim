@@ -10,6 +10,7 @@ use tracing::debug;
 
 use super::{Service, ServiceError};
 use crate::configuration::FailureMode;
+use crate::data::populate_ctx_with_request_attributes;
 use crate::filter::{DescriptorKey, DescriptorManager};
 use crate::kuadrant::ReqRespCtx;
 
@@ -25,6 +26,7 @@ pub struct DynamicService {
     failure_mode: FailureMode,
     descriptor_manager: Rc<DescriptorManager>,
     cel_env: OnceCell<Arc<Env>>,
+    message_template: Option<String>,
 }
 
 impl DynamicService {
@@ -44,7 +46,17 @@ impl DynamicService {
             failure_mode,
             descriptor_manager,
             cel_env: Default::default(),
+            message_template: None,
         }
+    }
+
+    pub fn with_message_template(mut self, template: Option<String>) -> Self {
+        self.message_template = template;
+        self
+    }
+
+    pub fn message_template(&self) -> Option<&String> {
+        self.message_template.as_ref()
     }
 
     pub fn register_for_fetch(&self) {
@@ -102,7 +114,11 @@ impl DynamicService {
             }
         };
 
-        let cel_ctx = Context::with_env(env);
+        let mut cel_ctx = Context::with_env(env);
+
+        // Populate the CEL context with request attributes (request.path, source.address, etc.)
+        // so message templates can reference them.
+        populate_ctx_with_request_attributes(&mut cel_ctx, ctx, message_expression);
 
         let program = Program::compile(message_expression).map_err(|e| {
             ServiceError::Dispatch(format!("Failed to compile CEL expression: {}", e))

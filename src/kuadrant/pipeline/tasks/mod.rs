@@ -1,21 +1,29 @@
+mod add_headers;
+mod allow;
 mod auth;
 mod export_traces;
 mod failure_mode;
+mod grpc_method;
 mod headers;
 mod ratelimit;
 mod send_reply;
 mod store_data;
 mod token_usage;
 mod tracing_decorator;
+mod with_response_code;
 
+pub use add_headers::AddHeadersTask;
+pub use allow::AllowTask;
 pub use auth::AuthTask;
 pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
+pub use grpc_method::GrpcMethodTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store_data::StoreDataTask;
 pub use token_usage::TokenUsageTask;
+pub use with_response_code::WithResponseCodeTask;
 use tracing::debug;
 pub use tracing_decorator::TracingDecoratorTask;
 

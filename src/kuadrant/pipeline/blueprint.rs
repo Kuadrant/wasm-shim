@@ -1,8 +1,10 @@
 use crate::configuration;
+use crate::configuration::ActionType;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType, ModifyHeadersTask,
-    RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    AddHeadersTask, AllowTask, AuthTask, ExportTracesTask, FailureModeTask, GrpcMethodTask,
+    HeaderOperation, HeadersType, ModifyHeadersTask, RateLimitTask, Task, TeardownAction,
+    TokenUsageTask, TracingDecoratorTask, WithResponseCodeTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -28,6 +30,12 @@ pub(crate) struct Action {
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
     pub sources: Vec<String>,
+    pub action_type: Option<ActionType>,
+    pub intention: Option<Predicate>,
+    pub intention_source: Option<String>,
+    pub message_template: Option<String>,
+    pub headers_to_add: Option<Expression>,
+    pub new_response_code: Option<u32>,
 }
 
 impl Action {
@@ -162,6 +170,71 @@ impl Blueprint {
             .any(|action| matches!(action.service, ServiceInstance::Tracing(Some(_))));
 
         for action in &self.actions {
+            // When ActionType is set, dispatch based on it
+            if let Some(action_type) = &action.action_type {
+                match action_type {
+                    ActionType::GrpcMethod => {
+                        if let ServiceInstance::Dynamic(dynamic_service) = &action.service {
+                            let intention_source = action
+                                .intention_source
+                                .clone()
+                                .unwrap_or_default();
+                            let message_template = action
+                                .message_template
+                                .clone()
+                                .unwrap_or_default();
+                            let abort_on_failure =
+                                action.service.failure_mode() == configuration::FailureMode::Deny;
+                            let task: Box<dyn Task> = Box::new(GrpcMethodTask::new(
+                                action.id.clone(),
+                                Rc::clone(dynamic_service),
+                                action.predicates.clone(),
+                                intention_source,
+                                message_template,
+                                action.dependencies.clone(),
+                            ));
+                            let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                            tasks.push(task);
+                        }
+                    }
+                    ActionType::Allow => {
+                        if let Some(intention) = &action.intention {
+                            let task: Box<dyn Task> = Box::new(AllowTask::new(
+                                action.id.clone(),
+                                action.predicates.clone(),
+                                intention.clone(),
+                                action.dependencies.clone(),
+                            ));
+                            tasks.push(task);
+                        }
+                    }
+                    ActionType::AddHeaders => {
+                        if let Some(headers_expr) = &action.headers_to_add {
+                            let task: Box<dyn Task> = Box::new(AddHeadersTask::new(
+                                action.id.clone(),
+                                action.predicates.clone(),
+                                headers_expr.clone(),
+                                action.dependencies.clone(),
+                            ));
+                            tasks.push(task);
+                        }
+                    }
+                    ActionType::WithResponseCode => {
+                        if let Some(code) = action.new_response_code {
+                            let task: Box<dyn Task> = Box::new(WithResponseCodeTask::new(
+                                action.id.clone(),
+                                action.predicates.clone(),
+                                code,
+                                action.dependencies.clone(),
+                            ));
+                            tasks.push(task);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Legacy dispatch: fall back to ServiceName-based dispatch
             let abort_on_failure =
                 action.service.failure_mode() == configuration::FailureMode::Deny;
 
@@ -174,7 +247,7 @@ impl Blueprint {
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.dependencies.clone(),
-                        true, // pauses_filter = true for auth tasks
+                        true,
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {
@@ -197,7 +270,7 @@ impl Blueprint {
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.conditional_data.clone(),
-                        true, // pauses_filter = true for regular ratelimit and check tasks
+                        true,
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {
@@ -211,7 +284,6 @@ impl Blueprint {
                     }
                 }
                 ServiceInstance::RateLimitReport(dynamic_service) => {
-                    // parse token usage from response
                     let task = Box::new(RateLimitTask::new_with_attributes(
                         ctx,
                         action.id.clone(),
@@ -220,7 +292,7 @@ impl Blueprint {
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.conditional_data.clone(),
-                        false, // pauses_filter = false for ratelimit report tasks
+                        false,
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
 
@@ -252,7 +324,8 @@ impl Blueprint {
                     }
                 }
                 ServiceInstance::Dynamic(_) => {
-                    todo!("DynamicTask not yet implemented")
+                    // Dynamic services without ActionType are not dispatched
+                    // (ActionType is required for pipeline action dispatch)
                 }
             }
         }
@@ -268,9 +341,15 @@ impl Action {
         id: String,
         dependencies: Vec<String>,
     ) -> Result<Self, CompileError> {
-        let service = services
-            .get(&config.service)
-            .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?;
+        let service = if config.service.is_empty() && config.action_type.is_some() {
+            // Non-service action types (allow, add_headers, with_response_code)
+            // use a placeholder Tracing(None) since they don't dispatch to a service
+            &ServiceInstance::Tracing(None)
+        } else {
+            services
+                .get(&config.service)
+                .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?
+        };
 
         let predicates: Vec<Predicate> = config
             .predicates
@@ -288,6 +367,28 @@ impl Action {
             .map(ConditionalData::compile)
             .collect::<Result<_, _>>()?;
 
+        let intention = config
+            .intention
+            .as_ref()
+            .map(|expr| Predicate::new(expr))
+            .transpose()
+            .map_err(|e| CompileError::InvalidActionPredicate {
+                service: config.service.clone(),
+                error: format!("invalid intention: {}", e),
+            })?;
+
+        let headers_to_add = config
+            .headers_to_add
+            .as_ref()
+            .map(|expr| Expression::new(expr))
+            .transpose()?;
+
+        // Resolve message_template from the service config
+        let message_template = match &service {
+            ServiceInstance::Dynamic(ds) => ds.message_template().cloned(),
+            _ => None,
+        };
+
         Ok(Self {
             id,
             service: service.clone(),
@@ -296,6 +397,12 @@ impl Action {
             conditional_data,
             dependencies,
             sources: config.sources.clone(),
+            action_type: config.action_type.clone(),
+            intention,
+            intention_source: config.intention.clone(),
+            message_template,
+            headers_to_add,
+            new_response_code: config.new_response_code,
         })
     }
 }
@@ -430,8 +537,7 @@ mod tests {
                 "true".to_string(),
                 "request.path.startsWith('/api')".to_string(),
             ],
-            conditional_data: vec![],
-            sources: vec![],
+            ..Default::default()
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -451,8 +557,7 @@ mod tests {
             service: "test-service".to_string(),
             scope: "test-scope".to_string(),
             predicates: vec!["bad syntax ***".to_string()],
-            conditional_data: vec![],
-            sources: vec![],
+            ..Default::default()
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -469,9 +574,7 @@ mod tests {
         let config = ConfigAction {
             service: "nonexistent-service".to_string(),
             scope: "test-scope".to_string(),
-            predicates: vec![],
-            conditional_data: vec![],
-            sources: vec![],
+            ..Default::default()
         };
 
         let result = Action::compile(&config, &services, "0".to_string(), vec![]);
@@ -592,7 +695,7 @@ mod tests {
                         },
                     ],
                 }],
-                sources: vec![],
+                ..Default::default()
             }],
         };
 

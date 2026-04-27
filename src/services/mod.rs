@@ -4,7 +4,7 @@ use crate::kuadrant::ReqRespCtx;
 use std::{rc::Rc, time::Duration};
 
 mod auth;
-mod dynamic;
+pub mod dynamic;
 mod tracing;
 
 pub use auth::AuthService;
@@ -89,7 +89,8 @@ impl ServiceInstance {
                     service.timeout.0,
                     service.failure_mode,
                     Rc::clone(descriptor_manager),
-                );
+                )
+                .with_message_template(service.message_template);
                 dynamic_service.register_for_fetch();
 
                 Ok(ServiceInstance::Dynamic(Rc::new(dynamic_service)))

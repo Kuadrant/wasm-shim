@@ -514,6 +514,55 @@ pub fn known_attribute_for(path: &Path) -> Option<Attribute> {
         })
 }
 
+/// Populates a CEL [Context] with request attribute variables (`request`, `source`,
+/// `destination`, `metadata`, `auth`) resolved from the [ReqRespCtx].
+///
+/// The `expression` is parsed to discover which well-known attributes it references,
+/// so only the relevant attributes are fetched from Envoy.
+pub fn populate_ctx_with_request_attributes(
+    ctx: &mut Context,
+    req_ctx: &ReqRespCtx,
+    expression: &str,
+) {
+    let Ok(parsed) = Parser::new()
+        .enable_optional_syntax(true)
+        .parse(expression)
+    else {
+        return;
+    };
+
+    let mut props = Vec::new();
+    let mut response_props = Vec::new();
+    properties(&parsed, &mut props, &mut response_props, &mut Vec::default());
+
+    let mut attributes: Vec<Attribute> = props
+        .into_iter()
+        .map(|tokens| {
+            let path = Path::new(tokens);
+            known_attribute_for(&path).unwrap_or(Attribute {
+                path,
+                cel_type: None,
+            })
+        })
+        .collect();
+    attributes.sort_by_key(|a| a.path.tokens().len());
+
+    if attributes.is_empty() {
+        return;
+    }
+
+    let paths: Vec<Path> = attributes.iter().map(|attr| attr.path.clone()).collect();
+    req_ctx.ensure_attributes(&paths);
+
+    let attr_map = data::AttributeMap::new(attributes);
+    if let Ok(AttributeState::Available(Map { map })) = attr_map.into(req_ctx) {
+        for binding in ["request", "metadata", "source", "destination", "auth"] {
+            let key: Key = binding.into();
+            ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
+        }
+    }
+}
+
 fn json_to_cel(json: &str) -> Value {
     let json_value: Result<JsonValue, _> = serde_json::from_str(json);
     match json_value {

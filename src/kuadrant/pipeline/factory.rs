@@ -84,6 +84,12 @@ impl PipelineFactory {
                 conditional_data: Default::default(),
                 dependencies: Default::default(),
                 sources: vec![],
+                action_type: None,
+                intention: None,
+                intention_source: None,
+                message_template: None,
+                headers_to_add: None,
+                new_response_code: None,
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
@@ -272,6 +278,7 @@ mod tests {
                 timeout: Timeout::default(),
                 grpc_service: None,
                 grpc_method: None,
+                message_template: None,
             },
         );
 
@@ -286,9 +293,7 @@ mod tests {
                 actions: vec![Action {
                     service: service_name.to_string(),
                     scope: "test-scope".to_string(),
-                    predicates: vec![],
-                    conditional_data: vec![],
-                    sources: vec![],
+                    ..Default::default()
                 }],
             }],
         )
@@ -341,6 +346,7 @@ mod tests {
                 timeout: Timeout::default(),
                 grpc_service: None,
                 grpc_method: None,
+                message_template: None,
             },
         );
 
@@ -579,6 +585,7 @@ mod tests {
                 timeout: Timeout::default(),
                 grpc_service: None,
                 grpc_method: None,
+                message_template: None,
             },
         );
 

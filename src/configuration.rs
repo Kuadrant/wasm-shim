@@ -16,7 +16,19 @@ pub struct ConditionalData {
     pub data: Vec<DataItem>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub enum ActionType {
+    #[serde(rename = "grpc_method")]
+    GrpcMethod,
+    #[serde(rename = "allow")]
+    Allow,
+    #[serde(rename = "add_headers")]
+    AddHeaders,
+    #[serde(rename = "with_response_code")]
+    WithResponseCode,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Action {
     pub service: String,
@@ -27,6 +39,17 @@ pub struct Action {
     pub conditional_data: Vec<ConditionalData>,
     #[serde(default)]
     pub sources: Vec<String>,
+    #[serde(default)]
+    pub action_type: Option<ActionType>,
+    #[serde(default)]
+    pub intention: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub method: Option<String>,
+    #[serde(default)]
+    pub headers_to_add: Option<String>,
+    #[serde(default)]
+    pub new_response_code: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -148,6 +171,7 @@ pub struct Service {
     pub timeout: Timeout,
     pub grpc_service: Option<String>,
     pub grpc_method: Option<String>,
+    pub message_template: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -589,5 +613,151 @@ mod test {
             dynamic_service.grpc_method.as_ref(),
             Some(&"ShouldRateLimit".to_string())
         );
+    }
+
+    #[test]
+    fn parse_action_with_grpc_method_action_type() {
+        let config = r#"{
+            "services": {
+                "ext-svc": {
+                    "type": "dynamic",
+                    "endpoint": "ext-cluster",
+                    "failureMode": "deny",
+                    "grpcService": "threat.ThreatService",
+                    "grpcMethod": "CheckThreatLevel",
+                    "messageTemplate": "ThreatRequest { uri: request.path }"
+                }
+            },
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": { "hostnames": ["example.com"] },
+                "actions": [{
+                    "service": "ext-svc",
+                    "scope": "request",
+                    "actionType": "grpc_method",
+                    "intention": "response.score < 5",
+                    "method": "checkThreatLevel",
+                    "predicates": ["request.method == 'GET'"]
+                }]
+            }]
+        }"#;
+
+        let plugin_config: PluginConfiguration =
+            serde_json::from_str(config).expect("valid config");
+        let action = &plugin_config.action_sets[0].actions[0];
+        assert_eq!(action.action_type, Some(ActionType::GrpcMethod));
+        assert_eq!(action.intention.as_deref(), Some("response.score < 5"));
+        assert_eq!(action.method.as_deref(), Some("checkThreatLevel"));
+        assert_eq!(action.predicates.len(), 1);
+
+        let service = plugin_config.services.get("ext-svc").unwrap();
+        assert_eq!(
+            service.message_template.as_deref(),
+            Some("ThreatRequest { uri: request.path }")
+        );
+    }
+
+    #[test]
+    fn parse_action_with_allow_action_type() {
+        let config = r#"{
+            "services": {},
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": { "hostnames": ["example.com"] },
+                "actions": [{
+                    "service": "",
+                    "scope": "request",
+                    "actionType": "allow",
+                    "intention": "request.auth.identity.admin == true"
+                }]
+            }]
+        }"#;
+
+        let plugin_config: PluginConfiguration =
+            serde_json::from_str(config).expect("valid config");
+        let action = &plugin_config.action_sets[0].actions[0];
+        assert_eq!(action.action_type, Some(ActionType::Allow));
+        assert_eq!(
+            action.intention.as_deref(),
+            Some("request.auth.identity.admin == true")
+        );
+    }
+
+    #[test]
+    fn parse_action_with_add_headers_action_type() {
+        let config = r#"{
+            "services": {},
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": { "hostnames": ["example.com"] },
+                "actions": [{
+                    "service": "",
+                    "scope": "response",
+                    "actionType": "add_headers",
+                    "headersToAdd": "{\"x-checked\": \"true\"}"
+                }]
+            }]
+        }"#;
+
+        let plugin_config: PluginConfiguration =
+            serde_json::from_str(config).expect("valid config");
+        let action = &plugin_config.action_sets[0].actions[0];
+        assert_eq!(action.action_type, Some(ActionType::AddHeaders));
+        assert_eq!(
+            action.headers_to_add.as_deref(),
+            Some("{\"x-checked\": \"true\"}")
+        );
+    }
+
+    #[test]
+    fn parse_action_with_response_code_action_type() {
+        let config = r#"{
+            "services": {},
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": { "hostnames": ["example.com"] },
+                "actions": [{
+                    "service": "",
+                    "scope": "response",
+                    "actionType": "with_response_code",
+                    "newResponseCode": 403
+                }]
+            }]
+        }"#;
+
+        let plugin_config: PluginConfiguration =
+            serde_json::from_str(config).expect("valid config");
+        let action = &plugin_config.action_sets[0].actions[0];
+        assert_eq!(action.action_type, Some(ActionType::WithResponseCode));
+        assert_eq!(action.new_response_code, Some(403));
+    }
+
+    #[test]
+    fn parse_legacy_action_without_action_type() {
+        let config = r#"{
+            "services": {
+                "authorino": {
+                    "type": "auth",
+                    "endpoint": "authorino-cluster",
+                    "failureMode": "deny"
+                }
+            },
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": { "hostnames": ["example.com"] },
+                "actions": [{
+                    "service": "authorino",
+                    "scope": "authconfig-A"
+                }]
+            }]
+        }"#;
+
+        let plugin_config: PluginConfiguration =
+            serde_json::from_str(config).expect("valid config");
+        let action = &plugin_config.action_sets[0].actions[0];
+        assert_eq!(action.action_type, None);
+        assert_eq!(action.intention, None);
+        assert_eq!(action.headers_to_add, None);
+        assert_eq!(action.new_response_code, None);
     }
 }
