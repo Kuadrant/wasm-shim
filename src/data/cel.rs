@@ -128,6 +128,18 @@ impl PartialEq for Expression {
     }
 }
 
+const HOST_PROPERTY_ROOTS: &[&str] = &[
+    "request",
+    "response",
+    "source",
+    "destination",
+    "connection",
+    "ratelimit",
+    "filter_state",
+    "metadata",
+    "auth",
+];
+
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseErrors> {
         let expression = Parser::new()
@@ -145,12 +157,16 @@ impl Expression {
 
         let mut attributes: Vec<Attribute> = props
             .into_iter()
-            .map(|tokens| {
+            .filter_map(|tokens| {
+                let root = tokens.first()?;
+                if !HOST_PROPERTY_ROOTS.contains(root) {
+                    return None;
+                }
                 let path = Path::new(tokens);
-                known_attribute_for(&path).unwrap_or(Attribute {
+                Some(known_attribute_for(&path).unwrap_or(Attribute {
                     path,
                     cel_type: None,
-                })
+                }))
             })
             .collect();
 
@@ -174,9 +190,14 @@ impl Expression {
     }
 
     pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
-        let mut ctx = create_context();
+        let mut cel_ctx = Context::default();
+        self.eval_with_ctx(req_ctx, &mut cel_ctx)
+    }
+
+    pub fn eval_with_ctx(&self, req_ctx: &ReqRespCtx, cel_ctx: &mut Context<'_>) -> EvalResult {
+        add_string_extensions(cel_ctx);
         if self.extended {
-            Self::add_extended_capabilities(&mut ctx)
+            Self::add_extended_capabilities(cel_ctx)
         }
 
         // Eagerly cache all attributes used by this expression
@@ -194,7 +215,7 @@ impl Expression {
 
         for binding in ["request", "metadata", "source", "destination", "auth"] {
             let key: Key = binding.into();
-            ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
+            cel_ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
         }
 
         let mut response_json_map = HashMap::new();
@@ -206,13 +227,13 @@ impl Expression {
                 None => return Ok(AttributeState::Pending),
             }
         }
-        ctx.add_variable_from_value(
+        cel_ctx.add_variable_from_value(
             RESPONSE_BODY_JSON_DATA,
             Value::Map(response_json_map.into()),
         );
-        ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
+        cel_ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
 
-        let result = Value::resolve(&self.expression, &ctx).map_err(CelError::from)?;
+        let result = Value::resolve(&self.expression, cel_ctx).map_err(CelError::from)?;
         Ok(AttributeState::Available(result))
     }
 
@@ -331,8 +352,7 @@ fn decode_query_string(This(s): This<Arc<String>>, Arguments(args): Arguments) -
     Ok(map.into())
 }
 
-fn create_context<'a>() -> Context<'a> {
-    let mut ctx = Context::default();
+fn add_string_extensions(ctx: &mut Context<'_>) {
     ctx.add_function("charAt", strings::char_at);
     ctx.add_function("indexOf", strings::index_of);
     ctx.add_function("join", strings::join);
@@ -343,7 +363,6 @@ fn create_context<'a>() -> Context<'a> {
     ctx.add_function("replace", strings::replace);
     ctx.add_function("split", strings::split);
     ctx.add_function("substring", strings::substring);
-    ctx
 }
 
 pub mod strings;
@@ -373,7 +392,16 @@ impl Predicate {
     }
 
     pub fn test(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
-        match self.expression.eval(req_ctx) {
+        let mut cel_ctx = Context::default();
+        self.test_with_ctx(req_ctx, &mut cel_ctx)
+    }
+
+    pub fn test_with_ctx(
+        &self,
+        req_ctx: &ReqRespCtx,
+        cel_ctx: &mut Context<'_>,
+    ) -> PredicateResult {
+        match self.expression.eval_with_ctx(req_ctx, cel_ctx) {
             Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
             Ok(AttributeState::Available(value)) => match value {
                 Value::Bool(result) => Ok(AttributeState::Available(result)),
@@ -907,13 +935,15 @@ mod tests {
         assert_eq!(value.attributes[0].path, "auth.identity".into());
 
         let value = Expression::new("foo.bar && a.b.c").expect("This is valid CEL!");
-        assert_eq!(value.attributes.len(), 2);
-        assert_eq!(value.attributes[0].path, "foo.bar".into());
-        assert_eq!(value.attributes[1].path, "a.b.c".into());
+        assert_eq!(value.attributes.len(), 0);
 
         let value = Expression::new("my_func(foo.bar).a.b > 3").expect("This is valid CEL!");
-        assert_eq!(value.attributes.len(), 1);
-        assert_eq!(value.attributes[0].path, "foo.bar".into());
+        assert_eq!(value.attributes.len(), 0);
+
+        let value = Expression::new("request.host && source.address").expect("This is valid CEL!");
+        assert_eq!(value.attributes.len(), 2);
+        assert_eq!(value.attributes[0].path, "request.host".into());
+        assert_eq!(value.attributes[1].path, "source.address".into());
     }
 
     #[test]
