@@ -322,6 +322,7 @@ impl Task for RateLimitTask {
             let _span =
                 tracing::debug_span!("ratelimit_request", task_id = self.task_id, scope = domain)
                     .entered();
+            #[allow(deprecated)]
             match self.service.dispatch_dynamic(ctx, &cel_expr) {
                 Ok(id) => id,
                 Err(e) => {
