@@ -43,14 +43,14 @@ pub(crate) struct TypedAction {
 #[derive(Clone)]
 pub(crate) enum Operation {
     Deny {
-        deny_with: String,
+        deny_with: Expression,
     },
     Headers {
         target: HeadersType,
-        headers: String,
+        headers: Expression,
     },
     Store {
-        data: Vec<(String, String)>,
+        data: Vec<(String, Expression)>,
     },
     Fail {
         log_message: String,
@@ -435,25 +435,27 @@ impl TypedAction {
         })?;
 
         let operation = match &config.operation {
-            configuration::Operation::Deny(deny) => Operation::Deny {
-                deny_with: deny.deny_with.clone(),
-            },
+            configuration::Operation::Deny(deny) => {
+                let deny_with = Expression::new(&deny.deny_with)?;
+                Operation::Deny { deny_with }
+            }
             configuration::Operation::Headers(headers) => {
                 let target = match headers.target {
                     configuration::HeadersTarget::Request => HeadersType::HttpRequestHeaders,
                     configuration::HeadersTarget::Response => HeadersType::HttpResponseHeaders,
                 };
+                let headers_expr = Expression::new(&headers.headers)?;
                 Operation::Headers {
                     target,
-                    headers: headers.headers.clone(),
+                    headers: headers_expr,
                 }
             }
             configuration::Operation::Store(store) => {
                 let data = store
                     .data
                     .iter()
-                    .map(|item| (item.path.clone(), item.value.clone()))
-                    .collect();
+                    .map(|item| Ok((item.path.clone(), Expression::new(&item.value)?)))
+                    .collect::<Result<_, CompileError>>()?;
                 Operation::Store { data }
             }
             configuration::Operation::Fail(fail) => Operation::Fail {

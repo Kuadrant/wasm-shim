@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use cel::{Program, Value};
+use cel::Value;
 use tracing::{debug, error};
 
 use crate::data::attribute::AttributeState;
@@ -157,7 +157,7 @@ fn process_dynamic_response(
         return TaskOutcome::Done;
     }
 
-    let cel_ctx = match service.response_cel_context(ctx, response_size, name) {
+    let mut cel_ctx = match service.response_cel_context(ctx, response_size, name) {
         Ok(c) => c,
         Err(e) => {
             record_error!("Failed to build response context: {e:?}");
@@ -168,7 +168,7 @@ fn process_dynamic_response(
     let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
     for action in on_reply {
-        match action.predicate.test(ctx) {
+        match action.predicate.test_with_ctx(ctx, &mut cel_ctx) {
             Ok(AttributeState::Available(true)) => {}
             Ok(AttributeState::Available(false)) => continue,
             Ok(AttributeState::Pending) => {
@@ -181,20 +181,26 @@ fn process_dynamic_response(
         }
 
         match &action.operation {
-            Operation::Deny { deny_with } => match compile_and_eval(deny_with, &cel_ctx) {
-                Ok(val @ Value::Struct(_)) => match SendReplyTask::try_from(val) {
-                    Ok(task) => {
-                        if action.terminal {
-                            return TaskOutcome::Terminate(Box::new(task));
+            Operation::Deny { deny_with } => match deny_with.eval_with_ctx(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Pending) => {
+                    error!("Unexpected pending state in onReply deny");
+                    return TaskOutcome::Failed;
+                }
+                Ok(AttributeState::Available(val @ Value::Struct(_))) => {
+                    match SendReplyTask::try_from(val) {
+                        Ok(task) => {
+                            if action.terminal {
+                                return TaskOutcome::Terminate(Box::new(task));
+                            }
+                            tasks.push(Box::new(task));
                         }
-                        tasks.push(Box::new(task));
+                        Err(e) => {
+                            error!("Invalid DenyResponse: {e}");
+                            return TaskOutcome::Failed;
+                        }
                     }
-                    Err(e) => {
-                        error!("Invalid DenyResponse: {e}");
-                        return TaskOutcome::Failed;
-                    }
-                },
-                Ok(other) => {
+                }
+                Ok(AttributeState::Available(other)) => {
                     error!("denyWith must return DenyResponse, got: {other:?}");
                     return TaskOutcome::Failed;
                 }
@@ -203,28 +209,38 @@ fn process_dynamic_response(
                     return TaskOutcome::Failed;
                 }
             },
-            Operation::Headers { target, headers } => match compile_and_eval(headers, &cel_ctx) {
-                Ok(ref val) => {
-                    let pairs = cel_value_to_header_pairs(val);
-                    if !pairs.is_empty() {
-                        tasks.push(Box::new(ModifyHeadersTask::new(
-                            HeaderOperation::Set(pairs.into()),
-                            target.clone(),
-                        )));
+            Operation::Headers { target, headers } => {
+                match headers.eval_with_ctx(ctx, &mut cel_ctx) {
+                    Ok(AttributeState::Available(ref val)) => {
+                        let pairs = cel_value_to_header_pairs(val);
+                        if !pairs.is_empty() {
+                            tasks.push(Box::new(ModifyHeadersTask::new(
+                                HeaderOperation::Set(pairs.into()),
+                                target.clone(),
+                            )));
+                        }
+                    }
+                    Ok(AttributeState::Pending) => {
+                        error!("Unexpected pending state in onReply headers");
+                        return TaskOutcome::Failed;
+                    }
+                    Err(e) => {
+                        error!("Failed to evaluate headers expression: {e}");
+                        return TaskOutcome::Failed;
                     }
                 }
-                Err(e) => {
-                    error!("Failed to evaluate headers expression: {e}");
-                    return TaskOutcome::Failed;
-                }
-            },
+            }
             Operation::Store { data } => {
                 let mut store_items: Vec<(String, Vec<u8>)> = Vec::new();
                 for (path, expr) in data {
-                    match compile_and_eval(expr, &cel_ctx) {
-                        Ok(val) => {
+                    match expr.eval_with_ctx(ctx, &mut cel_ctx) {
+                        Ok(AttributeState::Available(val)) => {
                             let bytes = cel_value_to_bytes(&val);
                             store_items.push((path.clone(), bytes));
+                        }
+                        Ok(AttributeState::Pending) => {
+                            error!("Unexpected pending state in onReply store");
+                            return TaskOutcome::Failed;
                         }
                         Err(e) => {
                             error!("Failed to evaluate store expression for '{path}': {e}");
@@ -248,13 +264,6 @@ fn process_dynamic_response(
     } else {
         TaskOutcome::Requeued(tasks)
     }
-}
-
-fn compile_and_eval(expression: &str, ctx: &cel::Context) -> Result<Value, String> {
-    let program = Program::compile(expression).map_err(|e| format!("CEL compile error: {}", e))?;
-    program
-        .execute(ctx)
-        .map_err(|e| format!("CEL execution error: {}", e))
 }
 
 fn cel_value_to_bytes(val: &Value) -> Vec<u8> {
