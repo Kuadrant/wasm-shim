@@ -5,6 +5,7 @@ use tracing::{debug, error};
 
 use crate::data::attribute::AttributeState;
 use crate::data::cel::{Predicate, PredicateVec};
+use crate::data::Expression;
 use crate::kuadrant::pipeline::blueprint::{Operation, TypedAction};
 use crate::kuadrant::pipeline::tasks::{
     HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, StoreDataTask, Task,
@@ -18,7 +19,7 @@ pub struct DynamicTask {
     task_id: String,
     service: Rc<DynamicService>,
     name: String,
-    message_builder: String,
+    message_builder: Expression,
     on_reply: Vec<TypedAction>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
@@ -29,7 +30,7 @@ impl DynamicTask {
         task_id: String,
         service: Rc<DynamicService>,
         name: String,
-        message_builder: String,
+        message_builder: Expression,
         on_reply: Vec<TypedAction>,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
@@ -74,7 +75,26 @@ impl Task for DynamicTask {
             let _span =
                 tracing::debug_span!("dynamic_request", task_id = self.task_id, name = self.name)
                     .entered();
-            match self.service.dispatch_dynamic(ctx, &self.message_builder) {
+
+            let env = match self.service.cel_env() {
+                Ok(env) => env,
+                Err(e) => {
+                    error!("Failed to get CEL environment: {e}");
+                    return TaskOutcome::Failed;
+                }
+            };
+
+            let mut cel_ctx = cel::Context::with_env(env);
+            let cel_value = match self.message_builder.eval_with_ctx(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
+                Ok(AttributeState::Available(val)) => val,
+                Err(e) => {
+                    error!("Failed to evaluate message builder: {e}");
+                    return TaskOutcome::Failed;
+                }
+            };
+
+            match self.service.dispatch_value(ctx, &cel_value) {
                 Ok(id) => id,
                 Err(e) => {
                     error!("Failed to dispatch dynamic service: {e}");

@@ -28,7 +28,7 @@ pub(crate) struct Action {
     pub conditional_data: Vec<ConditionalData>,
     pub dependencies: Vec<String>,
     pub sources: Vec<String>,
-    pub message_builder: Option<String>,
+    pub message_builder: Option<Expression>,
     pub on_reply: Vec<TypedAction>,
 }
 
@@ -389,6 +389,13 @@ impl Action {
                     .map(TypedAction::compile)
                     .collect::<Result<_, _>>()?;
 
+                let message_builder =
+                    Some(Expression::new(&grpc.message_builder).map_err(|e| {
+                        CompileError::InvalidDataExpression(format!(
+                            "Failed to compile message_builder: {e}"
+                        ))
+                    })?);
+
                 Ok(Self {
                     id,
                     service: service_instance.clone(),
@@ -397,7 +404,7 @@ impl Action {
                     conditional_data: vec![],
                     dependencies,
                     sources: vec![],
-                    message_builder: Some(grpc.message_builder.clone()),
+                    message_builder,
                     on_reply,
                 })
             }

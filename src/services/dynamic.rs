@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cel::{Context, Env, Program};
+use cel::{Context, Env, Program, Value};
 use prost::Message;
 use prost_reflect::DynamicMessage;
 use tracing::debug;
@@ -53,63 +53,37 @@ impl DynamicService {
         self.failure_mode
     }
 
-    pub fn dispatch_dynamic(
+    pub fn cel_env(&self) -> Result<Arc<Env>, ServiceError> {
+        match self.cel_env.get() {
+            Some(env) => Ok(Arc::clone(env)),
+            None => {
+                let input_descriptor = self.input_descriptor()?;
+                let output_descriptor = self.output_descriptor()?;
+                let mut env = Env::stdlib();
+                DescriptorConverter::register_message_types(&mut env, &input_descriptor).map_err(
+                    |e| ServiceError::Dispatch(format!("Failed to register message types: {}", e)),
+                )?;
+                DescriptorConverter::register_message_types(&mut env, &output_descriptor).map_err(
+                    |e| ServiceError::Dispatch(format!("Failed to register message types: {}", e)),
+                )?;
+                env.add_struct(deny_response_struct_def());
+                let env_arc = Arc::new(env);
+                let _ = self.cel_env.set(Arc::clone(&env_arc));
+                Ok(env_arc)
+            }
+        }
+    }
+
+    pub fn dispatch_value(
         &self,
         ctx: &mut ReqRespCtx,
-        message_expression: &str,
+        cel_value: &Value,
     ) -> Result<u32, ServiceError> {
-        let pool = self
-            .descriptor_manager
-            .get_pool(&self.upstream_name, &self.service_name)
-            .map_err(|e| ServiceError::Dispatch(e.to_string()))?;
+        let input_descriptor = self.input_descriptor()?;
 
-        let service_descriptor = pool
-            .get_service_by_name(&self.service_name)
-            .ok_or_else(|| {
-                ServiceError::Dispatch(format!(
-                    "Service '{}' not found in descriptor pool",
-                    self.service_name
-                ))
-            })?;
-        let method_descriptor = service_descriptor
-            .methods()
-            .find(|m| m.name() == self.method)
-            .ok_or_else(|| {
-                ServiceError::Dispatch(format!(
-                    "Method '{}' not found in service '{}'",
-                    self.method, self.service_name
-                ))
-            })?;
-        let input_descriptor = method_descriptor.input();
-
-        debug!("Building message from CEL expression");
-        let env = match self.cel_env.get() {
-            Some(env) => Arc::clone(env),
-            None => {
-                let mut new_env = Env::stdlib();
-                DescriptorConverter::register_message_types(&mut new_env, &input_descriptor)
-                    .map_err(|e| {
-                        ServiceError::Dispatch(format!("Failed to register message types: {}", e))
-                    })?;
-                new_env.add_struct(deny_response_struct_def());
-                let env_arc = Arc::new(new_env);
-                let _ = self.cel_env.set(Arc::clone(&env_arc));
-                env_arc
-            }
-        };
-
-        let cel_ctx = Context::with_env(env);
-
-        let program = Program::compile(message_expression).map_err(|e| {
-            ServiceError::Dispatch(format!("Failed to compile CEL expression: {}", e))
-        })?;
-
-        let cel_value = program.execute(&cel_ctx).map_err(|e| {
-            ServiceError::Dispatch(format!("Failed to execute CEL expression: {}", e))
-        })?;
-
+        debug!("Converting CEL value to protobuf message");
         let request_message =
-            MessageConverter::cel_to_dynamic_message(&cel_value, &input_descriptor).map_err(
+            MessageConverter::cel_to_dynamic_message(cel_value, &input_descriptor).map_err(
                 |e| ServiceError::Dispatch(format!("Failed to convert CEL to message: {}", e)),
             )?;
 
@@ -128,6 +102,59 @@ impl DynamicService {
         )
     }
 
+    pub fn dispatch_dynamic(
+        &self,
+        ctx: &mut ReqRespCtx,
+        message_expression: &str,
+    ) -> Result<u32, ServiceError> {
+        let env = self.cel_env()?;
+        let cel_ctx = Context::with_env(env);
+
+        let program = Program::compile(message_expression).map_err(|e| {
+            ServiceError::Dispatch(format!("Failed to compile CEL expression: {}", e))
+        })?;
+
+        let cel_value = program.execute(&cel_ctx).map_err(|e| {
+            ServiceError::Dispatch(format!("Failed to execute CEL expression: {}", e))
+        })?;
+
+        self.dispatch_value(ctx, &cel_value)
+    }
+
+    fn method_descriptor(&self) -> Result<prost_reflect::MethodDescriptor, ServiceError> {
+        let pool = self
+            .descriptor_manager
+            .get_pool(&self.upstream_name, &self.service_name)
+            .map_err(|e| ServiceError::Dispatch(e.to_string()))?;
+
+        let service_descriptor = pool
+            .get_service_by_name(&self.service_name)
+            .ok_or_else(|| {
+                ServiceError::Dispatch(format!(
+                    "Service '{}' not found in descriptor pool",
+                    self.service_name
+                ))
+            })?;
+        let method = service_descriptor
+            .methods()
+            .find(|m| m.name() == self.method)
+            .ok_or_else(|| {
+                ServiceError::Dispatch(format!(
+                    "Method '{}' not found in service '{}'",
+                    self.method, self.service_name
+                ))
+            })?;
+        Ok(method)
+    }
+
+    fn input_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
+        Ok(self.method_descriptor()?.input())
+    }
+
+    fn output_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
+        Ok(self.method_descriptor()?.output())
+    }
+
     pub fn response_cel_context(
         &self,
         ctx: &mut ReqRespCtx,
@@ -136,12 +163,7 @@ impl DynamicService {
     ) -> Result<Context<'_>, ServiceError> {
         let response = self.get_response(ctx, response_size)?;
         let cel_value = MessageConverter::dynamic_message_to_cel(&response);
-
-        let env = self.cel_env.get().cloned().unwrap_or_else(|| {
-            let mut env = Env::stdlib();
-            env.add_struct(deny_response_struct_def());
-            Arc::new(env)
-        });
+        let env = self.cel_env()?;
 
         let mut cel_ctx = Context::with_env(env);
         cel_ctx.add_variable_from_value(name, cel_value);
