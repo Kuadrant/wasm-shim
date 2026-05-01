@@ -512,8 +512,9 @@ mod tests {
     use crate::configuration::{
         Action as ConfigAction, ActionConfig, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, DenyOperation, ExpressionItem, GrpcOperation,
-        HeadersOperation, HeadersTarget, Operation as ConfigOperation, RouteRuleConditions,
-        StaticItem, StoreItem, StoreOperation, TypedAction as ConfigTypedAction,
+        HeadersOperation, HeadersTarget, Operation as ConfigOperation, Phase,
+        RouteRuleConditions, StaticItem, StoreItem, StoreOperation,
+        TypedAction as ConfigTypedAction,
     };
     use crate::filter::DescriptorManager;
     use crate::services::{AuthService, DynamicService, ServiceInstance};
@@ -801,6 +802,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "request.method == 'GET'".to_string(),
             terminal: false,
+            phase: Phase::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 name: "rl_check".to_string(),
                 service: "my-dynamic".to_string(),
@@ -809,6 +811,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "rl_check.overall_code == 2".to_string(),
                         terminal: true,
+                        phase: Phase::default(),
                         operation: ConfigOperation::Deny(DenyOperation {
                             deny_with: "DenyResponse{status: 429u}".to_string(),
                         }),
@@ -816,6 +819,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "true".to_string(),
                         terminal: false,
+                        phase: Phase::default(),
                         operation: ConfigOperation::Headers(HeadersOperation {
                             target: HeadersTarget::Request,
                             headers: "result.headers".to_string(),
@@ -824,6 +828,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "true".to_string(),
                         terminal: false,
+                        phase: Phase::default(),
                         operation: ConfigOperation::Store(StoreOperation {
                             data: vec![StoreItem {
                                 path: "rl.remaining".to_string(),
@@ -854,6 +859,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            phase: Phase::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 name: "check".to_string(),
                 service: "nonexistent".to_string(),
@@ -873,6 +879,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            phase: Phase::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 name: "check".to_string(),
                 service: "auth-svc".to_string(),
@@ -893,6 +900,7 @@ mod tests {
         let nested_grpc = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            phase: Phase::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 name: "nested".to_string(),
                 service: "svc".to_string(),
@@ -913,6 +921,7 @@ mod tests {
         let deny_config = ConfigTypedAction {
             predicate: "result.code == 2".to_string(),
             terminal: true,
+            phase: Phase::default(),
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -926,6 +935,7 @@ mod tests {
         let headers_config = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            phase: Phase::default(),
             operation: ConfigOperation::Headers(HeadersOperation {
                 target: HeadersTarget::Response,
                 headers: "result.resp_headers".to_string(),
@@ -946,6 +956,7 @@ mod tests {
         let store_config = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            phase: Phase::default(),
             operation: ConfigOperation::Store(StoreOperation {
                 data: vec![
                     StoreItem {
@@ -976,6 +987,7 @@ mod tests {
         let config = ConfigTypedAction {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
+            phase: Phase::default(),
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -1011,6 +1023,7 @@ mod tests {
                 ActionConfig::Typed(ConfigTypedAction {
                     predicate: "true".to_string(),
                     terminal: false,
+                    phase: Phase::default(),
                     operation: ConfigOperation::Grpc(GrpcOperation {
                         name: "rl_check".to_string(),
                         service: "dyn-svc".to_string(),
@@ -1018,6 +1031,7 @@ mod tests {
                         on_reply: vec![ConfigTypedAction {
                             predicate: "rl_check.code == 2".to_string(),
                             terminal: true,
+                            phase: Phase::default(),
                             operation: ConfigOperation::Deny(DenyOperation {
                                 deny_with: "DenyResponse{status: 429u}".to_string(),
                             }),

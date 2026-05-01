@@ -29,11 +29,21 @@ pub struct Action {
     pub sources: Vec<String>,
 }
 
+#[derive(Deserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase {
+    #[default]
+    Request,
+    Response,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TypedAction {
     pub predicate: String,
     pub terminal: bool,
+    #[serde(default)]
+    pub phase: Phase,
     #[serde(flatten)]
     pub operation: Operation,
 }
