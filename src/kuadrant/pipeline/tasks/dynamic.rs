@@ -3,6 +3,7 @@ use std::rc::Rc;
 use cel::Value;
 use tracing::{debug, error};
 
+use crate::configuration::Phase;
 use crate::data::attribute::AttributeState;
 use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Expression;
@@ -23,9 +24,12 @@ pub struct DynamicTask {
     on_reply: Vec<TypedAction>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
+    #[allow(dead_code)]
+    phase: Phase,
 }
 
 impl DynamicTask {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: String,
         service: Rc<DynamicService>,
@@ -34,6 +38,7 @@ impl DynamicTask {
         on_reply: Vec<TypedAction>,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
+        phase: Phase,
     ) -> Self {
         Self {
             task_id,
@@ -43,6 +48,7 @@ impl DynamicTask {
             on_reply,
             predicates,
             dependencies,
+            phase,
         }
     }
 }
@@ -54,6 +60,10 @@ impl Task for DynamicTask {
 
     fn pauses_filter(&self) -> bool {
         true
+    }
+
+    fn phase(&self) -> Phase {
+        self.phase
     }
 
     fn dependencies(&self) -> &[String] {

@@ -1,4 +1,4 @@
-use crate::configuration::PluginConfiguration;
+use crate::configuration::{Phase, PluginConfiguration};
 use crate::data::{
     attribute::AttributeState,
     cel::{Predicate, PredicateVec},
@@ -86,6 +86,7 @@ impl PipelineFactory {
                 sources: vec![],
                 message_builder: None,
                 on_reply: vec![],
+                phase: Phase::default(),
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {

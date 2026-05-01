@@ -21,6 +21,7 @@ pub use token_usage::TokenUsageTask;
 use tracing::debug;
 pub use tracing_decorator::TracingDecoratorTask;
 
+use crate::configuration::Phase;
 use crate::kuadrant::ReqRespCtx;
 
 //todo(refactor): this now has the signature of a task; should it be one?
@@ -39,6 +40,11 @@ pub trait Task {
 
     fn pauses_filter(&self) -> bool {
         false
+    }
+
+    #[allow(dead_code)]
+    fn phase(&self) -> Phase {
+        Phase::Request
     }
 }
 

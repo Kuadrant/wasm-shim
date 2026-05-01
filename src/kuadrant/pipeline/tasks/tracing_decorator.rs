@@ -1,3 +1,4 @@
+use crate::configuration::Phase;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 
@@ -85,5 +86,9 @@ impl Task for TracingDecoratorTask {
 
     fn pauses_filter(&self) -> bool {
         self.task.pauses_filter()
+    }
+
+    fn phase(&self) -> Phase {
+        self.task.phase()
     }
 }

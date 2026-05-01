@@ -1,4 +1,4 @@
-use crate::configuration;
+use crate::configuration::{self, Phase};
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     AuthTask, DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
@@ -30,6 +30,7 @@ pub(crate) struct Action {
     pub sources: Vec<String>,
     pub message_builder: Option<Expression>,
     pub on_reply: Vec<TypedAction>,
+    pub phase: Phase,
 }
 
 // todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
@@ -298,6 +299,7 @@ impl Blueprint {
                         action.on_reply.clone(),
                         action.predicates.clone(),
                         action.dependencies.clone(),
+                        action.phase,
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {
@@ -354,6 +356,7 @@ impl Action {
             sources: config.sources.clone(),
             message_builder: None,
             on_reply: vec![],
+            phase: Phase::default(),
         })
     }
 
@@ -406,6 +409,7 @@ impl Action {
                     sources: vec![],
                     message_builder,
                     on_reply,
+                    phase: typed.phase,
                 })
             }
             _ => Err(CompileError::InvalidDataExpression(
@@ -512,9 +516,8 @@ mod tests {
     use crate::configuration::{
         Action as ConfigAction, ActionConfig, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, DenyOperation, ExpressionItem, GrpcOperation,
-        HeadersOperation, HeadersTarget, Operation as ConfigOperation, Phase,
-        RouteRuleConditions, StaticItem, StoreItem, StoreOperation,
-        TypedAction as ConfigTypedAction,
+        HeadersOperation, HeadersTarget, Operation as ConfigOperation, RouteRuleConditions,
+        StaticItem, StoreItem, StoreOperation, TypedAction as ConfigTypedAction,
     };
     use crate::filter::DescriptorManager;
     use crate::services::{AuthService, DynamicService, ServiceInstance};

@@ -1,3 +1,4 @@
+use crate::configuration::Phase;
 use crate::kuadrant::{
     pipeline::tasks::{SendReplyTask, Task, TaskOutcome},
     ReqRespCtx,
@@ -49,5 +50,9 @@ impl Task for FailureModeTask {
 
     fn pauses_filter(&self) -> bool {
         self.task.pauses_filter()
+    }
+
+    fn phase(&self) -> Phase {
+        self.task.phase()
     }
 }
