@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+use crate::configuration::Phase;
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
@@ -27,6 +28,7 @@ pub struct ReqRespCtx {
     tracing: TracingContext,
     tracker: Tracker,
     body_values: HashMap<String, Value>,
+    phase: Phase,
 }
 
 impl Default for ReqRespCtx {
@@ -47,6 +49,7 @@ impl ReqRespCtx {
             tracing: TracingContext::default(),
             tracker: Tracker::default(),
             body_values: HashMap::new(),
+            phase: Phase::default(),
         }
     }
 
@@ -100,6 +103,14 @@ impl ReqRespCtx {
 
     pub fn set_hostname(&mut self, hostname: String) {
         self.tracing.hostname = Some(hostname);
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    pub fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {

@@ -73,6 +73,25 @@ impl Action {
         for (_, expr) in request_data {
             fields.extend(expr.body_values().iter().cloned());
         }
+        if let Some(mb) = &self.message_builder {
+            fields.extend(mb.body_values().iter().cloned());
+        }
+        for typed_action in &self.on_reply {
+            fields.extend(typed_action.predicate.body_values().iter().cloned());
+            match &typed_action.operation {
+                Operation::Deny { deny_with } => {
+                    fields.extend(deny_with.body_values().iter().cloned());
+                }
+                Operation::Headers { headers, .. } => {
+                    fields.extend(headers.body_values().iter().cloned());
+                }
+                Operation::Store { data } => {
+                    for (_, expr) in data {
+                        fields.extend(expr.body_values().iter().cloned());
+                    }
+                }
+            }
+        }
 
         fields.dedup();
         fields
@@ -291,7 +310,14 @@ impl Blueprint {
                             continue;
                         }
                     };
+
+                    let body_values = action.collect_body_values(request_data);
+                    if !body_values.is_empty() {
+                        tasks.push(Box::new(TokenUsageTask::with_expected_fields(body_values)));
+                    }
+
                     let task: Box<dyn Task> = Box::new(DynamicTask::new(
+                        ctx,
                         action.id.clone(),
                         Rc::clone(dynamic_service),
                         action.scope.clone(),

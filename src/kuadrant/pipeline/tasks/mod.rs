@@ -42,7 +42,6 @@ pub trait Task {
         false
     }
 
-    #[allow(dead_code)]
     fn phase(&self) -> Phase {
         Phase::Request
     }

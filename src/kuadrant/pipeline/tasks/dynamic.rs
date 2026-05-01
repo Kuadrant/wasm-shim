@@ -24,13 +24,13 @@ pub struct DynamicTask {
     on_reply: Vec<TypedAction>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
-    #[allow(dead_code)]
     phase: Phase,
 }
 
 impl DynamicTask {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        ctx: &ReqRespCtx,
         task_id: String,
         service: Rc<DynamicService>,
         name: String,
@@ -40,6 +40,25 @@ impl DynamicTask {
         dependencies: Vec<String>,
         phase: Phase,
     ) -> Self {
+        let _ = predicates.apply(ctx);
+        let _ = message_builder.eval(ctx);
+        let _ = on_reply.iter().map(|typed_action| {
+            let _ = typed_action.predicate.test(ctx);
+            match &typed_action.operation {
+                Operation::Deny { deny_with } => {
+                    let _ = deny_with.eval(ctx);
+                }
+                Operation::Headers { headers, .. } => {
+                    let _ = headers.eval(ctx);
+                }
+                Operation::Store { data } => {
+                    for (_, expr) in data {
+                        let _ = expr.eval(ctx);
+                    }
+                }
+            }
+        });
+
         Self {
             task_id,
             service,
@@ -71,6 +90,10 @@ impl Task for DynamicTask {
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        if ctx.phase() != self.phase {
+            return TaskOutcome::Requeued(vec![self]);
+        }
+
         match self.predicates.apply(ctx) {
             Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
             Ok(AttributeState::Available(false)) => return TaskOutcome::Done,

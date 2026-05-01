@@ -1,3 +1,4 @@
+use crate::configuration::Phase;
 use crate::kuadrant::{Pipeline, PipelineFactory, PipelineState, ReqRespCtx};
 use crate::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext};
@@ -153,7 +154,8 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_response_headers", self.context_id);
         METRICS.allowed().increment();
         self.in_response_phase = true;
-        if let Some(pipeline) = self.pipeline.take() {
+        if let Some(mut pipeline) = self.pipeline.take() {
+            pipeline.ctx.set_phase(Phase::Response);
             match pipeline.eval() {
                 PipelineState::InProgress(p) => {
                     self.pipeline = Some(*p);

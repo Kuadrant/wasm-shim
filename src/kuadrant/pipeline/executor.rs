@@ -199,6 +199,7 @@ impl Pipeline {
     }
 
     pub fn requires_pause(&self) -> bool {
+        let current_phase = self.ctx.phase();
         let has_blocking_deferred = self
             .deferred_tasks
             .iter()
@@ -211,7 +212,7 @@ impl Pipeline {
                 .dependencies()
                 .iter()
                 .all(|dep| self.completed_tasks.contains(dep));
-            deps_met && task.pauses_filter()
+            deps_met && task.pauses_filter() && task.phase() == current_phase
         });
         trace!(
             "requires_pause: has_blocking_deferred={} || has_blocking={}",
