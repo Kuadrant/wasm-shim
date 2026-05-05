@@ -140,6 +140,62 @@ impl DescriptorConverter {
     }
 }
 
+pub fn deny_response_struct_def() -> StructDef {
+    StructDef::new("DenyResponse".to_string())
+        .add_field("status".to_string(), UINT_TYPE)
+        .add_field_with_default("body".to_string(), Box::new(CelString::from("")))
+        .add_field_with_default("headers".to_string(), Box::new(CelList::from(vec![])))
+}
+
+pub fn cel_value_to_header_pairs(value: &Value) -> Vec<(String, String)> {
+    let Value::List(items) = value else {
+        return vec![];
+    };
+
+    let mut pairs = Vec::new();
+    for item in items.iter() {
+        match item {
+            Value::List(inner) if inner.len() == 2 => {
+                if let (Value::String(k), Value::String(v)) = (&inner[0], &inner[1]) {
+                    pairs.push((k.to_string(), v.to_string()));
+                }
+            }
+            Value::Struct(s) => {
+                if let (Some(key_val), Some(value_val)) =
+                    (s.field_value("key"), s.field_value("value"))
+                {
+                    if let (Some(k), Some(v)) = (
+                        key_val.downcast_ref::<CelString>(),
+                        value_val.downcast_ref::<CelString>(),
+                    ) {
+                        pairs.push((k.inner().to_string(), v.inner().to_string()));
+                        continue;
+                    }
+                }
+
+                if let Some(header_val) = s.field_value("header") {
+                    if let Some(header_struct) = header_val.downcast_ref::<CelStruct>() {
+                        if let (Some(key_val), Some(value_val)) = (
+                            header_struct.field_value("key"),
+                            header_struct.field_value("value"),
+                        ) {
+                            if let (Some(k), Some(v)) = (
+                                key_val.downcast_ref::<CelString>(),
+                                value_val.downcast_ref::<CelString>(),
+                            ) {
+                                pairs.push((k.inner().to_string(), v.inner().to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pairs
+}
+
 pub struct MessageConverter;
 
 impl MessageConverter {
@@ -153,7 +209,6 @@ impl MessageConverter {
         }
     }
 
-    #[allow(dead_code)]
     pub fn dynamic_message_to_cel(message: &DynamicMessage) -> Value {
         let descriptor = message.descriptor();
         let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
@@ -536,6 +591,7 @@ impl MessageConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cel::common::value::Val;
     use cel::{Context, Program};
     use prost::Message;
     use prost_types::{field_descriptor_proto, DescriptorProto, FieldDescriptorProto};
@@ -1200,5 +1256,203 @@ mod tests {
                 Some("third")
             );
         }
+    }
+
+    #[test]
+    fn deny_response_struct_def_registers_and_evaluates() {
+        let mut env = cel::Env::stdlib();
+        env.add_struct(deny_response_struct_def());
+        let ctx = Context::with_env(Arc::new(env));
+
+        let program = Program::compile("DenyResponse{status: 429u}").expect("Failed to compile");
+        let result = program.execute(&ctx).expect("Failed to execute");
+
+        assert!(matches!(&result, Value::Struct(_)));
+
+        if let Value::Struct(s) = &result {
+            assert_eq!(s.name(), "DenyResponse");
+
+            let status = s.field_value("status").expect("status field missing");
+            assert_eq!(
+                status.downcast_ref::<CelUInt>().map(|v| *v.inner()),
+                Some(429)
+            );
+
+            let body = s.field_value("body").expect("body field missing");
+            assert_eq!(
+                body.downcast_ref::<CelString>().map(|v| v.inner()),
+                Some("")
+            );
+
+            let headers = s.field_value("headers").expect("headers field missing");
+            let list = headers
+                .downcast_ref::<CelList>()
+                .expect("headers should be a list");
+            assert_eq!(list.len(), 0);
+        }
+    }
+
+    #[test]
+    fn deny_response_with_all_fields() {
+        let mut env = cel::Env::stdlib();
+        env.add_struct(deny_response_struct_def());
+        let ctx = Context::with_env(Arc::new(env));
+
+        let program =
+            Program::compile("DenyResponse{status: 403u, body: 'Forbidden', headers: []}")
+                .expect("Failed to compile");
+        let result = program.execute(&ctx).expect("Failed to execute");
+
+        assert!(matches!(&result, Value::Struct(_)));
+
+        if let Value::Struct(s) = &result {
+            let status = s.field_value("status").expect("status missing");
+            assert_eq!(
+                status.downcast_ref::<CelUInt>().map(|v| *v.inner()),
+                Some(403)
+            );
+
+            let body = s.field_value("body").expect("body missing");
+            assert_eq!(
+                body.downcast_ref::<CelString>().map(|v| v.inner()),
+                Some("Forbidden")
+            );
+        }
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_direct_key_value() {
+        let mut s1 = CelStruct::new("HeaderValue".to_string());
+        s1.add_field_value(
+            "key".to_string(),
+            Cow::Owned(Box::new(CelString::from("x-ratelimit-limit")) as Box<dyn Val>),
+        );
+        s1.add_field_value(
+            "value".to_string(),
+            Cow::Owned(Box::new(CelString::from("100")) as Box<dyn Val>),
+        );
+
+        let mut s2 = CelStruct::new("HeaderValue".to_string());
+        s2.add_field_value(
+            "key".to_string(),
+            Cow::Owned(Box::new(CelString::from("x-ratelimit-remaining")) as Box<dyn Val>),
+        );
+        s2.add_field_value(
+            "value".to_string(),
+            Cow::Owned(Box::new(CelString::from("42")) as Box<dyn Val>),
+        );
+
+        let list = Value::List(Arc::new(vec![
+            Value::Struct(Arc::new(s1)),
+            Value::Struct(Arc::new(s2)),
+        ]));
+
+        let pairs = cel_value_to_header_pairs(&list);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(
+            pairs[0],
+            ("x-ratelimit-limit".to_string(), "100".to_string())
+        );
+        assert_eq!(
+            pairs[1],
+            ("x-ratelimit-remaining".to_string(), "42".to_string())
+        );
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_nested_header_field() {
+        let mut header = CelStruct::new("HeaderValue".to_string());
+        header.add_field_value(
+            "key".to_string(),
+            Cow::Owned(Box::new(CelString::from("x-custom")) as Box<dyn Val>),
+        );
+        header.add_field_value(
+            "value".to_string(),
+            Cow::Owned(Box::new(CelString::from("test")) as Box<dyn Val>),
+        );
+
+        let mut option = CelStruct::new("HeaderValueOption".to_string());
+        option.add_field_value(
+            "header".to_string(),
+            Cow::Owned(Box::new(header) as Box<dyn Val>),
+        );
+
+        let list = Value::List(Arc::new(vec![Value::Struct(Arc::new(option))]));
+
+        let pairs = cel_value_to_header_pairs(&list);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("x-custom".to_string(), "test".to_string()));
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_empty_list() {
+        let list = Value::List(Arc::new(vec![]));
+        let pairs = cel_value_to_header_pairs(&list);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_non_list_returns_empty() {
+        let value = Value::String(Arc::new("not a list".to_string()));
+        let pairs = cel_value_to_header_pairs(&value);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_list_of_lists() {
+        let list = Value::List(Arc::new(vec![
+            Value::List(Arc::new(vec![
+                Value::String(Arc::new("x-result".to_string())),
+                Value::String(Arc::new("check-passed".to_string())),
+            ])),
+            Value::List(Arc::new(vec![
+                Value::String(Arc::new("x-custom".to_string())),
+                Value::String(Arc::new("static-value".to_string())),
+            ])),
+        ]));
+
+        let pairs = cel_value_to_header_pairs(&list);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(
+            pairs[0],
+            ("x-result".to_string(), "check-passed".to_string())
+        );
+        assert_eq!(
+            pairs[1],
+            ("x-custom".to_string(), "static-value".to_string())
+        );
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_list_of_lists_wrong_length_skipped() {
+        let list = Value::List(Arc::new(vec![
+            Value::List(Arc::new(vec![
+                Value::String(Arc::new("x-valid".to_string())),
+                Value::String(Arc::new("value".to_string())),
+            ])),
+            Value::List(Arc::new(vec![Value::String(Arc::new(
+                "only-one".to_string(),
+            ))])),
+            Value::List(Arc::new(vec![
+                Value::String(Arc::new("a".to_string())),
+                Value::String(Arc::new("b".to_string())),
+                Value::String(Arc::new("c".to_string())),
+            ])),
+        ]));
+
+        let pairs = cel_value_to_header_pairs(&list);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("x-valid".to_string(), "value".to_string()));
+    }
+
+    #[test]
+    fn cel_value_to_header_pairs_list_of_lists_non_string_skipped() {
+        let list = Value::List(Arc::new(vec![Value::List(Arc::new(vec![
+            Value::Int(42),
+            Value::String(Arc::new("value".to_string())),
+        ]))]));
+
+        let pairs = cel_value_to_header_pairs(&list);
+        assert!(pairs.is_empty());
     }
 }

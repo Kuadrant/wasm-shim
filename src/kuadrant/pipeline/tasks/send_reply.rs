@@ -1,8 +1,12 @@
+use cel::common::types::{CelString, CelUInt};
+use cel::Value;
+use tracing::error;
+
 use crate::envoy::StatusCode;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::metrics::METRICS;
-use tracing::error;
+use crate::services::cel_value_to_header_pairs;
 
 pub struct SendReplyTask {
     status_code: u32,
@@ -26,6 +30,36 @@ impl SendReplyTask {
             Vec::new(),
             Some("Internal Server Error.\n".to_string()),
         )
+    }
+}
+
+impl TryFrom<Value> for SendReplyTask {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        let Value::Struct(deny_response) = value else {
+            return Err(format!("expected DenyResponse struct, got: {value:?}"));
+        };
+
+        let status = deny_response
+            .field_value("status")
+            .and_then(|v| v.downcast_ref::<CelUInt>())
+            .map(|v| *v.inner() as u32)
+            .ok_or("DenyResponse missing or invalid 'status' field")?;
+
+        let body = deny_response
+            .field_value("body")
+            .and_then(|v| v.downcast_ref::<CelString>())
+            .map(|v| v.inner().to_string())
+            .filter(|s| !s.is_empty());
+
+        let headers = deny_response
+            .field_value("headers")
+            .and_then(|v| Value::try_from(v).ok())
+            .map(|v| cel_value_to_header_pairs(&v))
+            .unwrap_or_default();
+
+        Ok(Self::new(status, headers, body))
     }
 }
 

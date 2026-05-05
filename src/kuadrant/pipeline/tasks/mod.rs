@@ -1,4 +1,5 @@
 mod auth;
+mod dynamic;
 mod export_traces;
 mod failure_mode;
 mod headers;
@@ -9,6 +10,7 @@ mod token_usage;
 mod tracing_decorator;
 
 pub use auth::AuthTask;
+pub use dynamic::DynamicTask;
 pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};

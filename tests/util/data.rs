@@ -168,6 +168,24 @@ pub mod auth_response {
     ];
 }
 
+pub mod dynamic_response {
+    /// TestResponse { result: "denied" }
+    pub const RESULT_DENIED: &[u8] = &[0x0a, 0x06, 0x64, 0x65, 0x6e, 0x69, 0x65, 0x64];
+
+    /// TestResponse { result: "allowed" }
+    pub const RESULT_ALLOWED: &[u8] = &[0x0a, 0x07, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64];
+
+    /// TestResponse { result: "check-passed" }
+    pub const RESULT_CHECK_PASSED: &[u8] = &[
+        0x0a, 0x0c, 0x63, 0x68, 0x65, 0x63, 0x6b, 0x2d, 0x70, 0x61, 0x73, 0x73, 0x65, 0x64,
+    ];
+
+    /// TestResponse { result: "stored_value" }
+    pub const RESULT_STORED_VALUE: &[u8] = &[
+        0x0a, 0x0c, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65,
+    ];
+}
+
 pub mod descriptor_response {
     /// GetServiceDescriptorsResponse containing a FileDescriptorSet for test.TestService
     /// GetServiceDescriptorsResponse {
