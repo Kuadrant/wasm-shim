@@ -151,6 +151,19 @@ impl ReqRespCtx {
         }
     }
 
+    pub fn get_request_header(&self, key: &str) -> Option<String> {
+        match self
+            .backend
+            .get_attribute_map_value(proxy_wasm::types::MapType::HttpRequestHeaders, key)
+        {
+            Ok(value) => value,
+            Err(e) => {
+                warn!("failed to get request header '{key}': {e}");
+                None
+            }
+        }
+    }
+
     pub fn get_attribute_ref<T: AttributeValue>(
         &self,
         path: &Path,

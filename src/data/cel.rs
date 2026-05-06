@@ -158,14 +158,12 @@ impl Expression {
             &mut Vec::default(),
         );
 
-        let needs_grpc = props
-            .iter()
-            .any(|tokens| tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc");
-
+        let mut needs_grpc = false;
         let mut attributes: Vec<Attribute> = props
             .into_iter()
             .filter_map(|tokens| {
                 if tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc" {
+                    needs_grpc = true;
                     return None;
                 }
                 let root = tokens.first()?;
@@ -276,27 +274,23 @@ impl Expression {
     }
 
     fn resolve_grpc(&self, req_ctx: &ReqRespCtx) -> Option<Value> {
-        let content_type: Option<String> = req_ctx
-            .get_attribute::<Headers>("request.headers")
-            .ok()
-            .and_then(|state| match state {
-                AttributeState::Available(Some(headers)) => {
-                    headers.get("content-type").map(|s| s.to_string())
-                }
-                _ => None,
-            });
+        let content_type = req_ctx.get_request_header("content-type");
 
         if !content_type.as_deref().is_some_and(is_grpc_content_type) {
             return None;
         }
 
-        let url_path: Option<String> = req_ctx
-            .get_attribute::<String>("request.url_path")
-            .ok()
-            .and_then(|state| match state {
-                AttributeState::Available(opt) => opt,
-                _ => None,
-            });
+        let url_path: Option<String> = match req_ctx.get_attribute::<String>("request.url_path") {
+            Ok(AttributeState::Available(opt)) => opt,
+            Ok(AttributeState::Pending) => {
+                warn!("request.url_path is pending during gRPC attribute resolution");
+                None
+            }
+            Err(e) => {
+                warn!("failed to get request.url_path for gRPC resolution: {e}");
+                None
+            }
+        };
 
         let (service, method) = match url_path.as_deref().and_then(parse_grpc_path) {
             Some((s, m)) => (Value::String(s.into()), Value::String(m.into())),
@@ -1425,6 +1419,23 @@ mod tests {
             );
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("request.grpc.method == 'GetUser'").expect("valid CEL");
+        assert_eq!(
+            predicate.test(&ctx).expect("must evaluate"),
+            AttributeState::Available(true)
+        );
+    }
+
+    #[test]
+    fn grpc_has_true_for_grpc_request() {
+        let headers = vec![("content-type".to_string(), "application/grpc".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_map("request.headers".to_string(), headers)
+            .with_property(
+                "request.url_path".into(),
+                "/UserService/GetUser".bytes().collect(),
+            );
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let predicate = Predicate::new("has(request.grpc)").expect("valid CEL");
         assert_eq!(
             predicate.test(&ctx).expect("must evaluate"),
             AttributeState::Available(true)
