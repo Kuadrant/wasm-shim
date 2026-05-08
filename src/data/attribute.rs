@@ -1,4 +1,6 @@
 use chrono::{DateTime, FixedOffset};
+use prost::Message;
+use prost_types::Struct;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -147,6 +149,16 @@ impl AttributeValue for DateTime<FixedOffset> {
                 "parse: Timestamp expected to be 8 bytes, but got {ra_len}",
             ))),
         }
+    }
+}
+
+impl AttributeValue for Struct {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
+        Struct::decode(&raw_attribute[..]).map_err(|e| {
+            AttributeError::Parse(format!(
+                "parse: failed to decode protobuf Struct, error: {e}"
+            ))
+        })
     }
 }
 

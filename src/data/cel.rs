@@ -8,6 +8,7 @@ use cel::objects::{Key, Map, ValueType};
 use cel::parser::{Expression as CelExpression, ParseErrors, Parser};
 use cel::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
 use chrono::{DateTime, FixedOffset};
+use prost_types::Struct;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -522,6 +523,9 @@ impl Attribute {
                     })
                     .unwrap_or(Value::Null)
                 })),
+                ValueType::Struct => Ok(ctx
+                    .get_attribute_ref::<Struct>(&self.path)?
+                    .map(|opt| opt.map(|s| prost_struct_to_cel(&s)).unwrap_or(Value::Null))),
                 _ => todo!("Need support for `{t}`s!"),
             },
             None => Ok(ctx
@@ -576,6 +580,37 @@ fn json_value_to_cel(json: &JsonValue) -> Value {
                 .collect();
             Value::Map(cel_map.into())
         }
+    }
+}
+
+fn prost_struct_to_cel(prost_struct: &Struct) -> Value {
+    let cel_map: HashMap<Key, Value> = prost_struct
+        .fields
+        .iter()
+        .map(|(k, v)| (Key::String(k.clone().into()), prost_value_to_cel(v)))
+        .collect();
+    Value::Map(cel_map.into())
+}
+
+fn prost_value_to_cel(prost_value: &prost_types::Value) -> Value {
+    match &prost_value.kind {
+        Some(prost_types::value::Kind::NullValue(_)) => Value::Null,
+        Some(prost_types::value::Kind::NumberValue(n)) => {
+            // Check if the number is actually an integer
+            if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                Value::Int(*n as i64)
+            } else {
+                Value::Float(*n)
+            }
+        }
+        Some(prost_types::value::Kind::StringValue(s)) => Value::String(s.clone().into()),
+        Some(prost_types::value::Kind::BoolValue(b)) => Value::Bool(*b),
+        Some(prost_types::value::Kind::StructValue(s)) => prost_struct_to_cel(s),
+        Some(prost_types::value::Kind::ListValue(list)) => {
+            let cel_list: Vec<Value> = list.values.iter().map(prost_value_to_cel).collect();
+            Value::List(cel_list.into())
+        }
+        None => Value::Null,
     }
 }
 
@@ -906,11 +941,15 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::{AttributeState, Path};
-    use crate::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::data::cel::{
+        known_attribute_for, prost_struct_to_cel, prost_value_to_cel, Attribute, Expression,
+        Predicate,
+    };
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
-    use cel::objects::ValueType;
+    use cel::objects::{Key, ValueType};
     use cel::Value;
+    use prost_types::Struct;
     use std::sync::Arc;
 
     #[test]
@@ -1372,5 +1411,172 @@ mod tests {
             AttributeState::Pending,
             "Ternary expression with Pending condition should return Pending"
         );
+    }
+
+    #[test]
+    fn test_prost_struct_to_cel_conversion() {
+        use prost_types::{value::Kind, ListValue};
+
+        // Create a nested protobuf struct: { "name": "Alice", "age": 30, "tags": ["admin", "user"] }
+        let mut prost_struct = Struct::default();
+        prost_struct.fields.insert(
+            "name".to_string(),
+            prost_types::Value {
+                kind: Some(Kind::StringValue("Alice".to_string())),
+            },
+        );
+        prost_struct.fields.insert(
+            "age".to_string(),
+            prost_types::Value {
+                kind: Some(Kind::NumberValue(30.0)),
+            },
+        );
+        prost_struct.fields.insert(
+            "active".to_string(),
+            prost_types::Value {
+                kind: Some(Kind::BoolValue(true)),
+            },
+        );
+        prost_struct.fields.insert(
+            "tags".to_string(),
+            prost_types::Value {
+                kind: Some(Kind::ListValue(ListValue {
+                    values: vec![
+                        prost_types::Value {
+                            kind: Some(Kind::StringValue("admin".to_string())),
+                        },
+                        prost_types::Value {
+                            kind: Some(Kind::StringValue("user".to_string())),
+                        },
+                    ],
+                })),
+            },
+        );
+
+        let cel_value = prost_struct_to_cel(&prost_struct);
+
+        // Verify it's a Map
+        match cel_value {
+            Value::Map(map) => {
+                // Check name field
+                let name = map.map.get(&Key::String("name".to_string().into()));
+                assert!(name.is_some());
+                assert_eq!(name.unwrap(), &Value::String("Alice".to_string().into()));
+
+                // Check age field
+                let age = map.map.get(&Key::String("age".to_string().into()));
+                assert!(age.is_some());
+                assert_eq!(age.unwrap(), &Value::Int(30));
+
+                // Check active field
+                let active = map.map.get(&Key::String("active".to_string().into()));
+                assert!(active.is_some());
+                assert_eq!(active.unwrap(), &Value::Bool(true));
+
+                // Check tags field
+                let tags = map.map.get(&Key::String("tags".to_string().into()));
+                assert!(tags.is_some());
+                match tags.unwrap() {
+                    Value::List(list) => {
+                        assert_eq!(list.len(), 2);
+                        assert_eq!(list[0], Value::String("admin".to_string().into()));
+                        assert_eq!(list[1], Value::String("user".to_string().into()));
+                    }
+                    _ => panic!("Expected tags to be a List"),
+                }
+            }
+            _ => panic!("Expected Map value"),
+        }
+    }
+
+    #[test]
+    fn test_prost_value_to_cel_all_types() {
+        use prost_types::value::Kind;
+
+        // Test Null
+        let null_value = prost_types::Value {
+            kind: Some(Kind::NullValue(0)),
+        };
+        assert_eq!(prost_value_to_cel(&null_value), Value::Null);
+
+        // Test Number (integer)
+        let int_value = prost_types::Value {
+            kind: Some(Kind::NumberValue(42.0)),
+        };
+        assert_eq!(prost_value_to_cel(&int_value), Value::Int(42));
+
+        // Test Number (float)
+        let float_value = prost_types::Value {
+            kind: Some(Kind::NumberValue(3.14)),
+        };
+        assert_eq!(prost_value_to_cel(&float_value), Value::Float(3.14));
+
+        // Test String
+        let string_value = prost_types::Value {
+            kind: Some(Kind::StringValue("hello".to_string())),
+        };
+        assert_eq!(
+            prost_value_to_cel(&string_value),
+            Value::String("hello".to_string().into())
+        );
+
+        // Test Bool
+        let bool_value = prost_types::Value {
+            kind: Some(Kind::BoolValue(true)),
+        };
+        assert_eq!(prost_value_to_cel(&bool_value), Value::Bool(true));
+    }
+
+    #[test]
+    fn test_attribute_get_struct_type() {
+        use prost::Message;
+        use prost_types::value::Kind;
+
+        // Create a protobuf Struct
+        let mut prost_struct = Struct::default();
+        prost_struct.fields.insert(
+            "namespace".to_string(),
+            prost_types::Value {
+                kind: Some(Kind::StringValue("my-app".to_string())),
+            },
+        );
+        prost_struct.fields.insert(
+            "version".to_string(),
+            prost_types::Value {
+                kind: Some(Kind::NumberValue(1.0)),
+            },
+        );
+
+        // Encode it to bytes (as Envoy would provide it)
+        let encoded = prost_struct.encode_to_vec();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("metadata.filter_metadata.my_namespace".into(), encoded);
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        // Create an attribute with Struct type
+        let attr = Attribute {
+            path: "metadata.filter_metadata.my_namespace".into(),
+            cel_type: Some(ValueType::Struct),
+        };
+
+        let result = attr.get(&ctx).expect("Should not error");
+
+        // Verify we got a CEL Map
+        match result {
+            AttributeState::Available(Value::Map(map)) => {
+                let namespace = map.map.get(&Key::String("namespace".to_string().into()));
+                assert!(namespace.is_some());
+                assert_eq!(
+                    namespace.unwrap(),
+                    &Value::String("my-app".to_string().into())
+                );
+
+                let version = map.map.get(&Key::String("version".to_string().into()));
+                assert!(version.is_some());
+                assert_eq!(version.unwrap(), &Value::Int(1));
+            }
+            _ => panic!("Expected Available Map value"),
+        }
     }
 }
