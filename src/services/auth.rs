@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use cel::common::types::*;
+use cel::common::value::Val;
 use cel::Value;
 use chrono::{DateTime, FixedOffset};
 use prost::Message;
@@ -94,6 +96,72 @@ fn build_check_request(ctx: &mut ReqRespCtx, scope: &str) -> Result<CheckRequest
     })
 }
 
+fn cel_val_to_prost(val: &dyn Val) -> prost_types::Value {
+    // Try downcasting to each specific type
+    if let Some(s) = val.downcast_ref::<CelString>() {
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::StringValue(s.to_string())),
+        };
+    }
+    if let Some(i) = val.downcast_ref::<CelInt>() {
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::NumberValue(*i.inner() as f64)),
+        };
+    }
+    if let Some(u) = val.downcast_ref::<CelUInt>() {
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::NumberValue(*u.inner() as f64)),
+        };
+    }
+    if let Some(f) = val.downcast_ref::<CelDouble>() {
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::NumberValue(*f.inner())),
+        };
+    }
+    if let Some(b) = val.downcast_ref::<CelBool>() {
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::BoolValue(*b.inner())),
+        };
+    }
+    if let Some(list) = val.downcast_ref::<CelList>() {
+        let values = list.iter().map(|v| cel_val_to_prost(v.as_ref())).collect();
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::ListValue(
+                prost_types::ListValue { values },
+            )),
+        };
+    }
+    if let Some(map) = val.downcast_ref::<CelMap>() {
+        let mut fields = Struct::default();
+        for (key, value) in map.inner().iter() {
+            if let CelMapKey::String(k) = key {
+                fields
+                    .fields
+                    .insert(k.to_string(), cel_val_to_prost(value.as_ref()));
+            }
+        }
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::StructValue(fields)),
+        };
+    }
+    if let Some(cel_struct) = val.downcast_ref::<CelStruct>() {
+        let mut fields = Struct::default();
+        for (field_name, field_val) in cel_struct.field_values() {
+            fields
+                .fields
+                .insert(field_name, cel_val_to_prost(field_val.as_ref()));
+        }
+        return prost_types::Value {
+            kind: Some(prost_types::value::Kind::StructValue(fields)),
+        };
+    }
+
+    // Default to Null for unrecognized types
+    prost_types::Value {
+        kind: Some(prost_types::value::Kind::NullValue(0)),
+    }
+}
+
 fn cel_value_to_prost(value: cel::Value) -> prost_types::Value {
     match value {
         Value::Null => prost_types::Value {
@@ -134,6 +202,10 @@ fn cel_value_to_prost(value: cel::Value) -> prost_types::Value {
                     prost_types::ListValue { values },
                 )),
             }
+        }
+        Value::Struct(cel_struct) => {
+            // Delegate to cel_val_to_prost by passing the Arc<CelStruct> as &dyn Val
+            cel_val_to_prost(cel_struct.as_ref())
         }
         _ => prost_types::Value {
             kind: Some(prost_types::value::Kind::NullValue(0)),
@@ -569,6 +641,104 @@ mod tests {
         match prost_value.kind {
             Some(prost_types::value::Kind::StructValue(s)) => {
                 assert_eq!(s.fields.len(), 0);
+            }
+            _ => panic!("Expected StructValue"),
+        }
+    }
+
+    #[test]
+    fn test_cel_value_to_prost_struct() {
+        use std::borrow::Cow;
+        use std::sync::Arc;
+
+        // Create a CelStruct with some fields
+        let mut cel_struct = CelStruct::new("TestStruct".to_string());
+        cel_struct.add_field_value(
+            "name".to_string(),
+            Cow::Owned(Box::new(CelString::from("Alice")) as Box<dyn Val>),
+        );
+        cel_struct.add_field_value(
+            "age".to_string(),
+            Cow::Owned(Box::new(CelInt::from(30)) as Box<dyn Val>),
+        );
+        cel_struct.add_field_value(
+            "active".to_string(),
+            Cow::Owned(Box::new(CelBool::from(true)) as Box<dyn Val>),
+        );
+
+        let cel_value = Value::Struct(Arc::new(cel_struct));
+        let prost_value = cel_value_to_prost(cel_value);
+
+        match prost_value.kind {
+            Some(prost_types::value::Kind::StructValue(s)) => {
+                assert_eq!(s.fields.len(), 3);
+                assert_eq!(
+                    s.fields.get("name").unwrap().kind,
+                    Some(prost_types::value::Kind::StringValue("Alice".to_string()))
+                );
+                assert_eq!(
+                    s.fields.get("age").unwrap().kind,
+                    Some(prost_types::value::Kind::NumberValue(30.0))
+                );
+                assert_eq!(
+                    s.fields.get("active").unwrap().kind,
+                    Some(prost_types::value::Kind::BoolValue(true))
+                );
+            }
+            _ => panic!("Expected StructValue"),
+        }
+    }
+
+    #[test]
+    fn test_cel_value_to_prost_struct_with_nested_list() {
+        use std::borrow::Cow;
+        use std::sync::Arc;
+
+        // Create a nested list using Val types
+        let tags: Vec<Box<dyn Val>> = vec![
+            Box::new(CelString::from("admin")),
+            Box::new(CelString::from("moderator")),
+        ];
+        let cel_list = CelList::from(tags);
+
+        // Create a struct containing the list
+        let mut cel_struct = CelStruct::new("User".to_string());
+        cel_struct.add_field_value(
+            "username".to_string(),
+            Cow::Owned(Box::new(CelString::from("alice")) as Box<dyn Val>),
+        );
+        cel_struct.add_field_value(
+            "tags".to_string(),
+            Cow::Owned(Box::new(cel_list) as Box<dyn Val>),
+        );
+
+        let cel_value = Value::Struct(Arc::new(cel_struct));
+        let prost_value = cel_value_to_prost(cel_value);
+
+        match prost_value.kind {
+            Some(prost_types::value::Kind::StructValue(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert_eq!(
+                    s.fields.get("username").unwrap().kind,
+                    Some(prost_types::value::Kind::StringValue("alice".to_string()))
+                );
+
+                match &s.fields.get("tags").unwrap().kind {
+                    Some(prost_types::value::Kind::ListValue(list)) => {
+                        assert_eq!(list.values.len(), 2);
+                        assert_eq!(
+                            list.values[0].kind,
+                            Some(prost_types::value::Kind::StringValue("admin".to_string()))
+                        );
+                        assert_eq!(
+                            list.values[1].kind,
+                            Some(prost_types::value::Kind::StringValue(
+                                "moderator".to_string()
+                            ))
+                        );
+                    }
+                    _ => panic!("Expected ListValue for tags"),
+                }
             }
             _ => panic!("Expected StructValue"),
         }
