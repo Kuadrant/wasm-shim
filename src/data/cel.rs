@@ -700,6 +700,7 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
         ("filter_state".into(), ValueType::Map),
         ("connection.mtls".into(), ValueType::Bool),
         ("request.raw_body".into(), ValueType::Bytes),
+        ("metadata.filter_metadata.kuadrant_metadata".into(), ValueType::Struct),
     ])
 }
 
