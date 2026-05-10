@@ -41,6 +41,23 @@ impl AttributeResolver for ProxyWasmHost {
         }
     }
 
+    fn get_attribute_map_value(
+        &self,
+        map_type: proxy_wasm::types::MapType,
+        key: &str,
+    ) -> Result<Option<String>, AttributeError> {
+        debug!("Getting map value: `{:?}[{key}]`", map_type);
+        match hostcalls::get_map_value(map_type, key) {
+            Ok(value) => Ok(value),
+            Err(Status::BadArgument) => Err(AttributeError::NotAvailable(format!(
+                "Map `{map_type:?}` not available in current phase",
+            ))),
+            Err(err) => Err(AttributeError::Retrieval(format!(
+                "Error getting map value: {err:?}"
+            ))),
+        }
+    }
+
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError> {
         debug!("Setting property: `{}`", path);
         match hostcalls::set_property(path.tokens(), Some(value)) {

@@ -109,6 +109,15 @@ impl AttributeResolver for MockWasmHost {
         }
     }
 
+    fn get_attribute_map_value(
+        &self,
+        map_type: proxy_wasm::types::MapType,
+        key: &str,
+    ) -> Result<Option<String>, AttributeError> {
+        let map = self.get_attribute_map(map_type)?;
+        Ok(map.into_iter().find(|(k, _)| k == key).map(|(_, v)| v))
+    }
+
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError> {
         assert_eq!(
             path.tokens().len(),
