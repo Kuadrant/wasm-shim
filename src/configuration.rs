@@ -428,6 +428,34 @@ fn build_ratelimit_message_builder(
     )
 }
 
+fn build_descriptor_predicate(conditional_data: &[ConditionalData]) -> String {
+    if conditional_data.is_empty() {
+        return "true".to_string();
+    }
+    if conditional_data.iter().any(|cd| cd.predicates.is_empty()) {
+        return "true".to_string();
+    }
+
+    let block_predicates: Vec<String> = conditional_data
+        .iter()
+        .map(|cd| {
+            if cd.predicates.len() == 1 {
+                cd.predicates[0].clone()
+            } else {
+                let wrapped: Vec<String> =
+                    cd.predicates.iter().map(|p| format!("({})", p)).collect();
+                format!("({})", wrapped.join(" && "))
+            }
+        })
+        .collect();
+
+    if block_predicates.len() == 1 {
+        block_predicates[0].clone()
+    } else {
+        block_predicates.join(" || ")
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1285,5 +1313,85 @@ mod test {
         assert_eq!(escape_cel_string("with\\backslash"), r"with\\backslash");
         assert_eq!(escape_cel_string("with\nnewline"), r"with\nnewline");
         assert_eq!(escape_cel_string("with\ttab"), r"with\ttab");
+    }
+
+    #[test]
+    fn test_build_descriptor_predicate_empty() {
+        let conditional_data = vec![];
+        assert_eq!(build_descriptor_predicate(&conditional_data), "true");
+    }
+
+    #[test]
+    fn test_build_descriptor_predicate_unconditional() {
+        let conditional_data = vec![ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                item: DataType::Static(StaticItem {
+                    key: "limit".to_string(),
+                    value: "10".to_string(),
+                }),
+            }],
+        }];
+        assert_eq!(build_descriptor_predicate(&conditional_data), "true");
+    }
+
+    #[test]
+    fn test_build_descriptor_predicate_single_predicate() {
+        let conditional_data = vec![ConditionalData {
+            predicates: vec!["auth.identity.user == 'alice'".to_string()],
+            data: vec![],
+        }];
+        assert_eq!(
+            build_descriptor_predicate(&conditional_data),
+            "auth.identity.user == 'alice'"
+        );
+    }
+
+    #[test]
+    fn test_build_descriptor_predicate_multiple_predicates_single_block() {
+        let conditional_data = vec![ConditionalData {
+            predicates: vec![
+                "auth.identity.user == 'alice'".to_string(),
+                "request.method == 'POST'".to_string(),
+            ],
+            data: vec![],
+        }];
+        assert_eq!(
+            build_descriptor_predicate(&conditional_data),
+            "((auth.identity.user == 'alice') && (request.method == 'POST'))"
+        );
+    }
+
+    #[test]
+    fn test_build_descriptor_predicate_multiple_blocks() {
+        let conditional_data = vec![
+            ConditionalData {
+                predicates: vec!["auth.identity.role == 'admin'".to_string()],
+                data: vec![],
+            },
+            ConditionalData {
+                predicates: vec!["auth.identity.role == 'user'".to_string()],
+                data: vec![],
+            },
+        ];
+        assert_eq!(
+            build_descriptor_predicate(&conditional_data),
+            "auth.identity.role == 'admin' || auth.identity.role == 'user'"
+        );
+    }
+
+    #[test]
+    fn test_build_descriptor_predicate_mixed_conditional_unconditional() {
+        let conditional_data = vec![
+            ConditionalData {
+                predicates: vec!["auth.identity.role == 'admin'".to_string()],
+                data: vec![],
+            },
+            ConditionalData {
+                predicates: vec![],
+                data: vec![],
+            },
+        ];
+        assert_eq!(build_descriptor_predicate(&conditional_data), "true");
     }
 }
