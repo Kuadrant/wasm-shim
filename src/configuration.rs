@@ -342,7 +342,8 @@ fn build_ratelimit_entry_list_cel(cd: &ConditionalData) -> Option<String> {
     if cd.predicates.is_empty() {
         Some(entries_list)
     } else {
-        let predicate_cel = cd.predicates.join(" && ");
+        let wrapped: Vec<String> = cd.predicates.iter().map(|p| format!("({})", p)).collect();
+        let predicate_cel = wrapped.join(" && ");
         Some(format!("(({}) ? {} : [])", predicate_cel, entries_list))
     }
 }
@@ -516,6 +517,31 @@ fn build_ratelimit_on_reply(name: &str) -> Vec<TypedAction> {
             }),
         },
     ]
+}
+
+pub(crate) fn translate_legacy_ratelimit_to_typed(
+    action: &Action,
+    request_data: &[((String, String), String)],
+) -> TypedAction {
+    const RESPONSE_VAR: &str = "ratelimit_response";
+
+    let message_builder =
+        build_ratelimit_message_builder(&action.scope, &action.conditional_data, request_data);
+
+    let predicate = build_ratelimit_predicate(&action.predicates, &action.conditional_data);
+
+    let on_reply = build_ratelimit_on_reply(RESPONSE_VAR);
+
+    TypedAction {
+        predicate,
+        terminal: false,
+        operation: Operation::Grpc(GrpcOperation {
+            var: RESPONSE_VAR.to_string(),
+            service: action.service.clone(),
+            message_builder,
+            on_reply,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -1511,6 +1537,132 @@ mod test {
             Operation::Fail(fail_op) if
                 fail_op.log_message.contains("Unknown rate limit response code") &&
                 fail_op.log_message.contains("rate_limit")
+        ));
+    }
+
+    #[test]
+    fn test_translate_legacy_ratelimit_simple() {
+        let action = Action {
+            service: "limitador".to_string(),
+            scope: "my-ratelimit".to_string(),
+            predicates: vec![],
+            conditional_data: vec![],
+            sources: vec![],
+        };
+        let request_data = vec![];
+
+        let typed = translate_legacy_ratelimit_to_typed(&action, &request_data);
+
+        assert_eq!(typed.predicate, "true");
+        assert!(!typed.terminal);
+
+        assert!(matches!(&typed.operation,
+            Operation::Grpc(grpc_op) if
+                grpc_op.var == "ratelimit_response" &&
+                grpc_op.service == "limitador" &&
+                grpc_op.message_builder.contains(r#"domain: "my-ratelimit""#) &&
+                grpc_op.message_builder.contains("hits_addend: 1u") &&
+                grpc_op.on_reply.len() == 3
+        ));
+    }
+
+    #[test]
+    fn test_translate_legacy_ratelimit_with_conditional_data() {
+        let action = Action {
+            service: "limitador".to_string(),
+            scope: "rlp-A".to_string(),
+            predicates: vec![],
+            conditional_data: vec![ConditionalData {
+                predicates: vec!["auth.identity.user == 'alice'".to_string()],
+                data: vec![DataItem {
+                    item: DataType::Static(StaticItem {
+                        key: "tier".to_string(),
+                        value: "premium".to_string(),
+                    }),
+                }],
+            }],
+            sources: vec![],
+        };
+        let request_data = vec![];
+
+        let typed = translate_legacy_ratelimit_to_typed(&action, &request_data);
+
+        assert_eq!(typed.predicate, "auth.identity.user == 'alice'");
+
+        assert!(matches!(&typed.operation,
+            Operation::Grpc(grpc_op) if
+                grpc_op.message_builder.contains("auth.identity.user == 'alice'") &&
+                grpc_op.message_builder.contains(r#"key: "tier""#)
+        ));
+    }
+
+    #[test]
+    fn test_translate_legacy_ratelimit_with_request_data() {
+        let action = Action {
+            service: "limitador".to_string(),
+            scope: "rlp-B".to_string(),
+            predicates: vec![],
+            conditional_data: vec![],
+            sources: vec![],
+        };
+        let request_data = vec![(
+            ("metrics.labels".to_string(), "zone".to_string()),
+            r#""us-east""#.to_string(),
+        )];
+
+        let typed = translate_legacy_ratelimit_to_typed(&action, &request_data);
+
+        assert!(matches!(&typed.operation,
+            Operation::Grpc(grpc_op) if
+                grpc_op.message_builder.contains(r#"key: "zone""#) &&
+                grpc_op.message_builder.contains(r#""us-east""#)
+        ));
+    }
+
+    #[test]
+    fn test_translate_legacy_ratelimit_full() {
+        let action = Action {
+            service: "limitador".to_string(),
+            scope: "rlp-full".to_string(),
+            predicates: vec![],
+            conditional_data: vec![
+                ConditionalData {
+                    predicates: vec!["auth.identity.role == 'admin'".to_string()],
+                    data: vec![DataItem {
+                        item: DataType::Static(StaticItem {
+                            key: "tier".to_string(),
+                            value: "gold".to_string(),
+                        }),
+                    }],
+                },
+                ConditionalData {
+                    predicates: vec![],
+                    data: vec![DataItem {
+                        item: DataType::Expression(ExpressionItem {
+                            key: "method".to_string(),
+                            value: "request.method".to_string(),
+                        }),
+                    }],
+                },
+            ],
+            sources: vec![],
+        };
+        let request_data = vec![(
+            ("".to_string(), "env".to_string()),
+            r#""production""#.to_string(),
+        )];
+
+        let typed = translate_legacy_ratelimit_to_typed(&action, &request_data);
+
+        assert_eq!(typed.predicate, "true");
+
+        assert!(matches!(&typed.operation,
+            Operation::Grpc(grpc_op) if
+                grpc_op.message_builder.contains(r#"domain: "rlp-full""#) &&
+                grpc_op.message_builder.contains("auth.identity.role == 'admin'") &&
+                grpc_op.message_builder.contains(r#"key: "tier""#) &&
+                grpc_op.message_builder.contains(r#"key: "method""#) &&
+                grpc_op.message_builder.contains(r#"key: "env""#)
         ));
     }
 }
