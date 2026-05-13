@@ -488,6 +488,36 @@ fn build_ratelimit_predicate(
     }
 }
 
+fn build_ratelimit_on_reply(name: &str) -> Vec<TypedAction> {
+    vec![
+        TypedAction {
+            predicate: format!("{}.overall_code == 2", name),
+            terminal: true,
+            operation: Operation::Deny(DenyOperation {
+                deny_with: format!(
+                    r#"DenyResponse{{status: 429u, headers: {}.response_headers_to_add, body: "Too Many Requests\n"}}"#,
+                    name
+                ),
+            }),
+        },
+        TypedAction {
+            predicate: format!("{}.overall_code == 1", name),
+            terminal: false,
+            operation: Operation::Headers(HeadersOperation {
+                target: HeadersTarget::Response,
+                headers: format!("{}.response_headers_to_add", name),
+            }),
+        },
+        TypedAction {
+            predicate: format!("{}.overall_code != 1 && {}.overall_code != 2", name, name),
+            terminal: true,
+            operation: Operation::Fail(FailOperation {
+                log_message: format!("Unknown rate limit response code from {}", name),
+            }),
+        },
+    ]
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1425,5 +1455,62 @@ mod test {
             },
         ];
         assert_eq!(build_descriptor_predicate(&conditional_data), "true");
+    }
+
+    #[test]
+    fn test_build_ratelimit_on_reply_structure() {
+        let on_reply = build_ratelimit_on_reply("rl_response");
+
+        assert_eq!(on_reply.len(), 3);
+
+        assert_eq!(on_reply[0].predicate, "rl_response.overall_code == 2");
+        assert!(on_reply[0].terminal);
+        assert!(matches!(on_reply[0].operation, Operation::Deny(_)));
+
+        assert_eq!(on_reply[1].predicate, "rl_response.overall_code == 1");
+        assert!(!on_reply[1].terminal);
+        assert!(matches!(on_reply[1].operation, Operation::Headers(_)));
+
+        assert_eq!(
+            on_reply[2].predicate,
+            "rl_response.overall_code != 1 && rl_response.overall_code != 2"
+        );
+        assert!(on_reply[2].terminal);
+        assert!(matches!(on_reply[2].operation, Operation::Fail(_)));
+    }
+
+    #[test]
+    fn test_build_ratelimit_on_reply_deny_operation() {
+        let on_reply = build_ratelimit_on_reply("test_var");
+
+        assert!(matches!(&on_reply[0].operation,
+            Operation::Deny(deny_op) if
+                deny_op.deny_with.contains("DenyResponse") &&
+                deny_op.deny_with.contains("status: 429u") &&
+                deny_op.deny_with.contains("test_var.response_headers_to_add") &&
+                deny_op.deny_with.contains("Too Many Requests")
+        ));
+    }
+
+    #[test]
+    fn test_build_ratelimit_on_reply_headers_operation() {
+        let on_reply = build_ratelimit_on_reply("my_rl");
+
+        assert!(matches!(&on_reply[1].operation,
+            Operation::Headers(headers_op) if
+                matches!(headers_op.target, HeadersTarget::Response) &&
+                headers_op.headers == "my_rl.response_headers_to_add"
+        ));
+    }
+
+    #[test]
+    fn test_build_ratelimit_on_reply_fail_operation() {
+        let on_reply = build_ratelimit_on_reply("rate_limit");
+
+        assert!(matches!(&on_reply[2].operation,
+            Operation::Fail(fail_op) if
+                fail_op.log_message.contains("Unknown rate limit response code") &&
+                fail_op.log_message.contains("rate_limit")
+        ));
     }
 }
