@@ -271,6 +271,163 @@ impl Visitor<'_> for TimeoutVisitor {
     }
 }
 
+fn escape_cel_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+const RATELIMIT_KNOWN_ATTRS: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"];
+
+fn is_ratelimit_known_attr(item: &DataItem) -> bool {
+    let key = match &item.item {
+        DataType::Static(s) => s.key.as_str(),
+        DataType::Expression(e) => e.key.as_str(),
+    };
+    RATELIMIT_KNOWN_ATTRS.contains(&key)
+}
+
+fn find_ratelimit_known_attr_cel(
+    conditional_data: &[ConditionalData],
+    attr_key: &str,
+) -> Option<String> {
+    for cd in conditional_data {
+        for item in &cd.data {
+            match &item.item {
+                DataType::Static(s) if s.key == attr_key => {
+                    return Some(format!(r#""{}""#, escape_cel_string(&s.value)));
+                }
+                DataType::Expression(e) if e.key == attr_key => {
+                    return Some(e.value.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn build_ratelimit_descriptor_entry_cel(item: &DataItem) -> String {
+    let (key, value_cel) = match &item.item {
+        DataType::Static(s) => (
+            s.key.as_str(),
+            format!(r#""{}""#, escape_cel_string(&s.value)),
+        ),
+        DataType::Expression(e) => (e.key.as_str(), format!("string({})", e.value)),
+    };
+
+    format!(
+        r#"envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {{ key: "{}", value: {} }}"#,
+        escape_cel_string(key),
+        value_cel,
+    )
+}
+
+fn build_ratelimit_entry_list_cel(cd: &ConditionalData) -> Option<String> {
+    let entries: Vec<String> = cd
+        .data
+        .iter()
+        .filter(|item| !is_ratelimit_known_attr(item))
+        .map(build_ratelimit_descriptor_entry_cel)
+        .collect();
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    let entries_list = format!("[{}]", entries.join(", "));
+
+    if cd.predicates.is_empty() {
+        Some(entries_list)
+    } else {
+        let predicate_cel = cd.predicates.join(" && ");
+        Some(format!("(({}) ? {} : [])", predicate_cel, entries_list))
+    }
+}
+
+fn build_ratelimit_descriptors_cel(conditional_data: &[ConditionalData]) -> String {
+    let entry_parts: Vec<String> = conditional_data
+        .iter()
+        .filter_map(build_ratelimit_entry_list_cel)
+        .collect();
+
+    if entry_parts.is_empty() {
+        return "[]".to_string();
+    }
+
+    let combined_entries = entry_parts.join(" + ");
+    format!(
+        "[envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {{ entries: {} }}]",
+        combined_entries
+    )
+}
+
+fn build_ratelimit_message_builder(
+    scope: &str,
+    conditional_data: &[ConditionalData],
+    request_data: &[((String, String), String)],
+) -> String {
+    let domain_cel = find_ratelimit_known_attr_cel(conditional_data, "ratelimit.domain")
+        .unwrap_or_else(|| format!(r#""{}""#, escape_cel_string(scope)));
+
+    let hits_addend_cel = find_ratelimit_known_attr_cel(conditional_data, "ratelimit.hits_addend")
+        .unwrap_or_else(|| "1u".to_string());
+
+    let mut descriptors = vec![];
+
+    let cond_descriptors_cel = build_ratelimit_descriptors_cel(conditional_data);
+    if cond_descriptors_cel != "[]" {
+        descriptors.push(
+            cond_descriptors_cel
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_string(),
+        );
+    }
+
+    if !request_data.is_empty() {
+        let request_data_entries: Vec<String> = request_data
+            .iter()
+            .map(|((domain, field), value_expr)| {
+                let key = if domain.is_empty() || domain == "metrics.labels" {
+                    field.clone()
+                } else {
+                    format!("{}.{}", domain, field)
+                };
+                format!(
+                    r#"envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {{ key: "{}", value: {} }}"#,
+                    escape_cel_string(&key),
+                    value_expr
+                )
+            })
+            .collect();
+
+        if !request_data_entries.is_empty() {
+            descriptors.push(format!(
+                "envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {{ entries: [{}] }}",
+                request_data_entries.join(", ")
+            ));
+        }
+    }
+
+    let descriptors_cel = if descriptors.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", descriptors.join(", "))
+    };
+
+    format!(
+        r#"envoy.service.ratelimit.v3.RateLimitRequest {{
+    domain: {},
+    hits_addend: {},
+    descriptors: {}
+}}"#,
+        domain_cel, hits_addend_cel, descriptors_cel,
+    )
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -977,5 +1134,156 @@ mod test {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_build_ratelimit_message_builder_simple() {
+        let scope = "my-ratelimit";
+        let conditional_data = vec![];
+        let request_data = vec![];
+
+        let result = build_ratelimit_message_builder(scope, &conditional_data, &request_data);
+
+        assert!(result.contains(r#"domain: "my-ratelimit""#));
+        assert!(result.contains("hits_addend: 1u"));
+        assert!(result.contains("descriptors: []"));
+    }
+
+    #[test]
+    fn test_build_ratelimit_message_builder_with_custom_domain() {
+        let scope = "my-ratelimit";
+        let conditional_data = vec![ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                item: DataType::Static(StaticItem {
+                    key: "ratelimit.domain".to_string(),
+                    value: "custom-domain".to_string(),
+                }),
+            }],
+        }];
+        let request_data = vec![];
+
+        let result = build_ratelimit_message_builder(scope, &conditional_data, &request_data);
+
+        assert!(result.contains(r#"domain: "custom-domain""#));
+    }
+
+    #[test]
+    fn test_build_ratelimit_message_builder_with_hits_addend() {
+        let scope = "my-ratelimit";
+        let conditional_data = vec![ConditionalData {
+            predicates: vec![],
+            data: vec![DataItem {
+                item: DataType::Expression(ExpressionItem {
+                    key: "ratelimit.hits_addend".to_string(),
+                    value: "5u".to_string(),
+                }),
+            }],
+        }];
+        let request_data = vec![];
+
+        let result = build_ratelimit_message_builder(scope, &conditional_data, &request_data);
+
+        assert!(result.contains("hits_addend: 5u"));
+    }
+
+    #[test]
+    fn test_build_ratelimit_message_builder_with_conditional_data() {
+        let scope = "my-ratelimit";
+        let conditional_data = vec![ConditionalData {
+            predicates: vec!["auth.identity.user == 'alice'".to_string()],
+            data: vec![
+                DataItem {
+                    item: DataType::Static(StaticItem {
+                        key: "limit".to_string(),
+                        value: "10".to_string(),
+                    }),
+                },
+                DataItem {
+                    item: DataType::Expression(ExpressionItem {
+                        key: "username".to_string(),
+                        value: "auth.identity.user".to_string(),
+                    }),
+                },
+            ],
+        }];
+        let request_data = vec![];
+
+        let result = build_ratelimit_message_builder(scope, &conditional_data, &request_data);
+
+        assert!(result.contains("auth.identity.user == 'alice'"));
+        assert!(result.contains(r#"key: "limit""#));
+        assert!(result.contains(r#"value: "10""#));
+        assert!(result.contains(r#"key: "username""#));
+        assert!(result.contains("value: string(auth.identity.user)"));
+    }
+
+    #[test]
+    fn test_build_ratelimit_message_builder_with_request_data() {
+        let scope = "my-ratelimit";
+        let conditional_data = vec![];
+        let request_data = vec![
+            (
+                ("metrics.labels".to_string(), "user".to_string()),
+                "auth.identity.user".to_string(),
+            ),
+            (
+                ("metrics.labels".to_string(), "env".to_string()),
+                r#""production""#.to_string(),
+            ),
+        ];
+
+        let result = build_ratelimit_message_builder(scope, &conditional_data, &request_data);
+
+        assert!(result.contains(r#"key: "user""#));
+        assert!(result.contains("value: auth.identity.user"));
+        assert!(result.contains(r#"key: "env""#));
+        assert!(result.contains(r#"value: "production""#));
+    }
+
+    #[test]
+    fn test_build_ratelimit_message_builder_mixed() {
+        let scope = "my-ratelimit";
+        let conditional_data = vec![
+            ConditionalData {
+                predicates: vec!["auth.identity.role == 'admin'".to_string()],
+                data: vec![DataItem {
+                    item: DataType::Static(StaticItem {
+                        key: "tier".to_string(),
+                        value: "premium".to_string(),
+                    }),
+                }],
+            },
+            ConditionalData {
+                predicates: vec![],
+                data: vec![DataItem {
+                    item: DataType::Expression(ExpressionItem {
+                        key: "method".to_string(),
+                        value: "request.method".to_string(),
+                    }),
+                }],
+            },
+        ];
+        let request_data = vec![(
+            ("".to_string(), "zone".to_string()),
+            r#""us-east""#.to_string(),
+        )];
+
+        let result = build_ratelimit_message_builder(scope, &conditional_data, &request_data);
+
+        assert!(result.contains("descriptors:"));
+        assert!(result.contains("auth.identity.role == 'admin'"));
+        assert!(result.contains(r#"key: "tier""#));
+        assert!(result.contains(r#"key: "method""#));
+        assert!(result.contains(r#"key: "zone""#));
+    }
+
+    #[test]
+    fn test_escape_cel_string() {
+        assert_eq!(escape_cel_string("simple"), "simple");
+        assert_eq!(escape_cel_string("with\"quotes"), r#"with\"quotes"#);
+        assert_eq!(escape_cel_string("with\\backslash"), r"with\\backslash");
+        assert_eq!(escape_cel_string("with\nnewline"), r"with\nnewline");
+        assert_eq!(escape_cel_string("with\ttab"), r"with\ttab");
     }
 }
