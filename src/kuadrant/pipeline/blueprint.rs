@@ -283,8 +283,15 @@ impl Blueprint {
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {
+                        let span_label = match &action.service {
+                            //todo(@adam-cattermole): drop this in favour of method/service once other service types removed
+                            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
+                                "ratelimit"
+                            }
+                            _ => "dynamic",
+                        };
                         tasks.push(Box::new(TracingDecoratorTask::new(
-                            "dynamic",
+                            span_label,
                             task,
                             action.sources.clone(),
                         )));
