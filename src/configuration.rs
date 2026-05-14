@@ -456,6 +456,38 @@ fn build_descriptor_predicate(conditional_data: &[ConditionalData]) -> String {
     }
 }
 
+fn build_action_predicate(action_predicates: &[String]) -> String {
+    if action_predicates.is_empty() {
+        "true".to_string()
+    } else if action_predicates.len() == 1 {
+        action_predicates[0].clone()
+    } else {
+        let wrapped: Vec<String> = action_predicates
+            .iter()
+            .map(|p| format!("({})", p))
+            .collect();
+        wrapped.join(" && ")
+    }
+}
+
+fn build_ratelimit_predicate(
+    action_predicates: &[String],
+    conditional_data: &[ConditionalData],
+) -> String {
+    let action_pred = build_action_predicate(action_predicates);
+    let conditional_pred = build_descriptor_predicate(conditional_data);
+
+    if action_pred == "true" && conditional_pred == "true" {
+        "true".to_string()
+    } else if action_pred == "true" {
+        conditional_pred
+    } else if conditional_pred == "true" {
+        action_pred
+    } else {
+        format!("({}) && ({})", action_pred, conditional_pred)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
