@@ -1,3 +1,4 @@
+#[allow(deprecated)]
 use crate::configuration::{
     translate_legacy_ratelimit_to_typed, ActionConfig, PluginConfiguration,
 };
@@ -91,6 +92,7 @@ impl PipelineFactory {
                         ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_),
                     ) = services.get(&legacy.service)
                     {
+                        #[allow(deprecated)]
                         let typed = translate_legacy_ratelimit_to_typed(legacy, &request_data_raw);
                         *action = ActionConfig::Typed(typed);
                     }
