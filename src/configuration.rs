@@ -348,21 +348,21 @@ fn build_ratelimit_entry_list_cel(cd: &ConditionalData) -> Option<String> {
     }
 }
 
-fn build_ratelimit_descriptors_cel(conditional_data: &[ConditionalData]) -> String {
+fn build_ratelimit_descriptors_cel(conditional_data: &[ConditionalData]) -> Option<String> {
     let entry_parts: Vec<String> = conditional_data
         .iter()
         .filter_map(build_ratelimit_entry_list_cel)
         .collect();
 
     if entry_parts.is_empty() {
-        return "[]".to_string();
+        return None;
     }
 
     let combined_entries = entry_parts.join(" + ");
-    format!(
-        "[envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {{ entries: {} }}]",
+    Some(format!(
+        "envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {{ entries: {} }}",
         combined_entries
-    )
+    ))
 }
 
 fn build_ratelimit_message_builder(
@@ -378,14 +378,8 @@ fn build_ratelimit_message_builder(
 
     let mut descriptors = vec![];
 
-    let cond_descriptors_cel = build_ratelimit_descriptors_cel(conditional_data);
-    if cond_descriptors_cel != "[]" {
-        descriptors.push(
-            cond_descriptors_cel
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .to_string(),
-        );
+    if let Some(desc) = build_ratelimit_descriptors_cel(conditional_data) {
+        descriptors.push(desc);
     }
 
     if !request_data.is_empty() {
