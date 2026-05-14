@@ -119,7 +119,7 @@ fn it_fails_on_first_action_grpc_call() {
         )
         .expect_log(
             Some(LogLevel::Error),
-            Some("Failed to dispatch rate limit: Failed to dispatch gRPC call: ParseFailure"),
+            Some("Failed to dispatch dynamic service: Failed to dispatch gRPC call: ParseFailure"),
         )
         .expect_increment_metric(Some(6), Some(1))
         .expect_increment_metric(Some(5), Some(1))
@@ -289,7 +289,7 @@ fn it_fails_on_second_action_grpc_call() {
         )
         .expect_log(
             Some(LogLevel::Error),
-            Some("Failed to dispatch rate limit: Failed to dispatch gRPC call: ParseFailure"),
+            Some("Failed to dispatch dynamic service: Failed to dispatch gRPC call: ParseFailure"),
         )
         .expect_increment_metric(Some(6), Some(1))
         .expect_increment_metric(Some(5), Some(1))
