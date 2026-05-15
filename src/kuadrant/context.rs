@@ -20,6 +20,8 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Vec<RequestData>>,
+    request_body_size: usize,
+    request_end_of_stream: bool,
     response_body_size: usize,
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
@@ -42,6 +44,8 @@ impl ReqRespCtx {
             backend,
             cache: Arc::new(AttributeCache::new()),
             request_data: None,
+            request_body_size: 0,
+            request_end_of_stream: false,
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
@@ -102,6 +106,11 @@ impl ReqRespCtx {
 
     pub fn set_hostname(&mut self, hostname: String) {
         self.tracing.hostname = Some(hostname);
+    }
+
+    pub fn set_current_request_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
+        self.request_body_size = body_size;
+        self.request_end_of_stream = end_of_stream;
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
@@ -412,6 +421,7 @@ impl ReqRespCtx {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_request_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
         self.request_body_values.insert(key.into(), value.into());
     }
