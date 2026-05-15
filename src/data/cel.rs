@@ -102,6 +102,7 @@ pub(crate) mod errors {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
+    request_body_values: Vec<String>,
     response_body_values: Vec<String>,
     expression: CelExpression,
     extended: bool,
@@ -150,10 +151,12 @@ impl Expression {
             .parse(expression)?;
 
         let mut props = Vec::with_capacity(5);
+        let mut request_props = Vec::with_capacity(1);
         let mut response_props = Vec::with_capacity(1);
         properties(
             &expression,
             &mut props,
+            &mut request_props,
             &mut response_props,
             &mut Vec::default(),
         );
@@ -182,6 +185,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
+            request_body_values: request_props,
             response_body_values: response_props,
             expression,
             extended,
@@ -241,20 +245,39 @@ impl Expression {
             cel_ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
         }
 
-        let mut response_json_map = HashMap::new();
-        for field_key in &self.response_body_values {
-            match req_ctx.get_body_value(field_key) {
-                Some(value) => {
-                    response_json_map.insert(field_key.clone(), value.clone());
+        {
+            let mut response_json_map = HashMap::new();
+            for field_key in &self.response_body_values {
+                match req_ctx.get_response_body_value(field_key) {
+                    Some(value) => {
+                        response_json_map.insert(field_key.clone(), value.clone());
+                    }
+                    None => return Ok(AttributeState::Pending),
                 }
-                None => return Ok(AttributeState::Pending),
             }
+            cel_ctx.add_variable_from_value(
+                RESPONSE_BODY_JSON_DATA,
+                Value::Map(response_json_map.into()),
+            );
+            cel_ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
         }
-        cel_ctx.add_variable_from_value(
-            RESPONSE_BODY_JSON_DATA,
-            Value::Map(response_json_map.into()),
-        );
-        cel_ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
+
+        {
+            let mut request_json_map = HashMap::new();
+            for field_key in &self.request_body_values {
+                match req_ctx.get_request_body_value(field_key) {
+                    Some(value) => {
+                        request_json_map.insert(field_key.clone(), value.clone());
+                    }
+                    None => return Ok(AttributeState::Pending),
+                }
+            }
+            cel_ctx.add_variable_from_value(
+                REQUEST_BODY_JSON_DATA,
+                Value::Map(request_json_map.into()),
+            );
+            cel_ctx.add_function(REQUEST_BODY_JSON_FN, request_body_json);
+        }
 
         let result = Value::resolve(&self.expression, cel_ctx).map_err(CelError::from)?;
         Ok(AttributeState::Available(result))
@@ -308,6 +331,9 @@ impl Expression {
 const RESPONSE_BODY_JSON_DATA: &str = "@responseBodyJSON";
 const RESPONSE_BODY_JSON_FN: &str = "responseBodyJSON";
 
+const REQUEST_BODY_JSON_DATA: &str = "@requestBodyJSON";
+const REQUEST_BODY_JSON_FN: &str = "requestBodyJSON";
+
 pub fn response_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
     let key: Result<Key, Value> = arg.try_into();
     match key {
@@ -329,6 +355,36 @@ pub fn response_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
             None => Err(ExecutionError::FunctionError {
                 function: RESPONSE_BODY_JSON_FN.to_string(),
                 message: format!("Variable {} not found", RESPONSE_BODY_JSON_DATA),
+            }),
+        },
+        Err(e) => Err(ExecutionError::UnexpectedType {
+            got: format!("{e:?}"),
+            want: "Key".to_string(),
+        }),
+    }
+}
+
+pub fn request_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
+    let key: Result<Key, Value> = arg.try_into();
+    match key {
+        Ok(key) => match ftx.ptx.get_variable(REQUEST_BODY_JSON_DATA) {
+            Some(var) => match Value::try_from(var.as_ref()) {
+                Ok(Value::Map(map)) => match map.get(&key) {
+                    None => Ok(Value::Null),
+                    Some(value) => Ok(value.clone()),
+                },
+                Ok(_) => Err(ExecutionError::FunctionError {
+                    function: REQUEST_BODY_JSON_FN.to_string(),
+                    message: "Bad internal state!".to_string(),
+                }),
+                Err(_) => Err(ExecutionError::FunctionError {
+                    function: REQUEST_BODY_JSON_FN.to_string(),
+                    message: "Failed to convert variable to Value".to_string(),
+                }),
+            },
+            None => Err(ExecutionError::FunctionError {
+                function: REQUEST_BODY_JSON_FN.to_string(),
+                message: format!("Variable {} not found", REQUEST_BODY_JSON_DATA),
             }),
         },
         Err(e) => Err(ExecutionError::UnexpectedType {
@@ -725,29 +781,39 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
 fn properties<'e>(
     ided_exp: &'e IdedExpr,
     all: &mut Vec<Vec<&'e str>>,
+    request_props: &mut Vec<String>,
     response_props: &mut Vec<String>,
     path: &mut Vec<&'e str>,
 ) {
     match &ided_exp.expr {
         Expr::Call(call) => {
-            if call.target.is_none() && call.func_name == "responseBodyJSON" && call.args.len() == 1
+            if call.target.is_none()
+                && call.func_name == RESPONSE_BODY_JSON_FN
+                && call.args.len() == 1
             {
                 if let Expr::Literal(LiteralValue::String(prop)) = &call.args[0].expr {
                     response_props.push(prop.to_string());
                 }
+            } else if call.target.is_none()
+                && call.func_name == REQUEST_BODY_JSON_FN
+                && call.args.len() == 1
+            {
+                if let Expr::Literal(LiteralValue::String(prop)) = &call.args[0].expr {
+                    request_props.push(prop.to_string());
+                }
             }
             if let Some(target) = &call.target {
-                properties(target, all, response_props, path);
+                properties(target, all, request_props, response_props, path);
             } else {
                 path.clear();
             }
             for arg in &call.args {
-                properties(arg, all, response_props, path);
+                properties(arg, all, request_props, response_props, path);
             }
         }
         Expr::Select(select) => {
             path.insert(0, select.field.as_str());
-            properties(&select.operand, all, response_props, path);
+            properties(&select.operand, all, request_props, response_props, path);
         }
         Expr::Ident(name) => {
             if !path.is_empty() {
@@ -758,18 +824,18 @@ fn properties<'e>(
         }
         Expr::List(list) => {
             for elem in &list.elements {
-                properties(elem, all, response_props, path);
+                properties(elem, all, request_props, response_props, path);
             }
         }
         Expr::Map(map) => {
             for entry in &map.entries {
                 match &entry.expr {
                     EntryExpr::MapEntry(map_entry) => {
-                        properties(&map_entry.key, all, response_props, path);
-                        properties(&map_entry.value, all, response_props, path);
+                        properties(&map_entry.key, all, request_props, response_props, path);
+                        properties(&map_entry.value, all, request_props, response_props, path);
                     }
                     EntryExpr::StructField(field) => {
-                        properties(&field.value, all, response_props, path);
+                        properties(&field.value, all, request_props, response_props, path);
                     }
                 }
             }
@@ -777,16 +843,16 @@ fn properties<'e>(
         Expr::Struct(struct_expr) => {
             for entry in &struct_expr.entries {
                 if let EntryExpr::StructField(field) = &entry.expr {
-                    properties(&field.value, all, response_props, path);
+                    properties(&field.value, all, request_props, response_props, path);
                 }
             }
         }
         Expr::Comprehension(comp) => {
-            properties(&comp.iter_range, all, response_props, path);
-            properties(&comp.accu_init, all, response_props, path);
-            properties(&comp.loop_cond, all, response_props, path);
-            properties(&comp.loop_step, all, response_props, path);
-            properties(&comp.result, all, response_props, path);
+            properties(&comp.iter_range, all, request_props, response_props, path);
+            properties(&comp.accu_init, all, request_props, response_props, path);
+            properties(&comp.loop_cond, all, request_props, response_props, path);
+            properties(&comp.loop_step, all, request_props, response_props, path);
+            properties(&comp.result, all, request_props, response_props, path);
         }
         Expr::Literal(_) | Expr::Unspecified => {}
     }
@@ -1010,6 +1076,15 @@ mod tests {
     }
 
     #[test]
+    fn expressions_captures_request_fields() {
+        let value = Expression::new(
+            "auth.identity.anonymous && auth.identity != null && requestBodyJSON('foo.bar') > 3",
+        )
+        .expect("This is valid CEL!");
+        assert_eq!(value.request_body_values, vec!["foo.bar".to_string()]);
+    }
+
+    #[test]
     fn expressions_to_json_resolve() {
         // Test boolean value
         let mock_host = MockWasmHost::new().with_property(
@@ -1164,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_expressions_share_body_values_from_context() {
+    fn multiple_expressions_share_response_body_values_from_context() {
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.set_response_body_value("tokens", 100);
@@ -1179,6 +1254,54 @@ mod tests {
             "responseBodyJSON('tokens') > 0 && responseBodyJSON('model') == 'gpt-4'",
         )
         .unwrap();
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr2.eval(&ctx).unwrap()
+        );
+    }
+
+    #[test]
+    fn request_body_json() {
+        let expr = Expression::new("requestBodyJSON('bar') == 42").unwrap();
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_request_body_value("bar", 42);
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr.eval(&ctx).unwrap()
+        );
+    }
+
+    #[test]
+    fn request_body_json_returns_pending_when_not_set() {
+        let expr = Expression::new("requestBodyJSON('bar') == 42").unwrap();
+        let mock_host = MockWasmHost::new();
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+
+        let expr =
+            Expression::new("requestBodyJSON('foo') + requestBodyJSON('bar') == 100").unwrap();
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_request_body_value("foo", 58);
+        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+    }
+
+    #[test]
+    fn multiple_expressions_share_request_body_values_from_context() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.set_request_body_value("tokens", 100);
+        ctx.set_request_body_value("model", "gpt-4");
+
+        let expr1 = Expression::new("requestBodyJSON('tokens') > 50").unwrap();
+        assert_eq!(
+            AttributeState::Available(Value::Bool(true)),
+            expr1.eval(&ctx).unwrap()
+        );
+        let expr2 =
+            Expression::new("requestBodyJSON('tokens') > 0 && requestBodyJSON('model') == 'gpt-4'")
+                .unwrap();
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
             expr2.eval(&ctx).unwrap()
