@@ -62,18 +62,18 @@ impl Action {
         let mut fields = Vec::new();
 
         for predicate in &self.predicates {
-            fields.extend(predicate.body_values().iter().cloned());
+            fields.extend(predicate.response_body_values().iter().cloned());
         }
         for data in &self.conditional_data {
             for predicate in &data.predicates {
-                fields.extend(predicate.body_values().iter().cloned());
+                fields.extend(predicate.response_body_values().iter().cloned());
             }
             for item in &data.data {
-                fields.extend(item.value.body_values().iter().cloned());
+                fields.extend(item.value.response_body_values().iter().cloned());
             }
         }
         for (_, expr) in request_data {
-            fields.extend(expr.body_values().iter().cloned());
+            fields.extend(expr.response_body_values().iter().cloned());
         }
 
         fields.dedup();
@@ -258,7 +258,7 @@ impl Blueprint {
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
 
-                    tasks.push(Box::new(TokenUsageTask::with_expected_fields(
+                    tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
                         action.collect_body_values(request_data),
                     )));
 

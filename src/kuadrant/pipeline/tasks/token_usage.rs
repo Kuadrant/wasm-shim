@@ -10,19 +10,19 @@ mod event_parser;
 
 pub struct TokenUsageTask {
     strategy: Option<Box<dyn ExtractionStrategy>>,
-    expected_fields: Vec<String>,
+    expected_response_fields: Vec<String>,
 }
 
 impl TokenUsageTask {
     #[cfg(test)]
     pub fn new() -> Self {
-        Self::with_expected_fields(Vec::new())
+        Self::with_expected_response_fields(Vec::new())
     }
 
-    pub fn with_expected_fields(expected_fields: Vec<String>) -> Self {
+    pub fn with_expected_response_fields(expected_response_fields: Vec<String>) -> Self {
         Self {
             strategy: None,
-            expected_fields,
+            expected_response_fields,
         }
     }
 }
@@ -31,7 +31,7 @@ impl From<Box<Self>> for TokenUsageTask {
     fn from(value: Box<Self>) -> Self {
         Self {
             strategy: value.strategy,
-            expected_fields: value.expected_fields,
+            expected_response_fields: value.expected_response_fields,
         }
     }
 }
@@ -81,20 +81,20 @@ impl Task for TokenUsageTask {
         }
 
         if ctx.is_end_of_stream() {
-            for field in &task.expected_fields {
+            for field in &task.expected_response_fields {
                 if let Some(json_value) = strategy.extract_property(field) {
                     match json_value {
-                        Value::Bool(b) => ctx.set_body_value(field, b),
+                        Value::Bool(b) => ctx.set_response_body_value(field, b),
                         Value::Number(n) => {
                             if let Some(u) = n.as_u64() {
-                                ctx.set_body_value(field, u);
+                                ctx.set_response_body_value(field, u);
                             } else if let Some(i) = n.as_i64() {
-                                ctx.set_body_value(field, i);
+                                ctx.set_response_body_value(field, i);
                             } else if let Some(f) = n.as_f64() {
-                                ctx.set_body_value(field, f);
+                                ctx.set_response_body_value(field, f);
                             }
                         }
-                        Value::String(s) => ctx.set_body_value(field, s),
+                        Value::String(s) => ctx.set_response_body_value(field, s),
                         Value::Null | Value::Array(_) | Value::Object(_) => {
                             warn!("Unsupported json value type: {:?}", json_value);
                         }

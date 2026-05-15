@@ -26,7 +26,7 @@ pub struct ReqRespCtx {
     grpc_response_data: Option<(u32, usize)>,
     tracing: TracingContext,
     tracker: Tracker,
-    body_values: HashMap<String, Value>,
+    response_body_values: HashMap<String, Value>,
 }
 
 impl Default for ReqRespCtx {
@@ -46,7 +46,7 @@ impl ReqRespCtx {
             grpc_response_data: None,
             tracing: TracingContext::default(),
             tracker: Tracker::default(),
-            body_values: HashMap::new(),
+            response_body_values: HashMap::new(),
         }
     }
 
@@ -410,12 +410,12 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn set_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
-        self.body_values.insert(key.into(), value.into());
+    pub fn set_response_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        self.response_body_values.insert(key.into(), value.into());
     }
 
-    pub fn get_body_value(&self, key: &str) -> Option<&Value> {
-        self.body_values.get(key)
+    pub fn get_response_body_value(&self, key: &str) -> Option<&Value> {
+        self.response_body_values.get(key)
     }
 }
 

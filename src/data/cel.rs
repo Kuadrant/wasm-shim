@@ -102,7 +102,7 @@ pub(crate) mod errors {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
-    body_values: Vec<String>,
+    response_body_values: Vec<String>,
     expression: CelExpression,
     extended: bool,
     needs_grpc: bool,
@@ -182,7 +182,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
-            body_values: response_props,
+            response_body_values: response_props,
             expression,
             extended,
             needs_grpc,
@@ -242,7 +242,7 @@ impl Expression {
         }
 
         let mut response_json_map = HashMap::new();
-        for field_key in &self.body_values {
+        for field_key in &self.response_body_values {
             match req_ctx.get_body_value(field_key) {
                 Some(value) => {
                     response_json_map.insert(field_key.clone(), value.clone());
@@ -269,8 +269,8 @@ impl Expression {
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
 
-    pub fn body_values(&self) -> &[String] {
-        &self.body_values
+    pub fn response_body_values(&self) -> &[String] {
+        &self.response_body_values
     }
 
     fn resolve_grpc(&self, req_ctx: &ReqRespCtx) -> Option<Value> {
@@ -471,8 +471,8 @@ impl Predicate {
         }
     }
 
-    pub fn body_values(&self) -> &[String] {
-        self.expression.body_values()
+    pub fn response_body_values(&self) -> &[String] {
+        self.expression.response_body_values()
     }
 }
 
@@ -1006,7 +1006,7 @@ mod tests {
             "auth.identity.anonymous && auth.identity != null && responseBodyJSON('foo.bar') > 3",
         )
         .expect("This is valid CEL!");
-        assert_eq!(value.body_values, vec!["foo.bar".to_string()]);
+        assert_eq!(value.response_body_values, vec!["foo.bar".to_string()]);
     }
 
     #[test]
@@ -1141,7 +1141,7 @@ mod tests {
         let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_body_value("bar", 42);
+        ctx.set_response_body_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
             expr.eval(&ctx).unwrap()
@@ -1159,7 +1159,7 @@ mod tests {
             Expression::new("responseBodyJSON('foo') + responseBodyJSON('bar') == 100").unwrap();
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_body_value("foo", 58);
+        ctx.set_response_body_value("foo", 58);
         assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
     }
 
@@ -1167,8 +1167,8 @@ mod tests {
     fn multiple_expressions_share_body_values_from_context() {
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_body_value("tokens", 100);
-        ctx.set_body_value("model", "gpt-4");
+        ctx.set_response_body_value("tokens", 100);
+        ctx.set_response_body_value("model", "gpt-4");
 
         let expr1 = Expression::new("responseBodyJSON('tokens') > 50").unwrap();
         assert_eq!(
