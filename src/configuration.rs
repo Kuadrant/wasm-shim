@@ -10,6 +10,8 @@ use std::time::Duration;
 
 mod legacy_translation;
 #[allow(deprecated)]
+pub(crate) use legacy_translation::auth::translate_legacy_auth_to_typed;
+#[allow(deprecated)]
 pub(crate) use legacy_translation::ratelimit::translate_legacy_ratelimit_to_typed;
 
 #[derive(Deserialize, Debug, Clone)]
