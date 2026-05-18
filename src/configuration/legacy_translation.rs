@@ -1,6 +1,6 @@
 use super::{
     Action, ConditionalData, DataItem, DataType, DenyOperation, FailOperation, GrpcOperation,
-    HeadersOperation, HeadersTarget, Operation, TypedAction,
+    HeadersOperation, HeadersTarget, Operation, StoreOperation, TypedAction,
 };
 
 fn escape_cel_string(s: &str) -> String {
@@ -664,6 +664,65 @@ pub(super) mod auth {
         )
     }
 
+    fn build_auth_on_reply(name: &str) -> Vec<TypedAction> {
+        vec![
+            TypedAction {
+                predicate: format!("has({}.denied_response)", name),
+                terminal: true,
+                operation: Operation::Deny(DenyOperation {
+                    deny_with: format!(
+                        r#"DenyResponse{{status: ({name}.denied_response.status.code != 0) ? uint({name}.denied_response.status.code) : 403u, headers: {name}.denied_response.headers, body: {name}.denied_response.body}}"#,
+                        name = name
+                    ),
+                }),
+            },
+            TypedAction {
+                predicate: format!(
+                    "has({name}.ok_response) && (\
+                     {name}.ok_response.response_headers_to_add.size() > 0 || \
+                     {name}.ok_response.headers_to_remove.size() > 0 || \
+                     {name}.ok_response.query_parameters_to_set.size() > 0 || \
+                     {name}.ok_response.query_parameters_to_remove.size() > 0)",
+                    name = name
+                ),
+                terminal: true,
+                operation: Operation::Fail(FailOperation {
+                    log_message: "Unsupported field in OkHttpResponse".to_string(),
+                }),
+            },
+            TypedAction {
+                predicate: format!(
+                    "has({}.ok_response) && has({}.dynamic_metadata)",
+                    name, name
+                ),
+                terminal: false,
+                operation: Operation::Store(StoreOperation {
+                    path: "auth".to_string(),
+                    value: format!("{}.dynamic_metadata", name),
+                    export_to_host: true,
+                }),
+            },
+            TypedAction {
+                predicate: format!("has({}.ok_response)", name),
+                terminal: false,
+                operation: Operation::Headers(HeadersOperation {
+                    target: HeadersTarget::Request,
+                    headers: format!("{}.ok_response.headers", name),
+                }),
+            },
+            TypedAction {
+                predicate: format!(
+                    "!has({}.denied_response) && !has({}.ok_response)",
+                    name, name
+                ),
+                terminal: true,
+                operation: Operation::Fail(FailOperation {
+                    log_message: format!("Auth response contained no http_response from {}", name),
+                }),
+            },
+        ]
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -826,6 +885,104 @@ pub(super) mod auth {
   }
 }"#;
             assert_eq!(message, expected);
+        }
+
+        #[test]
+        fn test_build_auth_on_reply_structure() {
+            let on_reply = build_auth_on_reply("auth_response");
+
+            assert_eq!(on_reply.len(), 5);
+
+            assert_eq!(on_reply[0].predicate, "has(auth_response.denied_response)");
+            assert!(on_reply[0].terminal);
+            assert!(matches!(on_reply[0].operation, Operation::Deny(_)));
+
+            assert_eq!(
+                on_reply[1].predicate,
+                "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)"
+            );
+            assert!(on_reply[1].terminal);
+            assert!(matches!(on_reply[1].operation, Operation::Fail(_)));
+
+            assert_eq!(
+                on_reply[2].predicate,
+                "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)"
+            );
+            assert!(!on_reply[2].terminal);
+            assert!(matches!(on_reply[2].operation, Operation::Store(_)));
+
+            assert_eq!(on_reply[3].predicate, "has(auth_response.ok_response)");
+            assert!(!on_reply[3].terminal);
+            assert!(matches!(on_reply[3].operation, Operation::Headers(_)));
+
+            assert_eq!(
+                on_reply[4].predicate,
+                "!has(auth_response.denied_response) && !has(auth_response.ok_response)"
+            );
+            assert!(on_reply[4].terminal);
+            assert!(matches!(on_reply[4].operation, Operation::Fail(_)));
+        }
+
+        #[test]
+        fn test_build_auth_on_reply_store_metadata() {
+            let on_reply = build_auth_on_reply("test_var");
+
+            assert!(matches!(&on_reply[2].operation,
+                Operation::Store(store_op) if
+                    store_op.path == "auth" &&
+                    store_op.value == "test_var.dynamic_metadata"
+            ));
+        }
+
+        #[test]
+        fn test_build_auth_on_reply_unsupported_fields_validation() {
+            let on_reply = build_auth_on_reply("resp");
+
+            assert!(matches!(&on_reply[1].operation,
+                Operation::Fail(fail_op) if
+                    fail_op.log_message == "Unsupported field in OkHttpResponse"
+            ));
+
+            assert_eq!(
+                on_reply[1].predicate,
+                "has(resp.ok_response) && (resp.ok_response.response_headers_to_add.size() > 0 || resp.ok_response.headers_to_remove.size() > 0 || resp.ok_response.query_parameters_to_set.size() > 0 || resp.ok_response.query_parameters_to_remove.size() > 0)"
+            );
+        }
+
+        #[test]
+        fn test_build_auth_on_reply_denied_response() {
+            let on_reply = build_auth_on_reply("my_auth");
+
+            assert!(matches!(&on_reply[0].operation,
+                Operation::Deny(deny_op) if
+                    deny_op.deny_with == r#"DenyResponse{status: (my_auth.denied_response.status.code != 0) ? uint(my_auth.denied_response.status.code) : 403u, headers: my_auth.denied_response.headers, body: my_auth.denied_response.body}"#
+            ));
+        }
+
+        #[test]
+        fn test_build_auth_on_reply_ok_response_headers() {
+            let on_reply = build_auth_on_reply("check_resp");
+
+            assert!(matches!(&on_reply[3].operation,
+                Operation::Headers(headers_op) if
+                    matches!(headers_op.target, HeadersTarget::Request) &&
+                    headers_op.headers == "check_resp.ok_response.headers"
+            ));
+        }
+
+        #[test]
+        fn test_build_auth_on_reply_fallback_failure() {
+            let on_reply = build_auth_on_reply("auth_result");
+
+            assert!(matches!(&on_reply[4].operation,
+                Operation::Fail(fail_op) if
+                    fail_op.log_message == "Auth response contained no http_response from auth_result"
+            ));
+
+            assert_eq!(
+                on_reply[4].predicate,
+                "!has(auth_result.denied_response) && !has(auth_result.ok_response)"
+            );
         }
     }
 }
