@@ -389,10 +389,7 @@ pub(super) mod ratelimit {
 
             assert!(matches!(&on_reply[0].operation,
                 Operation::Deny(deny_op) if
-                    deny_op.deny_with.contains("DenyResponse") &&
-                    deny_op.deny_with.contains("status: 429u") &&
-                    deny_op.deny_with.contains("test_var.response_headers_to_add") &&
-                    deny_op.deny_with.contains("Too Many Requests")
+                    deny_op.deny_with == r#"DenyResponse{status: 429u, headers: test_var.response_headers_to_add, body: "Too Many Requests\n"}"#
             ));
         }
 
@@ -413,8 +410,7 @@ pub(super) mod ratelimit {
 
             assert!(matches!(&on_reply[2].operation,
                 Operation::Fail(fail_op) if
-                    fail_op.log_message.contains("Unknown rate limit response code") &&
-                    fail_op.log_message.contains("rate_limit")
+                    fail_op.log_message == "Unknown rate limit response code from rate_limit"
             ));
         }
 
@@ -438,7 +434,11 @@ pub(super) mod ratelimit {
                 Operation::Grpc(grpc_op) if
                     grpc_op.var == "ratelimit_response" &&
                     grpc_op.service == "limitador" &&
-                    grpc_op.message_builder.contains(r#"domain: "my-ratelimit""#) &&
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "my-ratelimit",
+    hits_addend: 1u,
+    descriptors: []
+}"# &&
                     grpc_op.on_reply.len() == 3
             ));
         }
@@ -465,11 +465,14 @@ pub(super) mod ratelimit {
             let typed = translate_legacy_ratelimit_to_typed(&action, &request_data);
 
             assert_eq!(typed.predicate, "auth.identity.user == 'alice'");
+
             assert!(matches!(&typed.operation,
                 Operation::Grpc(grpc_op) if
-                    grpc_op.message_builder.contains("auth.identity.user == 'alice'") &&
-                    grpc_op.message_builder.contains(r#"key: "tier""#) &&
-                    grpc_op.message_builder.contains(r#"value: "gold""#)
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "my-ratelimit",
+    hits_addend: 1u,
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.user == 'alice') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "tier", value: "gold" }] : []) }]
+}"#
             ));
         }
 
@@ -491,8 +494,11 @@ pub(super) mod ratelimit {
 
             assert!(matches!(&typed.operation,
                 Operation::Grpc(grpc_op) if
-                    grpc_op.message_builder.contains(r#"key: "env""#) &&
-                    grpc_op.message_builder.contains(r#""production""#)
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "default",
+    hits_addend: 1u,
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: "production" }] }]
+}"#
             ));
         }
 
@@ -535,11 +541,11 @@ pub(super) mod ratelimit {
 
             assert!(matches!(&typed.operation,
                 Operation::Grpc(grpc_op) if
-                    grpc_op.message_builder.contains(r#"domain: "rlp-full""#) &&
-                    grpc_op.message_builder.contains("auth.identity.role == 'admin'") &&
-                    grpc_op.message_builder.contains(r#"key: "tier""#) &&
-                    grpc_op.message_builder.contains(r#"key: "method""#) &&
-                    grpc_op.message_builder.contains(r#"key: "env""#)
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "rlp-full",
+    hits_addend: 1u,
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.role == 'admin') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "tier", value: "gold" }] : []) + [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "method", value: string(request.method) }] }, envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: "production" }] }]
+}"#
             ));
         }
     }
