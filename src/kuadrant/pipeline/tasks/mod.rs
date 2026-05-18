@@ -16,7 +16,7 @@ pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
-pub use store_data::StoreDataTask;
+pub use store_data::StoreTask;
 pub use token_usage::TokenUsageTask;
 use tracing::debug;
 pub use tracing_decorator::TracingDecoratorTask;

@@ -3,8 +3,8 @@ use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Headers;
 use crate::envoy::{check_response, CheckResponse, HeaderValueOption};
 use crate::kuadrant::pipeline::tasks::{
-    HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, SendReplyTask, StoreDataTask,
-    Task, TaskOutcome,
+    HeaderOperation, HeadersType, ModifyHeadersTask, PendingTask, SendReplyTask, StoreTask, Task,
+    TaskOutcome,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
@@ -170,11 +170,12 @@ impl Task for AuthTask {
 fn process_auth_response(response: CheckResponse) -> TaskOutcome {
     let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
-    // Create store task if dynamic metadata present
+    // Create store tasks if dynamic metadata present
     if let Some(ref dynamic_metadata) = response.dynamic_metadata {
         let data = process_metadata(dynamic_metadata, "auth".to_string());
-        if !data.is_empty() {
-            tasks.push(Box::new(StoreDataTask::new(data)));
+        for (path, bytes) in data {
+            let s = String::from_utf8_lossy(&bytes).to_string();
+            tasks.push(Box::new(StoreTask::new(path, cel::Value::String(s.into()))));
         }
     }
 
