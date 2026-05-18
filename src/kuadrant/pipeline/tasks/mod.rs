@@ -5,7 +5,7 @@ mod failure_mode;
 mod headers;
 mod ratelimit;
 mod send_reply;
-mod store_data;
+mod store;
 mod token_usage;
 mod tracing_decorator;
 
@@ -16,7 +16,7 @@ pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
-pub use store_data::StoreTask;
+pub use store::StoreTask;
 pub use token_usage::TokenUsageTask;
 use tracing::debug;
 pub use tracing_decorator::TracingDecoratorTask;
