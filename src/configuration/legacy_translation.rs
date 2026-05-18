@@ -550,3 +550,128 @@ pub(super) mod ratelimit {
         }
     }
 }
+
+pub(super) mod auth {
+    use super::*;
+
+    fn build_auth_message_builder(scope: &str) -> String {
+        format!(
+            r#"envoy.service.auth.v3.CheckRequest {{
+  attributes: envoy.service.auth.v3.AttributeContext {{
+    request: envoy.service.auth.v3.AttributeContext.Request {{
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {{
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }}
+    }},
+    destination: envoy.service.auth.v3.AttributeContext.Peer {{
+      address: envoy.config.core.v3.Address {{
+        socket_address: envoy.config.core.v3.SocketAddress {{
+          address: destination.address,
+          port_value: uint(destination.port)
+        }}
+      }}
+    }},
+    source: envoy.service.auth.v3.AttributeContext.Peer {{
+      address: envoy.config.core.v3.Address {{
+        socket_address: envoy.config.core.v3.SocketAddress {{
+          address: source.address,
+          port_value: uint(source.port)
+        }}
+      }}
+    }},
+    context_extensions: {{"host": "{}"}}
+  }}
+}}"#,
+            escape_cel_string(scope)
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_build_auth_message_builder_basic() {
+            let message = build_auth_message_builder("test-scope");
+
+            let expected = r#"envoy.service.auth.v3.CheckRequest {
+  attributes: envoy.service.auth.v3.AttributeContext {
+    request: envoy.service.auth.v3.AttributeContext.Request {
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }
+    },
+    destination: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: destination.address,
+          port_value: uint(destination.port)
+        }
+      }
+    },
+    source: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: source.address,
+          port_value: uint(source.port)
+        }
+      }
+    },
+    context_extensions: {"host": "test-scope"}
+  }
+}"#;
+            assert_eq!(message, expected);
+        }
+
+        #[test]
+        fn test_build_auth_message_builder_escapes_scope() {
+            let message = build_auth_message_builder("test\"scope");
+
+            let expected = r#"envoy.service.auth.v3.CheckRequest {
+  attributes: envoy.service.auth.v3.AttributeContext {
+    request: envoy.service.auth.v3.AttributeContext.Request {
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }
+    },
+    destination: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: destination.address,
+          port_value: uint(destination.port)
+        }
+      }
+    },
+    source: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: source.address,
+          port_value: uint(source.port)
+        }
+      }
+    },
+    context_extensions: {"host": "test\"scope"}
+  }
+}"#;
+            assert_eq!(message, expected);
+        }
+    }
+}
