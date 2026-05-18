@@ -1,7 +1,7 @@
 use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
+    DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
     ModifyHeadersTask, RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
@@ -202,27 +202,6 @@ impl Blueprint {
                 action.service.failure_mode() == configuration::FailureMode::Deny;
 
             match &action.service {
-                ServiceInstance::Auth(auth_service) => {
-                    let task = Box::new(AuthTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        Rc::clone(auth_service),
-                        action.scope.clone(),
-                        action.predicates.clone(),
-                        action.dependencies.clone(),
-                        true, // pauses_filter = true for auth tasks
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    if tracing_enabled {
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            "auth",
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
-                }
                 ServiceInstance::RateLimitReport(dynamic_service) => {
                     // parse token usage from response
                     let task = Box::new(RateLimitTask::new_with_attributes(
@@ -265,6 +244,7 @@ impl Blueprint {
                     }
                 }
                 ServiceInstance::Dynamic(dynamic_service)
+                | ServiceInstance::Auth(dynamic_service)
                 | ServiceInstance::RateLimit(dynamic_service)
                 | ServiceInstance::RateLimitCheck(dynamic_service) => {
                     let message_builder = match &action.message_builder {
@@ -287,6 +267,7 @@ impl Blueprint {
                     if tracing_enabled {
                         let span_label = match &action.service {
                             //todo(@adam-cattermole): drop this in favour of method/service once other service types removed
+                            ServiceInstance::Auth(_) => "auth",
                             ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
                                 "ratelimit"
                             }
@@ -363,6 +344,7 @@ impl Action {
                 if !matches!(
                     service_instance,
                     ServiceInstance::Dynamic(_)
+                        | ServiceInstance::Auth(_)
                         | ServiceInstance::RateLimit(_)
                         | ServiceInstance::RateLimitCheck(_)
                 ) {
@@ -517,17 +499,21 @@ mod tests {
     };
     use crate::configuration::{FailOperation, FailureMode};
     use crate::filter::DescriptorManager;
-    use crate::services::{AuthService, DynamicService, ServiceInstance};
+    use crate::services::{DynamicService, ServiceInstance};
     use std::collections::HashMap;
     use std::rc::Rc;
 
     fn build_test_service(name: &str) -> (String, ServiceInstance) {
+        let descriptor_manager = Rc::new(DescriptorManager::default());
         (
             name.to_string(),
-            ServiceInstance::Auth(Rc::new(AuthService::new(
+            ServiceInstance::Auth(Rc::new(DynamicService::new(
                 "test-cluster".to_string(),
+                "envoy.service.auth.v3.Authorization".to_string(),
+                "Check".to_string(),
                 std::time::Duration::from_secs(10),
                 FailureMode::Deny,
+                descriptor_manager,
             ))),
         )
     }
@@ -885,14 +871,21 @@ mod tests {
 
     #[test]
     fn grpc_typed_action_fails_on_non_dynamic_service() {
-        let services = HashMap::from([build_test_service("auth-svc")]);
+        use crate::services::TracingService;
+        let services = HashMap::from([(
+            "tracing-svc".to_string(),
+            ServiceInstance::Tracing(Some(Rc::new(TracingService::new(
+                "test-cluster".to_string(),
+                std::time::Duration::from_secs(10),
+            )))),
+        )]);
 
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
-                service: "auth-svc".to_string(),
+                service: "tracing-svc".to_string(),
                 message_builder: "test.Request{}".to_string(),
                 on_reply: vec![],
             }),
