@@ -3,16 +3,28 @@ use super::{
     HeadersOperation, HeadersTarget, Operation, TypedAction,
 };
 
+fn escape_cel_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+fn join_predicates(predicates: &[String], op: &str) -> String {
+    match predicates.len() {
+        0 => "true".to_string(),
+        1 => predicates[0].clone(),
+        _ => predicates
+            .iter()
+            .map(|p| format!("({})", p))
+            .collect::<Vec<_>>()
+            .join(&format!(" {} ", op)),
+    }
+}
+
 pub(super) mod ratelimit {
     use super::*;
-
-    fn escape_cel_string(s: &str) -> String {
-        s.replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-    }
 
     const RATELIMIT_KNOWN_ATTRS: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"];
 
@@ -77,8 +89,7 @@ pub(super) mod ratelimit {
         if cd.predicates.is_empty() {
             Some(entries_list)
         } else {
-            let wrapped: Vec<String> = cd.predicates.iter().map(|p| format!("({})", p)).collect();
-            let predicate_cel = wrapped.join(" && ");
+            let predicate_cel = join_predicates(&cd.predicates, "&&");
             Some(format!("(({}) ? {} : [])", predicate_cel, entries_list))
         }
     }
@@ -173,9 +184,7 @@ pub(super) mod ratelimit {
                 if cd.predicates.len() == 1 {
                     cd.predicates[0].clone()
                 } else {
-                    let wrapped: Vec<String> =
-                        cd.predicates.iter().map(|p| format!("({})", p)).collect();
-                    format!("({})", wrapped.join(" && "))
+                    format!("({})", join_predicates(&cd.predicates, "&&"))
                 }
             })
             .collect();
@@ -188,17 +197,7 @@ pub(super) mod ratelimit {
     }
 
     fn build_action_predicate(action_predicates: &[String]) -> String {
-        if action_predicates.is_empty() {
-            "true".to_string()
-        } else if action_predicates.len() == 1 {
-            action_predicates[0].clone()
-        } else {
-            let wrapped: Vec<String> = action_predicates
-                .iter()
-                .map(|p| format!("({})", p))
-                .collect();
-            wrapped.join(" && ")
-        }
+        join_predicates(action_predicates, "&&")
     }
 
     fn build_ratelimit_predicate(
