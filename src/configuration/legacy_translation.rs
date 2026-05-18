@@ -23,6 +23,10 @@ fn join_predicates(predicates: &[String], op: &str) -> String {
     }
 }
 
+fn build_action_predicate(action_predicates: &[String]) -> String {
+    join_predicates(action_predicates, "&&")
+}
+
 pub(super) mod ratelimit {
     use super::*;
 
@@ -194,10 +198,6 @@ pub(super) mod ratelimit {
         } else {
             block_predicates.join(" || ")
         }
-    }
-
-    fn build_action_predicate(action_predicates: &[String]) -> String {
-        join_predicates(action_predicates, "&&")
     }
 
     fn build_ratelimit_predicate(
