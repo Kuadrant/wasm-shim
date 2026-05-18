@@ -214,6 +214,9 @@ impl MessageConverter {
         let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
 
         for field in descriptor.fields() {
+            if field.containing_oneof().is_some() && !message.has_field(&field) {
+                continue;
+            }
             let field_value = message.get_field(&field);
             let cel_value = Self::proto_value_to_cel_val(field_value.as_ref());
             cel_struct.add_field_value(field.name().to_string(), Cow::Owned(cel_value));
@@ -239,6 +242,9 @@ impl MessageConverter {
                 let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
 
                 for field in descriptor.fields() {
+                    if field.containing_oneof().is_some() && !m.has_field(&field) {
+                        continue;
+                    }
                     let field_value = m.get_field(&field);
                     let cel_value = Self::proto_value_to_cel_val(field_value.as_ref());
                     cel_struct.add_field_value(field.name().to_string(), Cow::Owned(cel_value));
@@ -595,7 +601,7 @@ mod tests {
     use cel::{Context, Program};
     use prost::Message;
     use prost_types::{field_descriptor_proto, DescriptorProto, FieldDescriptorProto};
-    use prost_types::{FileDescriptorProto, FileDescriptorSet};
+    use prost_types::{FileDescriptorProto, FileDescriptorSet, OneofDescriptorProto};
     use std::sync::Arc;
 
     fn create_test_message_descriptor() -> MessageDescriptor {
@@ -1454,5 +1460,81 @@ mod tests {
 
         let pairs = cel_value_to_header_pairs(&list);
         assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_oneof_has_checks() {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("TestOneofMessage".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("variant_a".to_string()),
+                        number: Some(1),
+                        r#type: Some(field_descriptor_proto::Type::String.into()),
+                        oneof_index: Some(0),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("variant_b".to_string()),
+                        number: Some(2),
+                        r#type: Some(field_descriptor_proto::Type::Int32.into()),
+                        oneof_index: Some(0),
+                        ..Default::default()
+                    },
+                ],
+                oneof_decl: vec![OneofDescriptorProto {
+                    name: Some("test_oneof".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let fds = FileDescriptorSet {
+            file: vec![file_descriptor],
+        };
+
+        let pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds)
+            .expect("Failed to create descriptor pool");
+
+        let descriptor = pool
+            .get_message_by_name("test.TestOneofMessage")
+            .expect("Message not found");
+
+        let mut message = DynamicMessage::new(descriptor.clone());
+        message.set_field_by_name("variant_a", ProtoValue::String("selected".to_string()));
+
+        let cel_value = MessageConverter::dynamic_message_to_cel(&message);
+
+        let struct_def =
+            DescriptorConverter::to_struct_def(&descriptor).expect("Failed to convert descriptor");
+
+        let mut env = Env::stdlib();
+        env.add_struct(struct_def);
+
+        let mut ctx = Context::with_env(Arc::new(env));
+        ctx.add_variable_from_value("msg", cel_value);
+
+        let has_variant_a = Program::compile("has(msg.variant_a)")
+            .expect("Failed to compile")
+            .execute(&ctx)
+            .expect("Failed to execute");
+        assert!(
+            matches!(has_variant_a, Value::Bool(true)),
+            "has(msg.variant_a) should return true when variant_a is set"
+        );
+
+        let has_variant_b = Program::compile("has(msg.variant_b)")
+            .expect("Failed to compile")
+            .execute(&ctx)
+            .expect("Failed to execute");
+        assert!(
+            matches!(has_variant_b, Value::Bool(false)),
+            "has(msg.variant_b) should return false when variant_b is not set (unset oneof variant)"
+        );
     }
 }
