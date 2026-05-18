@@ -583,10 +583,8 @@ fn it_stores_data_from_grpc_response() {
                     "type": "store",
                     "predicate": "true",
                     "terminal": false,
-                    "data": [{
-                        "path": "check.result",
-                        "value": "my_check.result"
-                    }]
+                    "path": "check.result",
+                    "value": "my_check.result"
                 }]
             }]
         }]

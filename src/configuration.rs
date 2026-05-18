@@ -81,11 +81,6 @@ pub struct HeadersOperation {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreOperation {
-    pub data: Vec<StoreItem>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct StoreItem {
     pub path: String,
     pub value: String,
 }
@@ -856,10 +851,8 @@ mod test {
                     "type": "store",
                     "predicate": "true",
                     "terminal": false,
-                    "data": [
-                        { "path": "auth.metadata", "value": "auth_check.dynamic_metadata" },
-                        { "path": "auth.identity", "value": "auth_check.identity" }
-                    ]
+                    "path": "auth.metadata",
+                    "value": "auth_check.dynamic_metadata"
                 }]
             }]
         }"#;
@@ -874,11 +867,8 @@ mod test {
         let Operation::Store(store) = &typed.operation else {
             unreachable!("expected store operation");
         };
-        assert_eq!(store.data.len(), 2);
-        assert_eq!(store.data[0].path, "auth.metadata");
-        assert_eq!(store.data[0].value, "auth_check.dynamic_metadata");
-        assert_eq!(store.data[1].path, "auth.identity");
-        assert_eq!(store.data[1].value, "auth_check.identity");
+        assert_eq!(store.path, "auth.metadata");
+        assert_eq!(store.value, "auth_check.dynamic_metadata");
     }
 
     #[test]

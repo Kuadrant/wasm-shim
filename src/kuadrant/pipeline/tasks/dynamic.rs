@@ -230,26 +230,20 @@ fn process_dynamic_response(
                     }
                 }
             }
-            Operation::Store { data } => {
-                let mut store_items: Vec<(String, Vec<u8>)> = Vec::new();
-                for (path, expr) in data {
-                    match expr.eval_with_ctx(ctx, &mut cel_ctx) {
-                        Ok(AttributeState::Available(val)) => {
-                            let bytes = cel_value_to_bytes(&val);
-                            store_items.push((path.clone(), bytes));
-                        }
-                        Ok(AttributeState::Pending) => {
-                            error!("Unexpected pending state in onReply store");
-                            return TaskOutcome::Failed;
-                        }
-                        Err(e) => {
-                            error!("Failed to evaluate store expression for '{path}': {e}");
-                            return TaskOutcome::Failed;
-                        }
+            Operation::Store { path, expression } => {
+                match expression.eval_with_ctx(ctx, &mut cel_ctx) {
+                    Ok(AttributeState::Available(val)) => {
+                        let bytes = cel_value_to_bytes(&val);
+                        tasks.push(Box::new(StoreDataTask::new(vec![(path.clone(), bytes)])));
                     }
-                }
-                if !store_items.is_empty() {
-                    tasks.push(Box::new(StoreDataTask::new(store_items)));
+                    Ok(AttributeState::Pending) => {
+                        error!("Unexpected pending state in onReply store for '{path}'");
+                        return TaskOutcome::Failed;
+                    }
+                    Err(e) => {
+                        error!("Failed to evaluate store expression for '{path}': {e}");
+                        return TaskOutcome::Failed;
+                    }
                 }
             }
             Operation::Fail { log_message } => {

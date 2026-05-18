@@ -50,7 +50,8 @@ pub(crate) enum Operation {
         headers: Expression,
     },
     Store {
-        data: Vec<(String, Expression)>,
+        path: String,
+        expression: Expression,
     },
     Fail {
         log_message: String,
@@ -451,12 +452,9 @@ impl TypedAction {
                 }
             }
             configuration::Operation::Store(store) => {
-                let data = store
-                    .data
-                    .iter()
-                    .map(|item| Ok((item.path.clone(), Expression::new(&item.value)?)))
-                    .collect::<Result<_, CompileError>>()?;
-                Operation::Store { data }
+                let path = store.path.clone();
+                let expression = Expression::new(&store.value)?;
+                Operation::Store { path, expression }
             }
             configuration::Operation::Fail(fail) => Operation::Fail {
                 log_message: fail.log_message.clone(),
@@ -519,7 +517,7 @@ mod tests {
         Action as ConfigAction, ActionConfig, ActionSet, ConditionalData as ConfigConditionalData,
         DataItem as ConfigDataItem, DataType, DenyOperation, ExpressionItem, GrpcOperation,
         HeadersOperation, HeadersTarget, Operation as ConfigOperation, RouteRuleConditions,
-        StaticItem, StoreItem, StoreOperation, TypedAction as ConfigTypedAction,
+        StaticItem, StoreOperation, TypedAction as ConfigTypedAction,
     };
     use crate::configuration::{FailOperation, FailureMode};
     use crate::filter::DescriptorManager;
@@ -849,10 +847,8 @@ mod tests {
                         predicate: "true".to_string(),
                         terminal: false,
                         operation: ConfigOperation::Store(StoreOperation {
-                            data: vec![StoreItem {
-                                path: "rl.remaining".to_string(),
-                                value: "result.remaining".to_string(),
-                            }],
+                            path: "rl.remaining".to_string(),
+                            value: "result.remaining".to_string(),
                         }),
                     },
                 ],
@@ -971,16 +967,8 @@ mod tests {
             predicate: "true".to_string(),
             terminal: false,
             operation: ConfigOperation::Store(StoreOperation {
-                data: vec![
-                    StoreItem {
-                        path: "a.b".to_string(),
-                        value: "result.x".to_string(),
-                    },
-                    StoreItem {
-                        path: "c.d".to_string(),
-                        value: "result.y".to_string(),
-                    },
-                ],
+                path: "a.b".to_string(),
+                value: "result.x".to_string(),
             }),
         };
         let store_result = TypedAction::compile(&store_config);
@@ -989,9 +977,7 @@ mod tests {
         assert!(!store.terminal);
         assert!(matches!(
             store.operation,
-            Operation::Store { ref data, .. }
-                if data.len() == 2
-                && data[0].0 == "a.b"
+            Operation::Store { ref path, .. } if path == "a.b"
         ));
     }
 
