@@ -42,7 +42,7 @@ jobs:
           author: ${{ github.actor }} <${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com>
           signoff: true
           base: ${{ env.BASE_BRANCH }}
-          branch: release-v${{ env.WASM_SHIM_VERSION }}
+          branch: release-${{ env.WASM_SHIM_VERSION }}
           delete-branch: true
           title: '[Release] WASM Shim v${{ env.WASM_SHIM_VERSION }}'
           body: |

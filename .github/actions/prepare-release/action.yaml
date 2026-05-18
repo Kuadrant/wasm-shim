@@ -40,7 +40,7 @@ runs:
       id: create-branch
       shell: bash
       run: |
-        base_branch=release-v$(echo "$WASM_SHIM_VERSION" | sed 's/[+-].*//; s/\.[0-9]*$//')
+        base_branch=release-$(echo "$WASM_SHIM_VERSION" | sed 's/[+-].*//; s/\.[0-9]*$//')
         echo "BASE_BRANCH=$base_branch" >> $GITHUB_ENV
         echo "base-branch=$base_branch" >> $GITHUB_OUTPUT
 
