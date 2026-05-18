@@ -553,8 +553,78 @@ pub(super) mod ratelimit {
 
 pub(super) mod auth {
     use super::*;
+    use std::collections::HashMap;
 
-    fn build_auth_message_builder(scope: &str) -> String {
+    fn build_request_data_value_cel(field_expr: &str) -> String {
+        if field_expr.contains("auth.") {
+            format!(
+                r#"google.protobuf.Value{{struct_value: google.protobuf.Struct{{fields: {{"cel_expr": google.protobuf.Value{{string_value: "{escaped_expr}"}}}}}}}}"#,
+                escaped_expr = escape_cel_string(field_expr)
+            )
+        } else {
+            format!(
+                r#"google.protobuf.Value{{string_value: string({expr})}}"#,
+                expr = field_expr
+            )
+        }
+    }
+
+    fn build_metadata_context_cel(request_data: &[((String, String), String)]) -> String {
+        if request_data.is_empty() {
+            return "envoy.config.core.v3.Metadata{}".to_string();
+        }
+
+        let mut by_domain: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for ((domain, field), expr) in request_data {
+            let key = if domain.is_empty() {
+                "io.kuadrant".to_string()
+            } else {
+                format!("io.kuadrant.{}", domain)
+            };
+            by_domain
+                .entry(key)
+                .or_default()
+                .push((field.clone(), expr.clone()));
+        }
+
+        let mut domain_entries: Vec<(String, Vec<(String, String)>)> =
+            by_domain.into_iter().collect();
+        domain_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let filter_metadata_entries: Vec<String> = domain_entries
+            .into_iter()
+            .map(|(domain, entries)| {
+                let field_entries: Vec<String> = entries
+                    .iter()
+                    .map(|(field, expr)| {
+                        format!(
+                            r#""{field}": {value}"#,
+                            field = escape_cel_string(field),
+                            value = build_request_data_value_cel(expr)
+                        )
+                    })
+                    .collect();
+
+                format!(
+                    r#""{domain}": google.protobuf.Struct{{fields: {{{fields}}}}}"#,
+                    domain = escape_cel_string(&domain),
+                    fields = field_entries.join(", ")
+                )
+            })
+            .collect();
+
+        format!(
+            "envoy.config.core.v3.Metadata{{filter_metadata: {{{}}}}}",
+            filter_metadata_entries.join(", ")
+        )
+    }
+
+    fn build_auth_message_builder(
+        scope: &str,
+        request_data: &[((String, String), String)],
+    ) -> String {
+        let metadata_context = build_metadata_context_cel(request_data);
+
         format!(
             r#"envoy.service.auth.v3.CheckRequest {{
   attributes: envoy.service.auth.v3.AttributeContext {{
@@ -585,10 +655,12 @@ pub(super) mod auth {
         }}
       }}
     }},
-    context_extensions: {{"host": "{}"}}
+    context_extensions: {{"host": "{}"}},
+    metadata_context: {}
   }}
 }}"#,
-            escape_cel_string(scope)
+            escape_cel_string(scope),
+            metadata_context
         )
     }
 
@@ -598,7 +670,7 @@ pub(super) mod auth {
 
         #[test]
         fn test_build_auth_message_builder_basic() {
-            let message = build_auth_message_builder("test-scope");
+            let message = build_auth_message_builder("test-scope", &[]);
 
             let expected = r#"envoy.service.auth.v3.CheckRequest {
   attributes: envoy.service.auth.v3.AttributeContext {
@@ -629,7 +701,8 @@ pub(super) mod auth {
         }
       }
     },
-    context_extensions: {"host": "test-scope"}
+    context_extensions: {"host": "test-scope"},
+    metadata_context: envoy.config.core.v3.Metadata{}
   }
 }"#;
             assert_eq!(message, expected);
@@ -637,7 +710,7 @@ pub(super) mod auth {
 
         #[test]
         fn test_build_auth_message_builder_escapes_scope() {
-            let message = build_auth_message_builder("test\"scope");
+            let message = build_auth_message_builder("test\"scope", &[]);
 
             let expected = r#"envoy.service.auth.v3.CheckRequest {
   attributes: envoy.service.auth.v3.AttributeContext {
@@ -668,7 +741,88 @@ pub(super) mod auth {
         }
       }
     },
-    context_extensions: {"host": "test\"scope"}
+    context_extensions: {"host": "test\"scope"},
+    metadata_context: envoy.config.core.v3.Metadata{}
+  }
+}"#;
+            assert_eq!(message, expected);
+        }
+
+        #[test]
+        fn test_build_metadata_context_cel_empty() {
+            let cel = build_metadata_context_cel(&[]);
+            assert_eq!(cel, "envoy.config.core.v3.Metadata{}");
+        }
+
+        #[test]
+        fn test_build_metadata_context_cel_single_field() {
+            let request_data = vec![(
+                ("".to_string(), "userid".to_string()),
+                "auth.identity.userid".to_string(),
+            )];
+            let cel = build_metadata_context_cel(&request_data);
+
+            let expected = r#"envoy.config.core.v3.Metadata{filter_metadata: {"io.kuadrant": google.protobuf.Struct{fields: {"userid": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.userid"}}}}}}}}"#;
+            assert_eq!(cel, expected);
+        }
+
+        #[test]
+        fn test_build_metadata_context_cel_multiple_domains() {
+            let request_data = vec![
+                (
+                    ("".to_string(), "userid".to_string()),
+                    "auth.identity.userid".to_string(),
+                ),
+                (
+                    ("custom".to_string(), "role".to_string()),
+                    "auth.identity.role".to_string(),
+                ),
+            ];
+            let cel = build_metadata_context_cel(&request_data);
+
+            let expected = r#"envoy.config.core.v3.Metadata{filter_metadata: {"io.kuadrant": google.protobuf.Struct{fields: {"userid": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.userid"}}}}}}, "io.kuadrant.custom": google.protobuf.Struct{fields: {"role": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.role"}}}}}}}}"#;
+            assert_eq!(cel, expected);
+        }
+
+        #[test]
+        fn test_build_auth_message_builder_with_request_data() {
+            let request_data = vec![(
+                ("".to_string(), "userid".to_string()),
+                "auth.identity.userid".to_string(),
+            )];
+            let message = build_auth_message_builder("my-scope", &request_data);
+
+            let expected = r#"envoy.service.auth.v3.CheckRequest {
+  attributes: envoy.service.auth.v3.AttributeContext {
+    request: envoy.service.auth.v3.AttributeContext.Request {
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }
+    },
+    destination: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: destination.address,
+          port_value: uint(destination.port)
+        }
+      }
+    },
+    source: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: source.address,
+          port_value: uint(source.port)
+        }
+      }
+    },
+    context_extensions: {"host": "my-scope"},
+    metadata_context: envoy.config.core.v3.Metadata{filter_metadata: {"io.kuadrant": google.protobuf.Struct{fields: {"userid": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.userid"}}}}}}}}
   }
 }"#;
             assert_eq!(message, expected);
