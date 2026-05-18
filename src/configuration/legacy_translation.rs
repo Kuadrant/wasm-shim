@@ -664,6 +664,29 @@ pub(super) mod auth {
         )
     }
 
+    #[deprecated(note = "temporary translation for legacy auth configuration")]
+    pub(crate) fn translate_legacy_auth_to_typed(
+        action: &Action,
+        request_data: &[((String, String), String)],
+    ) -> TypedAction {
+        const RESPONSE_VAR: &str = "auth_response";
+
+        let message_builder = build_auth_message_builder(&action.scope, request_data);
+        let predicate = build_action_predicate(&action.predicates);
+        let on_reply = build_auth_on_reply(RESPONSE_VAR);
+
+        TypedAction {
+            predicate,
+            terminal: false,
+            operation: Operation::Grpc(GrpcOperation {
+                var: RESPONSE_VAR.to_string(),
+                service: action.service.clone(),
+                message_builder,
+                on_reply,
+            }),
+        }
+    }
+
     fn build_auth_on_reply(name: &str) -> Vec<TypedAction> {
         vec![
             TypedAction {
@@ -724,6 +747,7 @@ pub(super) mod auth {
     }
 
     #[cfg(test)]
+    #[allow(deprecated)]
     mod tests {
         use super::*;
 
@@ -983,6 +1007,205 @@ pub(super) mod auth {
                 on_reply[4].predicate,
                 "!has(auth_result.denied_response) && !has(auth_result.ok_response)"
             );
+        }
+
+        #[test]
+        fn test_translate_legacy_auth_simple() {
+            let action = Action {
+                service: "authorino".to_string(),
+                scope: "my-auth".to_string(),
+                predicates: vec![],
+                conditional_data: vec![],
+                sources: vec![],
+            };
+            let request_data = vec![];
+
+            let typed = translate_legacy_auth_to_typed(&action, &request_data);
+
+            assert_eq!(typed.predicate, "true");
+            assert!(!typed.terminal);
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.var == "auth_response" &&
+                    grpc_op.service == "authorino" &&
+                    grpc_op.message_builder == r#"envoy.service.auth.v3.CheckRequest {
+  attributes: envoy.service.auth.v3.AttributeContext {
+    request: envoy.service.auth.v3.AttributeContext.Request {
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }
+    },
+    destination: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: destination.address,
+          port_value: uint(destination.port)
+        }
+      }
+    },
+    source: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: source.address,
+          port_value: uint(source.port)
+        }
+      }
+    },
+    context_extensions: {"host": "my-auth"},
+    metadata_context: envoy.config.core.v3.Metadata{}
+  }
+}"# &&
+                    grpc_op.on_reply.len() == 5
+            ));
+        }
+
+        #[test]
+        fn test_translate_legacy_auth_with_predicates() {
+            let action = Action {
+                service: "authorino".to_string(),
+                scope: "my-auth".to_string(),
+                predicates: vec!["request.path.startsWith('/api')".to_string()],
+                conditional_data: vec![],
+                sources: vec![],
+            };
+            let request_data = vec![];
+
+            let typed = translate_legacy_auth_to_typed(&action, &request_data);
+
+            assert_eq!(typed.predicate, "request.path.startsWith('/api')");
+        }
+
+        #[test]
+        fn test_translate_legacy_auth_with_request_data() {
+            let action = Action {
+                service: "authorino".to_string(),
+                scope: "my-auth".to_string(),
+                predicates: vec![],
+                conditional_data: vec![],
+                sources: vec![],
+            };
+            let request_data = vec![(
+                ("".to_string(), "userid".to_string()),
+                "auth.identity.userid".to_string(),
+            )];
+
+            let typed = translate_legacy_auth_to_typed(&action, &request_data);
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.message_builder == r#"envoy.service.auth.v3.CheckRequest {
+  attributes: envoy.service.auth.v3.AttributeContext {
+    request: envoy.service.auth.v3.AttributeContext.Request {
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }
+    },
+    destination: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: destination.address,
+          port_value: uint(destination.port)
+        }
+      }
+    },
+    source: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: source.address,
+          port_value: uint(source.port)
+        }
+      }
+    },
+    context_extensions: {"host": "my-auth"},
+    metadata_context: envoy.config.core.v3.Metadata{filter_metadata: {"io.kuadrant": google.protobuf.Struct{fields: {"userid": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.userid"}}}}}}}}
+  }
+}"#
+            ));
+        }
+
+        #[test]
+        fn test_translate_legacy_auth_full() {
+            let action = Action {
+                service: "authorino".to_string(),
+                scope: "api-auth".to_string(),
+                predicates: vec![
+                    "request.method == 'POST'".to_string(),
+                    "request.path.startsWith('/api')".to_string(),
+                ],
+                conditional_data: vec![],
+                sources: vec![],
+            };
+            let request_data = vec![
+                (
+                    ("".to_string(), "userid".to_string()),
+                    "auth.identity.userid".to_string(),
+                ),
+                (
+                    ("custom".to_string(), "role".to_string()),
+                    "auth.identity.role".to_string(),
+                ),
+            ];
+
+            let typed = translate_legacy_auth_to_typed(&action, &request_data);
+
+            assert_eq!(
+                typed.predicate,
+                "(request.method == 'POST') && (request.path.startsWith('/api'))"
+            );
+            assert!(!typed.terminal);
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.var == "auth_response" &&
+                    grpc_op.service == "authorino" &&
+                    grpc_op.on_reply.len() == 5 &&
+                    grpc_op.message_builder == r#"envoy.service.auth.v3.CheckRequest {
+  attributes: envoy.service.auth.v3.AttributeContext {
+    request: envoy.service.auth.v3.AttributeContext.Request {
+      time: request.time,
+      http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+        host: request.host,
+        method: request.method,
+        scheme: request.scheme,
+        path: request.path,
+        protocol: request.protocol,
+        headers: request.headers
+      }
+    },
+    destination: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: destination.address,
+          port_value: uint(destination.port)
+        }
+      }
+    },
+    source: envoy.service.auth.v3.AttributeContext.Peer {
+      address: envoy.config.core.v3.Address {
+        socket_address: envoy.config.core.v3.SocketAddress {
+          address: source.address,
+          port_value: uint(source.port)
+        }
+      }
+    },
+    context_extensions: {"host": "api-auth"},
+    metadata_context: envoy.config.core.v3.Metadata{filter_metadata: {"io.kuadrant": google.protobuf.Struct{fields: {"userid": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.userid"}}}}}}, "io.kuadrant.custom": google.protobuf.Struct{fields: {"role": google.protobuf.Value{struct_value: google.protobuf.Struct{fields: {"cel_expr": google.protobuf.Value{string_value: "auth.identity.role"}}}}}}}}
+  }
+}"#
+            ));
         }
     }
 }
