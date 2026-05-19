@@ -8,7 +8,7 @@ mod dynamic;
 mod tracing;
 
 pub use auth::AuthService;
-pub use dynamic::converters::cel_value_to_header_pairs;
+pub use dynamic::converters::{cel_value_to_header_pairs, ConversionError, MessageConverter};
 pub use dynamic::DynamicService;
 pub use tracing::TracingService;
 

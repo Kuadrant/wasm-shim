@@ -8,8 +8,7 @@ use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Expression;
 use crate::kuadrant::pipeline::blueprint::{Operation, TypedAction};
 use crate::kuadrant::pipeline::tasks::{
-    HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, StoreDataTask, Task,
-    TaskOutcome,
+    HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, StoreTask, Task, TaskOutcome,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
@@ -230,26 +229,19 @@ fn process_dynamic_response(
                     }
                 }
             }
-            Operation::Store { data } => {
-                let mut store_items: Vec<(String, Vec<u8>)> = Vec::new();
-                for (path, expr) in data {
-                    match expr.eval_with_ctx(ctx, &mut cel_ctx) {
-                        Ok(AttributeState::Available(val)) => {
-                            let bytes = cel_value_to_bytes(&val);
-                            store_items.push((path.clone(), bytes));
-                        }
-                        Ok(AttributeState::Pending) => {
-                            error!("Unexpected pending state in onReply store");
-                            return TaskOutcome::Failed;
-                        }
-                        Err(e) => {
-                            error!("Failed to evaluate store expression for '{path}': {e}");
-                            return TaskOutcome::Failed;
-                        }
+            Operation::Store { path, expression } => {
+                match expression.eval_with_ctx(ctx, &mut cel_ctx) {
+                    Ok(AttributeState::Available(val)) => {
+                        tasks.push(Box::new(StoreTask::new(path.clone(), val)));
                     }
-                }
-                if !store_items.is_empty() {
-                    tasks.push(Box::new(StoreDataTask::new(store_items)));
+                    Ok(AttributeState::Pending) => {
+                        error!("Unexpected pending state in onReply store for '{path}'");
+                        return TaskOutcome::Failed;
+                    }
+                    Err(e) => {
+                        error!("Failed to evaluate store expression for '{path}': {e}");
+                        return TaskOutcome::Failed;
+                    }
                 }
             }
             Operation::Fail { log_message } => {
@@ -263,17 +255,5 @@ fn process_dynamic_response(
         TaskOutcome::Done
     } else {
         TaskOutcome::Requeued(tasks)
-    }
-}
-
-fn cel_value_to_bytes(val: &Value) -> Vec<u8> {
-    match val {
-        Value::String(s) => s.to_string().into_bytes(),
-        Value::Int(n) => n.to_string().into_bytes(),
-        Value::UInt(n) => n.to_string().into_bytes(),
-        Value::Float(n) => n.to_string().into_bytes(),
-        Value::Bool(b) => b.to_string().into_bytes(),
-        Value::Null => Vec::new(),
-        _ => format!("{val:?}").into_bytes(),
     }
 }
