@@ -1,4 +1,7 @@
-use crate::configuration::PluginConfiguration;
+#[allow(deprecated)]
+use crate::configuration::{
+    translate_legacy_ratelimit_to_typed, ActionConfig, PluginConfiguration,
+};
 use crate::data::{
     attribute::AttributeState,
     cel::{Predicate, PredicateVec},
@@ -73,6 +76,30 @@ impl PipelineFactory {
             .cloned()
             .unwrap_or(ServiceInstance::Tracing(None));
 
+        let request_data_raw: Vec<((String, String), String)> = config
+            .request_data
+            .iter()
+            .map(|(k, v)| {
+                let (domain, field) = domain_and_field_name(k);
+                ((domain.to_owned(), field.to_owned()), v.clone())
+            })
+            .collect();
+
+        for action_set in &mut config.action_sets {
+            for action in &mut action_set.actions {
+                if let ActionConfig::Legacy(legacy) = action {
+                    if let Some(
+                        ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_),
+                    ) = services.get(&legacy.service)
+                    {
+                        #[allow(deprecated)]
+                        let typed = translate_legacy_ratelimit_to_typed(legacy, &request_data_raw);
+                        *action = ActionConfig::Typed(typed);
+                    }
+                }
+            }
+        }
+
         let dev_mode_action = config
             .observability
             .http_header_identifier
@@ -105,14 +132,10 @@ impl PipelineFactory {
             }
         }
 
-        let mut request_data: Vec<((String, String), Expression)> = config
-            .request_data
+        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
             .into_iter()
-            .filter_map(|(k, v)| {
-                Expression::new(&v).ok().map(|expr| {
-                    let (domain, field) = domain_and_field_name(&k);
-                    ((domain.to_owned(), field.to_owned()), expr)
-                })
+            .filter_map(|((domain, field), v)| {
+                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
             })
             .collect();
         request_data.sort_by(|a, b| a.0.cmp(&b.0));

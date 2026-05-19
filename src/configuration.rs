@@ -8,6 +8,10 @@ use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
+mod legacy_translation;
+#[allow(deprecated)]
+pub(crate) use legacy_translation::ratelimit::translate_legacy_ratelimit_to_typed;
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct ConditionalData {
     #[serde(default)]

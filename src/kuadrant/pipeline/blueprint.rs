@@ -221,29 +221,6 @@ impl Blueprint {
                         tasks.push(task);
                     }
                 }
-                ServiceInstance::RateLimit(dynamic_service)
-                | ServiceInstance::RateLimitCheck(dynamic_service) => {
-                    let task = Box::new(RateLimitTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        action.dependencies.clone(),
-                        Rc::clone(dynamic_service),
-                        action.scope.clone(),
-                        action.predicates.clone(),
-                        action.conditional_data.clone(),
-                        true, // pauses_filter = true for regular ratelimit and check tasks
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    if tracing_enabled {
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            "ratelimit",
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
-                }
                 ServiceInstance::RateLimitReport(dynamic_service) => {
                     // parse token usage from response
                     let task = Box::new(RateLimitTask::new_with_attributes(
@@ -285,7 +262,9 @@ impl Blueprint {
                             .push(Box::new(ExportTracesTask::new(ctx, Rc::clone(service))));
                     }
                 }
-                ServiceInstance::Dynamic(dynamic_service) => {
+                ServiceInstance::Dynamic(dynamic_service)
+                | ServiceInstance::RateLimit(dynamic_service)
+                | ServiceInstance::RateLimitCheck(dynamic_service) => {
                     let message_builder = match &action.message_builder {
                         Some(mb) => mb.clone(),
                         None => {
@@ -304,8 +283,15 @@ impl Blueprint {
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {
+                        let span_label = match &action.service {
+                            //todo(@adam-cattermole): drop this in favour of method/service once other service types removed
+                            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
+                                "ratelimit"
+                            }
+                            _ => "dynamic",
+                        };
                         tasks.push(Box::new(TracingDecoratorTask::new(
-                            "dynamic",
+                            span_label,
                             task,
                             action.sources.clone(),
                         )));
@@ -372,9 +358,14 @@ impl Action {
                     .get(&grpc.service)
                     .ok_or_else(|| CompileError::UnknownService(grpc.service.clone()))?;
 
-                if !matches!(service_instance, ServiceInstance::Dynamic(_)) {
+                if !matches!(
+                    service_instance,
+                    ServiceInstance::Dynamic(_)
+                        | ServiceInstance::RateLimit(_)
+                        | ServiceInstance::RateLimitCheck(_)
+                ) {
                     return Err(CompileError::ServiceCreationFailed(format!(
-                        "Service '{}' is not a dynamic service type",
+                        "Service '{}' cannot be used with typed grpc action",
                         grpc.service
                     )));
                 }
