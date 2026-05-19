@@ -20,13 +20,16 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Vec<RequestData>>,
+    request_body_size: usize,
+    request_end_of_stream: bool,
     response_body_size: usize,
     response_end_of_stream: bool,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
     tracing: TracingContext,
     tracker: Tracker,
-    body_values: HashMap<String, Value>,
+    request_body_values: HashMap<String, Value>,
+    response_body_values: HashMap<String, Value>,
 }
 
 impl Default for ReqRespCtx {
@@ -41,12 +44,15 @@ impl ReqRespCtx {
             backend,
             cache: Arc::new(AttributeCache::new()),
             request_data: None,
+            request_body_size: 0,
+            request_end_of_stream: false,
             response_body_size: 0,
             response_end_of_stream: false,
             grpc_response_data: None,
             tracing: TracingContext::default(),
             tracker: Tracker::default(),
-            body_values: HashMap::new(),
+            request_body_values: HashMap::new(),
+            response_body_values: HashMap::new(),
         }
     }
 
@@ -100,6 +106,11 @@ impl ReqRespCtx {
 
     pub fn set_hostname(&mut self, hostname: String) {
         self.tracing.hostname = Some(hostname);
+    }
+
+    pub fn set_current_request_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
+        self.request_body_size = body_size;
+        self.request_end_of_stream = end_of_stream;
     }
 
     pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
@@ -410,12 +421,21 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn set_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
-        self.body_values.insert(key.into(), value.into());
+    #[allow(dead_code)]
+    pub fn set_request_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        self.request_body_values.insert(key.into(), value.into());
     }
 
-    pub fn get_body_value(&self, key: &str) -> Option<&Value> {
-        self.body_values.get(key)
+    pub fn get_request_body_value(&self, key: &str) -> Option<&Value> {
+        self.request_body_values.get(key)
+    }
+
+    pub fn set_response_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        self.response_body_values.insert(key.into(), value.into());
+    }
+
+    pub fn get_response_body_value(&self, key: &str) -> Option<&Value> {
+        self.response_body_values.get(key)
     }
 }
 

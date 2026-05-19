@@ -128,9 +128,12 @@ impl HttpContext for KuadrantFilter {
         }
     }
 
-    fn on_http_request_body(&mut self, _buffer_size: usize, _end_of_stream: bool) -> Action {
+    fn on_http_request_body(&mut self, buffer_size: usize, end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_body", self.context_id);
-        if let Some(pipeline) = self.pipeline.take() {
+        if let Some(mut pipeline) = self.pipeline.take() {
+            pipeline
+                .ctx
+                .set_current_request_body_buffer_size(buffer_size, end_of_stream);
             match pipeline.eval() {
                 PipelineState::InProgress(p) => {
                     self.pipeline = Some(*p);
