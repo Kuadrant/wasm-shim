@@ -163,7 +163,9 @@ impl DynamicService {
         name: &str,
     ) -> Result<Context<'_>, ServiceError> {
         let response = self.get_response(ctx, response_size)?;
-        let cel_value = MessageConverter::dynamic_message_to_cel(&response);
+        let cel_value = MessageConverter::dynamic_message_to_cel(&response).map_err(|e| {
+            ServiceError::Decode(format!("Failed to convert message to CEL: {}", e))
+        })?;
         let env = self.cel_env()?;
 
         let mut cel_ctx = Context::with_env(env);

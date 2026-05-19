@@ -131,7 +131,13 @@ impl DescriptorConverter {
             ProtoKind::Float | ProtoKind::Double => Ok(DOUBLE_TYPE),
             ProtoKind::String => Ok(STRING_TYPE),
             ProtoKind::Bytes => Ok(BYTES_TYPE),
-            ProtoKind::Message(desc) => Ok(Type::new_struct(desc.full_name().to_string())),
+            ProtoKind::Message(desc) => {
+                if desc.full_name() == "google.protobuf.Timestamp" {
+                    Ok(TIMESTAMP_TYPE)
+                } else {
+                    Ok(Type::new_struct(desc.full_name().to_string()))
+                }
+            }
             ProtoKind::Enum(_) => {
                 // Enums are represented as INT in CEL
                 Ok(INT_TYPE)
@@ -209,7 +215,7 @@ impl MessageConverter {
         }
     }
 
-    pub fn dynamic_message_to_cel(message: &DynamicMessage) -> Value {
+    pub fn dynamic_message_to_cel(message: &DynamicMessage) -> Result<Value, ConversionError> {
         let descriptor = message.descriptor();
         let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
 
@@ -218,27 +224,35 @@ impl MessageConverter {
                 continue;
             }
             let field_value = message.get_field(&field);
-            let cel_value = Self::proto_value_to_cel_val(field_value.as_ref());
+            let cel_value = Self::proto_value_to_cel_val(field_value.as_ref())?;
             cel_struct.add_field_value(field.name().to_string(), Cow::Owned(cel_value));
         }
 
-        Value::Struct(Arc::new(cel_struct))
+        Ok(Value::Struct(Arc::new(cel_struct)))
     }
 
-    fn proto_value_to_cel_val(proto_value: &ProtoValue) -> Box<dyn cel::common::value::Val> {
+    fn proto_value_to_cel_val(
+        proto_value: &ProtoValue,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
         match proto_value {
-            ProtoValue::Bool(b) => Box::new(CelBool::from(*b)),
-            ProtoValue::I32(i) => Box::new(CelInt::from(*i as i64)),
-            ProtoValue::I64(i) => Box::new(CelInt::from(*i)),
-            ProtoValue::U32(u) => Box::new(CelUInt::from(*u as u64)),
-            ProtoValue::U64(u) => Box::new(CelUInt::from(*u)),
-            ProtoValue::F32(f) => Box::new(CelDouble::from(*f as f64)),
-            ProtoValue::F64(f) => Box::new(CelDouble::from(*f)),
-            ProtoValue::String(s) => Box::new(CelString::from(s.clone())),
-            ProtoValue::Bytes(b) => Box::new(CelBytes::from(b.to_vec())),
-            ProtoValue::EnumNumber(n) => Box::new(CelInt::from(*n as i64)),
+            ProtoValue::Bool(b) => Ok(Box::new(CelBool::from(*b))),
+            ProtoValue::I32(i) => Ok(Box::new(CelInt::from(*i as i64))),
+            ProtoValue::I64(i) => Ok(Box::new(CelInt::from(*i))),
+            ProtoValue::U32(u) => Ok(Box::new(CelUInt::from(*u as u64))),
+            ProtoValue::U64(u) => Ok(Box::new(CelUInt::from(*u))),
+            ProtoValue::F32(f) => Ok(Box::new(CelDouble::from(*f as f64))),
+            ProtoValue::F64(f) => Ok(Box::new(CelDouble::from(*f))),
+            ProtoValue::String(s) => Ok(Box::new(CelString::from(s.clone()))),
+            ProtoValue::Bytes(b) => Ok(Box::new(CelBytes::from(b.to_vec()))),
+            ProtoValue::EnumNumber(n) => Ok(Box::new(CelInt::from(*n as i64))),
             ProtoValue::Message(m) => {
                 let descriptor = m.descriptor();
+
+                // Special handling for google.protobuf.Timestamp ->  Value::Timestamp
+                if descriptor.full_name() == "google.protobuf.Timestamp" {
+                    return Self::proto_timestamp_to_cel_timestamp(m);
+                }
+
                 let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
 
                 for field in descriptor.fields() {
@@ -246,27 +260,27 @@ impl MessageConverter {
                         continue;
                     }
                     let field_value = m.get_field(&field);
-                    let cel_value = Self::proto_value_to_cel_val(field_value.as_ref());
+                    let cel_value = Self::proto_value_to_cel_val(field_value.as_ref())?;
                     cel_struct.add_field_value(field.name().to_string(), Cow::Owned(cel_value));
                 }
 
-                Box::new(cel_struct)
+                Ok(Box::new(cel_struct))
             }
             ProtoValue::List(items) => {
-                let cel_items: Vec<Box<dyn cel::common::value::Val>> = items
+                let cel_items: Result<Vec<_>, _> = items
                     .iter()
                     .map(|item| Self::proto_value_to_cel_val(item))
                     .collect();
-                Box::new(CelList::from(cel_items))
+                Ok(Box::new(CelList::from(cel_items?)))
             }
             ProtoValue::Map(entries) => {
                 let mut map = HashMap::new();
                 for (key, value) in entries.iter() {
                     let cel_key = Self::map_key_to_cel(key);
-                    let cel_value = Self::proto_value_to_cel_val(value);
+                    let cel_value = Self::proto_value_to_cel_val(value)?;
                     map.insert(cel_key, cel_value);
                 }
-                Box::new(CelMap::from(map))
+                Ok(Box::new(CelMap::from(map)))
             }
         }
     }
@@ -560,11 +574,114 @@ impl MessageConverter {
                 Ok(ProtoValue::EnumNumber(value.number()))
             }
             ProtoKind::Message(nested_desc) => {
+                // Special handling for Value::Timestamp -> google.protobuf.Timestamp
+                if nested_desc.full_name() == "google.protobuf.Timestamp" {
+                    if let Some(cel_ts) = cel_val.downcast_ref::<CelTimestamp>() {
+                        return Self::cel_timestamp_to_proto_message(
+                            cel_ts,
+                            &nested_desc,
+                            field_name,
+                        );
+                    }
+                }
+
                 let nested_message =
                     Self::struct_from_val_to_message(cel_val, &nested_desc, field_name)?;
                 Ok(ProtoValue::Message(nested_message))
             }
         }
+    }
+
+    fn cel_timestamp_to_proto_message(
+        cel_ts: &CelTimestamp,
+        descriptor: &MessageDescriptor,
+        field_name: &str,
+    ) -> Result<ProtoValue, ConversionError> {
+        let dt = cel_ts.inner();
+        let mut message = DynamicMessage::new(descriptor.clone());
+
+        let seconds_field = descriptor.get_field_by_name("seconds").ok_or_else(|| {
+            ConversionError::TypeMismatch {
+                field: field_name.to_string(),
+                expected: "Timestamp with seconds field".to_string(),
+                got: "missing seconds field".to_string(),
+            }
+        })?;
+        let nanos_field =
+            descriptor
+                .get_field_by_name("nanos")
+                .ok_or_else(|| ConversionError::TypeMismatch {
+                    field: field_name.to_string(),
+                    expected: "Timestamp with nanos field".to_string(),
+                    got: "missing nanos field".to_string(),
+                })?;
+
+        message.set_field(&seconds_field, ProtoValue::I64(dt.timestamp()));
+        message.set_field(
+            &nanos_field,
+            ProtoValue::I32(dt.timestamp_subsec_nanos() as i32),
+        );
+
+        Ok(ProtoValue::Message(message))
+    }
+
+    fn proto_timestamp_to_cel_timestamp(
+        message: &DynamicMessage,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
+        use chrono::{DateTime, FixedOffset};
+
+        let descriptor = message.descriptor();
+
+        let seconds_field = descriptor.get_field_by_name("seconds").ok_or_else(|| {
+            ConversionError::TypeMismatch {
+                field: "seconds".to_string(),
+                expected: "google.protobuf.Timestamp must have seconds field".to_string(),
+                got: "field not found".to_string(),
+            }
+        })?;
+        let nanos_field =
+            descriptor
+                .get_field_by_name("nanos")
+                .ok_or_else(|| ConversionError::TypeMismatch {
+                    field: "nanos".to_string(),
+                    expected: "google.protobuf.Timestamp must have nanos field".to_string(),
+                    got: "field not found".to_string(),
+                })?;
+
+        let seconds = message.get_field(&seconds_field);
+        let nanos = message.get_field(&nanos_field);
+
+        let seconds_value = match seconds.as_ref() {
+            ProtoValue::I64(s) => *s,
+            _ => {
+                return Err(ConversionError::TypeMismatch {
+                    field: "seconds".to_string(),
+                    expected: "i64".to_string(),
+                    got: format!("{:?}", seconds),
+                })
+            }
+        };
+
+        let nanos_value = match nanos.as_ref() {
+            ProtoValue::I32(n) => *n as u32,
+            _ => {
+                return Err(ConversionError::TypeMismatch {
+                    field: "nanos".to_string(),
+                    expected: "i32".to_string(),
+                    got: format!("{:?}", nanos),
+                })
+            }
+        };
+
+        let dt: DateTime<FixedOffset> = DateTime::from_timestamp(seconds_value, nanos_value)
+            .ok_or_else(|| ConversionError::TypeMismatch {
+                field: "timestamp".to_string(),
+                expected: "valid timestamp".to_string(),
+                got: format!("seconds={}, nanos={}", seconds_value, nanos_value),
+            })?
+            .into();
+
+        Ok(Box::new(CelTimestamp::from(dt)))
     }
 
     fn struct_from_val_to_message(
@@ -855,7 +972,8 @@ mod tests {
         message.set_field_by_name("int32_field", ProtoValue::I32(42));
         message.set_field_by_name("bool_field", ProtoValue::Bool(true));
 
-        let cel_value = MessageConverter::dynamic_message_to_cel(&message);
+        let cel_value =
+            MessageConverter::dynamic_message_to_cel(&message).expect("Failed to convert to CEL");
 
         assert!(matches!(&cel_value, Value::Struct(_)));
 
@@ -905,7 +1023,8 @@ mod tests {
         let message = MessageConverter::cel_to_dynamic_message(&original_cel, &descriptor)
             .expect("Failed to convert to message");
 
-        let converted_cel = MessageConverter::dynamic_message_to_cel(&message);
+        let converted_cel =
+            MessageConverter::dynamic_message_to_cel(&message).expect("Failed to convert to CEL");
 
         assert!(matches!(&converted_cel, Value::Struct(_)));
 
@@ -994,7 +1113,8 @@ mod tests {
         outer_message.set_field_by_name("name", ProtoValue::String("parent".to_string()));
         outer_message.set_field_by_name("inner", ProtoValue::Message(inner_message));
 
-        let cel_value = MessageConverter::dynamic_message_to_cel(&outer_message);
+        let cel_value = MessageConverter::dynamic_message_to_cel(&outer_message)
+            .expect("Failed to convert to CEL");
 
         assert!(matches!(&cel_value, Value::Struct(_)));
 
@@ -1090,7 +1210,8 @@ mod tests {
 
         message.set_field_by_name("tags", ProtoValue::Map(map_entries));
 
-        let cel_value = MessageConverter::dynamic_message_to_cel(&message);
+        let cel_value =
+            MessageConverter::dynamic_message_to_cel(&message).expect("Failed to convert to CEL");
 
         assert!(matches!(&cel_value, Value::Struct(_)));
 
@@ -1232,7 +1353,8 @@ mod tests {
             ]),
         );
 
-        let cel_value = MessageConverter::dynamic_message_to_cel(&message);
+        let cel_value =
+            MessageConverter::dynamic_message_to_cel(&message).expect("Failed to convert to CEL");
 
         assert!(matches!(&cel_value, Value::Struct(_)));
 
@@ -1508,7 +1630,8 @@ mod tests {
         let mut message = DynamicMessage::new(descriptor.clone());
         message.set_field_by_name("variant_a", ProtoValue::String("selected".to_string()));
 
-        let cel_value = MessageConverter::dynamic_message_to_cel(&message);
+        let cel_value =
+            MessageConverter::dynamic_message_to_cel(&message).expect("Failed to convert to CEL");
 
         let struct_def =
             DescriptorConverter::to_struct_def(&descriptor).expect("Failed to convert descriptor");
@@ -1535,6 +1658,218 @@ mod tests {
         assert!(
             matches!(has_variant_b, Value::Bool(false)),
             "has(msg.variant_b) should return false when variant_b is not set (unset oneof variant)"
+        );
+    }
+
+    #[test]
+    fn cel_timestamp_to_protobuf_timestamp_via_cel_expression() {
+        use chrono::{DateTime, FixedOffset};
+
+        let timestamp_proto = FileDescriptorProto {
+            name: Some("google/protobuf/timestamp.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Timestamp".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(1),
+                        r#type: Some(field_descriptor_proto::Type::Int64.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(2),
+                        r#type: Some(field_descriptor_proto::Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let request_proto = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("Request".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("time".to_string()),
+                    number: Some(1),
+                    r#type: Some(field_descriptor_proto::Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let fds = FileDescriptorSet {
+            file: vec![timestamp_proto, request_proto],
+        };
+        let pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds)
+            .expect("Failed to create pool");
+
+        let timestamp_desc = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .expect("Failed to get Timestamp descriptor");
+        let request_desc = pool
+            .get_message_by_name("test.Request")
+            .expect("Failed to get Request descriptor");
+
+        let mut env = Env::default();
+        DescriptorConverter::register_message_types(&mut env, &timestamp_desc)
+            .expect("Failed to register Timestamp");
+        DescriptorConverter::register_message_types(&mut env, &request_desc)
+            .expect("Failed to register Request");
+
+        // Create a CEL timestamp: 2024-05-16 12:00:00 UTC (1715875200 seconds, 123456789 nanos)
+        let dt: DateTime<FixedOffset> = DateTime::from_timestamp(1715875200, 123456789)
+            .expect("Valid timestamp")
+            .into();
+        let cel_timestamp = Value::Timestamp(dt);
+
+        let ctx = Context::with_env(Arc::new(env));
+        let mut ctx_with_var = ctx;
+        ctx_with_var
+            .add_variable("request_time", cel_timestamp)
+            .expect("Failed to add variable");
+
+        let program = Program::compile("test.Request { time: request_time }")
+            .expect("Failed to compile CEL expression");
+
+        let cel_result = program
+            .execute(&ctx_with_var)
+            .expect("Failed to execute CEL expression");
+
+        let message = MessageConverter::cel_to_dynamic_message(&cel_result, &request_desc)
+            .expect("Failed to convert to DynamicMessage");
+
+        let time_field = request_desc
+            .get_field_by_name("time")
+            .expect("time field not found");
+        let time_value = message.get_field(&time_field);
+
+        let seconds_field = timestamp_desc
+            .get_field_by_name("seconds")
+            .expect("seconds field not found");
+        let nanos_field = timestamp_desc
+            .get_field_by_name("nanos")
+            .expect("nanos field not found");
+
+        assert!(
+            matches!(time_value.as_ref(), ProtoValue::Message(ts) if
+                matches!(ts.get_field(&seconds_field).as_ref(), ProtoValue::I64(1715875200)) &&
+                matches!(ts.get_field(&nanos_field).as_ref(), ProtoValue::I32(123456789))
+            ),
+            "Expected Message with correct timestamp values, got {:?}",
+            time_value
+        );
+    }
+
+    #[test]
+    fn protobuf_timestamp_to_cel_timestamp_roundtrip() {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("google/protobuf/timestamp.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Timestamp".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(1),
+                        r#type: Some(field_descriptor_proto::Type::Int64.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(2),
+                        r#type: Some(field_descriptor_proto::Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let fds = FileDescriptorSet {
+            file: vec![file_descriptor.clone()],
+        };
+        let pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds)
+            .expect("Failed to create pool");
+        let timestamp_desc = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .expect("Failed to get Timestamp descriptor");
+
+        let mut ts_msg = DynamicMessage::new(timestamp_desc.clone());
+        ts_msg.set_field_by_name("seconds", ProtoValue::I64(1715875200));
+        ts_msg.set_field_by_name("nanos", ProtoValue::I32(123456789));
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(ts_msg))
+            .expect("Failed to convert to CEL");
+
+        let cel_timestamp = cel_val
+            .downcast_ref::<CelTimestamp>()
+            .expect("Expected CelTimestamp");
+
+        let dt = cel_timestamp.inner();
+        assert_eq!(dt.timestamp(), 1715875200);
+        assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
+
+        let time_field = FieldDescriptorProto {
+            name: Some("time".to_string()),
+            number: Some(1),
+            r#type: Some(field_descriptor_proto::Type::Message.into()),
+            type_name: Some(".google.protobuf.Timestamp".to_string()),
+            ..Default::default()
+        };
+
+        let parent_desc = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("TestMessage".to_string()),
+                field: vec![time_field],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let fds_with_test = FileDescriptorSet {
+            file: vec![file_descriptor, parent_desc],
+        };
+        let test_pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds_with_test)
+            .expect("Failed to create pool");
+
+        let test_desc = test_pool
+            .get_message_by_name("test.TestMessage")
+            .expect("Failed to get test descriptor");
+        let field = test_desc
+            .get_field_by_name("time")
+            .expect("time field not found");
+
+        let proto_value = MessageConverter::cel_val_to_proto_value(&*cel_val, &field)
+            .expect("Failed to convert back to protobuf");
+
+        let seconds_field = timestamp_desc
+            .get_field_by_name("seconds")
+            .expect("seconds field not found");
+        let nanos_field = timestamp_desc
+            .get_field_by_name("nanos")
+            .expect("nanos field not found");
+
+        assert!(
+            matches!(proto_value, ProtoValue::Message(ref ts) if
+                matches!(ts.get_field(&seconds_field).as_ref(), ProtoValue::I64(1715875200)) &&
+                matches!(ts.get_field(&nanos_field).as_ref(), ProtoValue::I32(123456789))
+            ),
+            "Expected Message with correct timestamp values, got {:?}",
+            proto_value
         );
     }
 }
