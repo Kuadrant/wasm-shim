@@ -144,6 +144,10 @@ const HOST_PROPERTY_ROOTS: &[&str] = &[
     "auth",
 ];
 
+fn is_host_property_root(root: &str) -> bool {
+    HOST_PROPERTY_ROOTS.contains(&root)
+}
+
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseErrors> {
         let expression = Parser::new()
@@ -167,10 +171,6 @@ impl Expression {
             .filter_map(|tokens| {
                 if tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc" {
                     needs_grpc = true;
-                    return None;
-                }
-                let root = tokens.first()?;
-                if !HOST_PROPERTY_ROOTS.contains(root) {
                     return None;
                 }
                 let path = Path::new(tokens);
@@ -213,10 +213,16 @@ impl Expression {
             Self::add_extended_capabilities(cel_ctx)
         }
 
-        // Eagerly cache all attributes used by this expression
+        // Eagerly cache host-resolvable attributes used by this expression
         let paths: Vec<Path> = self
             .attributes
             .iter()
+            .filter(|attr| {
+                attr.path
+                    .tokens()
+                    .first()
+                    .is_some_and(|root| is_host_property_root(root))
+            })
             .map(|attr| attr.path.clone())
             .collect();
         req_ctx.ensure_attributes(&paths);
@@ -545,6 +551,12 @@ impl PredicateVec for Vec<Predicate> {
         let paths: Vec<Path> = self
             .iter()
             .flat_map(|p| &p.expression.attributes)
+            .filter(|attr| {
+                attr.path
+                    .tokens()
+                    .first()
+                    .is_some_and(|root| is_host_property_root(root))
+            })
             .map(|attr| attr.path.clone())
             .collect();
         req_ctx.ensure_attributes(&paths);
@@ -877,7 +889,7 @@ pub fn debug_all_well_known_attributes() {
 
 pub mod data {
     use crate::data::attribute::{AttributeError, AttributeState};
-    use crate::data::cel::Attribute;
+    use crate::data::cel::{is_host_property_root, Attribute};
     use crate::kuadrant::ReqRespCtx;
     use cel::objects::{Key, Map};
     use cel::Value;
@@ -922,16 +934,26 @@ pub mod data {
 
     impl AttributeMap {
         pub fn into(self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-            map_to_value(self.data, req_ctx)
+            map_to_value(self.data, req_ctx, "")
         }
     }
 
     fn map_to_value(
         map: HashMap<String, Token>,
         req_ctx: &ReqRespCtx,
+        path_prefix: &str,
     ) -> Result<AttributeState<Map>, AttributeError> {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
+            let current_path = if path_prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", path_prefix, key)
+            };
+
+            if path_prefix.is_empty() && !is_host_property_root(&key) {
+                continue;
+            }
             let k = key.into();
             let v = match value {
                 Token::Value(attr) => match attr.get(req_ctx)? {
@@ -940,12 +962,14 @@ pub mod data {
                         return Ok(AttributeState::Pending);
                     }
                 },
-                Token::Node(nested_map) => match map_to_value(nested_map, req_ctx)? {
-                    AttributeState::Available(m) => Value::Map(m),
-                    AttributeState::Pending => {
-                        return Ok(AttributeState::Pending);
+                Token::Node(nested_map) => {
+                    match map_to_value(nested_map, req_ctx, &current_path)? {
+                        AttributeState::Available(m) => Value::Map(m),
+                        AttributeState::Pending => {
+                            return Ok(AttributeState::Pending);
+                        }
                     }
-                },
+                }
             };
             out.insert(k, v);
         }
@@ -1055,10 +1079,13 @@ mod tests {
         assert_eq!(value.attributes[0].path, "auth.identity".into());
 
         let value = Expression::new("foo.bar && a.b.c").expect("This is valid CEL!");
-        assert_eq!(value.attributes.len(), 0);
+        assert_eq!(value.attributes.len(), 2);
+        assert_eq!(value.attributes[0].path, "foo.bar".into());
+        assert_eq!(value.attributes[1].path, "a.b.c".into());
 
         let value = Expression::new("my_func(foo.bar).a.b > 3").expect("This is valid CEL!");
-        assert_eq!(value.attributes.len(), 0);
+        assert_eq!(value.attributes.len(), 1);
+        assert_eq!(value.attributes[0].path, "foo.bar".into());
 
         let value = Expression::new("request.host && source.address").expect("This is valid CEL!");
         assert_eq!(value.attributes.len(), 2);
