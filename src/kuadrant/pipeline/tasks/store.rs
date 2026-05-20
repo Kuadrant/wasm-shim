@@ -74,9 +74,7 @@ impl Task for StoreTask {
             Ok(bytes) => {
                 if let Err(e) = ctx.set_attribute(&self.path, &bytes) {
                     error!("Failed to store attribute {}: {:?}", self.path, e);
-                    TaskOutcome::Failed
-                } else {
-                    TaskOutcome::Done
+                    return TaskOutcome::Failed;
                 }
             }
             Err(e) => {
@@ -84,8 +82,10 @@ impl Task for StoreTask {
                     "Failed to convert value to bytes for '{}': {}",
                     self.path, e
                 );
-                TaskOutcome::Failed
+                return TaskOutcome::Failed;
             }
         }
+        ctx.store_value(self.path, self.value);
+        TaskOutcome::Done
     }
 }
