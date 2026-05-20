@@ -1,6 +1,6 @@
 use cel::Value;
 use std::cell::OnceCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -30,6 +30,7 @@ pub struct ReqRespCtx {
     tracker: Tracker,
     request_body_values: HashMap<String, Value>,
     response_body_values: HashMap<String, Value>,
+    stored_values: BTreeMap<String, Value>,
 }
 
 impl Default for ReqRespCtx {
@@ -53,6 +54,7 @@ impl ReqRespCtx {
             tracker: Tracker::default(),
             request_body_values: HashMap::new(),
             response_body_values: HashMap::new(),
+            stored_values: BTreeMap::new(),
         }
     }
 
@@ -436,6 +438,16 @@ impl ReqRespCtx {
 
     pub fn get_response_body_value(&self, key: &str) -> Option<&Value> {
         self.response_body_values.get(key)
+    }
+
+    #[allow(dead_code)]
+    pub fn store_value(&mut self, path: String, value: Value) {
+        self.stored_values.insert(path, value);
+    }
+
+    #[allow(dead_code)]
+    pub fn get_stored_value(&self, path: &str) -> Option<&Value> {
+        self.stored_values.get(path)
     }
 }
 
