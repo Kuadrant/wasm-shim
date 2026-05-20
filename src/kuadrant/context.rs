@@ -440,7 +440,6 @@ impl ReqRespCtx {
         self.response_body_values.get(key)
     }
 
-    #[allow(dead_code)]
     pub fn store_value(&mut self, path: String, value: Value) {
         self.stored_values.insert(path, value);
     }
