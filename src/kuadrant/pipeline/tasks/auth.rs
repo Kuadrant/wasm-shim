@@ -175,7 +175,11 @@ fn process_auth_response(response: CheckResponse) -> TaskOutcome {
         let data = process_metadata(dynamic_metadata, "auth".to_string());
         for (path, bytes) in data {
             let s = String::from_utf8_lossy(&bytes).to_string();
-            tasks.push(Box::new(StoreTask::new(path, cel::Value::String(s.into()))));
+            tasks.push(Box::new(StoreTask::new(
+                path,
+                cel::Value::String(s.into()),
+                true,
+            )));
         }
     }
 

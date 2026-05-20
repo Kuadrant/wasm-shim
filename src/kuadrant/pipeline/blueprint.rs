@@ -52,6 +52,7 @@ pub(crate) enum Operation {
     Store {
         path: String,
         expression: Expression,
+        export_to_host: bool,
     },
     Fail {
         log_message: String,
@@ -445,7 +446,11 @@ impl TypedAction {
             configuration::Operation::Store(store) => {
                 let path = store.path.clone();
                 let expression = Expression::new(&store.value)?;
-                Operation::Store { path, expression }
+                Operation::Store {
+                    path,
+                    expression,
+                    export_to_host: store.export_to_host,
+                }
             }
             configuration::Operation::Fail(fail) => Operation::Fail {
                 log_message: fail.log_message.clone(),
@@ -840,6 +845,7 @@ mod tests {
                         operation: ConfigOperation::Store(StoreOperation {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
+                            export_to_host: false,
                         }),
                     },
                 ],
@@ -960,6 +966,7 @@ mod tests {
             operation: ConfigOperation::Store(StoreOperation {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
+                export_to_host: false,
             }),
         };
         let store_result = TypedAction::compile(&store_config);
