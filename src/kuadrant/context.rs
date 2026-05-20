@@ -444,9 +444,19 @@ impl ReqRespCtx {
         self.stored_values.insert(path, value);
     }
 
-    #[allow(dead_code)]
     pub fn get_stored_value(&self, path: &str) -> Option<&Value> {
         self.stored_values.get(path)
+    }
+
+    pub fn stored_value_paths(&self) -> impl Iterator<Item = &str> {
+        self.stored_values.keys().map(|s| s.as_str())
+    }
+
+    pub fn has_stored_prefix(&self, prefix: &str) -> bool {
+        self.stored_values
+            .range::<String, _>(prefix.to_string()..)
+            .next()
+            .is_some_and(|(k, _)| k.starts_with(prefix))
     }
 }
 
