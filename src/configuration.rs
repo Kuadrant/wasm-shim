@@ -87,6 +87,8 @@ pub struct HeadersOperation {
 pub struct StoreOperation {
     pub path: String,
     pub value: String,
+    #[serde(default)]
+    pub export_to_host: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]

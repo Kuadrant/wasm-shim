@@ -40,11 +40,16 @@ impl From<prost::EncodeError> for StoreError {
 pub struct StoreTask {
     path: String,
     value: Value,
+    export_to_host: bool,
 }
 
 impl StoreTask {
-    pub fn new(path: String, value: Value) -> Self {
-        Self { path, value }
+    pub fn new(path: String, value: Value, export_to_host: bool) -> Self {
+        Self {
+            path,
+            value,
+            export_to_host,
+        }
     }
 
     fn value_to_bytes(value: &Value) -> Result<Vec<u8>, StoreError> {
@@ -70,19 +75,21 @@ impl StoreTask {
 impl Task for StoreTask {
     #[tracing::instrument(name = "store", skip(self, ctx), level = tracing::Level::TRACE)]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        match Self::value_to_bytes(&self.value) {
-            Ok(bytes) => {
-                if let Err(e) = ctx.set_attribute(&self.path, &bytes) {
-                    error!("Failed to store attribute {}: {:?}", self.path, e);
+        if self.export_to_host {
+            match Self::value_to_bytes(&self.value) {
+                Ok(bytes) => {
+                    if let Err(e) = ctx.set_attribute(&self.path, &bytes) {
+                        error!("Failed to store attribute {}: {:?}", self.path, e);
+                        return TaskOutcome::Failed;
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to convert value to bytes for '{}': {}",
+                        self.path, e
+                    );
                     return TaskOutcome::Failed;
                 }
-            }
-            Err(e) => {
-                error!(
-                    "Failed to convert value to bytes for '{}': {}",
-                    self.path, e
-                );
-                return TaskOutcome::Failed;
             }
         }
         ctx.store_value(self.path, self.value);

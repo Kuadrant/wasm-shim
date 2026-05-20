@@ -584,7 +584,8 @@ fn it_stores_data_from_grpc_response() {
                     "predicate": "true",
                     "terminal": false,
                     "path": "check.result",
-                    "value": "my_check.result"
+                    "value": "my_check.result",
+                    "exportToHost": true
                 }]
             }]
         }]

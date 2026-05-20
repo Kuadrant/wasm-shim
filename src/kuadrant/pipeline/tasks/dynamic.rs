@@ -229,21 +229,23 @@ fn process_dynamic_response(
                     }
                 }
             }
-            Operation::Store { path, expression } => {
-                match expression.eval_with_ctx(ctx, &mut cel_ctx) {
-                    Ok(AttributeState::Available(val)) => {
-                        tasks.push(Box::new(StoreTask::new(path.clone(), val)));
-                    }
-                    Ok(AttributeState::Pending) => {
-                        error!("Unexpected pending state in onReply store for '{path}'");
-                        return TaskOutcome::Failed;
-                    }
-                    Err(e) => {
-                        error!("Failed to evaluate store expression for '{path}': {e}");
-                        return TaskOutcome::Failed;
-                    }
+            Operation::Store {
+                path,
+                expression,
+                export_to_host,
+            } => match expression.eval_with_ctx(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Available(val)) => {
+                    tasks.push(Box::new(StoreTask::new(path.clone(), val, *export_to_host)));
                 }
-            }
+                Ok(AttributeState::Pending) => {
+                    error!("Unexpected pending state in onReply store for '{path}'");
+                    return TaskOutcome::Failed;
+                }
+                Err(e) => {
+                    error!("Failed to evaluate store expression for '{path}': {e}");
+                    return TaskOutcome::Failed;
+                }
+            },
             Operation::Fail { log_message } => {
                 error!("Action failure: {log_message}");
                 return TaskOutcome::Failed;
