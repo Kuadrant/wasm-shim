@@ -251,6 +251,26 @@ impl Expression {
             cel_ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
         }
 
+        for (key, value) in map.iter() {
+            if let Key::String(name) = key {
+                if *key != request_key && !is_host_property_root(name) {
+                    cel_ctx.add_variable_from_value(name.as_str(), value.clone());
+                }
+            }
+        }
+
+        for path in req_ctx.stored_value_paths() {
+            let root = path.split('.').next().unwrap_or(path);
+            if root == path {
+                let key: Key = root.into();
+                if !map.contains_key(&key) {
+                    if let Some(value) = req_ctx.get_stored_value(path) {
+                        cel_ctx.add_variable_from_value(root, value.clone());
+                    }
+                }
+            }
+        }
+
         {
             let mut response_json_map = HashMap::new();
             for field_key in &self.response_body_values {
@@ -951,7 +971,14 @@ pub mod data {
                 format!("{}.{}", path_prefix, key)
             };
 
-            if path_prefix.is_empty() && !is_host_property_root(&key) {
+            if let Some(stored_val) = req_ctx.get_stored_value(&current_path) {
+                out.insert(key.into(), stored_val.clone());
+                continue;
+            }
+            if path_prefix.is_empty()
+                && !is_host_property_root(&key)
+                && !req_ctx.has_stored_prefix(&format!("{}.", key))
+            {
                 continue;
             }
             let k = key.into();
@@ -1055,6 +1082,7 @@ mod tests {
     use crate::kuadrant::ReqRespCtx;
     use cel::objects::ValueType;
     use cel::Value;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
@@ -1707,5 +1735,70 @@ mod tests {
             AttributeState::Pending,
             "Ternary expression with Pending condition should return Pending"
         );
+    }
+
+    #[test]
+    fn stored_value_resolves_in_expression() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let identity_map: HashMap<cel::objects::Key, Value> = HashMap::from([
+            (
+                cel::objects::Key::String(Arc::new("userid".to_string())),
+                Value::String(Arc::new("alice".to_string())),
+            ),
+            (
+                cel::objects::Key::String(Arc::new("role".to_string())),
+                Value::String(Arc::new("admin".to_string())),
+            ),
+        ]);
+        let auth_map: HashMap<cel::objects::Key, Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new("identity".to_string())),
+            Value::Map(cel::objects::Map::from(identity_map)),
+        )]);
+        ctx.store_value(
+            "auth".to_string(),
+            Value::Map(cel::objects::Map::from(auth_map)),
+        );
+
+        let expr = Expression::new("auth.identity.userid == 'alice'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+
+        let expr = Expression::new("auth.identity.role == 'admin'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+    }
+
+    #[test]
+    fn stored_value_at_nested_path() {
+        let mock_host =
+            MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        ctx.store_value(
+            "request.custom".to_string(),
+            Value::String(Arc::new("stored_data".to_string())),
+        );
+
+        let expr = Expression::new("request.custom == 'stored_data'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+
+        let expr = Expression::new("request.method == 'GET'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+    }
+
+    #[test]
+    fn stored_value_with_custom_root() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        ctx.store_value("myvar".to_string(), Value::Int(42));
+
+        let expr = Expression::new("myvar == 42").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
     }
 }
