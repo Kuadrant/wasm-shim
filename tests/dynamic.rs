@@ -624,7 +624,13 @@ fn it_stores_data_from_grpc_response() {
         .call_proxy_on_grpc_receive(http_context, 43, grpc_response.len() as i32)
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(grpc_response))
-        .expect_set_property(Some(vec!["kuadrant.check.result"]), Some(b"stored_value"))
+        .expect_set_property(
+            Some(vec!["kuadrant.check.result"]),
+            // google.protobuf.Value{string_value: "stored_value"}
+            Some(&[
+                26, 12, 115, 116, 111, 114, 101, 100, 95, 118, 97, 108, 117, 101,
+            ]),
+        )
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
