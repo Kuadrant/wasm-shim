@@ -147,6 +147,7 @@ impl ReqRespCtx {
         self.get_attribute_ref(&path.into())
     }
 
+    #[allow(dead_code)]
     pub fn get_required<T: AttributeValue>(
         &self,
         path: impl Into<Path>,
@@ -521,6 +522,7 @@ pub mod request_data {
         pub domain: String,
         pub field: String,
         pub result: EvalResult,
+        #[allow(dead_code)]
         pub source: String,
     }
 }
