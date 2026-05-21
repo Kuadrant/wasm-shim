@@ -399,7 +399,7 @@ impl Action {
                     predicates: vec![predicate],
                     conditional_data: vec![],
                     dependencies,
-                    sources: vec![],
+                    sources: typed.sources.clone(),
                     message_builder,
                     on_reply,
                     is_guard: typed.is_guard,
@@ -808,6 +808,7 @@ mod tests {
             predicate: "request.method == 'GET'".to_string(),
             terminal: false,
             is_guard: true,
+            sources: vec![],
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "rl_check".to_string(),
                 service: "my-dynamic".to_string(),
@@ -817,6 +818,7 @@ mod tests {
                         predicate: "rl_check.overall_code == 2".to_string(),
                         terminal: true,
                         is_guard: false,
+                        sources: vec![],
                         operation: ConfigOperation::Deny(DenyOperation {
                             deny_with: "DenyResponse{status: 429u}".to_string(),
                         }),
@@ -825,6 +827,7 @@ mod tests {
                         predicate: "rl_check.overall_code == 0".to_string(),
                         terminal: true,
                         is_guard: false,
+                        sources: vec![],
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message: "Received UNKNOWN from rate limiting service".to_string(),
                         }),
@@ -834,6 +837,7 @@ mod tests {
                             .to_string(),
                         terminal: true,
                         is_guard: false,
+                        sources: vec![],
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message:
                                 "Received invalid response code from rate limiting service"
@@ -844,6 +848,7 @@ mod tests {
                         predicate: "true".to_string(),
                         terminal: false,
                         is_guard: false,
+                        sources: vec![],
                         operation: ConfigOperation::Headers(HeadersOperation {
                             target: HeadersTarget::Request,
                             headers: "result.headers".to_string(),
@@ -853,6 +858,7 @@ mod tests {
                         predicate: "true".to_string(),
                         terminal: false,
                         is_guard: false,
+                        sources: vec![],
                         operation: ConfigOperation::Store(StoreOperation {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
@@ -883,6 +889,7 @@ mod tests {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
+            sources: vec![],
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "nonexistent".to_string(),
@@ -910,6 +917,7 @@ mod tests {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
+            sources: vec![],
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "tracing-svc".to_string(),
@@ -931,6 +939,7 @@ mod tests {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: false,
+            sources: vec![],
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "nested".to_string(),
                 service: "svc".to_string(),
@@ -952,6 +961,7 @@ mod tests {
             predicate: "result.code == 2".to_string(),
             terminal: true,
             is_guard: false,
+            sources: vec![],
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -966,6 +976,7 @@ mod tests {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: false,
+            sources: vec![],
             operation: ConfigOperation::Headers(HeadersOperation {
                 target: HeadersTarget::Response,
                 headers: "result.resp_headers".to_string(),
@@ -987,6 +998,7 @@ mod tests {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
+            sources: vec![],
             operation: ConfigOperation::Store(StoreOperation {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
@@ -1009,6 +1021,7 @@ mod tests {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
             is_guard: true,
+            sources: vec![],
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -1045,6 +1058,7 @@ mod tests {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
+                    sources: vec![],
                     operation: ConfigOperation::Grpc(GrpcOperation {
                         var: "rl_check".to_string(),
                         service: "dyn-svc".to_string(),
@@ -1053,6 +1067,7 @@ mod tests {
                             predicate: "rl_check.code == 2".to_string(),
                             terminal: true,
                             is_guard: false,
+                            sources: vec![],
                             operation: ConfigOperation::Deny(DenyOperation {
                                 deny_with: "DenyResponse{status: 429u}".to_string(),
                             }),
