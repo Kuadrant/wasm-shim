@@ -141,7 +141,6 @@ const HOST_PROPERTY_ROOTS: &[&str] = &[
     "ratelimit",
     "filter_state",
     "metadata",
-    "auth",
 ];
 
 fn is_host_property_root(root: &str) -> bool {
@@ -1076,7 +1075,7 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::attribute::{AttributeState, Path};
+    use crate::data::attribute::AttributeState;
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
@@ -1139,17 +1138,26 @@ mod tests {
         assert_eq!(value.request_body_values, vec!["foo.bar".to_string()]);
     }
 
+    fn store_auth_leaf(ctx: &mut ReqRespCtx, field: &str, value: Value) {
+        let leaf_map: HashMap<cel::objects::Key, Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new(field.to_string())),
+            value,
+        )]);
+        let auth_map: HashMap<cel::objects::Key, Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new("identity".to_string())),
+            Value::Map(cel::objects::Map::from(leaf_map)),
+        )]);
+        ctx.store_value(
+            "auth".to_string(),
+            Value::Map(cel::objects::Map::from(auth_map)),
+        );
+    }
+
     #[test]
     fn expressions_to_json_resolve() {
         // Test boolean value
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec![
-                "filter_state",
-                "wasm.kuadrant.auth.identity.anonymous",
-            ]),
-            "true".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "anonymous", Value::Bool(true));
         let value = Expression::new("auth.identity.anonymous")
             .expect("This is valid CEL!")
             .eval(&ctx)
@@ -1157,11 +1165,8 @@ mod tests {
         assert_eq!(value, AttributeState::Available(true.into()));
 
         // Test integer value
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "42".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "age", Value::UInt(42));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
             .eval(&ctx)
@@ -1169,22 +1174,17 @@ mod tests {
         assert_eq!(value, AttributeState::Available(Value::UInt(42)));
 
         // Test float value
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "42.3".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "age", Value::Float(42.3));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::Float(42.3)));
 
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "\"John\"".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        // Test string value
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "age", Value::String("John".to_string().into()));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
             .eval(&ctx)
@@ -1195,31 +1195,13 @@ mod tests {
         );
 
         // Test negative integer
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
-            "-42".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "name", Value::Int(-42));
         let value = Expression::new("auth.identity.name")
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::Int(-42)));
-
-        // Test fallback to string for non-JSON
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "some random crap".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
-        let value = Expression::new("auth.identity.age")
-            .expect("This is valid CEL!")
-            .eval(&ctx)
-            .expect("This must evaluate!");
-        assert_eq!(
-            value,
-            AttributeState::Available(Value::String("some random crap".to_string().into()))
-        );
     }
 
     #[test]
