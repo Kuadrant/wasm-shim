@@ -76,16 +76,14 @@ impl DescriptorConverter {
                 continue;
             }
 
-            if desc.is_map_entry() {
-                continue;
-            }
-
             for field in desc.fields() {
                 if let ProtoKind::Message(nested_desc) = field.kind() {
-                    if !nested_desc.is_map_entry() {
-                        to_register.push(nested_desc);
-                    }
+                    to_register.push(nested_desc);
                 }
+            }
+
+            if desc.is_map_entry() {
+                continue;
             }
 
             let struct_def = Self::to_struct_def(&desc)?;
@@ -220,7 +218,7 @@ impl MessageConverter {
         let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
 
         for field in descriptor.fields() {
-            if field.containing_oneof().is_some() && !message.has_field(&field) {
+            if !message.has_field(&field) && field.supports_presence() {
                 continue;
             }
             let field_value = message.get_field(&field);
@@ -256,7 +254,7 @@ impl MessageConverter {
                 let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
 
                 for field in descriptor.fields() {
-                    if field.containing_oneof().is_some() && !m.has_field(&field) {
+                    if !m.has_field(&field) && field.supports_presence() {
                         continue;
                     }
                     let field_value = m.get_field(&field);
