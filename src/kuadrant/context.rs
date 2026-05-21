@@ -589,10 +589,9 @@ mod tests {
 
     #[test]
     fn test_request_data() {
-        let mock_host = MockWasmHost::new()
-            .with_property("auth.identity.user".into(), "alice".bytes().collect())
-            .with_property("auth.identity.group".into(), "admin".bytes().collect());
-        let backend = Arc::new(mock_host);
+        use std::collections::HashMap;
+
+        let backend = Arc::new(MockWasmHost::new());
 
         let request_data = vec![
             (
@@ -610,8 +609,26 @@ mod tests {
         let results_empty = ctx_empty.eval_request_data();
         assert!(results_empty.is_empty());
 
-        // With request_data
-        let ctx = ReqRespCtx::new(backend).with_request_data(request_data);
+        // With request_data and stored auth values
+        let identity_map: HashMap<cel::objects::Key, cel::Value> = HashMap::from([
+            (
+                cel::objects::Key::String(Arc::new("user".to_string())),
+                cel::Value::String(Arc::new("alice".to_string())),
+            ),
+            (
+                cel::objects::Key::String(Arc::new("group".to_string())),
+                cel::Value::String(Arc::new("admin".to_string())),
+            ),
+        ]);
+        let auth_map: HashMap<cel::objects::Key, cel::Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new("identity".to_string())),
+            cel::Value::Map(cel::objects::Map::from(identity_map)),
+        )]);
+        let mut ctx = ReqRespCtx::new(backend).with_request_data(request_data);
+        ctx.store_value(
+            "auth".to_string(),
+            cel::Value::Map(cel::objects::Map::from(auth_map)),
+        );
         let results = ctx.eval_request_data();
         assert_eq!(results.len(), 2);
 
