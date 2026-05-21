@@ -1,4 +1,5 @@
 use cel::common::types::*;
+use cel::objects::Key;
 use cel::{Env, StructDef, Value};
 use prost_reflect::Cardinality;
 use prost_reflect::{
@@ -213,6 +214,72 @@ impl MessageConverter {
         }
     }
 
+    pub fn cel_value_to_bytes(value: &Value) -> Result<Vec<u8>, ConversionError> {
+        use prost::Message;
+        match value {
+            Value::Map(_) => Ok(Self::cel_to_prost_struct(value)?.encode_to_vec()),
+            _ => Ok(Self::cel_to_prost_value(value)?.encode_to_vec()),
+        }
+    }
+
+    fn cel_to_prost_value(value: &Value) -> Result<prost_types::Value, ConversionError> {
+        let kind = match value {
+            Value::Null => prost_types::value::Kind::NullValue(0),
+            Value::Float(f) => prost_types::value::Kind::NumberValue(*f),
+            Value::Int(i) => prost_types::value::Kind::NumberValue(*i as f64),
+            Value::UInt(u) => prost_types::value::Kind::NumberValue(*u as f64),
+            Value::String(s) => prost_types::value::Kind::StringValue(s.to_string()),
+            Value::Bool(b) => prost_types::value::Kind::BoolValue(*b),
+            Value::Bytes(b) => {
+                prost_types::value::Kind::StringValue(String::from_utf8_lossy(b).to_string())
+            }
+            Value::Map(_) => {
+                prost_types::value::Kind::StructValue(Self::cel_to_prost_struct(value)?)
+            }
+            Value::List(items) => {
+                let values: Result<Vec<_>, _> =
+                    items.iter().map(Self::cel_to_prost_value).collect();
+                prost_types::value::Kind::ListValue(prost_types::ListValue { values: values? })
+            }
+            _ => {
+                return Err(ConversionError::TypeMismatch {
+                    field: "value".to_string(),
+                    expected: "null, number, string, bool, map, or list".to_string(),
+                    got: format!("{:?}", value),
+                })
+            }
+        };
+        Ok(prost_types::Value { kind: Some(kind) })
+    }
+
+    fn cel_to_prost_struct(value: &Value) -> Result<prost_types::Struct, ConversionError> {
+        use std::collections::BTreeMap;
+        match value {
+            Value::Map(m) => {
+                let mut fields = BTreeMap::new();
+                for (k, v) in m.map.iter() {
+                    let key_str = match k {
+                        Key::String(s) => s.to_string(),
+                        _ => {
+                            return Err(ConversionError::TypeMismatch {
+                                field: "map key".to_string(),
+                                expected: "string".to_string(),
+                                got: format!("{:?}", k),
+                            })
+                        }
+                    };
+                    fields.insert(key_str, Self::cel_to_prost_value(v)?);
+                }
+                Ok(prost_types::Struct { fields })
+            }
+            _ => Err(ConversionError::TypeMismatch {
+                field: "value".to_string(),
+                expected: "map".to_string(),
+                got: format!("{:?}", value),
+            }),
+        }
+    }
+
     pub fn dynamic_message_to_cel(message: &DynamicMessage) -> Result<Value, ConversionError> {
         let descriptor = message.descriptor();
         let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
@@ -249,6 +316,18 @@ impl MessageConverter {
                 // Special handling for google.protobuf.Timestamp ->  Value::Timestamp
                 if descriptor.full_name() == "google.protobuf.Timestamp" {
                     return Self::proto_timestamp_to_cel_timestamp(m);
+                }
+
+                if descriptor.full_name() == "google.protobuf.Struct" {
+                    return Self::unwrap_proto_struct(m);
+                }
+
+                if descriptor.full_name() == "google.protobuf.Value" {
+                    return Self::unwrap_proto_value(m);
+                }
+
+                if descriptor.full_name() == "google.protobuf.ListValue" {
+                    return Self::unwrap_proto_list_value(m);
                 }
 
                 let mut cel_struct = CelStruct::new(descriptor.full_name().to_string());
@@ -680,6 +759,94 @@ impl MessageConverter {
             .into();
 
         Ok(Box::new(CelTimestamp::from(dt)))
+    }
+
+    fn unwrap_proto_struct(
+        message: &DynamicMessage,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
+        let descriptor = message.descriptor();
+        let fields_field = descriptor.get_field_by_name("fields").ok_or_else(|| {
+            ConversionError::TypeMismatch {
+                field: "fields".to_string(),
+                expected: "google.protobuf.Struct must have fields".to_string(),
+                got: "field not found".to_string(),
+            }
+        })?;
+
+        let fields_value = message.get_field(&fields_field);
+        match fields_value.as_ref() {
+            ProtoValue::Map(entries) => {
+                let mut map = HashMap::new();
+                for (key, value) in entries.iter() {
+                    let cel_key: CelMapKey = Self::map_key_to_cel(key);
+                    let cel_value = Self::proto_value_to_cel_val(value)?;
+                    map.insert(cel_key, cel_value);
+                }
+                Ok(Box::new(CelMap::from(map)))
+            }
+            _ => Err(ConversionError::TypeMismatch {
+                field: "fields".to_string(),
+                expected: "map".to_string(),
+                got: format!("{:?}", fields_value),
+            }),
+        }
+    }
+
+    fn unwrap_proto_value(
+        message: &DynamicMessage,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
+        let descriptor = message.descriptor();
+
+        for field in descriptor.fields() {
+            if field.containing_oneof().is_some() && !message.has_field(&field) {
+                continue;
+            }
+
+            let field_value = message.get_field(&field);
+            return match field.name() {
+                "null_value" => Ok(Box::new(CelNull)),
+                "number_value" => Self::proto_value_to_cel_val(field_value.as_ref()),
+                "string_value" => Self::proto_value_to_cel_val(field_value.as_ref()),
+                "bool_value" => Self::proto_value_to_cel_val(field_value.as_ref()),
+                "struct_value" => Self::proto_value_to_cel_val(field_value.as_ref()),
+                "list_value" => Self::proto_value_to_cel_val(field_value.as_ref()),
+                _ => Err(ConversionError::UnsupportedFieldType {
+                    field: field.name().to_string(),
+                    kind: "unknown google.protobuf.Value variant".to_string(),
+                }),
+            };
+        }
+
+        Ok(Box::new(CelNull))
+    }
+
+    fn unwrap_proto_list_value(
+        message: &DynamicMessage,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
+        let descriptor = message.descriptor();
+        let values_field = descriptor.get_field_by_name("values").ok_or_else(|| {
+            ConversionError::TypeMismatch {
+                field: "values".to_string(),
+                expected: "google.protobuf.ListValue must have values".to_string(),
+                got: "field not found".to_string(),
+            }
+        })?;
+
+        let values = message.get_field(&values_field);
+        match values.as_ref() {
+            ProtoValue::List(items) => {
+                let cel_items: Result<Vec<_>, _> = items
+                    .iter()
+                    .map(|item| Self::proto_value_to_cel_val(item))
+                    .collect();
+                Ok(Box::new(CelList::from(cel_items?)))
+            }
+            _ => Err(ConversionError::TypeMismatch {
+                field: "values".to_string(),
+                expected: "list".to_string(),
+                got: format!("{:?}", values),
+            }),
+        }
     }
 
     fn struct_from_val_to_message(
@@ -1868,6 +2035,335 @@ mod tests {
             ),
             "Expected Message with correct timestamp values, got {:?}",
             proto_value
+        );
+    }
+
+    fn create_well_known_types_pool() -> prost_reflect::DescriptorPool {
+        let null_enum = prost_types::EnumDescriptorProto {
+            name: Some("NullValue".to_string()),
+            value: vec![prost_types::EnumValueDescriptorProto {
+                name: Some("NULL_VALUE".to_string()),
+                number: Some(0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let value_msg = DescriptorProto {
+            name: Some("Value".to_string()),
+            field: vec![
+                FieldDescriptorProto {
+                    name: Some("null_value".to_string()),
+                    number: Some(1),
+                    r#type: Some(field_descriptor_proto::Type::Enum.into()),
+                    type_name: Some(".google.protobuf.NullValue".to_string()),
+                    oneof_index: Some(0),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("number_value".to_string()),
+                    number: Some(2),
+                    r#type: Some(field_descriptor_proto::Type::Double.into()),
+                    oneof_index: Some(0),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("string_value".to_string()),
+                    number: Some(3),
+                    r#type: Some(field_descriptor_proto::Type::String.into()),
+                    oneof_index: Some(0),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("bool_value".to_string()),
+                    number: Some(4),
+                    r#type: Some(field_descriptor_proto::Type::Bool.into()),
+                    oneof_index: Some(0),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("struct_value".to_string()),
+                    number: Some(5),
+                    r#type: Some(field_descriptor_proto::Type::Message.into()),
+                    type_name: Some(".google.protobuf.Struct".to_string()),
+                    oneof_index: Some(0),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("list_value".to_string()),
+                    number: Some(6),
+                    r#type: Some(field_descriptor_proto::Type::Message.into()),
+                    type_name: Some(".google.protobuf.ListValue".to_string()),
+                    oneof_index: Some(0),
+                    ..Default::default()
+                },
+            ],
+            oneof_decl: vec![OneofDescriptorProto {
+                name: Some("kind".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let struct_msg = DescriptorProto {
+            name: Some("Struct".to_string()),
+            field: vec![FieldDescriptorProto {
+                name: Some("fields".to_string()),
+                number: Some(1),
+                r#type: Some(field_descriptor_proto::Type::Message.into()),
+                type_name: Some(".google.protobuf.Struct.FieldsEntry".to_string()),
+                label: Some(prost_types::field_descriptor_proto::Label::Repeated.into()),
+                ..Default::default()
+            }],
+            nested_type: vec![DescriptorProto {
+                name: Some("FieldsEntry".to_string()),
+                options: Some(prost_types::MessageOptions {
+                    map_entry: Some(true),
+                    ..Default::default()
+                }),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("key".to_string()),
+                        number: Some(1),
+                        r#type: Some(field_descriptor_proto::Type::String.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("value".to_string()),
+                        number: Some(2),
+                        r#type: Some(field_descriptor_proto::Type::Message.into()),
+                        type_name: Some(".google.protobuf.Value".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let list_value_msg = DescriptorProto {
+            name: Some("ListValue".to_string()),
+            field: vec![FieldDescriptorProto {
+                name: Some("values".to_string()),
+                number: Some(1),
+                r#type: Some(field_descriptor_proto::Type::Message.into()),
+                type_name: Some(".google.protobuf.Value".to_string()),
+                label: Some(prost_types::field_descriptor_proto::Label::Repeated.into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let file_descriptor = FileDescriptorProto {
+            name: Some("google/protobuf/struct.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            message_type: vec![struct_msg, value_msg, list_value_msg],
+            enum_type: vec![null_enum],
+            ..Default::default()
+        };
+
+        let fds = FileDescriptorSet {
+            file: vec![file_descriptor],
+        };
+
+        prost_reflect::DescriptorPool::from_file_descriptor_set(fds)
+            .expect("Failed to create well-known types pool")
+    }
+
+    fn make_string_value(pool: &prost_reflect::DescriptorPool, s: &str) -> DynamicMessage {
+        let value_desc = pool
+            .get_message_by_name("google.protobuf.Value")
+            .expect("Value not found");
+        let mut msg = DynamicMessage::new(value_desc);
+        msg.set_field_by_name("string_value", ProtoValue::String(s.to_string()));
+        msg
+    }
+
+    fn make_number_value(pool: &prost_reflect::DescriptorPool, n: f64) -> DynamicMessage {
+        let value_desc = pool
+            .get_message_by_name("google.protobuf.Value")
+            .expect("Value not found");
+        let mut msg = DynamicMessage::new(value_desc);
+        msg.set_field_by_name("number_value", ProtoValue::F64(n));
+        msg
+    }
+
+    fn make_struct(
+        pool: &prost_reflect::DescriptorPool,
+        fields: HashMap<String, DynamicMessage>,
+    ) -> DynamicMessage {
+        let struct_desc = pool
+            .get_message_by_name("google.protobuf.Struct")
+            .expect("Struct not found");
+        let mut msg = DynamicMessage::new(struct_desc);
+        let map: HashMap<MapKey, ProtoValue> = fields
+            .into_iter()
+            .map(|(k, v)| (MapKey::String(k), ProtoValue::Message(v)))
+            .collect();
+        msg.set_field_by_name("fields", ProtoValue::Map(map));
+        msg
+    }
+
+    #[test]
+    fn test_protobuf_struct_unwraps_to_map() {
+        let pool = create_well_known_types_pool();
+
+        let mut fields = HashMap::new();
+        fields.insert("name".to_string(), make_string_value(&pool, "alice"));
+        fields.insert("age".to_string(), make_number_value(&pool, 30.0));
+        let struct_msg = make_struct(&pool, fields);
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(struct_msg))
+            .expect("Failed to convert");
+
+        let map = cel_val
+            .downcast_ref::<CelMap>()
+            .expect("Expected CelMap, got something else");
+
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_protobuf_nested_struct_unwraps() {
+        let pool = create_well_known_types_pool();
+
+        let mut identity_fields = HashMap::new();
+        identity_fields.insert("userid".to_string(), make_string_value(&pool, "alice"));
+
+        let value_desc = pool
+            .get_message_by_name("google.protobuf.Value")
+            .expect("Value not found");
+        let mut identity_value = DynamicMessage::new(value_desc);
+        identity_value.set_field_by_name(
+            "struct_value",
+            ProtoValue::Message(make_struct(&pool, identity_fields)),
+        );
+
+        let mut outer_fields = HashMap::new();
+        outer_fields.insert("identity".to_string(), identity_value);
+        let struct_msg = make_struct(&pool, outer_fields);
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(struct_msg))
+            .expect("Failed to convert");
+
+        let outer_map = cel_val
+            .downcast_ref::<CelMap>()
+            .expect("Expected outer CelMap");
+        assert_eq!(outer_map.len(), 1);
+
+        let identity_val = outer_map
+            .get(&CelMapKey::String(CelString::from("identity")))
+            .expect("identity key not found");
+        let inner_map = identity_val
+            .downcast_ref::<CelMap>()
+            .expect("Expected inner CelMap for identity");
+
+        let userid_val = inner_map
+            .get(&CelMapKey::String(CelString::from("userid")))
+            .expect("userid key not found");
+        assert_eq!(
+            userid_val.downcast_ref::<CelString>().map(|s| s.inner()),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn test_protobuf_value_string_variant() {
+        let pool = create_well_known_types_pool();
+        let msg = make_string_value(&pool, "hello");
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(msg))
+            .expect("Failed to convert");
+
+        assert_eq!(
+            cel_val.downcast_ref::<CelString>().map(|s| s.inner()),
+            Some("hello")
+        );
+    }
+
+    #[test]
+    fn test_protobuf_value_number_variant() {
+        let pool = create_well_known_types_pool();
+        let msg = make_number_value(&pool, 42.5);
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(msg))
+            .expect("Failed to convert");
+
+        assert_eq!(
+            cel_val.downcast_ref::<CelDouble>().map(|d| *d.inner()),
+            Some(42.5)
+        );
+    }
+
+    #[test]
+    fn test_protobuf_value_bool_variant() {
+        let pool = create_well_known_types_pool();
+        let value_desc = pool
+            .get_message_by_name("google.protobuf.Value")
+            .expect("Value not found");
+        let mut msg = DynamicMessage::new(value_desc);
+        msg.set_field_by_name("bool_value", ProtoValue::Bool(true));
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(msg))
+            .expect("Failed to convert");
+
+        assert_eq!(
+            cel_val.downcast_ref::<CelBool>().map(|b| *b.inner()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_protobuf_value_null_variant() {
+        let pool = create_well_known_types_pool();
+        let value_desc = pool
+            .get_message_by_name("google.protobuf.Value")
+            .expect("Value not found");
+        let mut msg = DynamicMessage::new(value_desc);
+        msg.set_field_by_name("null_value", ProtoValue::EnumNumber(0));
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(msg))
+            .expect("Failed to convert");
+
+        assert!(
+            cel_val.downcast_ref::<CelNull>().is_some(),
+            "Expected CelNull"
+        );
+    }
+
+    #[test]
+    fn test_protobuf_list_value_unwraps() {
+        let pool = create_well_known_types_pool();
+        let list_desc = pool
+            .get_message_by_name("google.protobuf.ListValue")
+            .expect("ListValue not found");
+
+        let mut list_msg = DynamicMessage::new(list_desc);
+        list_msg.set_field_by_name(
+            "values",
+            ProtoValue::List(vec![
+                ProtoValue::Message(make_string_value(&pool, "first")),
+                ProtoValue::Message(make_number_value(&pool, 2.0)),
+            ]),
+        );
+
+        let cel_val = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(list_msg))
+            .expect("Failed to convert");
+
+        let list = cel_val.downcast_ref::<CelList>().expect("Expected CelList");
+        assert_eq!(list.len(), 2);
+
+        assert_eq!(
+            list.first()
+                .and_then(|v| v.downcast_ref::<CelString>())
+                .map(|s| s.inner()),
+            Some("first")
+        );
+        assert_eq!(
+            list.get(1)
+                .and_then(|v| v.downcast_ref::<CelDouble>())
+                .map(|d| *d.inner()),
+            Some(2.0)
         );
     }
 }
