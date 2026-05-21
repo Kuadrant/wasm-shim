@@ -105,14 +105,14 @@ fn it_auths() {
             "x-request-id",
             "e1fc297a-a8a3-4360-8f41-af57b4a861e1",
         )]))
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -140,8 +140,8 @@ fn it_auths() {
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(grpc_response))
         .expect_set_property(
-            Some(vec!["kuadrant.auth.identity.userid"]),
-            Some(b"\"alice\""),
+            Some(vec!["kuadrant.auth"]),
+            Some(data::auth_response::METADATA_STRUCT_USERID_ALICE),
         )
         .execute_and_expect(ReturnType::None)
         .unwrap();
@@ -251,14 +251,14 @@ fn it_passes_request_data() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -267,11 +267,6 @@ fn it_passes_request_data() {
         .returning(Some(data::source::ADDRESS))
         .expect_get_property(Some(vec!["source", "port"]))
         .returning(Some(data::source::port::P_45000))
-        .expect_get_property(Some(vec![
-            "filter_state",
-            "wasm.kuadrant.auth.identity.name",
-        ]))
-        .returning(None)
         .expect_increment_metric(Some(2), Some(1))
         .expect_grpc_call(
             Some("authorino-cluster"),
@@ -285,7 +280,7 @@ fn it_passes_request_data() {
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
     // The above request is validated as None because the protobuf Struct fields is a HashMap and so they ordering is not guaranteed.
-    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    let grpc_response: [u8; 4] = [10, 0, 26, 0];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
@@ -366,14 +361,14 @@ fn it_denies() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -510,6 +505,8 @@ fn it_does_not_fold_auth_actions() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "method"]))
         .returning(Some(data::request::method::GET))
         .expect_get_property(Some(vec!["request", "scheme"]))
@@ -518,8 +515,6 @@ fn it_does_not_fold_auth_actions() {
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -541,7 +536,7 @@ fn it_does_not_fold_auth_actions() {
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
-    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    let grpc_response: [u8; 4] = [10, 0, 26, 0];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
@@ -558,7 +553,7 @@ fn it_does_not_fold_auth_actions() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
-    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    let grpc_response: [u8; 4] = [10, 0, 26, 0];
     module
         .call_proxy_on_grpc_receive(http_context, 43, grpc_response.len() as i32)
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
@@ -642,14 +637,14 @@ fn it_replaces_headers() {
             ("x-request-id", "e1fc297a-a8a3-4360-8f41-af57b4a861e1"),
             ("authorization", "Bearer initial-token"),
         ]))
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))

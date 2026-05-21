@@ -125,14 +125,14 @@ fn it_performs_authenticated_rate_limiting() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -160,8 +160,8 @@ fn it_performs_authenticated_rate_limiting() {
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(grpc_response))
         .expect_set_property(
-            Some(vec!["kuadrant.auth.identity.userid"]),
-            Some(b"\"alice\""),
+            Some(vec!["kuadrant.auth"]),
+            Some(data::auth_response::METADATA_STRUCT_USERID_ALICE),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
@@ -256,14 +256,14 @@ fn unauthenticated_does_not_ratelimit() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -448,14 +448,14 @@ fn authenticated_one_ratelimit_action_matches() {
             "x-request-id",
             "e1fc297a-a8a3-4360-8f41-af57b4a861e1",
         )]))
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -477,7 +477,7 @@ fn authenticated_one_ratelimit_action_matches() {
         .execute_and_expect(ReturnType::Action(Action::Pause))
         .unwrap();
 
-    let grpc_response: [u8; 6] = [10, 0, 34, 0, 26, 0];
+    let grpc_response: [u8; 4] = [10, 0, 26, 0];
     module
         .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
@@ -626,14 +626,14 @@ fn it_handles_array_metadata_in_predicates() {
         // retrieving properties for CheckRequest
         .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
         .returning(None)
+        .expect_get_property(Some(vec!["request", "time"]))
+        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["request", "scheme"]))
         .returning(Some(data::request::scheme::HTTP))
         .expect_get_property(Some(vec!["request", "path"]))
         .returning(Some(data::request::path::ADMIN_TOY))
         .expect_get_property(Some(vec!["request", "protocol"]))
         .returning(Some(data::request::protocol::HTTP_1_1))
-        .expect_get_property(Some(vec!["request", "time"]))
-        .returning(Some(data::request::TIME))
         .expect_get_property(Some(vec!["destination", "address"]))
         .returning(Some(data::destination::ADDRESS))
         .expect_get_property(Some(vec!["destination", "port"]))
@@ -661,12 +661,8 @@ fn it_handles_array_metadata_in_predicates() {
         .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
         .returning(Some(grpc_response))
         .expect_set_property(
-            Some(vec!["kuadrant.auth.identity.groups"]),
-            Some(b"[\"basic\",\"premium\"]"),
-        )
-        .expect_set_property(
-            Some(vec!["kuadrant.auth.identity.userid"]),
-            Some(b"\"alice\""),
+            Some(vec!["kuadrant.auth"]),
+            Some(data::auth_response::METADATA_STRUCT_USERID_GROUPS),
         )
         .expect_grpc_call(
             Some("limitador-cluster"),
