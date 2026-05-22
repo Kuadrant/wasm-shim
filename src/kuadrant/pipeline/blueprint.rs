@@ -30,7 +30,6 @@ pub(crate) struct Action {
     pub sources: Vec<String>,
     pub message_builder: Option<Expression>,
     pub on_reply: Vec<TypedAction>,
-    #[allow(dead_code)]
     pub is_guard: bool,
 }
 
@@ -264,6 +263,7 @@ impl Blueprint {
                         action.on_reply.clone(),
                         action.predicates.clone(),
                         action.dependencies.clone(),
+                        action.is_guard,
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {

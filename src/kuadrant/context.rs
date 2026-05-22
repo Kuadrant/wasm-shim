@@ -31,7 +31,6 @@ pub struct ReqRespCtx {
     request_body_values: HashMap<String, Value>,
     response_body_values: HashMap<String, Value>,
     stored_values: BTreeMap<String, Value>,
-    #[allow(dead_code)]
     upstream_barrier: u32,
 }
 
@@ -143,12 +142,10 @@ impl ReqRespCtx {
             .ok_or_else(|| ServiceError::Retrieval("No gRPC response data available".to_string()))
     }
 
-    #[allow(dead_code)]
     pub fn raise_upstream_barrier(&mut self) {
         self.upstream_barrier += 1;
     }
 
-    #[allow(dead_code)]
     pub fn lower_upstream_barrier(&mut self) {
         match self.upstream_barrier.checked_sub(1) {
             Some(new_value) => self.upstream_barrier = new_value,
@@ -158,7 +155,6 @@ impl ReqRespCtx {
         }
     }
 
-    #[allow(dead_code)]
     pub fn upstream_barrier(&self) -> u32 {
         self.upstream_barrier
     }
