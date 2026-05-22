@@ -68,7 +68,6 @@ const KNOWN_ATTRIBUTES: [&str; 2] = ["ratelimit.domain", "ratelimit.hits_addend"
 pub struct RateLimitTask {
     task_id: String,
     dependencies: Vec<String>,
-    pauses_filter: bool,
 
     // Rate limit configuration
     scope: String,
@@ -82,7 +81,6 @@ pub struct RateLimitTask {
 /// Creates a new RL task
 impl RateLimitTask {
     /// Creates a new RL task prior caching its needed attributes
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_attributes(
         ctx: &ReqRespCtx,
         task_id: String,
@@ -91,7 +89,6 @@ impl RateLimitTask {
         scope: String,
         predicates: Vec<Predicate>,
         conditional_data_sets: Vec<ConditionalData>,
-        pauses_filter: bool,
     ) -> Self {
         // Warming up the cache
         let _ = predicates.apply(ctx);
@@ -106,7 +103,6 @@ impl RateLimitTask {
         Self {
             task_id,
             dependencies,
-            pauses_filter,
             scope,
             service,
             conditional_data_sets,
@@ -384,10 +380,6 @@ impl Task for RateLimitTask {
     fn dependencies(&self) -> &[String] {
         self.dependencies.as_slice()
     }
-
-    fn pauses_filter(&self) -> bool {
-        self.pauses_filter
-    }
 }
 
 fn process_rl_response(response: DynamicMessage) -> TaskOutcome {
@@ -551,7 +543,6 @@ mod tests {
             "test".to_string(),
             top_predicates,
             conditional_data,
-            false,
         )
     }
 
@@ -566,7 +557,6 @@ mod tests {
             "test".to_string(),
             vec![],
             vec![],
-            false,
         );
 
         let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
@@ -599,7 +589,6 @@ mod tests {
             "test".to_string(),
             vec![],
             vec![conditional_data],
-            false,
         );
 
         let (hits_addend, domain) = task.get_known_attributes(&ctx).unwrap();
@@ -636,7 +625,6 @@ mod tests {
             "test".to_string(),
             vec![],
             vec![conditional_data],
-            false,
         );
 
         let result = task.build_descriptors(&ctx).unwrap();

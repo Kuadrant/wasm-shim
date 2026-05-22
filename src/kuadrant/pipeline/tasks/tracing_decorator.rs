@@ -82,8 +82,4 @@ impl Task for TracingDecoratorTask {
     fn dependencies(&self) -> &[String] {
         self.task.dependencies()
     }
-
-    fn pauses_filter(&self) -> bool {
-        self.task.pauses_filter()
-    }
 }
