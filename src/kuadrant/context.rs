@@ -31,6 +31,8 @@ pub struct ReqRespCtx {
     request_body_values: HashMap<String, Value>,
     response_body_values: HashMap<String, Value>,
     stored_values: BTreeMap<String, Value>,
+    #[allow(dead_code)]
+    upstream_barrier: u32,
 }
 
 impl Default for ReqRespCtx {
@@ -55,6 +57,7 @@ impl ReqRespCtx {
             request_body_values: HashMap::new(),
             response_body_values: HashMap::new(),
             stored_values: BTreeMap::new(),
+            upstream_barrier: 0,
         }
     }
 
@@ -138,6 +141,26 @@ impl ReqRespCtx {
         self.grpc_response_data
             .take()
             .ok_or_else(|| ServiceError::Retrieval("No gRPC response data available".to_string()))
+    }
+
+    #[allow(dead_code)]
+    pub fn raise_upstream_barrier(&mut self) {
+        self.upstream_barrier += 1;
+    }
+
+    #[allow(dead_code)]
+    pub fn lower_upstream_barrier(&mut self) {
+        match self.upstream_barrier.checked_sub(1) {
+            Some(new_value) => self.upstream_barrier = new_value,
+            None => {
+                tracing::error!("Attempted to lower upstream barrier when count is already 0 - mismatched raise/lower pairs");
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn upstream_barrier(&self) -> u32 {
+        self.upstream_barrier
     }
 
     pub fn get_attribute<T: AttributeValue>(
@@ -781,5 +804,45 @@ mod tests {
             result2,
             Ok(AttributeState::Available(Some(ref s))) if s == "external-user-id"
         ));
+    }
+
+    #[test]
+    fn test_upstream_barrier_raise_and_lower() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        ctx.raise_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 1);
+
+        ctx.raise_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 2);
+
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 1);
+
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 0);
+    }
+
+    #[test]
+    fn test_upstream_barrier_underflow_protection() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        // Attempting to lower when already at 0 should log error and remain at 0
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        // Verify multiple underflow attempts don't cause issues
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        // Normal operation should still work after underflow
+        ctx.raise_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 1);
     }
 }
