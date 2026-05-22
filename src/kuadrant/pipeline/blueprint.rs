@@ -349,6 +349,7 @@ impl Action {
                         | ServiceInstance::Auth(_)
                         | ServiceInstance::RateLimit(_)
                         | ServiceInstance::RateLimitCheck(_)
+                        | ServiceInstance::RateLimitReport(_)
                 ) {
                     return Err(CompileError::ServiceCreationFailed(format!(
                         "Service '{}' cannot be used with typed grpc action",
