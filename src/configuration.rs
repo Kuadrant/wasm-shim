@@ -35,11 +35,18 @@ pub struct Action {
     pub sources: Vec<String>,
 }
 
+fn default_is_guard() -> bool {
+    true
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TypedAction {
     pub predicate: String,
     pub terminal: bool,
+    #[serde(default = "default_is_guard")]
+    #[allow(dead_code)]
+    pub is_guard: bool,
     #[serde(flatten)]
     pub operation: Operation,
 }
@@ -975,5 +982,38 @@ mod test {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_is_guard_defaults_to_true() {
+        let config = r#"{
+            "type": "grpc",
+            "predicate": "true",
+            "terminal": false,
+            "var": "test",
+            "service": "test-service",
+            "messageBuilder": "test",
+            "onReply": []
+        }"#;
+
+        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
+        assert!(typed_action.is_guard);
+    }
+
+    #[test]
+    fn test_is_guard_can_be_set_to_false() {
+        let config = r#"{
+            "type": "grpc",
+            "predicate": "true",
+            "terminal": false,
+            "isGuard": false,
+            "var": "test",
+            "service": "test-service",
+            "messageBuilder": "test",
+            "onReply": []
+        }"#;
+
+        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
+        assert!(!typed_action.is_guard);
     }
 }

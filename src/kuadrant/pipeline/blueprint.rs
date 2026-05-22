@@ -788,6 +788,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "request.method == 'GET'".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "rl_check".to_string(),
                 service: "my-dynamic".to_string(),
@@ -796,6 +797,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "rl_check.overall_code == 2".to_string(),
                         terminal: true,
+                        is_guard: false,
                         operation: ConfigOperation::Deny(DenyOperation {
                             deny_with: "DenyResponse{status: 429u}".to_string(),
                         }),
@@ -803,6 +805,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "rl_check.overall_code == 0".to_string(),
                         terminal: true,
+                        is_guard: false,
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message: "Received UNKNOWN from rate limiting service".to_string(),
                         }),
@@ -811,6 +814,7 @@ mod tests {
                         predicate: "rl_check.overall_code != 1 && rl_check.overall_code != 2"
                             .to_string(),
                         terminal: true,
+                        is_guard: false,
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message:
                                 "Received invalid response code from rate limiting service"
@@ -820,6 +824,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "true".to_string(),
                         terminal: false,
+                        is_guard: false,
                         operation: ConfigOperation::Headers(HeadersOperation {
                             target: HeadersTarget::Request,
                             headers: "result.headers".to_string(),
@@ -828,6 +833,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "true".to_string(),
                         terminal: false,
+                        is_guard: false,
                         operation: ConfigOperation::Store(StoreOperation {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
@@ -857,6 +863,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "nonexistent".to_string(),
@@ -883,6 +890,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "tracing-svc".to_string(),
@@ -903,6 +911,7 @@ mod tests {
         let nested_grpc = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: false,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "nested".to_string(),
                 service: "svc".to_string(),
@@ -923,6 +932,7 @@ mod tests {
         let deny_config = ConfigTypedAction {
             predicate: "result.code == 2".to_string(),
             terminal: true,
+            is_guard: false,
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -936,6 +946,7 @@ mod tests {
         let headers_config = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: false,
             operation: ConfigOperation::Headers(HeadersOperation {
                 target: HeadersTarget::Response,
                 headers: "result.resp_headers".to_string(),
@@ -956,6 +967,7 @@ mod tests {
         let store_config = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Store(StoreOperation {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
@@ -977,6 +989,7 @@ mod tests {
         let config = ConfigTypedAction {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
+            is_guard: true,
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -1012,6 +1025,7 @@ mod tests {
                 ActionConfig::Typed(ConfigTypedAction {
                     predicate: "true".to_string(),
                     terminal: false,
+                    is_guard: true,
                     operation: ConfigOperation::Grpc(GrpcOperation {
                         var: "rl_check".to_string(),
                         service: "dyn-svc".to_string(),
@@ -1019,6 +1033,7 @@ mod tests {
                         on_reply: vec![ConfigTypedAction {
                             predicate: "rl_check.code == 2".to_string(),
                             terminal: true,
+                            is_guard: false,
                             operation: ConfigOperation::Deny(DenyOperation {
                                 deny_with: "DenyResponse{status: 429u}".to_string(),
                             }),

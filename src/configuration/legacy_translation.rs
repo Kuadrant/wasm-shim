@@ -223,6 +223,7 @@ pub(super) mod ratelimit {
             TypedAction {
                 predicate: format!("{}.overall_code == 2", name),
                 terminal: true,
+                is_guard: true,
                 operation: Operation::Deny(DenyOperation {
                     deny_with: format!(
                         r#"DenyResponse{{status: 429u, headers: {}.response_headers_to_add, body: "Too Many Requests\n"}}"#,
@@ -233,6 +234,7 @@ pub(super) mod ratelimit {
             TypedAction {
                 predicate: format!("{}.overall_code == 1", name),
                 terminal: false,
+                is_guard: true,
                 operation: Operation::Headers(HeadersOperation {
                     target: HeadersTarget::Response,
                     headers: format!("{}.response_headers_to_add", name),
@@ -241,6 +243,7 @@ pub(super) mod ratelimit {
             TypedAction {
                 predicate: format!("{}.overall_code != 1 && {}.overall_code != 2", name, name),
                 terminal: true,
+                is_guard: true,
                 operation: Operation::Fail(FailOperation {
                     log_message: format!("Unknown rate limit response code from {}", name),
                 }),
@@ -265,6 +268,7 @@ pub(super) mod ratelimit {
         TypedAction {
             predicate,
             terminal: false,
+            is_guard: true,
             operation: Operation::Grpc(GrpcOperation {
                 var: RESPONSE_VAR.to_string(),
                 service: action.service.clone(),
@@ -678,6 +682,7 @@ pub(super) mod auth {
         TypedAction {
             predicate,
             terminal: false,
+            is_guard: true,
             operation: Operation::Grpc(GrpcOperation {
                 var: RESPONSE_VAR.to_string(),
                 service: action.service.clone(),
@@ -692,6 +697,7 @@ pub(super) mod auth {
             TypedAction {
                 predicate: format!("has({}.denied_response)", name),
                 terminal: true,
+                is_guard: true,
                 operation: Operation::Deny(DenyOperation {
                     deny_with: format!(
                         r#"DenyResponse{{status: ({name}.denied_response.status.code != 0) ? uint({name}.denied_response.status.code) : 403u, headers: {name}.denied_response.headers, body: {name}.denied_response.body}}"#,
@@ -709,6 +715,7 @@ pub(super) mod auth {
                     name = name
                 ),
                 terminal: true,
+                is_guard: true,
                 operation: Operation::Fail(FailOperation {
                     log_message: "Unsupported field in OkHttpResponse".to_string(),
                 }),
@@ -719,6 +726,7 @@ pub(super) mod auth {
                     name, name
                 ),
                 terminal: false,
+                is_guard: true,
                 operation: Operation::Store(StoreOperation {
                     path: "auth".to_string(),
                     value: format!("{}.dynamic_metadata", name),
@@ -728,6 +736,7 @@ pub(super) mod auth {
             TypedAction {
                 predicate: format!("has({}.ok_response)", name),
                 terminal: false,
+                is_guard: true,
                 operation: Operation::Headers(HeadersOperation {
                     target: HeadersTarget::Request,
                     headers: format!("{}.ok_response.headers", name),
@@ -739,6 +748,7 @@ pub(super) mod auth {
                     name, name
                 ),
                 terminal: true,
+                is_guard: true,
                 operation: Operation::Fail(FailOperation {
                     log_message: format!("Auth response contained no http_response from {}", name),
                 }),
