@@ -55,10 +55,6 @@ impl Task for DynamicTask {
         Some(self.task_id.clone())
     }
 
-    fn pauses_filter(&self) -> bool {
-        true
-    }
-
     fn dependencies(&self) -> &[String] {
         &self.dependencies
     }

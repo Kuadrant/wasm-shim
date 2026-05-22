@@ -68,7 +68,7 @@ impl Pipeline {
             .into_iter()
             .map(|(token_id, task)| {
                 // Create a new PendingTask with no-op processor
-                let pending = Box::new(PendingTask::background(
+                let pending = Box::new(PendingTask::new(
                     task.id().unwrap_or_default(),
                     Box::new(noop_response_processor(token_id)),
                 )) as Box<dyn Task>;
@@ -84,7 +84,7 @@ impl Pipeline {
                 TeardownOutcome::Done => {}
                 TeardownOutcome::Deferred(token_id) => {
                     // Create a no-op PendingTask for this deferred teardown action
-                    let pending = Box::new(PendingTask::background(
+                    let pending = Box::new(PendingTask::new(
                         format!("teardown_{}", token_id),
                         Box::new(noop_response_processor(token_id)),
                     ));
@@ -272,10 +272,6 @@ mod tests {
 
         fn dependencies(&self) -> &[String] {
             &self.dependencies
-        }
-
-        fn pauses_filter(&self) -> bool {
-            true
         }
     }
 

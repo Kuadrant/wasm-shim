@@ -213,7 +213,6 @@ impl Blueprint {
                         action.scope.clone(),
                         action.predicates.clone(),
                         action.conditional_data.clone(),
-                        false, // pauses_filter = false for ratelimit report tasks
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
 
