@@ -278,6 +278,41 @@ pub(super) mod ratelimit {
         }
     }
 
+    #[deprecated(note = "temporary translation for legacy ratelimit report configuration")]
+    #[allow(dead_code)]
+    pub(crate) fn translate_legacy_report_to_typed(
+        action: &Action,
+        request_data: &[((String, String), String)],
+    ) -> TypedAction {
+        const RESPONSE_VAR: &str = "report_response";
+
+        let message_builder =
+            build_ratelimit_message_builder(&action.scope, &action.conditional_data, request_data);
+
+        let predicate = build_ratelimit_predicate(&action.predicates, &action.conditional_data);
+
+        let on_reply = vec![TypedAction {
+            predicate: format!("!has({}.overall_code)", RESPONSE_VAR),
+            terminal: false,
+            is_guard: false,
+            operation: Operation::Fail(FailOperation {
+                log_message: "Rate limit report failed: invalid gRPC response".to_string(),
+            }),
+        }];
+
+        TypedAction {
+            predicate,
+            terminal: false,
+            is_guard: false,
+            operation: Operation::Grpc(GrpcOperation {
+                var: RESPONSE_VAR.to_string(),
+                service: action.service.clone(),
+                message_builder,
+                on_reply,
+            }),
+        }
+    }
+
     #[cfg(test)]
     #[allow(deprecated)]
     mod tests {
@@ -550,6 +585,178 @@ pub(super) mod ratelimit {
     hits_addend: 1u,
     descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.role == 'admin') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "tier", value: "gold" }] : []) + [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "method", value: string(request.method) }] }, envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: "production" }] }]
 }"#
+            ));
+        }
+
+        #[test]
+        fn test_translate_legacy_report_basic_no_hits_addend() {
+            let action = Action {
+                service: "limitador-report".to_string(),
+                scope: "my-report".to_string(),
+                predicates: vec![],
+                conditional_data: vec![],
+                sources: vec![],
+            };
+            let request_data = vec![];
+
+            let typed = translate_legacy_report_to_typed(&action, &request_data);
+
+            assert_eq!(typed.predicate, "true");
+            assert!(!typed.terminal);
+            assert!(!typed.is_guard);
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.var == "report_response" &&
+                    grpc_op.service == "limitador-report" &&
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "my-report",
+    hits_addend: 1u,
+    descriptors: []
+}"# &&
+                    grpc_op.on_reply.len() == 1
+            ));
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.on_reply[0].predicate == "!has(report_response.overall_code)" &&
+                    !grpc_op.on_reply[0].terminal &&
+                    !grpc_op.on_reply[0].is_guard &&
+                    matches!(&grpc_op.on_reply[0].operation, Operation::Fail(_))
+            ));
+        }
+
+        #[test]
+        fn test_translate_legacy_report_with_descriptor_from_response_body() {
+            let action = Action {
+                service: "limitador-report".to_string(),
+                scope: "my-report".to_string(),
+                predicates: vec![],
+                conditional_data: vec![ConditionalData {
+                    predicates: vec![],
+                    data: vec![DataItem {
+                        item: DataType::Expression(ExpressionItem {
+                            key: "model".to_string(),
+                            value: "responseBodyJSON('/model')".to_string(),
+                        }),
+                    }],
+                }],
+                sources: vec![],
+            };
+            let request_data = vec![];
+
+            let typed = translate_legacy_report_to_typed(&action, &request_data);
+
+            assert_eq!(typed.predicate, "true");
+            assert!(!typed.is_guard);
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "my-report",
+    hits_addend: 1u,
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "model", value: string(responseBodyJSON('/model')) }] }]
+}"# &&
+                    grpc_op.on_reply.len() == 1
+            ));
+        }
+
+        #[test]
+        fn test_translate_legacy_report_with_hits_addend_from_response_body() {
+            let action = Action {
+                service: "limitador-report".to_string(),
+                scope: "default".to_string(),
+                predicates: vec![],
+                conditional_data: vec![ConditionalData {
+                    predicates: vec![],
+                    data: vec![
+                        DataItem {
+                            item: DataType::Expression(ExpressionItem {
+                                key: "ratelimit.hits_addend".to_string(),
+                                value: "responseBodyJSON('/usage/total_tokens')".to_string(),
+                            }),
+                        },
+                        DataItem {
+                            item: DataType::Expression(ExpressionItem {
+                                key: "user".to_string(),
+                                value: "auth.identity.username".to_string(),
+                            }),
+                        },
+                    ],
+                }],
+                sources: vec![],
+            };
+            let request_data = vec![];
+
+            let typed = translate_legacy_report_to_typed(&action, &request_data);
+
+            assert!(!typed.is_guard);
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "default",
+    hits_addend: responseBodyJSON('/usage/total_tokens'),
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "user", value: string(auth.identity.username) }] }]
+}"# &&
+                    grpc_op.on_reply.len() == 1
+            ));
+        }
+
+        #[test]
+        fn test_translate_legacy_report_full() {
+            let action = Action {
+                service: "limitador-report".to_string(),
+                scope: "report-full".to_string(),
+                predicates: vec!["request.path.startsWith(\"/api\")".to_string()],
+                conditional_data: vec![
+                    ConditionalData {
+                        predicates: vec![],
+                        data: vec![DataItem {
+                            item: DataType::Expression(ExpressionItem {
+                                key: "ratelimit.hits_addend".to_string(),
+                                value: "responseBodyJSON('/usage/total_tokens')".to_string(),
+                            }),
+                        }],
+                    },
+                    ConditionalData {
+                        predicates: vec!["auth.identity.tier == 'gold'".to_string()],
+                        data: vec![DataItem {
+                            item: DataType::Static(StaticItem {
+                                key: "priority".to_string(),
+                                value: "high".to_string(),
+                            }),
+                        }],
+                    },
+                    ConditionalData {
+                        predicates: vec![],
+                        data: vec![DataItem {
+                            item: DataType::Expression(ExpressionItem {
+                                key: "endpoint".to_string(),
+                                value: "request.path".to_string(),
+                            }),
+                        }],
+                    },
+                ],
+                sources: vec![],
+            };
+            let request_data = vec![(
+                ("".to_string(), "zone".to_string()),
+                r#""east""#.to_string(),
+            )];
+
+            let typed = translate_legacy_report_to_typed(&action, &request_data);
+
+            assert_eq!(typed.predicate, r#"request.path.startsWith("/api")"#);
+            assert!(!typed.is_guard);
+
+            assert!(matches!(&typed.operation,
+                Operation::Grpc(grpc_op) if
+                    grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
+    domain: "report-full",
+    hits_addend: responseBodyJSON('/usage/total_tokens'),
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.tier == 'gold') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "priority", value: "high" }] : []) + [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "endpoint", value: string(request.path) }] }, envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "zone", value: "east" }] }]
+}"# &&
+                    grpc_op.on_reply.len() == 1
             ));
         }
     }
