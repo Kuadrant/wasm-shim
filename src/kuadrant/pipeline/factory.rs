@@ -118,6 +118,7 @@ impl PipelineFactory {
                 sources: vec![],
                 message_builder: None,
                 on_reply: vec![],
+                is_guard: true,
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {

@@ -30,6 +30,8 @@ pub(crate) struct Action {
     pub sources: Vec<String>,
     pub message_builder: Option<Expression>,
     pub on_reply: Vec<TypedAction>,
+    #[allow(dead_code)]
+    pub is_guard: bool,
 }
 
 // todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
@@ -326,6 +328,7 @@ impl Action {
             sources: config.sources.clone(),
             message_builder: None,
             on_reply: vec![],
+            is_guard: true,
         })
     }
 
@@ -384,6 +387,7 @@ impl Action {
                     sources: vec![],
                     message_builder,
                     on_reply,
+                    is_guard: typed.is_guard,
                 })
             }
             _ => Err(CompileError::InvalidDataExpression(
