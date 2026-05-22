@@ -22,9 +22,11 @@ pub struct DynamicTask {
     on_reply: Vec<TypedAction>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
+    is_guard: bool,
 }
 
 impl DynamicTask {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: String,
         service: Rc<DynamicService>,
@@ -33,6 +35,7 @@ impl DynamicTask {
         on_reply: Vec<TypedAction>,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
+        is_guard: bool,
     ) -> Self {
         Self {
             task_id,
@@ -42,6 +45,7 @@ impl DynamicTask {
             on_reply,
             predicates,
             dependencies,
+            is_guard,
         }
     }
 }
@@ -106,13 +110,24 @@ impl Task for DynamicTask {
         let task_id = self.task_id.clone();
         let name = self.name.clone();
         let on_reply = self.on_reply.clone();
+        let is_guard = self.is_guard;
+
+        if is_guard {
+            ctx.raise_upstream_barrier();
+        }
 
         TaskOutcome::Deferred {
             token_id,
             pending: Box::new(PendingTask::new(
                 self.task_id,
                 Box::new(move |ctx| {
-                    process_dynamic_response(ctx, &service, &task_id, token_id, &name, &on_reply)
+                    let outcome = process_dynamic_response(
+                        ctx, &service, &task_id, token_id, &name, &on_reply,
+                    );
+                    if is_guard {
+                        ctx.lower_upstream_barrier();
+                    }
+                    outcome
                 }),
             )),
         }
