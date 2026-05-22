@@ -116,6 +116,7 @@ pub(crate) struct ConditionalData {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DataItem {
+    #[allow(dead_code)]
     pub key: String,
     pub value: Expression,
 }

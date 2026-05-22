@@ -312,6 +312,7 @@ impl ReqRespCtx {
         }
     }
 
+    #[allow(dead_code)]
     pub fn eval_request_data(&self) -> Vec<request_data::RequestDataEntry> {
         let Some(ref expressions) = self.request_data else {
             return Vec::new();
@@ -537,6 +538,7 @@ impl Default for TracingContext {
 pub mod request_data {
     use crate::data::cel::EvalResult;
 
+    #[allow(dead_code)]
     pub struct RequestDataEntry {
         pub domain: String,
         pub field: String,

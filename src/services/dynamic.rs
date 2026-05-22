@@ -103,6 +103,7 @@ impl DynamicService {
     }
 
     #[deprecated(note = "use dispatch_value instead")]
+    #[allow(dead_code)]
     pub fn dispatch_dynamic(
         &self,
         ctx: &mut ReqRespCtx,

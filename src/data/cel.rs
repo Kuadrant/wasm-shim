@@ -201,6 +201,7 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
+    #[allow(dead_code)]
     pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
         let mut cel_ctx = Context::default();
         self.eval_with_ctx(req_ctx, &mut cel_ctx)
