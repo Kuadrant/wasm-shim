@@ -2,7 +2,7 @@ use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
-    ModifyHeadersTask, RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    ModifyHeadersTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -77,6 +77,30 @@ impl Action {
         }
         for (_, expr) in request_data {
             fields.extend(expr.response_body_values().iter().cloned());
+        }
+        if let Some(mb) = &self.message_builder {
+            fields.extend(mb.response_body_values().iter().cloned());
+        }
+        for on_reply_action in &self.on_reply {
+            fields.extend(
+                on_reply_action
+                    .predicate
+                    .response_body_values()
+                    .iter()
+                    .cloned(),
+            );
+            match &on_reply_action.operation {
+                Operation::Deny { deny_with } => {
+                    fields.extend(deny_with.response_body_values().iter().cloned());
+                }
+                Operation::Headers { headers, .. } => {
+                    fields.extend(headers.response_body_values().iter().cloned());
+                }
+                Operation::Store { expression, .. } => {
+                    fields.extend(expression.response_body_values().iter().cloned());
+                }
+                Operation::Fail { .. } => {}
+            }
         }
 
         fields.dedup();
@@ -203,33 +227,6 @@ impl Blueprint {
                 action.service.failure_mode() == configuration::FailureMode::Deny;
 
             match &action.service {
-                ServiceInstance::RateLimitReport(dynamic_service) => {
-                    // parse token usage from response
-                    let task = Box::new(RateLimitTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        action.dependencies.clone(),
-                        Rc::clone(dynamic_service),
-                        action.scope.clone(),
-                        action.predicates.clone(),
-                        action.conditional_data.clone(),
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-
-                    tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
-                        action.collect_body_values(request_data),
-                    )));
-
-                    if tracing_enabled {
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            "ratelimit_report",
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
-                }
                 ServiceInstance::Tracing(service) => {
                     ctx.set_public_tracker_id(action.scope.clone());
                     tasks.push(Box::new(ModifyHeadersTask::new(
@@ -246,7 +243,8 @@ impl Blueprint {
                 ServiceInstance::Dynamic(dynamic_service)
                 | ServiceInstance::Auth(dynamic_service)
                 | ServiceInstance::RateLimit(dynamic_service)
-                | ServiceInstance::RateLimitCheck(dynamic_service) => {
+                | ServiceInstance::RateLimitCheck(dynamic_service)
+                | ServiceInstance::RateLimitReport(dynamic_service) => {
                     let message_builder = match &action.message_builder {
                         Some(mb) => mb.clone(),
                         None => {
@@ -254,6 +252,20 @@ impl Blueprint {
                             continue;
                         }
                     };
+
+                    // Restrict to Report and Dynamic for now
+                    if matches!(
+                        &action.service,
+                        ServiceInstance::RateLimitReport(_) | ServiceInstance::Dynamic(_)
+                    ) {
+                        let body_values = action.collect_body_values(request_data);
+                        if !body_values.is_empty() {
+                            tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
+                                body_values,
+                            )));
+                        }
+                    }
+
                     let task: Box<dyn Task> = Box::new(DynamicTask::new(
                         action.id.clone(),
                         Rc::clone(dynamic_service),
@@ -272,6 +284,7 @@ impl Blueprint {
                             ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
                                 "ratelimit"
                             }
+                            ServiceInstance::RateLimitReport(_) => "ratelimit_report",
                             _ => "dynamic",
                         };
                         tasks.push(Box::new(TracingDecoratorTask::new(
