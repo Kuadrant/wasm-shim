@@ -27,7 +27,8 @@ pub struct DynamicTask {
 
 impl DynamicTask {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_with_attributes(
+        ctx: &ReqRespCtx,
         task_id: String,
         service: Rc<DynamicService>,
         name: String,
@@ -37,6 +38,29 @@ impl DynamicTask {
         dependencies: Vec<String>,
         is_guard: bool,
     ) -> Self {
+        // Warm up the cache
+        let _ = predicates.apply(ctx);
+        if let Ok(env) = service.cel_env() {
+            let mut cel_ctx = cel::Context::with_env(env);
+            let _ = message_builder.eval_with_ctx(ctx, &mut cel_ctx);
+
+            for action in &on_reply {
+                let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
+                match &action.operation {
+                    Operation::Deny { deny_with } => {
+                        let _ = deny_with.eval_with_ctx(ctx, &mut cel_ctx);
+                    }
+                    Operation::Headers { headers, .. } => {
+                        let _ = headers.eval_with_ctx(ctx, &mut cel_ctx);
+                    }
+                    Operation::Store { expression, .. } => {
+                        let _ = expression.eval_with_ctx(ctx, &mut cel_ctx);
+                    }
+                    Operation::Fail { .. } => {}
+                }
+            }
+        }
+
         Self {
             task_id,
             service,
