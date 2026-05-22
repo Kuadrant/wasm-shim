@@ -267,7 +267,8 @@ impl Blueprint {
                         }
                     }
 
-                    let task: Box<dyn Task> = Box::new(DynamicTask::new(
+                    let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
+                        ctx,
                         action.id.clone(),
                         Rc::clone(dynamic_service),
                         action.scope.clone(),
