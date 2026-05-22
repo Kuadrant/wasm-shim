@@ -47,7 +47,6 @@ pub struct TypedAction {
     pub predicate: String,
     pub terminal: bool,
     #[serde(default = "default_is_guard")]
-    #[allow(dead_code)]
     pub is_guard: bool,
     #[serde(flatten)]
     pub operation: Operation,
