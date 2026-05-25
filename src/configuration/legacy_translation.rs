@@ -139,7 +139,7 @@ pub(super) mod ratelimit {
                         format!("{}.{}", domain, field)
                     };
                     format!(
-                        r#"envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {{ key: "{}", value: {} }}"#,
+                        r#"envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {{ key: "{}", value: string({}) }}"#,
                         escape_cel_string(&key),
                         value_expr
                     )
@@ -497,7 +497,7 @@ pub(super) mod ratelimit {
                     grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
     domain: "default",
     hits_addend: 1u,
-    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: "production" }] }]
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: string("production") }] }]
 }"#
             ));
         }
@@ -544,7 +544,7 @@ pub(super) mod ratelimit {
                     grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
     domain: "rlp-full",
     hits_addend: 1u,
-    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.role == 'admin') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "tier", value: "gold" }] : []) + [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "method", value: string(request.method) }] }, envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: "production" }] }]
+    descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.role == 'admin') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "tier", value: "gold" }] : []) + [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "method", value: string(request.method) }] }, envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "env", value: string("production") }] }]
 }"#
             ));
         }
