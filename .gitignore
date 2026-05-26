@@ -1,7 +1,7 @@
 /target
 
-/src/envoy/*
-!/src/envoy/mod.rs
+/src/proto/*
+!/src/proto/mod.rs
 
 /bin
 

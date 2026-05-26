@@ -2,11 +2,11 @@ extern crate core;
 
 mod configuration;
 mod data;
-#[allow(unused_imports)]
-mod envoy;
 mod filter;
 mod kuadrant;
 pub mod metrics;
+#[allow(unused_imports)]
+mod proto;
 mod services;
 pub mod tracing;
 

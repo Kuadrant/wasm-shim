@@ -61,7 +61,7 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
 
     // Generate Rust code for all protos
     let mut prost_build = prost_build::Config::new();
-    prost_build.out_dir("src/envoy");
+    prost_build.out_dir("src/proto");
 
     println!("Compiling protos...");
     let result = prost_build.compile_protos(
