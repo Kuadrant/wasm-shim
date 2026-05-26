@@ -48,6 +48,8 @@ pub struct TypedAction {
     pub terminal: bool,
     #[serde(default = "default_is_guard")]
     pub is_guard: bool,
+    #[serde(default)]
+    pub sources: Vec<String>,
     #[serde(flatten)]
     pub operation: Operation,
 }
