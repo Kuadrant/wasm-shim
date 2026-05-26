@@ -44,7 +44,7 @@ pub(crate) enum Operation {
         service: ServiceInstance,
         var: String,
         message_builder: Expression,
-        on_reply: Vec<TypedAction>,
+        on_reply: Vec<Action>,
     },
     Deny {
         deny_with: Expression,
@@ -355,7 +355,19 @@ impl Action {
         id: String,
         dependencies: Vec<String>,
     ) -> Result<Self, CompileError> {
-        match &typed.operation {
+        let predicate =
+            Predicate::new(&typed.predicate).map_err(|e| CompileError::InvalidActionPredicate {
+                service: match &typed.operation {
+                    configuration::Operation::Grpc(grpc) => grpc.service.clone(),
+                    configuration::Operation::Deny(_) => "deny".to_string(),
+                    configuration::Operation::Headers(_) => "headers".to_string(),
+                    configuration::Operation::Store(_) => "store".to_string(),
+                    configuration::Operation::Fail(_) => "fail".to_string(),
+                },
+                error: e.to_string(),
+            })?;
+
+        let operation = match &typed.operation {
             configuration::Operation::Grpc(grpc) => {
                 let service_instance = services
                     .get(&grpc.service)
@@ -370,53 +382,77 @@ impl Action {
                         | ServiceInstance::RateLimitReport(_)
                 ) {
                     return Err(CompileError::ServiceCreationFailed(format!(
-                        "Service '{}' cannot be used with typed grpc action",
+                        "Service '{}' cannot be used with gRPC action",
                         grpc.service
                     )));
                 }
 
-                let predicate = Predicate::new(&typed.predicate).map_err(|e| {
-                    CompileError::InvalidActionPredicate {
-                        service: grpc.service.clone(),
-                        error: e.to_string(),
-                    }
-                })?;
-
                 let on_reply: Vec<TypedAction> = grpc
                     .on_reply
                     .iter()
-                    .map(TypedAction::compile)
+                    .enumerate()
+                    .map(|(idx, typed_action)| TypedAction::compile(typed_action, &id, idx))
                     .collect::<Result<_, _>>()?;
 
-                let message_builder =
-                    Some(Expression::new(&grpc.message_builder).map_err(|e| {
-                        CompileError::InvalidDataExpression(format!(
-                            "Failed to compile message_builder: {e}"
-                        ))
-                    })?);
+                let message_builder = Expression::new(&grpc.message_builder).map_err(|e| {
+                    CompileError::InvalidDataExpression(format!(
+                        "Failed to compile message_builder: {e}"
+                    ))
+                })?;
 
-                Ok(Self {
-                    id,
+                Operation::Grpc {
                     service: service_instance.clone(),
-                    scope: grpc.var.clone(),
-                    predicates: vec![predicate],
-                    conditional_data: vec![],
-                    dependencies,
-                    sources: typed.sources.clone(),
+                    var: grpc.var.clone(),
                     message_builder,
                     on_reply,
-                    is_guard: typed.is_guard,
-                })
+                }
             }
-            _ => Err(CompileError::InvalidDataExpression(
-                "Only gRPC typed actions are currently supported as top-level actions".to_string(),
-            )),
-        }
+            configuration::Operation::Deny(deny) => {
+                let deny_with = Expression::new(&deny.deny_with)?;
+                Operation::Deny { deny_with }
+            }
+            configuration::Operation::Headers(headers) => {
+                let target = match headers.target {
+                    configuration::HeadersTarget::Request => HeadersType::HttpRequestHeaders,
+                    configuration::HeadersTarget::Response => HeadersType::HttpResponseHeaders,
+                };
+                let headers_expr = Expression::new(&headers.headers)?;
+                Operation::Headers {
+                    target,
+                    headers: headers_expr,
+                }
+            }
+            configuration::Operation::Store(store) => {
+                let expression = Expression::new(&store.value)?;
+                Operation::Store {
+                    path: store.path.clone(),
+                    expression,
+                    export_to_host: store.export_to_host,
+                }
+            }
+            configuration::Operation::Fail(fail) => Operation::Fail {
+                log_message: fail.log_message.clone(),
+            },
+        };
+
+        Ok(Action {
+            id,
+            predicate,
+            terminal: typed.terminal,
+            operation,
+            dependencies,
+            sources: typed.sources.clone(),
+            is_guard: typed.is_guard,
+        })
     }
 }
 
 impl TypedAction {
-    fn compile(config: &configuration::TypedAction) -> Result<Self, CompileError> {
+    fn compile(
+        config: &configuration::TypedAction,
+        parent_id: &str,
+        reply_index: usize,
+    ) -> Result<Action, CompileError> {
         let predicate = Predicate::new(&config.predicate).map_err(|e| {
             CompileError::InvalidActionPredicate {
                 service: match &config.operation {
@@ -466,10 +502,22 @@ impl TypedAction {
             }
         };
 
-        Ok(TypedAction {
+        let id = format!("{}.{}", parent_id, reply_index);
+
+        let dependencies = if reply_index > 0 {
+            vec![format!("{}.{}", parent_id, reply_index - 1)]
+        } else {
+            vec![]
+        };
+
+        Ok(Action {
+            id,
             predicate,
             terminal: config.terminal,
             operation,
+            dependencies,
+            sources: config.sources.clone(),
+            is_guard: config.is_guard,
         })
     }
 }
