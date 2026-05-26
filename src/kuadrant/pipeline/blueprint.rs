@@ -61,49 +61,69 @@ pub(crate) enum Operation {
 
 impl Action {
     pub fn collect_body_values(&self, request_data: &[RequestData]) -> Vec<String> {
-        let mut fields = Vec::new();
+        use std::collections::HashSet;
 
-        for predicate in &self.predicates {
-            fields.extend(predicate.response_body_values().iter().cloned());
-        }
-        for data in &self.conditional_data {
-            for predicate in &data.predicates {
-                fields.extend(predicate.response_body_values().iter().cloned());
+        let mut fields = HashSet::new();
+
+        fields.extend(self.predicate.response_body_values().iter().cloned());
+
+        fields.extend(
+            request_data
+                .iter()
+                .flat_map(|(_, expr)| expr.response_body_values().iter().cloned()),
+        );
+
+        match &self.operation {
+            Operation::Grpc {
+                message_builder,
+                on_reply,
+                ..
+            } => {
+                fields.extend(message_builder.response_body_values().iter().cloned());
+                fields.extend(on_reply.iter().flat_map(|action| {
+                    let mut reply_fields = Vec::new();
+                    reply_fields.extend(action.predicate.response_body_values().iter().cloned());
+                    match &action.operation {
+                        Operation::Grpc {
+                            message_builder,
+                            on_reply: nested_reply,
+                            ..
+                        } => {
+                            reply_fields
+                                .extend(message_builder.response_body_values().iter().cloned());
+                            reply_fields.extend(
+                                nested_reply
+                                    .iter()
+                                    .flat_map(|nested| nested.collect_body_values(&[])),
+                            );
+                        }
+                        Operation::Deny { deny_with } => {
+                            reply_fields.extend(deny_with.response_body_values().iter().cloned());
+                        }
+                        Operation::Headers { headers, .. } => {
+                            reply_fields.extend(headers.response_body_values().iter().cloned());
+                        }
+                        Operation::Store { expression, .. } => {
+                            reply_fields.extend(expression.response_body_values().iter().cloned());
+                        }
+                        Operation::Fail { .. } => {}
+                    }
+                    reply_fields
+                }));
             }
-            for item in &data.data {
-                fields.extend(item.value.response_body_values().iter().cloned());
+            Operation::Deny { deny_with } => {
+                fields.extend(deny_with.response_body_values().iter().cloned());
             }
-        }
-        for (_, expr) in request_data {
-            fields.extend(expr.response_body_values().iter().cloned());
-        }
-        if let Some(mb) = &self.message_builder {
-            fields.extend(mb.response_body_values().iter().cloned());
-        }
-        for on_reply_action in &self.on_reply {
-            fields.extend(
-                on_reply_action
-                    .predicate
-                    .response_body_values()
-                    .iter()
-                    .cloned(),
-            );
-            match &on_reply_action.operation {
-                Operation::Deny { deny_with } => {
-                    fields.extend(deny_with.response_body_values().iter().cloned());
-                }
-                Operation::Headers { headers, .. } => {
-                    fields.extend(headers.response_body_values().iter().cloned());
-                }
-                Operation::Store { expression, .. } => {
-                    fields.extend(expression.response_body_values().iter().cloned());
-                }
-                Operation::Fail { .. } => {}
+            Operation::Headers { headers, .. } => {
+                fields.extend(headers.response_body_values().iter().cloned());
             }
+            Operation::Store { expression, .. } => {
+                fields.extend(expression.response_body_values().iter().cloned());
+            }
+            Operation::Fail { .. } => {}
         }
 
-        fields.dedup();
-        fields
+        fields.into_iter().collect()
     }
 }
 
@@ -446,7 +466,6 @@ impl Action {
         })
     }
 }
-
 
 impl ConditionalData {
     fn compile(config: &configuration::ConditionalData) -> Result<Self, CompileError> {
@@ -963,7 +982,8 @@ mod tests {
                 headers: "result.resp_headers".to_string(),
             }),
         };
-        let headers_result = Action::compile_typed(&headers_config, &services, "0".to_string(), vec![]);
+        let headers_result =
+            Action::compile_typed(&headers_config, &services, "0".to_string(), vec![]);
         assert!(headers_result.is_ok());
         let headers = headers_result.unwrap();
         assert!(!headers.terminal);
