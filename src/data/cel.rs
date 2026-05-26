@@ -141,8 +141,11 @@ const HOST_PROPERTY_ROOTS: &[&str] = &[
     "ratelimit",
     "filter_state",
     "metadata",
-    "auth",
 ];
+
+fn is_host_property_root(root: &str) -> bool {
+    HOST_PROPERTY_ROOTS.contains(&root)
+}
 
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseErrors> {
@@ -167,10 +170,6 @@ impl Expression {
             .filter_map(|tokens| {
                 if tokens.len() >= 2 && tokens[0] == "request" && tokens[1] == "grpc" {
                     needs_grpc = true;
-                    return None;
-                }
-                let root = tokens.first()?;
-                if !HOST_PROPERTY_ROOTS.contains(root) {
                     return None;
                 }
                 let path = Path::new(tokens);
@@ -202,6 +201,7 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
+    #[allow(dead_code)]
     pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
         let mut cel_ctx = Context::default();
         self.eval_with_ctx(req_ctx, &mut cel_ctx)
@@ -213,10 +213,16 @@ impl Expression {
             Self::add_extended_capabilities(cel_ctx)
         }
 
-        // Eagerly cache all attributes used by this expression
+        // Eagerly cache host-resolvable attributes used by this expression
         let paths: Vec<Path> = self
             .attributes
             .iter()
+            .filter(|attr| {
+                attr.path
+                    .tokens()
+                    .first()
+                    .is_some_and(|root| is_host_property_root(root))
+            })
             .map(|attr| attr.path.clone())
             .collect();
         req_ctx.ensure_attributes(&paths);
@@ -243,6 +249,26 @@ impl Expression {
         for binding in ["metadata", "source", "destination", "auth"] {
             let key: Key = binding.into();
             cel_ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
+        }
+
+        for (key, value) in map.iter() {
+            if let Key::String(name) = key {
+                if *key != request_key && !is_host_property_root(name) {
+                    cel_ctx.add_variable_from_value(name.as_str(), value.clone());
+                }
+            }
+        }
+
+        for path in req_ctx.stored_value_paths() {
+            let root = path.split('.').next().unwrap_or(path);
+            if root == path {
+                let key: Key = root.into();
+                if !map.contains_key(&key) {
+                    if let Some(value) = req_ctx.get_stored_value(path) {
+                        cel_ctx.add_variable_from_value(root, value.clone());
+                    }
+                }
+            }
         }
 
         {
@@ -545,6 +571,12 @@ impl PredicateVec for Vec<Predicate> {
         let paths: Vec<Path> = self
             .iter()
             .flat_map(|p| &p.expression.attributes)
+            .filter(|attr| {
+                attr.path
+                    .tokens()
+                    .first()
+                    .is_some_and(|root| is_host_property_root(root))
+            })
             .map(|attr| attr.path.clone())
             .collect();
         req_ctx.ensure_attributes(&paths);
@@ -877,7 +909,7 @@ pub fn debug_all_well_known_attributes() {
 
 pub mod data {
     use crate::data::attribute::{AttributeError, AttributeState};
-    use crate::data::cel::Attribute;
+    use crate::data::cel::{is_host_property_root, Attribute};
     use crate::kuadrant::ReqRespCtx;
     use cel::objects::{Key, Map};
     use cel::Value;
@@ -922,16 +954,33 @@ pub mod data {
 
     impl AttributeMap {
         pub fn into(self, req_ctx: &ReqRespCtx) -> Result<AttributeState<Map>, AttributeError> {
-            map_to_value(self.data, req_ctx)
+            map_to_value(self.data, req_ctx, "")
         }
     }
 
     fn map_to_value(
         map: HashMap<String, Token>,
         req_ctx: &ReqRespCtx,
+        path_prefix: &str,
     ) -> Result<AttributeState<Map>, AttributeError> {
         let mut out: HashMap<Key, Value> = HashMap::default();
         for (key, value) in map {
+            let current_path = if path_prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", path_prefix, key)
+            };
+
+            if let Some(stored_val) = req_ctx.get_stored_value(&current_path) {
+                out.insert(key.into(), stored_val.clone());
+                continue;
+            }
+            if path_prefix.is_empty()
+                && !is_host_property_root(&key)
+                && !req_ctx.has_stored_prefix(&format!("{}.", key))
+            {
+                continue;
+            }
             let k = key.into();
             let v = match value {
                 Token::Value(attr) => match attr.get(req_ctx)? {
@@ -940,12 +989,14 @@ pub mod data {
                         return Ok(AttributeState::Pending);
                     }
                 },
-                Token::Node(nested_map) => match map_to_value(nested_map, req_ctx)? {
-                    AttributeState::Available(m) => Value::Map(m),
-                    AttributeState::Pending => {
-                        return Ok(AttributeState::Pending);
+                Token::Node(nested_map) => {
+                    match map_to_value(nested_map, req_ctx, &current_path)? {
+                        AttributeState::Available(m) => Value::Map(m),
+                        AttributeState::Pending => {
+                            return Ok(AttributeState::Pending);
+                        }
                     }
-                },
+                }
             };
             out.insert(k, v);
         }
@@ -1025,12 +1076,13 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::attribute::{AttributeState, Path};
+    use crate::data::attribute::AttributeState;
     use crate::data::cel::{known_attribute_for, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel::objects::ValueType;
     use cel::Value;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
@@ -1055,10 +1107,13 @@ mod tests {
         assert_eq!(value.attributes[0].path, "auth.identity".into());
 
         let value = Expression::new("foo.bar && a.b.c").expect("This is valid CEL!");
-        assert_eq!(value.attributes.len(), 0);
+        assert_eq!(value.attributes.len(), 2);
+        assert_eq!(value.attributes[0].path, "foo.bar".into());
+        assert_eq!(value.attributes[1].path, "a.b.c".into());
 
         let value = Expression::new("my_func(foo.bar).a.b > 3").expect("This is valid CEL!");
-        assert_eq!(value.attributes.len(), 0);
+        assert_eq!(value.attributes.len(), 1);
+        assert_eq!(value.attributes[0].path, "foo.bar".into());
 
         let value = Expression::new("request.host && source.address").expect("This is valid CEL!");
         assert_eq!(value.attributes.len(), 2);
@@ -1084,17 +1139,26 @@ mod tests {
         assert_eq!(value.request_body_values, vec!["foo.bar".to_string()]);
     }
 
+    fn store_auth_leaf(ctx: &mut ReqRespCtx, field: &str, value: Value) {
+        let leaf_map: HashMap<cel::objects::Key, Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new(field.to_string())),
+            value,
+        )]);
+        let auth_map: HashMap<cel::objects::Key, Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new("identity".to_string())),
+            Value::Map(cel::objects::Map::from(leaf_map)),
+        )]);
+        ctx.store_value(
+            "auth".to_string(),
+            Value::Map(cel::objects::Map::from(auth_map)),
+        );
+    }
+
     #[test]
     fn expressions_to_json_resolve() {
         // Test boolean value
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec![
-                "filter_state",
-                "wasm.kuadrant.auth.identity.anonymous",
-            ]),
-            "true".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "anonymous", Value::Bool(true));
         let value = Expression::new("auth.identity.anonymous")
             .expect("This is valid CEL!")
             .eval(&ctx)
@@ -1102,11 +1166,8 @@ mod tests {
         assert_eq!(value, AttributeState::Available(true.into()));
 
         // Test integer value
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "42".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "age", Value::UInt(42));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
             .eval(&ctx)
@@ -1114,22 +1175,17 @@ mod tests {
         assert_eq!(value, AttributeState::Available(Value::UInt(42)));
 
         // Test float value
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "42.3".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "age", Value::Float(42.3));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::Float(42.3)));
 
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "\"John\"".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        // Test string value
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "age", Value::String("John".to_string().into()));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
             .eval(&ctx)
@@ -1140,31 +1196,13 @@ mod tests {
         );
 
         // Test negative integer
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.name"]),
-            "-42".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        store_auth_leaf(&mut ctx, "name", Value::Int(-42));
         let value = Expression::new("auth.identity.name")
             .expect("This is valid CEL!")
             .eval(&ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::Int(-42)));
-
-        // Test fallback to string for non-JSON
-        let mock_host = MockWasmHost::new().with_property(
-            Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.age"]),
-            "some random crap".bytes().collect(),
-        );
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
-        let value = Expression::new("auth.identity.age")
-            .expect("This is valid CEL!")
-            .eval(&ctx)
-            .expect("This must evaluate!");
-        assert_eq!(
-            value,
-            AttributeState::Available(Value::String("some random crap".to_string().into()))
-        );
     }
 
     #[test]
@@ -1680,5 +1718,70 @@ mod tests {
             AttributeState::Pending,
             "Ternary expression with Pending condition should return Pending"
         );
+    }
+
+    #[test]
+    fn stored_value_resolves_in_expression() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let identity_map: HashMap<cel::objects::Key, Value> = HashMap::from([
+            (
+                cel::objects::Key::String(Arc::new("userid".to_string())),
+                Value::String(Arc::new("alice".to_string())),
+            ),
+            (
+                cel::objects::Key::String(Arc::new("role".to_string())),
+                Value::String(Arc::new("admin".to_string())),
+            ),
+        ]);
+        let auth_map: HashMap<cel::objects::Key, Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new("identity".to_string())),
+            Value::Map(cel::objects::Map::from(identity_map)),
+        )]);
+        ctx.store_value(
+            "auth".to_string(),
+            Value::Map(cel::objects::Map::from(auth_map)),
+        );
+
+        let expr = Expression::new("auth.identity.userid == 'alice'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+
+        let expr = Expression::new("auth.identity.role == 'admin'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+    }
+
+    #[test]
+    fn stored_value_at_nested_path() {
+        let mock_host =
+            MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        ctx.store_value(
+            "request.custom".to_string(),
+            Value::String(Arc::new("stored_data".to_string())),
+        );
+
+        let expr = Expression::new("request.custom == 'stored_data'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+
+        let expr = Expression::new("request.method == 'GET'").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+    }
+
+    #[test]
+    fn stored_value_with_custom_root() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        ctx.store_value("myvar".to_string(), Value::Int(42));
+
+        let expr = Expression::new("myvar == 42").expect("valid CEL");
+        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
     }
 }

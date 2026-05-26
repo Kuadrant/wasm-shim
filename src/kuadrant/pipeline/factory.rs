@@ -1,6 +1,7 @@
 #[allow(deprecated)]
 use crate::configuration::{
-    translate_legacy_ratelimit_to_typed, ActionConfig, PluginConfiguration,
+    translate_legacy_auth_to_typed, translate_legacy_ratelimit_to_typed,
+    translate_legacy_report_to_typed, ActionConfig, PluginConfiguration,
 };
 use crate::data::{
     attribute::AttributeState,
@@ -95,6 +96,16 @@ impl PipelineFactory {
                         #[allow(deprecated)]
                         let typed = translate_legacy_ratelimit_to_typed(legacy, &request_data_raw);
                         *action = ActionConfig::Typed(typed);
+                    } else if let Some(ServiceInstance::Auth(_)) = services.get(&legacy.service) {
+                        #[allow(deprecated)]
+                        let typed = translate_legacy_auth_to_typed(legacy, &request_data_raw);
+                        *action = ActionConfig::Typed(typed);
+                    } else if let Some(ServiceInstance::RateLimitReport(_)) =
+                        services.get(&legacy.service)
+                    {
+                        #[allow(deprecated)]
+                        let typed = translate_legacy_report_to_typed(legacy, &request_data_raw);
+                        *action = ActionConfig::Typed(typed);
                     }
                 }
             }
@@ -113,6 +124,7 @@ impl PipelineFactory {
                 sources: vec![],
                 message_builder: None,
                 on_reply: vec![],
+                is_guard: true,
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {

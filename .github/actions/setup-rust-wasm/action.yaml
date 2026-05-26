@@ -1,17 +1,17 @@
-name: 'Setup Rust WASM Environment'
-description: 'Set up Rust toolchain with wasm32-wasip1 target, cache, and protoc'
+name: "Setup Rust WASM Environment"
+description: "Set up Rust toolchain with wasm32-wasip1 target, cache, and protoc"
 
 inputs:
   rust-components:
-    description: 'Additional Rust components (e.g., rustfmt, clippy)'
+    description: "Additional Rust components (e.g., rustfmt, clippy)"
     required: false
-    default: ''
+    default: ""
   github-token:
-    description: 'GitHub token for protoc setup'
+    description: "GitHub token for protoc setup"
     required: true
 
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -23,7 +23,11 @@ runs:
       uses: Swatinem/rust-cache@v2
 
     - name: Set up protoc
-      uses: arduino/setup-protoc@v3
-      with:
-        version: "3.x"
-        repo-token: ${{ inputs.github-token }}
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+        elif [ "$RUNNER_OS" == "macOS" ]; then
+          brew install protobuf
+        fi

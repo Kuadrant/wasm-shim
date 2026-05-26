@@ -1,6 +1,6 @@
 use cel::Value;
 use std::cell::OnceCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -30,6 +30,8 @@ pub struct ReqRespCtx {
     tracker: Tracker,
     request_body_values: HashMap<String, Value>,
     response_body_values: HashMap<String, Value>,
+    stored_values: BTreeMap<String, Value>,
+    upstream_barrier: u32,
 }
 
 impl Default for ReqRespCtx {
@@ -53,6 +55,8 @@ impl ReqRespCtx {
             tracker: Tracker::default(),
             request_body_values: HashMap::new(),
             response_body_values: HashMap::new(),
+            stored_values: BTreeMap::new(),
+            upstream_barrier: 0,
         }
     }
 
@@ -138,6 +142,23 @@ impl ReqRespCtx {
             .ok_or_else(|| ServiceError::Retrieval("No gRPC response data available".to_string()))
     }
 
+    pub fn raise_upstream_barrier(&mut self) {
+        self.upstream_barrier += 1;
+    }
+
+    pub fn lower_upstream_barrier(&mut self) {
+        match self.upstream_barrier.checked_sub(1) {
+            Some(new_value) => self.upstream_barrier = new_value,
+            None => {
+                tracing::error!("Attempted to lower upstream barrier when count is already 0 - mismatched raise/lower pairs");
+            }
+        }
+    }
+
+    pub fn upstream_barrier(&self) -> u32 {
+        self.upstream_barrier
+    }
+
     pub fn get_attribute<T: AttributeValue>(
         &self,
         path: impl Into<Path>,
@@ -145,6 +166,7 @@ impl ReqRespCtx {
         self.get_attribute_ref(&path.into())
     }
 
+    #[allow(dead_code)]
     pub fn get_required<T: AttributeValue>(
         &self,
         path: impl Into<Path>,
@@ -290,6 +312,7 @@ impl ReqRespCtx {
         }
     }
 
+    #[allow(dead_code)]
     pub fn eval_request_data(&self) -> Vec<request_data::RequestDataEntry> {
         let Some(ref expressions) = self.request_data else {
             return Vec::new();
@@ -437,6 +460,25 @@ impl ReqRespCtx {
     pub fn get_response_body_value(&self, key: &str) -> Option<&Value> {
         self.response_body_values.get(key)
     }
+
+    pub fn store_value(&mut self, path: String, value: Value) {
+        self.stored_values.insert(path, value);
+    }
+
+    pub fn get_stored_value(&self, path: &str) -> Option<&Value> {
+        self.stored_values.get(path)
+    }
+
+    pub fn stored_value_paths(&self) -> impl Iterator<Item = &str> {
+        self.stored_values.keys().map(|s| s.as_str())
+    }
+
+    pub fn has_stored_prefix(&self, prefix: &str) -> bool {
+        self.stored_values
+            .range::<String, _>(prefix.to_string()..)
+            .next()
+            .is_some_and(|(k, _)| k.starts_with(prefix))
+    }
 }
 
 struct Tracker {
@@ -496,10 +538,12 @@ impl Default for TracingContext {
 pub mod request_data {
     use crate::data::cel::EvalResult;
 
+    #[allow(dead_code)]
     pub struct RequestDataEntry {
         pub domain: String,
         pub field: String,
         pub result: EvalResult,
+        #[allow(dead_code)]
         pub source: String,
     }
 }
@@ -568,10 +612,9 @@ mod tests {
 
     #[test]
     fn test_request_data() {
-        let mock_host = MockWasmHost::new()
-            .with_property("auth.identity.user".into(), "alice".bytes().collect())
-            .with_property("auth.identity.group".into(), "admin".bytes().collect());
-        let backend = Arc::new(mock_host);
+        use std::collections::HashMap;
+
+        let backend = Arc::new(MockWasmHost::new());
 
         let request_data = vec![
             (
@@ -589,8 +632,26 @@ mod tests {
         let results_empty = ctx_empty.eval_request_data();
         assert!(results_empty.is_empty());
 
-        // With request_data
-        let ctx = ReqRespCtx::new(backend).with_request_data(request_data);
+        // With request_data and stored auth values
+        let identity_map: HashMap<cel::objects::Key, cel::Value> = HashMap::from([
+            (
+                cel::objects::Key::String(Arc::new("user".to_string())),
+                cel::Value::String(Arc::new("alice".to_string())),
+            ),
+            (
+                cel::objects::Key::String(Arc::new("group".to_string())),
+                cel::Value::String(Arc::new("admin".to_string())),
+            ),
+        ]);
+        let auth_map: HashMap<cel::objects::Key, cel::Value> = HashMap::from([(
+            cel::objects::Key::String(Arc::new("identity".to_string())),
+            cel::Value::Map(cel::objects::Map::from(identity_map)),
+        )]);
+        let mut ctx = ReqRespCtx::new(backend).with_request_data(request_data);
+        ctx.store_value(
+            "auth".to_string(),
+            cel::Value::Map(cel::objects::Map::from(auth_map)),
+        );
         let results = ctx.eval_request_data();
         assert_eq!(results.len(), 2);
 
@@ -741,5 +802,45 @@ mod tests {
             result2,
             Ok(AttributeState::Available(Some(ref s))) if s == "external-user-id"
         ));
+    }
+
+    #[test]
+    fn test_upstream_barrier_raise_and_lower() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        ctx.raise_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 1);
+
+        ctx.raise_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 2);
+
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 1);
+
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 0);
+    }
+
+    #[test]
+    fn test_upstream_barrier_underflow_protection() {
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        // Attempting to lower when already at 0 should log error and remain at 0
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        // Verify multiple underflow attempts don't cause issues
+        ctx.lower_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 0);
+
+        // Normal operation should still work after underflow
+        ctx.raise_upstream_barrier();
+        assert_eq!(ctx.upstream_barrier(), 1);
     }
 }

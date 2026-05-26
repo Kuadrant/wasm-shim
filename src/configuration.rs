@@ -10,7 +10,11 @@ use std::time::Duration;
 
 mod legacy_translation;
 #[allow(deprecated)]
+pub(crate) use legacy_translation::auth::translate_legacy_auth_to_typed;
+#[allow(deprecated)]
 pub(crate) use legacy_translation::ratelimit::translate_legacy_ratelimit_to_typed;
+#[allow(deprecated)]
+pub(crate) use legacy_translation::ratelimit::translate_legacy_report_to_typed;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ConditionalData {
@@ -33,11 +37,17 @@ pub struct Action {
     pub sources: Vec<String>,
 }
 
+fn default_is_guard() -> bool {
+    true
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TypedAction {
     pub predicate: String,
     pub terminal: bool,
+    #[serde(default = "default_is_guard")]
+    pub is_guard: bool,
     #[serde(flatten)]
     pub operation: Operation,
 }
@@ -87,6 +97,8 @@ pub struct HeadersOperation {
 pub struct StoreOperation {
     pub path: String,
     pub value: String,
+    #[serde(default)]
+    pub export_to_host: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -971,5 +983,38 @@ mod test {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_is_guard_defaults_to_true() {
+        let config = r#"{
+            "type": "grpc",
+            "predicate": "true",
+            "terminal": false,
+            "var": "test",
+            "service": "test-service",
+            "messageBuilder": "test",
+            "onReply": []
+        }"#;
+
+        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
+        assert!(typed_action.is_guard);
+    }
+
+    #[test]
+    fn test_is_guard_can_be_set_to_false() {
+        let config = r#"{
+            "type": "grpc",
+            "predicate": "true",
+            "terminal": false,
+            "isGuard": false,
+            "var": "test",
+            "service": "test-service",
+            "messageBuilder": "test",
+            "onReply": []
+        }"#;
+
+        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
+        assert!(!typed_action.is_guard);
     }
 }

@@ -1,20 +1,16 @@
-mod auth;
 mod dynamic;
 mod export_traces;
 mod failure_mode;
 mod headers;
-mod ratelimit;
 mod send_reply;
 mod store;
 mod token_usage;
 mod tracing_decorator;
 
-pub use auth::AuthTask;
 pub use dynamic::DynamicTask;
 pub use export_traces::ExportTracesTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
-pub use ratelimit::RateLimitTask;
 pub use send_reply::SendReplyTask;
 pub use store::StoreTask;
 pub use token_usage::TokenUsageTask;
@@ -36,16 +32,11 @@ pub trait Task {
     fn dependencies(&self) -> &[String] {
         &[]
     }
-
-    fn pauses_filter(&self) -> bool {
-        false
-    }
 }
 
 pub struct PendingTask {
     task_id: String,
     process_response: Box<ResponseProcessor>,
-    pause: bool,
 }
 
 impl PendingTask {
@@ -53,15 +44,6 @@ impl PendingTask {
         Self {
             task_id,
             process_response,
-            pause: true,
-        }
-    }
-
-    pub fn background(task_id: String, process_response: Box<ResponseProcessor>) -> Self {
-        Self {
-            task_id,
-            process_response,
-            pause: false,
         }
     }
 }
@@ -72,9 +54,6 @@ impl Task for PendingTask {
     }
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
-    }
-    fn pauses_filter(&self) -> bool {
-        self.pause
     }
 }
 

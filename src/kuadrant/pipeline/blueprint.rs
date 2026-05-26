@@ -1,8 +1,8 @@
 use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    AuthTask, DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
-    ModifyHeadersTask, RateLimitTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
+    ModifyHeadersTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -30,6 +30,7 @@ pub(crate) struct Action {
     pub sources: Vec<String>,
     pub message_builder: Option<Expression>,
     pub on_reply: Vec<TypedAction>,
+    pub is_guard: bool,
 }
 
 // todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
@@ -52,6 +53,7 @@ pub(crate) enum Operation {
     Store {
         path: String,
         expression: Expression,
+        export_to_host: bool,
     },
     Fail {
         log_message: String,
@@ -76,6 +78,30 @@ impl Action {
         for (_, expr) in request_data {
             fields.extend(expr.response_body_values().iter().cloned());
         }
+        if let Some(mb) = &self.message_builder {
+            fields.extend(mb.response_body_values().iter().cloned());
+        }
+        for on_reply_action in &self.on_reply {
+            fields.extend(
+                on_reply_action
+                    .predicate
+                    .response_body_values()
+                    .iter()
+                    .cloned(),
+            );
+            match &on_reply_action.operation {
+                Operation::Deny { deny_with } => {
+                    fields.extend(deny_with.response_body_values().iter().cloned());
+                }
+                Operation::Headers { headers, .. } => {
+                    fields.extend(headers.response_body_values().iter().cloned());
+                }
+                Operation::Store { expression, .. } => {
+                    fields.extend(expression.response_body_values().iter().cloned());
+                }
+                Operation::Fail { .. } => {}
+            }
+        }
 
         fields.dedup();
         fields
@@ -90,6 +116,7 @@ pub(crate) struct ConditionalData {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DataItem {
+    #[allow(dead_code)]
     pub key: String,
     pub value: Expression,
 }
@@ -201,55 +228,6 @@ impl Blueprint {
                 action.service.failure_mode() == configuration::FailureMode::Deny;
 
             match &action.service {
-                ServiceInstance::Auth(auth_service) => {
-                    let task = Box::new(AuthTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        Rc::clone(auth_service),
-                        action.scope.clone(),
-                        action.predicates.clone(),
-                        action.dependencies.clone(),
-                        true, // pauses_filter = true for auth tasks
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    if tracing_enabled {
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            "auth",
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
-                }
-                ServiceInstance::RateLimitReport(dynamic_service) => {
-                    // parse token usage from response
-                    let task = Box::new(RateLimitTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        action.dependencies.clone(),
-                        Rc::clone(dynamic_service),
-                        action.scope.clone(),
-                        action.predicates.clone(),
-                        action.conditional_data.clone(),
-                        false, // pauses_filter = false for ratelimit report tasks
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-
-                    tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
-                        action.collect_body_values(request_data),
-                    )));
-
-                    if tracing_enabled {
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            "ratelimit_report",
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
-                }
                 ServiceInstance::Tracing(service) => {
                     ctx.set_public_tracker_id(action.scope.clone());
                     tasks.push(Box::new(ModifyHeadersTask::new(
@@ -264,8 +242,10 @@ impl Blueprint {
                     }
                 }
                 ServiceInstance::Dynamic(dynamic_service)
+                | ServiceInstance::Auth(dynamic_service)
                 | ServiceInstance::RateLimit(dynamic_service)
-                | ServiceInstance::RateLimitCheck(dynamic_service) => {
+                | ServiceInstance::RateLimitCheck(dynamic_service)
+                | ServiceInstance::RateLimitReport(dynamic_service) => {
                     let message_builder = match &action.message_builder {
                         Some(mb) => mb.clone(),
                         None => {
@@ -273,7 +253,22 @@ impl Blueprint {
                             continue;
                         }
                     };
-                    let task: Box<dyn Task> = Box::new(DynamicTask::new(
+
+                    // Restrict to Report and Dynamic for now
+                    if matches!(
+                        &action.service,
+                        ServiceInstance::RateLimitReport(_) | ServiceInstance::Dynamic(_)
+                    ) {
+                        let body_values = action.collect_body_values(request_data);
+                        if !body_values.is_empty() {
+                            tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
+                                body_values,
+                            )));
+                        }
+                    }
+
+                    let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
+                        ctx,
                         action.id.clone(),
                         Rc::clone(dynamic_service),
                         action.scope.clone(),
@@ -281,14 +276,17 @@ impl Blueprint {
                         action.on_reply.clone(),
                         action.predicates.clone(),
                         action.dependencies.clone(),
+                        action.is_guard,
                     ));
                     let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                     if tracing_enabled {
                         let span_label = match &action.service {
                             //todo(@adam-cattermole): drop this in favour of method/service once other service types removed
+                            ServiceInstance::Auth(_) => "auth",
                             ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
                                 "ratelimit"
                             }
+                            ServiceInstance::RateLimitReport(_) => "ratelimit_report",
                             _ => "dynamic",
                         };
                         tasks.push(Box::new(TracingDecoratorTask::new(
@@ -344,6 +342,7 @@ impl Action {
             sources: config.sources.clone(),
             message_builder: None,
             on_reply: vec![],
+            is_guard: true,
         })
     }
 
@@ -362,8 +361,10 @@ impl Action {
                 if !matches!(
                     service_instance,
                     ServiceInstance::Dynamic(_)
+                        | ServiceInstance::Auth(_)
                         | ServiceInstance::RateLimit(_)
                         | ServiceInstance::RateLimitCheck(_)
+                        | ServiceInstance::RateLimitReport(_)
                 ) {
                     return Err(CompileError::ServiceCreationFailed(format!(
                         "Service '{}' cannot be used with typed grpc action",
@@ -401,6 +402,7 @@ impl Action {
                     sources: vec![],
                     message_builder,
                     on_reply,
+                    is_guard: typed.is_guard,
                 })
             }
             _ => Err(CompileError::InvalidDataExpression(
@@ -445,7 +447,11 @@ impl TypedAction {
             configuration::Operation::Store(store) => {
                 let path = store.path.clone();
                 let expression = Expression::new(&store.value)?;
-                Operation::Store { path, expression }
+                Operation::Store {
+                    path,
+                    expression,
+                    export_to_host: store.export_to_host,
+                }
             }
             configuration::Operation::Fail(fail) => Operation::Fail {
                 log_message: fail.log_message.clone(),
@@ -512,17 +518,21 @@ mod tests {
     };
     use crate::configuration::{FailOperation, FailureMode};
     use crate::filter::DescriptorManager;
-    use crate::services::{AuthService, DynamicService, ServiceInstance};
+    use crate::services::{DynamicService, ServiceInstance};
     use std::collections::HashMap;
     use std::rc::Rc;
 
     fn build_test_service(name: &str) -> (String, ServiceInstance) {
+        let descriptor_manager = Rc::new(DescriptorManager::default());
         (
             name.to_string(),
-            ServiceInstance::Auth(Rc::new(AuthService::new(
+            ServiceInstance::Auth(Rc::new(DynamicService::new(
                 "test-cluster".to_string(),
+                "envoy.service.auth.v3.Authorization".to_string(),
+                "Check".to_string(),
                 std::time::Duration::from_secs(10),
                 FailureMode::Deny,
+                descriptor_manager,
             ))),
         )
     }
@@ -797,6 +807,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "request.method == 'GET'".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "rl_check".to_string(),
                 service: "my-dynamic".to_string(),
@@ -805,6 +816,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "rl_check.overall_code == 2".to_string(),
                         terminal: true,
+                        is_guard: false,
                         operation: ConfigOperation::Deny(DenyOperation {
                             deny_with: "DenyResponse{status: 429u}".to_string(),
                         }),
@@ -812,6 +824,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "rl_check.overall_code == 0".to_string(),
                         terminal: true,
+                        is_guard: false,
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message: "Received UNKNOWN from rate limiting service".to_string(),
                         }),
@@ -820,6 +833,7 @@ mod tests {
                         predicate: "rl_check.overall_code != 1 && rl_check.overall_code != 2"
                             .to_string(),
                         terminal: true,
+                        is_guard: false,
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message:
                                 "Received invalid response code from rate limiting service"
@@ -829,6 +843,7 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "true".to_string(),
                         terminal: false,
+                        is_guard: false,
                         operation: ConfigOperation::Headers(HeadersOperation {
                             target: HeadersTarget::Request,
                             headers: "result.headers".to_string(),
@@ -837,9 +852,11 @@ mod tests {
                     ConfigTypedAction {
                         predicate: "true".to_string(),
                         terminal: false,
+                        is_guard: false,
                         operation: ConfigOperation::Store(StoreOperation {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
+                            export_to_host: false,
                         }),
                     },
                 ],
@@ -865,6 +882,7 @@ mod tests {
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "nonexistent".to_string(),
@@ -879,14 +897,22 @@ mod tests {
 
     #[test]
     fn grpc_typed_action_fails_on_non_dynamic_service() {
-        let services = HashMap::from([build_test_service("auth-svc")]);
+        use crate::services::TracingService;
+        let services = HashMap::from([(
+            "tracing-svc".to_string(),
+            ServiceInstance::Tracing(Some(Rc::new(TracingService::new(
+                "test-cluster".to_string(),
+                std::time::Duration::from_secs(10),
+            )))),
+        )]);
 
         let typed = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
-                service: "auth-svc".to_string(),
+                service: "tracing-svc".to_string(),
                 message_builder: "test.Request{}".to_string(),
                 on_reply: vec![],
             }),
@@ -904,6 +930,7 @@ mod tests {
         let nested_grpc = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: false,
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "nested".to_string(),
                 service: "svc".to_string(),
@@ -924,6 +951,7 @@ mod tests {
         let deny_config = ConfigTypedAction {
             predicate: "result.code == 2".to_string(),
             terminal: true,
+            is_guard: false,
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -937,6 +965,7 @@ mod tests {
         let headers_config = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: false,
             operation: ConfigOperation::Headers(HeadersOperation {
                 target: HeadersTarget::Response,
                 headers: "result.resp_headers".to_string(),
@@ -957,9 +986,11 @@ mod tests {
         let store_config = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
+            is_guard: true,
             operation: ConfigOperation::Store(StoreOperation {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
+                export_to_host: false,
             }),
         };
         let store_result = TypedAction::compile(&store_config);
@@ -977,6 +1008,7 @@ mod tests {
         let config = ConfigTypedAction {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
+            is_guard: true,
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
@@ -1012,6 +1044,7 @@ mod tests {
                 ActionConfig::Typed(ConfigTypedAction {
                     predicate: "true".to_string(),
                     terminal: false,
+                    is_guard: true,
                     operation: ConfigOperation::Grpc(GrpcOperation {
                         var: "rl_check".to_string(),
                         service: "dyn-svc".to_string(),
@@ -1019,6 +1052,7 @@ mod tests {
                         on_reply: vec![ConfigTypedAction {
                             predicate: "rl_check.code == 2".to_string(),
                             terminal: true,
+                            is_guard: false,
                             operation: ConfigOperation::Deny(DenyOperation {
                                 deny_with: "DenyResponse{status: 429u}".to_string(),
                             }),

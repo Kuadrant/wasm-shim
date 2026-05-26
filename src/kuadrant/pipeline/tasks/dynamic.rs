@@ -22,10 +22,13 @@ pub struct DynamicTask {
     on_reply: Vec<TypedAction>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
+    is_guard: bool,
 }
 
 impl DynamicTask {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_attributes(
+        ctx: &ReqRespCtx,
         task_id: String,
         service: Rc<DynamicService>,
         name: String,
@@ -33,7 +36,31 @@ impl DynamicTask {
         on_reply: Vec<TypedAction>,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
+        is_guard: bool,
     ) -> Self {
+        // Warm up the cache
+        let _ = predicates.apply(ctx);
+        if let Ok(env) = service.cel_env() {
+            let mut cel_ctx = cel::Context::with_env(env);
+            let _ = message_builder.eval_with_ctx(ctx, &mut cel_ctx);
+
+            for action in &on_reply {
+                let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
+                match &action.operation {
+                    Operation::Deny { deny_with } => {
+                        let _ = deny_with.eval_with_ctx(ctx, &mut cel_ctx);
+                    }
+                    Operation::Headers { headers, .. } => {
+                        let _ = headers.eval_with_ctx(ctx, &mut cel_ctx);
+                    }
+                    Operation::Store { expression, .. } => {
+                        let _ = expression.eval_with_ctx(ctx, &mut cel_ctx);
+                    }
+                    Operation::Fail { .. } => {}
+                }
+            }
+        }
+
         Self {
             task_id,
             service,
@@ -42,6 +69,7 @@ impl DynamicTask {
             on_reply,
             predicates,
             dependencies,
+            is_guard,
         }
     }
 }
@@ -51,17 +79,19 @@ impl Task for DynamicTask {
         Some(self.task_id.clone())
     }
 
-    fn pauses_filter(&self) -> bool {
-        true
-    }
-
     fn dependencies(&self) -> &[String] {
         &self.dependencies
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
-            Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
+            Ok(AttributeState::Pending) => {
+                return if ctx.is_end_of_stream() {
+                    TaskOutcome::Failed
+                } else {
+                    TaskOutcome::Requeued(vec![self])
+                };
+            }
             Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
             Ok(AttributeState::Available(true)) => {}
             Err(e) => {
@@ -85,7 +115,13 @@ impl Task for DynamicTask {
 
             let mut cel_ctx = cel::Context::with_env(env);
             let cel_value = match self.message_builder.eval_with_ctx(ctx, &mut cel_ctx) {
-                Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
+                Ok(AttributeState::Pending) => {
+                    return if ctx.is_end_of_stream() {
+                        TaskOutcome::Failed
+                    } else {
+                        TaskOutcome::Requeued(vec![self])
+                    };
+                }
                 Ok(AttributeState::Available(val)) => val,
                 Err(e) => {
                     error!("Failed to evaluate message builder: {e}");
@@ -106,13 +142,24 @@ impl Task for DynamicTask {
         let task_id = self.task_id.clone();
         let name = self.name.clone();
         let on_reply = self.on_reply.clone();
+        let is_guard = self.is_guard;
+
+        if is_guard {
+            ctx.raise_upstream_barrier();
+        }
 
         TaskOutcome::Deferred {
             token_id,
             pending: Box::new(PendingTask::new(
                 self.task_id,
                 Box::new(move |ctx| {
-                    process_dynamic_response(ctx, &service, &task_id, token_id, &name, &on_reply)
+                    let outcome = process_dynamic_response(
+                        ctx, &service, &task_id, token_id, &name, &on_reply,
+                    );
+                    if is_guard {
+                        ctx.lower_upstream_barrier();
+                    }
+                    outcome
                 }),
             )),
         }
@@ -229,21 +276,23 @@ fn process_dynamic_response(
                     }
                 }
             }
-            Operation::Store { path, expression } => {
-                match expression.eval_with_ctx(ctx, &mut cel_ctx) {
-                    Ok(AttributeState::Available(val)) => {
-                        tasks.push(Box::new(StoreTask::new(path.clone(), val)));
-                    }
-                    Ok(AttributeState::Pending) => {
-                        error!("Unexpected pending state in onReply store for '{path}'");
-                        return TaskOutcome::Failed;
-                    }
-                    Err(e) => {
-                        error!("Failed to evaluate store expression for '{path}': {e}");
-                        return TaskOutcome::Failed;
-                    }
+            Operation::Store {
+                path,
+                expression,
+                export_to_host,
+            } => match expression.eval_with_ctx(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Available(val)) => {
+                    tasks.push(Box::new(StoreTask::new(path.clone(), val, *export_to_host)));
                 }
-            }
+                Ok(AttributeState::Pending) => {
+                    error!("Unexpected pending state in onReply store for '{path}'");
+                    return TaskOutcome::Failed;
+                }
+                Err(e) => {
+                    error!("Failed to evaluate store expression for '{path}': {e}");
+                    return TaskOutcome::Failed;
+                }
+            },
             Operation::Fail { log_message } => {
                 error!("Action failure: {log_message}");
                 return TaskOutcome::Failed;

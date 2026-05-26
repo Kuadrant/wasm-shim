@@ -3,18 +3,16 @@ use crate::filter::DescriptorManager;
 use crate::kuadrant::ReqRespCtx;
 use std::{rc::Rc, time::Duration};
 
-mod auth;
 mod dynamic;
 mod tracing;
 
-pub use auth::AuthService;
-pub use dynamic::converters::{cel_value_to_header_pairs, ConversionError, MessageConverter};
+pub use dynamic::converters::{cel_value_to_header_pairs, MessageConverter};
 pub use dynamic::DynamicService;
 pub use tracing::TracingService;
 
 #[derive(Clone)]
 pub enum ServiceInstance {
-    Auth(Rc<AuthService>),
+    Auth(Rc<DynamicService>),
     RateLimit(Rc<DynamicService>),
     RateLimitCheck(Rc<DynamicService>),
     RateLimitReport(Rc<DynamicService>),
@@ -39,10 +37,13 @@ impl ServiceInstance {
         descriptor_manager: &Rc<DescriptorManager>,
     ) -> Result<Self, ServiceError> {
         match service.service_type {
-            ServiceType::Auth => Ok(ServiceInstance::Auth(Rc::new(AuthService::new(
+            ServiceType::Auth => Ok(ServiceInstance::Auth(Rc::new(DynamicService::new(
                 service.endpoint,
+                "envoy.service.auth.v3.Authorization".to_string(),
+                "Check".to_string(),
                 service.timeout.0,
                 service.failure_mode,
+                Rc::clone(descriptor_manager),
             )))),
             ServiceType::RateLimit => Ok(ServiceInstance::RateLimit(Rc::new(DynamicService::new(
                 service.endpoint,

@@ -1,4 +1,4 @@
-use tracing::{error, trace};
+use tracing::error;
 
 use crate::kuadrant::{
     pipeline::tasks::{
@@ -68,7 +68,7 @@ impl Pipeline {
             .into_iter()
             .map(|(token_id, task)| {
                 // Create a new PendingTask with no-op processor
-                let pending = Box::new(PendingTask::background(
+                let pending = Box::new(PendingTask::new(
                     task.id().unwrap_or_default(),
                     Box::new(noop_response_processor(token_id)),
                 )) as Box<dyn Task>;
@@ -84,7 +84,7 @@ impl Pipeline {
                 TeardownOutcome::Done => {}
                 TeardownOutcome::Deferred(token_id) => {
                     // Create a no-op PendingTask for this deferred teardown action
-                    let pending = Box::new(PendingTask::background(
+                    let pending = Box::new(PendingTask::new(
                         format!("teardown_{}", token_id),
                         Box::new(noop_response_processor(token_id)),
                     ));
@@ -199,26 +199,7 @@ impl Pipeline {
     }
 
     pub fn requires_pause(&self) -> bool {
-        let has_blocking_deferred = self
-            .deferred_tasks
-            .iter()
-            .any(|(_, task)| task.pauses_filter());
-        let has_blocking = self.task_queue.iter().any(|task| {
-            // Only consider tasks whose dependencies are met.
-            // Tasks with unmet deps shouldn't block the filter since they're
-            // waiting for other tasks to complete first.
-            let deps_met = task
-                .dependencies()
-                .iter()
-                .all(|dep| self.completed_tasks.contains(dep));
-            deps_met && task.pauses_filter()
-        });
-        trace!(
-            "requires_pause: has_blocking_deferred={} || has_blocking={}",
-            has_blocking_deferred,
-            has_blocking
-        );
-        has_blocking_deferred || has_blocking
+        self.ctx.upstream_barrier() > 0
     }
 }
 
@@ -233,26 +214,56 @@ mod tests {
         ReqRespCtx::new(Arc::new(mock_host))
     }
 
-    /// A simple test task for testing requires_pause behavior
-    struct TestTask {
-        id: String,
-        dependencies: Vec<String>,
-        pauses_filter: bool,
+    fn token_id_for(id: &str) -> u32 {
+        id.as_bytes()
+            .iter()
+            .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32))
     }
 
-    impl TestTask {
-        fn new(id: &str, dependencies: Vec<&str>, pauses_filter: bool) -> Self {
+    struct MockGuardTask {
+        id: String,
+        dependencies: Vec<String>,
+        is_guard: bool,
+        complete_outcome: TaskOutcome,
+    }
+
+    impl MockGuardTask {
+        fn new(id: &str, dependencies: Vec<&str>, is_guard: bool) -> Self {
             Self {
                 id: id.to_string(),
                 dependencies: dependencies.into_iter().map(|s| s.to_string()).collect(),
-                pauses_filter,
+                is_guard,
+                complete_outcome: TaskOutcome::Done,
             }
         }
     }
 
-    impl Task for TestTask {
-        fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
-            TaskOutcome::Done
+    impl Task for MockGuardTask {
+        fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+            if self.is_guard {
+                ctx.raise_upstream_barrier();
+            }
+
+            let is_guard = self.is_guard;
+            let complete_outcome = self.complete_outcome;
+            let token_id = self
+                .id
+                .as_bytes()
+                .iter()
+                .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32));
+
+            TaskOutcome::Deferred {
+                token_id,
+                pending: Box::new(PendingTask::new(
+                    self.id.clone(),
+                    Box::new(move |ctx| {
+                        if is_guard {
+                            ctx.lower_upstream_barrier();
+                        }
+                        complete_outcome
+                    }),
+                )),
+            }
         }
 
         fn id(&self) -> Option<String> {
@@ -262,95 +273,202 @@ mod tests {
         fn dependencies(&self) -> &[String] {
             &self.dependencies
         }
+    }
 
-        fn pauses_filter(&self) -> bool {
-            self.pauses_filter
+    #[test]
+    fn scenario_auth_guards_upstream() {
+        let ctx = create_test_context();
+        let pipeline = Pipeline::new(ctx);
+
+        let auth_task = MockGuardTask::new("auth", vec![], true);
+        let pipeline = pipeline.with_tasks(vec![Box::new(auth_task)]);
+
+        assert!(
+            !pipeline.requires_pause(),
+            "Before dispatch: no barrier, should not pause"
+        );
+
+        match pipeline.eval() {
+            PipelineState::InProgress(pipeline) => {
+                assert!(
+                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                    "After auth dispatched: barrier raised, should pause"
+                );
+
+                let state = pipeline.digest(token_id_for("auth"), 0, 0);
+                assert!(
+                    matches!(
+                        state,
+                        PipelineState::Completed {
+                            should_resume: true
+                        }
+                    ),
+                    "Expected Completed with should_resume=true after auth completes"
+                );
+            }
+            PipelineState::Completed { .. } => {
+                unreachable!("Expected InProgress after eval");
+            }
         }
     }
 
     #[test]
-    fn requires_pause_ignores_tasks_with_unmet_deps() {
-        // Task with pauses_filter=true but depends on "auth" which hasn't completed
-        let blocking_task = TestTask::new("blocker", vec!["auth"], true);
-
+    fn scenario_auth_then_ratelimit_chain() {
         let ctx = create_test_context();
-        let mut pipeline = Pipeline::new(ctx);
-        pipeline.task_queue.push(Box::new(blocking_task));
+        let auth_task = MockGuardTask::new("auth", vec![], true);
+        let ratelimit_task = MockGuardTask::new("ratelimit", vec!["auth"], true);
 
-        // requires_pause should return FALSE because the task's deps are not met
-        assert!(
-            !pipeline.requires_pause(),
-            "requires_pause() should ignore tasks with unmet deps"
-        );
+        let pipeline =
+            Pipeline::new(ctx).with_tasks(vec![Box::new(auth_task), Box::new(ratelimit_task)]);
+
+        match pipeline.eval() {
+            PipelineState::InProgress(pipeline) => {
+                assert!(
+                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                    "Auth dispatched, barrier=1, should pause"
+                );
+
+                match pipeline.digest(token_id_for("auth"), 0, 0) {
+                    PipelineState::InProgress(pipeline) => {
+                        assert!(
+                            pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                            "Ratelimit dispatched, barrier=1, should pause"
+                        );
+
+                        let state = pipeline.digest(token_id_for("ratelimit"), 0, 0);
+                        assert!(
+                            matches!(state, PipelineState::Completed { .. }),
+                            "Expected Completed after ratelimit completes (both tasks done)"
+                        );
+                    }
+                    PipelineState::Completed { .. } => {
+                        unreachable!("Expected InProgress after auth completes");
+                    }
+                }
+            }
+            PipelineState::Completed { .. } => {
+                unreachable!("Expected InProgress after first eval");
+            }
+        }
     }
 
     #[test]
-    fn requires_pause_considers_tasks_with_met_deps() {
-        // Task with pauses_filter=true and deps are met (auth is in completed_tasks)
-        let blocking_task = TestTask::new("blocker", vec!["auth"], true);
-
+    fn scenario_task_with_unmet_deps_doesnt_dispatch() {
         let ctx = create_test_context();
-        let mut pipeline = Pipeline::new(ctx);
-        pipeline.completed_tasks.insert("auth".to_string());
-        pipeline.task_queue.push(Box::new(blocking_task));
+        let ratelimit_task = MockGuardTask::new("ratelimit", vec!["auth"], true);
 
-        // requires_pause should return TRUE because task's deps are met and it pauses
-        assert!(
-            pipeline.requires_pause(),
-            "requires_pause() should consider tasks with met deps"
-        );
+        let pipeline = Pipeline::new(ctx).with_tasks(vec![Box::new(ratelimit_task)]);
+
+        match pipeline.eval() {
+            PipelineState::InProgress(p) => {
+                assert!(
+                    !p.requires_pause() && p.ctx.upstream_barrier() == 0,
+                    "Task with unmet deps doesn't dispatch, no barrier raised"
+                );
+            }
+            PipelineState::Completed { .. } => {
+                unreachable!("Expected InProgress with task waiting for deps");
+            }
+        }
     }
 
     #[test]
-    fn requires_pause_returns_true_for_blocking_deferred_tasks() {
-        // Even with blocking task that has unmet deps, blocking deferred tasks cause pause
-        let blocking_task = TestTask::new("blocker", vec!["auth"], true);
-        let deferred_task = TestTask::new("auth", vec![], true);
-
+    fn scenario_non_guard_doesnt_block_upstream() {
         let ctx = create_test_context();
-        let mut pipeline = Pipeline::new(ctx);
-        pipeline.task_queue.push(Box::new(blocking_task));
-        pipeline.deferred_tasks.insert(42, Box::new(deferred_task));
+        let report_task = MockGuardTask::new("report", vec![], false);
 
-        // requires_pause should return TRUE because there's a blocking deferred task
-        assert!(
-            pipeline.requires_pause(),
-            "requires_pause() should return true when blocking deferred tasks exist"
-        );
+        let pipeline = Pipeline::new(ctx).with_tasks(vec![Box::new(report_task)]);
+
+        match pipeline.eval() {
+            PipelineState::InProgress(pipeline) => {
+                assert!(
+                    !pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 0,
+                    "Non-guard task dispatched but barrier not raised, should not pause"
+                );
+
+                let state = pipeline.digest(token_id_for("report"), 0, 0);
+                assert!(
+                    matches!(state, PipelineState::Completed { .. }),
+                    "Expected Completed after report completes (only task done)"
+                );
+            }
+            PipelineState::Completed { .. } => {
+                unreachable!("Expected InProgress with deferred task");
+            }
+        }
     }
 
     #[test]
-    fn requires_pause_ignores_background_deferred_tasks() {
-        // Background deferred tasks (pauses_filter=false) should not cause pause
-        let background_task = TestTask::new("background", vec![], false);
-
+    fn scenario_multiple_concurrent_guards() {
         let ctx = create_test_context();
-        let mut pipeline = Pipeline::new(ctx);
-        pipeline
-            .deferred_tasks
-            .insert(42, Box::new(background_task));
+        let auth_task = MockGuardTask::new("auth", vec![], true);
+        let custom_guard = MockGuardTask::new("custom", vec![], true);
 
-        // requires_pause should return FALSE because background tasks don't pause
-        assert!(
-            !pipeline.requires_pause(),
-            "requires_pause() should ignore background deferred tasks"
-        );
+        let pipeline =
+            Pipeline::new(ctx).with_tasks(vec![Box::new(auth_task), Box::new(custom_guard)]);
+
+        match pipeline.eval() {
+            PipelineState::InProgress(pipeline) => {
+                assert!(
+                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 2,
+                    "Both guards dispatched, barrier=2, should pause"
+                );
+
+                match pipeline.digest(token_id_for("auth"), 0, 0) {
+                    PipelineState::InProgress(pipeline) => {
+                        assert!(
+                            pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                            "One guard completed, barrier=1, should still pause"
+                        );
+
+                        let state = pipeline.digest(token_id_for("custom"), 0, 0);
+                        assert!(
+                            matches!(state, PipelineState::Completed { .. }),
+                            "Expected Completed after both guards complete (all tasks done)"
+                        );
+                    }
+                    PipelineState::Completed { .. } => {
+                        unreachable!("Expected InProgress with one guard still deferred");
+                    }
+                }
+            }
+            PipelineState::Completed { .. } => {
+                unreachable!("Expected InProgress after both guards dispatch");
+            }
+        }
     }
 
     #[test]
-    fn requires_pause_ignores_non_blocking_tasks_with_met_deps() {
-        // Task with pauses_filter=false and deps met - should not cause pause
-        let non_blocking_task = TestTask::new("report", vec!["auth"], false);
-
+    fn scenario_mixed_guard_and_non_guard() {
         let ctx = create_test_context();
-        let mut pipeline = Pipeline::new(ctx);
-        pipeline.completed_tasks.insert("auth".to_string());
-        pipeline.task_queue.push(Box::new(non_blocking_task));
+        let auth_task = MockGuardTask::new("auth", vec![], true);
+        let report_task = MockGuardTask::new("report", vec!["auth"], false);
 
-        // requires_pause should return FALSE because task doesn't pause filter
-        assert!(
-            !pipeline.requires_pause(),
-            "requires_pause() should ignore tasks with pauses_filter=false"
-        );
+        let pipeline =
+            Pipeline::new(ctx).with_tasks(vec![Box::new(auth_task), Box::new(report_task)]);
+
+        match pipeline.eval() {
+            PipelineState::InProgress(pipeline) => {
+                assert!(
+                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                    "Only auth (guard) raises barrier, should pause"
+                );
+
+                match pipeline.digest(token_id_for("auth"), 0, 0) {
+                    PipelineState::InProgress(p) => {
+                        assert!(
+                            !p.requires_pause() && p.ctx.upstream_barrier() == 0,
+                            "Report (non-guard) dispatches but doesn't raise barrier, should not pause"
+                        );
+                    }
+                    PipelineState::Completed { .. } => {
+                        unreachable!("Expected InProgress after auth completes");
+                    }
+                }
+            }
+            PipelineState::Completed { .. } => {
+                unreachable!("Expected InProgress after auth dispatch");
+            }
+        }
     }
 }
