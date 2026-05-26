@@ -22,14 +22,11 @@ pub(crate) struct Blueprint {
 #[derive(Clone)]
 pub(crate) struct Action {
     pub id: String,
-    pub service: ServiceInstance,
-    pub scope: String,
-    pub predicates: Vec<Predicate>,
-    pub conditional_data: Vec<ConditionalData>,
+    pub predicate: Predicate,
+    pub terminal: bool,
+    pub operation: Operation,
     pub dependencies: Vec<String>,
     pub sources: Vec<String>,
-    pub message_builder: Option<Expression>,
-    pub on_reply: Vec<TypedAction>,
     pub is_guard: bool,
 }
 
