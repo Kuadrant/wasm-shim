@@ -43,6 +43,12 @@ pub(crate) struct TypedAction {
 
 #[derive(Clone)]
 pub(crate) enum Operation {
+    Grpc {
+        service: ServiceInstance,
+        var: String,
+        message_builder: Expression,
+        on_reply: Vec<TypedAction>,
+    },
     Deny {
         deny_with: Expression,
     },
