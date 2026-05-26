@@ -353,9 +353,12 @@ impl Blueprint {
                     );
                     tasks.push(Box::new(task));
                 }
-                Operation::Fail { .. } => {
-                    //todo(@adam-cattermole): implement non-gRPC operations
-                    tracing::error!("not implemented yet: {} non-gRPC operation", action.id);
+                Operation::Fail { log_message } => {
+                    tracing::error!(
+                        "Top-level Fail operation is currently unsupported. Action {}: {}",
+                        action.id,
+                        log_message
+                    );
                 }
             }
         }
@@ -662,9 +665,8 @@ mod tests {
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
-        assert_eq!(action.scope, "test-scope");
-        assert_eq!(action.predicates.len(), 2);
         assert!(action.dependencies.is_empty());
+        assert!(matches!(action.operation, Operation::Grpc { .. }));
     }
 
     #[test]
@@ -826,9 +828,10 @@ mod tests {
         assert_eq!(blueprint.name, "complete-test");
         assert_eq!(blueprint.route_predicates.len(), 1);
         assert_eq!(blueprint.actions.len(), 1);
-        assert_eq!(blueprint.actions[0].predicates.len(), 1);
-        assert_eq!(blueprint.actions[0].conditional_data.len(), 1);
-        assert_eq!(blueprint.actions[0].conditional_data[0].data.len(), 2);
+        assert!(matches!(
+            blueprint.actions[0].operation,
+            Operation::Grpc { .. }
+        ));
     }
 
     #[test]
@@ -904,12 +907,20 @@ mod tests {
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
-        assert_eq!(action.scope, "rl_check");
-        assert!(matches!(action.service, ServiceInstance::Dynamic(_)));
-        assert_eq!(action.predicates.len(), 1);
-        assert!(action.message_builder.is_some());
-        assert_eq!(action.on_reply.len(), 5);
-        assert!(action.conditional_data.is_empty());
+        assert!(action.is_guard);
+        assert!(!action.terminal);
+        assert!(matches!(action.operation, Operation::Grpc { .. }));
+        if let Operation::Grpc {
+            ref service,
+            ref var,
+            ref on_reply,
+            ..
+        } = action.operation
+        {
+            assert_eq!(var, "rl_check");
+            assert!(matches!(service, ServiceInstance::Dynamic(_)));
+            assert_eq!(on_reply.len(), 5);
+        }
     }
 
     #[test]
@@ -1121,19 +1132,25 @@ mod tests {
         assert_eq!(blueprint.actions.len(), 2);
 
         assert!(matches!(
-            blueprint.actions[0].service,
-            ServiceInstance::Auth(_)
+            &blueprint.actions[0].operation,
+            Operation::Grpc { .. }
         ));
-        assert!(blueprint.actions[0].message_builder.is_none());
-        assert!(blueprint.actions[0].on_reply.is_empty());
+        if let Operation::Grpc { service, .. } = &blueprint.actions[0].operation {
+            assert!(matches!(service, ServiceInstance::Auth(_)));
+        }
         assert!(blueprint.actions[0].dependencies.is_empty());
 
         assert!(matches!(
-            blueprint.actions[1].service,
-            ServiceInstance::Dynamic(_)
+            &blueprint.actions[1].operation,
+            Operation::Grpc { .. }
         ));
-        assert!(blueprint.actions[1].message_builder.is_some());
-        assert_eq!(blueprint.actions[1].on_reply.len(), 1);
+        if let Operation::Grpc {
+            service, on_reply, ..
+        } = &blueprint.actions[1].operation
+        {
+            assert!(matches!(service, ServiceInstance::Dynamic(_)));
+            assert_eq!(on_reply.len(), 1);
+        }
         assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
     }
 }
