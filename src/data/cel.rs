@@ -201,13 +201,7 @@ impl Expression {
         Self::new_expression(expression, true)
     }
 
-    #[allow(dead_code)]
-    pub fn eval(&self, req_ctx: &ReqRespCtx) -> EvalResult {
-        let mut cel_ctx = Context::default();
-        self.eval_with_ctx(req_ctx, &mut cel_ctx)
-    }
-
-    pub fn eval_with_ctx(&self, req_ctx: &ReqRespCtx, cel_ctx: &mut Context<'_>) -> EvalResult {
+    pub fn eval(&self, req_ctx: &ReqRespCtx, cel_ctx: &mut Context<'_>) -> EvalResult {
         add_string_extensions(cel_ctx);
         if self.extended {
             Self::add_extended_capabilities(cel_ctx)
@@ -537,7 +531,7 @@ impl Predicate {
         req_ctx: &ReqRespCtx,
         cel_ctx: &mut Context<'_>,
     ) -> PredicateResult {
-        match self.expression.eval_with_ctx(req_ctx, cel_ctx) {
+        match self.expression.eval(req_ctx, cel_ctx) {
             Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
             Ok(AttributeState::Available(value)) => match value {
                 Value::Bool(result) => Ok(AttributeState::Available(result)),
@@ -1157,38 +1151,46 @@ mod tests {
     #[test]
     fn expressions_to_json_resolve() {
         // Test boolean value
-        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
-        store_auth_leaf(&mut ctx, "anonymous", Value::Bool(true));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+        store_auth_leaf(&mut req_ctx, "anonymous", Value::Bool(true));
         let value = Expression::new("auth.identity.anonymous")
             .expect("This is valid CEL!")
-            .eval(&ctx)
+            .eval(&req_ctx, &mut cel_ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(true.into()));
 
         // Test integer value
-        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
-        store_auth_leaf(&mut ctx, "age", Value::UInt(42));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+        store_auth_leaf(&mut req_ctx, "age", Value::UInt(42));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval(&ctx)
+            .eval(&req_ctx, &mut cel_ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::UInt(42)));
 
         // Test float value
-        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
-        store_auth_leaf(&mut ctx, "age", Value::Float(42.3));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+        store_auth_leaf(&mut req_ctx, "age", Value::Float(42.3));
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval(&ctx)
+            .eval(&req_ctx, &mut cel_ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::Float(42.3)));
 
         // Test string value
-        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
-        store_auth_leaf(&mut ctx, "age", Value::String("John".to_string().into()));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+        store_auth_leaf(
+            &mut req_ctx,
+            "age",
+            Value::String("John".to_string().into()),
+        );
         let value = Expression::new("auth.identity.age")
             .expect("This is valid CEL!")
-            .eval(&ctx)
+            .eval(&req_ctx, &mut cel_ctx)
             .expect("This must evaluate!");
         assert_eq!(
             value,
@@ -1196,11 +1198,12 @@ mod tests {
         );
 
         // Test negative integer
-        let mut ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
-        store_auth_leaf(&mut ctx, "name", Value::Int(-42));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+        store_auth_leaf(&mut req_ctx, "name", Value::Int(-42));
         let value = Expression::new("auth.identity.name")
             .expect("This is valid CEL!")
-            .eval(&ctx)
+            .eval(&req_ctx, &mut cel_ctx)
             .expect("This must evaluate!");
         assert_eq!(value, AttributeState::Available(Value::Int(-42)));
     }
@@ -1253,11 +1256,12 @@ mod tests {
     fn response_body_json() {
         let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_response_body_value("bar", 42);
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        req_ctx.set_response_body_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
-            expr.eval(&ctx).unwrap()
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
         );
     }
 
@@ -1265,28 +1269,37 @@ mod tests {
     fn response_body_json_returns_pending_when_not_set() {
         let expr = Expression::new("responseBodyJSON('bar') == 42").unwrap();
         let mock_host = MockWasmHost::new();
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
-        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+        let req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        assert_eq!(
+            AttributeState::Pending,
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
+        );
 
         let expr =
             Expression::new("responseBodyJSON('foo') + responseBodyJSON('bar') == 100").unwrap();
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_response_body_value("foo", 58);
-        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        req_ctx.set_response_body_value("foo", 58);
+        assert_eq!(
+            AttributeState::Pending,
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
+        );
     }
 
     #[test]
     fn multiple_expressions_share_response_body_values_from_context() {
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_response_body_value("tokens", 100);
-        ctx.set_response_body_value("model", "gpt-4");
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        req_ctx.set_response_body_value("tokens", 100);
+        req_ctx.set_response_body_value("model", "gpt-4");
 
         let expr1 = Expression::new("responseBodyJSON('tokens') > 50").unwrap();
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
-            expr1.eval(&ctx).unwrap()
+            expr1.eval(&req_ctx, &mut cel_ctx).unwrap()
         );
         let expr2 = Expression::new(
             "responseBodyJSON('tokens') > 0 && responseBodyJSON('model') == 'gpt-4'",
@@ -1294,7 +1307,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
-            expr2.eval(&ctx).unwrap()
+            expr2.eval(&req_ctx, &mut cel_ctx).unwrap()
         );
     }
 
@@ -1302,11 +1315,12 @@ mod tests {
     fn request_body_json() {
         let expr = Expression::new("requestBodyJSON('bar') == 42").unwrap();
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_request_body_value("bar", 42);
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        req_ctx.set_request_body_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
-            expr.eval(&ctx).unwrap()
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
         );
     }
 
@@ -1314,35 +1328,44 @@ mod tests {
     fn request_body_json_returns_pending_when_not_set() {
         let expr = Expression::new("requestBodyJSON('bar') == 42").unwrap();
         let mock_host = MockWasmHost::new();
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
-        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+        let req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        assert_eq!(
+            AttributeState::Pending,
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
+        );
 
         let expr =
             Expression::new("requestBodyJSON('foo') + requestBodyJSON('bar') == 100").unwrap();
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_request_body_value("foo", 58);
-        assert_eq!(AttributeState::Pending, expr.eval(&ctx).unwrap());
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        req_ctx.set_request_body_value("foo", 58);
+        let mut cel_ctx = cel::Context::default();
+        assert_eq!(
+            AttributeState::Pending,
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
+        );
     }
 
     #[test]
     fn multiple_expressions_share_request_body_values_from_context() {
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.set_request_body_value("tokens", 100);
-        ctx.set_request_body_value("model", "gpt-4");
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        req_ctx.set_request_body_value("tokens", 100);
+        req_ctx.set_request_body_value("model", "gpt-4");
 
         let expr1 = Expression::new("requestBodyJSON('tokens') > 50").unwrap();
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
-            expr1.eval(&ctx).unwrap()
+            expr1.eval(&req_ctx, &mut cel_ctx).unwrap()
         );
         let expr2 =
             Expression::new("requestBodyJSON('tokens') > 0 && requestBodyJSON('model') == 'gpt-4'")
                 .unwrap();
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
-            expr2.eval(&ctx).unwrap()
+            expr2.eval(&req_ctx, &mut cel_ctx).unwrap()
         );
     }
 
@@ -1417,11 +1440,14 @@ mod tests {
         let mock_host = MockWasmHost::new()
             .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
             .with_pending_property("destination.port".into());
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
         let expression = Expression::new("source.port == 65432 && destination.port == 80")
             .expect("This is valid CEL!");
-        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+        let result = expression
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("Evaluation should succeed");
 
         assert_eq!(result, AttributeState::Pending);
     }
@@ -1673,11 +1699,14 @@ mod tests {
         let mock_host = MockWasmHost::new()
             .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
             .with_pending_property("destination.port".into());
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
         let expression = Expression::new("source.port == 65432 || destination.port == 80")
             .expect("This is valid CEL!");
-        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+        let result = expression
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("Evaluation should succeed");
 
         assert_eq!(
             result,
@@ -1690,13 +1719,16 @@ mod tests {
             .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
             .with_pending_property("destination.port".into())
             .with_property("request.method".into(), "GET".bytes().collect());
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
         let expression = Expression::new(
             "(source.port == 65432 && destination.port == 80) || request.method == 'POST'",
         )
         .expect("This is valid CEL!");
-        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+        let result = expression
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("Evaluation should succeed");
         assert_eq!(
             result,
             AttributeState::Pending,
@@ -1707,11 +1739,14 @@ mod tests {
         let mock_host = MockWasmHost::new()
             .with_property("source.port".into(), 65432_i64.to_le_bytes().to_vec())
             .with_pending_property("destination.port".into());
-        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
         let expression = Expression::new("source.port == 65432 ? 443 : destination.port")
             .expect("This is valid CEL!");
-        let result = expression.eval(&ctx).expect("Evaluation should succeed");
+        let result = expression
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("Evaluation should succeed");
 
         assert_eq!(
             result,
@@ -1723,7 +1758,8 @@ mod tests {
     #[test]
     fn stored_value_resolves_in_expression() {
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
         let identity_map: HashMap<cel::objects::Key, Value> = HashMap::from([
             (
@@ -1739,17 +1775,21 @@ mod tests {
             cel::objects::Key::String(Arc::new("identity".to_string())),
             Value::Map(cel::objects::Map::from(identity_map)),
         )]);
-        ctx.store_value(
+        req_ctx.store_value(
             "auth".to_string(),
             Value::Map(cel::objects::Map::from(auth_map)),
         );
 
         let expr = Expression::new("auth.identity.userid == 'alice'").expect("valid CEL");
-        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
         assert_eq!(result, AttributeState::Available(Value::Bool(true)));
 
         let expr = Expression::new("auth.identity.role == 'admin'").expect("valid CEL");
-        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
         assert_eq!(result, AttributeState::Available(Value::Bool(true)));
     }
 
@@ -1757,31 +1797,39 @@ mod tests {
     fn stored_value_at_nested_path() {
         let mock_host =
             MockWasmHost::new().with_property("request.method".into(), "GET".bytes().collect());
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
-        ctx.store_value(
+        req_ctx.store_value(
             "request.custom".to_string(),
             Value::String(Arc::new("stored_data".to_string())),
         );
 
         let expr = Expression::new("request.custom == 'stored_data'").expect("valid CEL");
-        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
         assert_eq!(result, AttributeState::Available(Value::Bool(true)));
 
         let expr = Expression::new("request.method == 'GET'").expect("valid CEL");
-        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
         assert_eq!(result, AttributeState::Available(Value::Bool(true)));
     }
 
     #[test]
     fn stored_value_with_custom_root() {
         let mock_host = MockWasmHost::new();
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
 
-        ctx.store_value("myvar".to_string(), Value::Int(42));
+        req_ctx.store_value("myvar".to_string(), Value::Int(42));
 
         let expr = Expression::new("myvar == 42").expect("valid CEL");
-        let result = expr.eval(&ctx).expect("evaluation should succeed");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
         assert_eq!(result, AttributeState::Available(Value::Bool(true)));
     }
 }

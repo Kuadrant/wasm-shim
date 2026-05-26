@@ -314,6 +314,7 @@ impl ReqRespCtx {
 
     #[allow(dead_code)]
     pub fn eval_request_data(&self) -> Vec<request_data::RequestDataEntry> {
+        let mut cel_ctx = cel::Context::default();
         let Some(ref expressions) = self.request_data else {
             return Vec::new();
         };
@@ -322,7 +323,7 @@ impl ReqRespCtx {
             .map(|((domain, field), expr)| request_data::RequestDataEntry {
                 domain: domain.clone(),
                 field: field.clone(),
-                result: expr.eval(self),
+                result: expr.eval(self, &mut cel_ctx),
                 source: expr.to_string(),
             })
             .collect()
