@@ -338,7 +338,22 @@ impl Blueprint {
                     );
                     tasks.push(Box::new(task));
                 }
-                Operation::Store { .. } | Operation::Fail { .. } => {
+                Operation::Store {
+                    path,
+                    expression,
+                    export_to_host,
+                } => {
+                    use crate::kuadrant::pipeline::tasks::StoreTask;
+                    let task = StoreTask::new_deferred(
+                        action.predicate.clone(),
+                        expression.clone(),
+                        path.clone(),
+                        *export_to_host,
+                        action.terminal,
+                    );
+                    tasks.push(Box::new(task));
+                }
+                Operation::Fail { .. } => {
                     //todo(@adam-cattermole): implement non-gRPC operations
                     tracing::error!("not implemented yet: {} non-gRPC operation", action.id);
                 }
