@@ -145,7 +145,7 @@ impl Task for DynamicTask {
         let is_guard = self.is_guard;
 
         if is_guard {
-            ctx.raise_upstream_barrier();
+            ctx.barrier.raise();
         }
 
         TaskOutcome::Deferred {
@@ -157,7 +157,7 @@ impl Task for DynamicTask {
                         ctx, &service, &task_id, token_id, &name, &on_reply,
                     );
                     if is_guard {
-                        ctx.lower_upstream_barrier();
+                        ctx.barrier.lower();
                     }
                     outcome
                 }),

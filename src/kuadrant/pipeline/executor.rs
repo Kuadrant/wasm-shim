@@ -199,7 +199,7 @@ impl Pipeline {
     }
 
     pub fn requires_pause(&self) -> bool {
-        self.ctx.upstream_barrier() > 0
+        self.ctx.barrier.is_tripped()
     }
 }
 
@@ -241,7 +241,7 @@ mod tests {
     impl Task for MockGuardTask {
         fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
             if self.is_guard {
-                ctx.raise_upstream_barrier();
+                ctx.barrier.raise();
             }
 
             let is_guard = self.is_guard;
@@ -258,7 +258,7 @@ mod tests {
                     self.id.clone(),
                     Box::new(move |ctx| {
                         if is_guard {
-                            ctx.lower_upstream_barrier();
+                            ctx.barrier.lower();
                         }
                         complete_outcome
                     }),
@@ -291,7 +291,7 @@ mod tests {
         match pipeline.eval() {
             PipelineState::InProgress(pipeline) => {
                 assert!(
-                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                    pipeline.requires_pause() && pipeline.ctx.barrier.is_tripped(),
                     "After auth dispatched: barrier raised, should pause"
                 );
 
@@ -324,14 +324,14 @@ mod tests {
         match pipeline.eval() {
             PipelineState::InProgress(pipeline) => {
                 assert!(
-                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                    pipeline.requires_pause() && pipeline.ctx.barrier.is_tripped(),
                     "Auth dispatched, barrier=1, should pause"
                 );
 
                 match pipeline.digest(token_id_for("auth"), 0, 0) {
                     PipelineState::InProgress(pipeline) => {
                         assert!(
-                            pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                            pipeline.requires_pause() && pipeline.ctx.barrier.is_tripped(),
                             "Ratelimit dispatched, barrier=1, should pause"
                         );
 
@@ -362,7 +362,7 @@ mod tests {
         match pipeline.eval() {
             PipelineState::InProgress(p) => {
                 assert!(
-                    !p.requires_pause() && p.ctx.upstream_barrier() == 0,
+                    !p.requires_pause() && !p.ctx.barrier.is_tripped(),
                     "Task with unmet deps doesn't dispatch, no barrier raised"
                 );
             }
@@ -382,7 +382,7 @@ mod tests {
         match pipeline.eval() {
             PipelineState::InProgress(pipeline) => {
                 assert!(
-                    !pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 0,
+                    !pipeline.requires_pause() && !pipeline.ctx.barrier.is_tripped(),
                     "Non-guard task dispatched but barrier not raised, should not pause"
                 );
 
@@ -409,16 +409,18 @@ mod tests {
 
         match pipeline.eval() {
             PipelineState::InProgress(pipeline) => {
+                assert_eq!(pipeline.ctx.barrier.count(), 2, "Both guards dispatched");
                 assert!(
-                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 2,
-                    "Both guards dispatched, barrier=2, should pause"
+                    pipeline.requires_pause() && pipeline.ctx.barrier.is_tripped(),
+                    "Both guards dispatched, barrier tripped, should pause"
                 );
 
                 match pipeline.digest(token_id_for("auth"), 0, 0) {
                     PipelineState::InProgress(pipeline) => {
+                        assert_eq!(pipeline.ctx.barrier.count(), 1, "One guard completed");
                         assert!(
-                            pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
-                            "One guard completed, barrier=1, should still pause"
+                            pipeline.requires_pause() && pipeline.ctx.barrier.is_tripped(),
+                            "One guard completed, barrier still tripped, should still pause"
                         );
 
                         let state = pipeline.digest(token_id_for("custom"), 0, 0);
@@ -450,14 +452,14 @@ mod tests {
         match pipeline.eval() {
             PipelineState::InProgress(pipeline) => {
                 assert!(
-                    pipeline.requires_pause() && pipeline.ctx.upstream_barrier() == 1,
+                    pipeline.requires_pause() && pipeline.ctx.barrier.is_tripped(),
                     "Only auth (guard) raises barrier, should pause"
                 );
 
                 match pipeline.digest(token_id_for("auth"), 0, 0) {
                     PipelineState::InProgress(p) => {
                         assert!(
-                            !p.requires_pause() && p.ctx.upstream_barrier() == 0,
+                            !p.requires_pause() && !p.ctx.barrier.is_tripped(),
                             "Report (non-guard) dispatches but doesn't raise barrier, should not pause"
                         );
                     }
