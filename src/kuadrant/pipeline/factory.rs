@@ -119,6 +119,8 @@ impl PipelineFactory {
             .collect();
         request_data.sort_by(|a, b| a.0.cmp(&b.0));
 
+        //todo(@adam-cattermole): lets clean this up
+        #[allow(clippy::expect_used)]
         let dev_mode_action = config
             .observability
             .http_header_identifier
