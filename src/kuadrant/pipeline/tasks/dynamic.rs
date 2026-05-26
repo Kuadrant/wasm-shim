@@ -6,7 +6,7 @@ use tracing::{debug, error};
 use crate::data::attribute::AttributeState;
 use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Expression;
-use crate::kuadrant::pipeline::blueprint::{Operation, TypedAction};
+use crate::kuadrant::pipeline::blueprint::{Action, Operation};
 use crate::kuadrant::pipeline::tasks::{
     HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, StoreTask, Task, TaskOutcome,
 };
@@ -19,7 +19,7 @@ pub struct DynamicTask {
     service: Rc<DynamicService>,
     name: String,
     message_builder: Expression,
-    on_reply: Vec<TypedAction>,
+    on_reply: Vec<Action>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
     is_guard: bool,
@@ -33,7 +33,7 @@ impl DynamicTask {
         service: Rc<DynamicService>,
         name: String,
         message_builder: Expression,
-        on_reply: Vec<TypedAction>,
+        on_reply: Vec<Action>,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
         is_guard: bool,
@@ -172,7 +172,7 @@ fn process_dynamic_response(
     task_id: &str,
     token_id: u32,
     name: &str,
-    on_reply: &[TypedAction],
+    on_reply: &[Action],
 ) -> TaskOutcome {
     let span = tracing::debug_span!(
         "dynamic_response",

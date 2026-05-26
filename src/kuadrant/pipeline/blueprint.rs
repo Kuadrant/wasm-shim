@@ -34,14 +34,6 @@ pub(crate) struct Action {
     pub is_guard: bool,
 }
 
-// todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
-#[derive(Clone)]
-pub(crate) struct TypedAction {
-    pub predicate: Predicate,
-    pub terminal: bool,
-    pub operation: Operation,
-}
-
 #[derive(Clone)]
 pub(crate) enum Operation {
     Grpc {
@@ -171,6 +163,7 @@ impl Blueprint {
     pub fn compile(
         config: &configuration::ActionSet,
         services: &HashMap<String, ServiceInstance>,
+        request_data: &[RequestData],
     ) -> Result<Self, CompileError> {
         let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
@@ -196,9 +189,11 @@ impl Blueprint {
                 };
                 match action_config {
                     configuration::ActionConfig::Legacy(action) => {
-                        // todo(@adam-cattermole): Pass actual request_data
-                        let empty_request_data: &[((String, String), String)] = &[];
-                        Action::compile(action, services, id, dependencies, empty_request_data)
+                        let legacy_request_data: Vec<((String, String), String)> = request_data
+                            .iter()
+                            .map(|(key, expr)| (key.clone(), expr.source().to_string()))
+                            .collect();
+                        Action::compile(action, services, id, dependencies, &legacy_request_data)
                     }
                     configuration::ActionConfig::Typed(typed) => {
                         Action::compile_typed(typed, services, id, dependencies)
@@ -384,11 +379,19 @@ impl Action {
                     )));
                 }
 
-                let on_reply: Vec<TypedAction> = grpc
+                let on_reply: Vec<Action> = grpc
                     .on_reply
                     .iter()
                     .enumerate()
-                    .map(|(idx, typed_action)| TypedAction::compile(typed_action, &id, idx))
+                    .map(|(idx, typed_action)| {
+                        let reply_id = format!("{}.{}", id, idx);
+                        let reply_deps = if idx > 0 {
+                            vec![format!("{}.{}", id, idx - 1)]
+                        } else {
+                            vec![]
+                        };
+                        Action::compile_typed(typed_action, services, reply_id, reply_deps)
+                    })
                     .collect::<Result<_, _>>()?;
 
                 let message_builder = Expression::new(&grpc.message_builder).map_err(|e| {
@@ -444,80 +447,6 @@ impl Action {
     }
 }
 
-impl TypedAction {
-    fn compile(
-        config: &configuration::TypedAction,
-        parent_id: &str,
-        reply_index: usize,
-    ) -> Result<Action, CompileError> {
-        let predicate = Predicate::new(&config.predicate).map_err(|e| {
-            CompileError::InvalidActionPredicate {
-                service: match &config.operation {
-                    configuration::Operation::Deny(_) => "deny",
-                    configuration::Operation::Headers(_) => "headers",
-                    configuration::Operation::Store(_) => "store",
-                    configuration::Operation::Grpc(_) => "grpc",
-                    configuration::Operation::Fail(_) => "fail",
-                }
-                .to_string(),
-                error: e.to_string(),
-            }
-        })?;
-
-        let operation = match &config.operation {
-            configuration::Operation::Deny(deny) => {
-                let deny_with = Expression::new(&deny.deny_with)?;
-                Operation::Deny { deny_with }
-            }
-            configuration::Operation::Headers(headers) => {
-                let target = match headers.target {
-                    configuration::HeadersTarget::Request => HeadersType::HttpRequestHeaders,
-                    configuration::HeadersTarget::Response => HeadersType::HttpResponseHeaders,
-                };
-                let headers_expr = Expression::new(&headers.headers)?;
-                Operation::Headers {
-                    target,
-                    headers: headers_expr,
-                }
-            }
-            configuration::Operation::Store(store) => {
-                let path = store.path.clone();
-                let expression = Expression::new(&store.value)?;
-                Operation::Store {
-                    path,
-                    expression,
-                    export_to_host: store.export_to_host,
-                }
-            }
-            configuration::Operation::Fail(fail) => Operation::Fail {
-                log_message: fail.log_message.clone(),
-            },
-            configuration::Operation::Grpc(_) => {
-                return Err(CompileError::InvalidDataExpression(
-                    "gRPC actions cannot be nested inside 'onReply' blocks".to_string(),
-                ));
-            }
-        };
-
-        let id = format!("{}.{}", parent_id, reply_index);
-
-        let dependencies = if reply_index > 0 {
-            vec![format!("{}.{}", parent_id, reply_index - 1)]
-        } else {
-            vec![]
-        };
-
-        Ok(Action {
-            id,
-            predicate,
-            terminal: config.terminal,
-            operation,
-            dependencies,
-            sources: config.sources.clone(),
-            is_guard: config.is_guard,
-        })
-    }
-}
 
 impl ConditionalData {
     fn compile(config: &configuration::ConditionalData) -> Result<Self, CompileError> {
@@ -613,7 +542,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.name, "test-action-set");
@@ -634,7 +563,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.route_predicates.len(), 2);
@@ -653,7 +582,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidRoutePredicate { ref action_set, .. }) if action_set == "test-action-set"
@@ -675,7 +604,7 @@ mod tests {
             sources: vec![],
         };
 
-        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
@@ -696,7 +625,7 @@ mod tests {
             sources: vec![],
         };
 
-        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { ref service, .. }) if service == "test-service"
@@ -715,7 +644,7 @@ mod tests {
             sources: vec![],
         };
 
-        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
         assert!(matches!(
             result,
             Err(CompileError::UnknownService(ref service)) if service == "nonexistent-service"
@@ -837,7 +766,7 @@ mod tests {
             })],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.name, "complete-test");
@@ -982,7 +911,9 @@ mod tests {
     }
 
     #[test]
-    fn grpc_in_on_reply_block_is_rejected() {
+    fn grpc_in_on_reply_block_compiles() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
         let nested_grpc = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
@@ -996,15 +927,17 @@ mod tests {
             }),
         };
 
-        let result = TypedAction::compile(&nested_grpc);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidDataExpression(ref msg)) if msg.contains("cannot be nested")
-        ));
+        let result = Action::compile_typed(&nested_grpc, &services, "parent.0".to_string(), vec![]);
+        assert!(result.is_ok());
+        let action = result.unwrap();
+        assert_eq!(action.id, "parent.0");
+        assert!(matches!(action.operation, Operation::Grpc { .. }));
     }
 
     #[test]
     fn typed_actions_compile() {
+        let services = HashMap::new();
+
         let deny_config = ConfigTypedAction {
             predicate: "result.code == 2".to_string(),
             terminal: true,
@@ -1014,7 +947,7 @@ mod tests {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let deny_result = TypedAction::compile(&deny_config);
+        let deny_result = Action::compile_typed(&deny_config, &services, "0".to_string(), vec![]);
         assert!(deny_result.is_ok());
         let deny = deny_result.unwrap();
         assert!(deny.terminal);
@@ -1030,7 +963,7 @@ mod tests {
                 headers: "result.resp_headers".to_string(),
             }),
         };
-        let headers_result = TypedAction::compile(&headers_config);
+        let headers_result = Action::compile_typed(&headers_config, &services, "0".to_string(), vec![]);
         assert!(headers_result.is_ok());
         let headers = headers_result.unwrap();
         assert!(!headers.terminal);
@@ -1053,7 +986,7 @@ mod tests {
                 export_to_host: false,
             }),
         };
-        let store_result = TypedAction::compile(&store_config);
+        let store_result = Action::compile_typed(&store_config, &services, "0".to_string(), vec![]);
         assert!(store_result.is_ok());
         let store = store_result.unwrap();
         assert!(!store.terminal);
@@ -1065,6 +998,8 @@ mod tests {
 
     #[test]
     fn typed_action_fails_on_invalid_predicate() {
+        let services = HashMap::new();
+
         let config = ConfigTypedAction {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
@@ -1074,7 +1009,7 @@ mod tests {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let result = TypedAction::compile(&config);
+        let result = Action::compile_typed(&config, &services, "0".to_string(), vec![]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { .. })
@@ -1125,7 +1060,7 @@ mod tests {
             ],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.actions.len(), 2);

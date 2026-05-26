@@ -128,7 +128,7 @@ impl PipelineFactory {
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
-            let mut blueprint = Blueprint::compile(config_action_set, &services)?;
+            let mut blueprint = Blueprint::compile(config_action_set, &services, &[])?;
             if let Some(dev_mode) = &dev_mode_action {
                 blueprint.actions.push(dev_mode.clone());
             }
