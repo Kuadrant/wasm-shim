@@ -2,7 +2,6 @@ use cel::common::types::{CelString, CelUInt};
 use cel::Value;
 use tracing::error;
 
-use crate::envoy::StatusCode;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::metrics::METRICS;
@@ -26,7 +25,7 @@ impl SendReplyTask {
 
     pub fn default() -> Self {
         Self::new(
-            StatusCode::InternalServerError as u32,
+            500,
             Vec::new(),
             Some("Internal Server Error.\n".to_string()),
         )

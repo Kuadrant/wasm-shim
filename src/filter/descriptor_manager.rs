@@ -1,4 +1,4 @@
-use crate::envoy::kuadrant::v1::{
+use crate::proto::kuadrant::v1::{
     GetServiceDescriptorsRequest, GetServiceDescriptorsResponse, ServiceRef,
 };
 use prost::Message;

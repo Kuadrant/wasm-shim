@@ -42,19 +42,19 @@ impl DynamicTask {
         let _ = predicates.apply(ctx);
         if let Ok(env) = service.cel_env() {
             let mut cel_ctx = cel::Context::with_env(env);
-            let _ = message_builder.eval_with_ctx(ctx, &mut cel_ctx);
+            let _ = message_builder.eval(ctx, &mut cel_ctx);
 
             for action in &on_reply {
                 let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
                 match &action.operation {
                     Operation::Deny { deny_with } => {
-                        let _ = deny_with.eval_with_ctx(ctx, &mut cel_ctx);
+                        let _ = deny_with.eval(ctx, &mut cel_ctx);
                     }
                     Operation::Headers { headers, .. } => {
-                        let _ = headers.eval_with_ctx(ctx, &mut cel_ctx);
+                        let _ = headers.eval(ctx, &mut cel_ctx);
                     }
                     Operation::Store { expression, .. } => {
-                        let _ = expression.eval_with_ctx(ctx, &mut cel_ctx);
+                        let _ = expression.eval(ctx, &mut cel_ctx);
                     }
                     Operation::Fail { .. } => {}
                 }
@@ -114,7 +114,7 @@ impl Task for DynamicTask {
             };
 
             let mut cel_ctx = cel::Context::with_env(env);
-            let cel_value = match self.message_builder.eval_with_ctx(ctx, &mut cel_ctx) {
+            let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
                     return if ctx.is_end_of_stream() {
                         TaskOutcome::Failed
@@ -145,7 +145,7 @@ impl Task for DynamicTask {
         let is_guard = self.is_guard;
 
         if is_guard {
-            ctx.raise_upstream_barrier();
+            ctx.barrier.raise();
         }
 
         TaskOutcome::Deferred {
@@ -157,7 +157,7 @@ impl Task for DynamicTask {
                         ctx, &service, &task_id, token_id, &name, &on_reply,
                     );
                     if is_guard {
-                        ctx.lower_upstream_barrier();
+                        ctx.barrier.lower();
                     }
                     outcome
                 }),
@@ -227,7 +227,7 @@ fn process_dynamic_response(
         }
 
         match &action.operation {
-            Operation::Deny { deny_with } => match deny_with.eval_with_ctx(ctx, &mut cel_ctx) {
+            Operation::Deny { deny_with } => match deny_with.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
                     error!("Unexpected pending state in onReply deny");
                     return TaskOutcome::Failed;
@@ -255,32 +255,30 @@ fn process_dynamic_response(
                     return TaskOutcome::Failed;
                 }
             },
-            Operation::Headers { target, headers } => {
-                match headers.eval_with_ctx(ctx, &mut cel_ctx) {
-                    Ok(AttributeState::Available(ref val)) => {
-                        let pairs = cel_value_to_header_pairs(val);
-                        if !pairs.is_empty() {
-                            tasks.push(Box::new(ModifyHeadersTask::new(
-                                HeaderOperation::Set(pairs.into()),
-                                target.clone(),
-                            )));
-                        }
-                    }
-                    Ok(AttributeState::Pending) => {
-                        error!("Unexpected pending state in onReply headers");
-                        return TaskOutcome::Failed;
-                    }
-                    Err(e) => {
-                        error!("Failed to evaluate headers expression: {e}");
-                        return TaskOutcome::Failed;
+            Operation::Headers { target, headers } => match headers.eval(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Available(ref val)) => {
+                    let pairs = cel_value_to_header_pairs(val);
+                    if !pairs.is_empty() {
+                        tasks.push(Box::new(ModifyHeadersTask::new(
+                            HeaderOperation::Set(pairs.into()),
+                            target.clone(),
+                        )));
                     }
                 }
-            }
+                Ok(AttributeState::Pending) => {
+                    error!("Unexpected pending state in onReply headers");
+                    return TaskOutcome::Failed;
+                }
+                Err(e) => {
+                    error!("Failed to evaluate headers expression: {e}");
+                    return TaskOutcome::Failed;
+                }
+            },
             Operation::Store {
                 path,
                 expression,
                 export_to_host,
-            } => match expression.eval_with_ctx(ctx, &mut cel_ctx) {
+            } => match expression.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Available(val)) => {
                     tasks.push(Box::new(StoreTask::new(path.clone(), val, *export_to_host)));
                 }

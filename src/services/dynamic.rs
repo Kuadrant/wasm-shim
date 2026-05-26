@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cel::{Context, Env, Program, Value};
+use cel::{Context, Env, Value};
 use prost::Message;
 use prost_reflect::DynamicMessage;
 use tracing::debug;
@@ -102,27 +102,6 @@ impl DynamicService {
         )
     }
 
-    #[deprecated(note = "use dispatch_value instead")]
-    #[allow(dead_code)]
-    pub fn dispatch_dynamic(
-        &self,
-        ctx: &mut ReqRespCtx,
-        message_expression: &str,
-    ) -> Result<u32, ServiceError> {
-        let env = self.cel_env()?;
-        let cel_ctx = Context::with_env(env);
-
-        let program = Program::compile(message_expression).map_err(|e| {
-            ServiceError::Dispatch(format!("Failed to compile CEL expression: {}", e))
-        })?;
-
-        let cel_value = program.execute(&cel_ctx).map_err(|e| {
-            ServiceError::Dispatch(format!("Failed to execute CEL expression: {}", e))
-        })?;
-
-        self.dispatch_value(ctx, &cel_value)
-    }
-
     fn method_descriptor(&self) -> Result<prost_reflect::MethodDescriptor, ServiceError> {
         let pool = self
             .descriptor_manager
@@ -213,6 +192,7 @@ impl Service for DynamicService {
 mod tests {
     use super::*;
     use crate::filter::{DescriptorKey, DescriptorManager};
+    use cel::Program;
     use prost_reflect::DescriptorPool;
     use prost_types::{
         field_descriptor_proto, DescriptorProto, FieldDescriptorProto, FileDescriptorProto,
