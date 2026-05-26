@@ -1,7 +1,9 @@
 use crate::data::attribute::{AttributeState, Path};
-use crate::data::Headers;
-use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::data::cel::Predicate;
+use crate::data::{Expression, Headers};
+use crate::kuadrant::pipeline::tasks::{NoopTerminalTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
+use crate::services::cel_value_to_header_pairs;
 use tracing::{debug, error};
 
 #[derive(Clone)]
@@ -27,25 +29,100 @@ impl From<&HeadersType> for Path {
     }
 }
 
+enum HeadersMode {
+    Concrete { operation: HeaderOperation },
+    Deferred { headers_expr: Expression },
+}
+
 #[derive(Clone)]
 pub struct ModifyHeadersTask {
-    operation: HeaderOperation,
+    predicate: Predicate,
+    mode: HeadersMode,
     target: HeadersType,
+    terminal: bool,
+}
+
+impl Clone for HeadersMode {
+    fn clone(&self) -> Self {
+        match self {
+            HeadersMode::Concrete { operation } => HeadersMode::Concrete {
+                operation: operation.clone(),
+            },
+            HeadersMode::Deferred { headers_expr } => HeadersMode::Deferred {
+                headers_expr: headers_expr.clone(),
+            },
+        }
+    }
 }
 
 impl ModifyHeadersTask {
     pub fn new(operation: HeaderOperation, target: HeadersType) -> ModifyHeadersTask {
-        ModifyHeadersTask { operation, target }
+        ModifyHeadersTask {
+            predicate: Predicate::new("true").expect("Valid predicate"),
+            mode: HeadersMode::Concrete { operation },
+            target,
+            terminal: false,
+        }
+    }
+
+    pub fn new_deferred(
+        predicate: Predicate,
+        headers_expr: Expression,
+        target: HeadersType,
+        terminal: bool,
+    ) -> Self {
+        Self {
+            predicate,
+            mode: HeadersMode::Deferred { headers_expr },
+            target,
+            terminal,
+        }
     }
 }
 
 impl Task for ModifyHeadersTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        match self.predicate.test(ctx) {
+            Ok(AttributeState::Available(true)) => {}
+            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+            Ok(AttributeState::Pending) => {
+                return TaskOutcome::Requeued(vec![self]);
+            }
+            Err(e) => {
+                error!("Failed to evaluate predicate: {e:?}");
+                return TaskOutcome::Failed;
+            }
+        }
+
+        let operation = match &self.mode {
+            HeadersMode::Concrete { operation } => operation.clone(),
+            HeadersMode::Deferred { headers_expr } => {
+                let mut cel_ctx = cel::Context::default();
+                match headers_expr.eval(ctx, &mut cel_ctx) {
+                    Ok(AttributeState::Pending) => {
+                        error!("Unexpected pending state in headers expression");
+                        return TaskOutcome::Failed;
+                    }
+                    Ok(AttributeState::Available(ref val)) => {
+                        let pairs = cel_value_to_header_pairs(val);
+                        if pairs.is_empty() {
+                            return TaskOutcome::Done;
+                        }
+                        HeaderOperation::Set(pairs.into())
+                    }
+                    Err(e) => {
+                        error!("Failed to evaluate headers expression: {e}");
+                        return TaskOutcome::Failed;
+                    }
+                }
+            }
+        };
+
         let path: Path = (&self.target).into();
         let result: Result<AttributeState<Option<Headers>>, _> = ctx.get_attribute_ref(&path);
         match result {
             Ok(AttributeState::Available(Some(mut existing_headers))) => {
-                match &self.operation {
+                match &operation {
                     HeaderOperation::Append(headers) => {
                         debug!("Appending {} headers", headers.len());
                         existing_headers.extend(headers.clone());
@@ -64,7 +141,13 @@ impl Task for ModifyHeadersTask {
                     }
                 }
                 match ctx.set_attribute_map(&path, existing_headers) {
-                    Ok(AttributeState::Available(_)) => TaskOutcome::Done,
+                    Ok(AttributeState::Available(_)) => {
+                        if self.terminal {
+                            TaskOutcome::Terminate(Box::new(NoopTerminalTask))
+                        } else {
+                            TaskOutcome::Done
+                        }
+                    }
                     Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
                     Err(e) => {
                         error!("Failed to set attribute map: {e:?}");

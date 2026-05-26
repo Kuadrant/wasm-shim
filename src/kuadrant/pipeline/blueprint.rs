@@ -326,7 +326,19 @@ impl Blueprint {
                     );
                     tasks.push(Box::new(task));
                 }
-                Operation::Headers { .. } | Operation::Store { .. } | Operation::Fail { .. } => {
+                Operation::Headers {
+                    target,
+                    headers: headers_expr,
+                } => {
+                    let task = ModifyHeadersTask::new_deferred(
+                        action.predicate.clone(),
+                        headers_expr.clone(),
+                        target.clone(),
+                        action.terminal,
+                    );
+                    tasks.push(Box::new(task));
+                }
+                Operation::Store { .. } | Operation::Fail { .. } => {
                     //todo(@adam-cattermole): implement non-gRPC operations
                     tracing::error!("not implemented yet: {} non-gRPC operation", action.id);
                 }
