@@ -9,7 +9,7 @@ use crate::data::{
     Expression,
 };
 use crate::filter::DescriptorManager;
-use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError};
+use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError, Operation};
 use crate::kuadrant::pipeline::executor::Pipeline;
 
 use crate::kuadrant::ReqRespCtx;
@@ -116,14 +116,16 @@ impl PipelineFactory {
             .http_header_identifier
             .map(|header| Action {
                 id: "kuadrant.devMode".to_string(),
-                service: tracing_service.clone(),
-                scope: header,
-                predicates: vec![],
-                conditional_data: Default::default(),
+                predicate: Predicate::new("true").expect("Valid predicate"),
+                terminal: false,
+                operation: Operation::Grpc {
+                    service: tracing_service.clone(),
+                    var: header,
+                    message_builder: Expression::new("true").expect("Valid expression"),
+                    on_reply: vec![],
+                },
                 dependencies: Default::default(),
                 sources: vec![],
-                message_builder: None,
-                on_reply: vec![],
                 is_guard: true,
             });
         let mut index = Trie::new();

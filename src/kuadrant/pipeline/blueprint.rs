@@ -242,85 +242,87 @@ impl Blueprint {
         let mut tasks: TaskList = Vec::new();
         let mut teardown_tasks: TeardownList = Vec::new();
 
-        let tracing_enabled = self
-            .actions
-            .iter()
-            .any(|action| matches!(action.service, ServiceInstance::Tracing(Some(_))));
+        let tracing_enabled = self.actions.iter().any(|action| {
+            matches!(
+                &action.operation,
+                Operation::Grpc { service, .. } if matches!(service, ServiceInstance::Tracing(Some(_)))
+            )
+        });
 
         for action in &self.actions {
-            let abort_on_failure =
-                action.service.failure_mode() == configuration::FailureMode::Deny;
+            match &action.operation {
+                Operation::Grpc {
+                    service,
+                    var,
+                    message_builder,
+                    on_reply,
+                } => {
+                    let abort_on_failure =
+                        service.failure_mode() == configuration::FailureMode::Deny;
 
-            match &action.service {
-                ServiceInstance::Tracing(service) => {
-                    ctx.set_public_tracker_id(action.scope.clone());
-                    tasks.push(Box::new(ModifyHeadersTask::new(
-                        HeaderOperation::Append(
-                            vec![(action.scope.clone(), ctx.request_id().to_string())].into(),
-                        ),
-                        HeadersType::HttpResponseHeaders,
-                    )));
-                    if let Some(service) = service {
-                        teardown_tasks
-                            .push(Box::new(ExportTracesTask::new(ctx, Rc::clone(service))));
+                    match service {
+                        ServiceInstance::Tracing(tracing_service) => {
+                            ctx.set_public_tracker_id(var.clone());
+                            tasks.push(Box::new(ModifyHeadersTask::new(
+                                HeaderOperation::Append(
+                                    vec![(var.clone(), ctx.request_id().to_string())].into(),
+                                ),
+                                HeadersType::HttpResponseHeaders,
+                            )));
+                            if let Some(service) = tracing_service {
+                                teardown_tasks
+                                    .push(Box::new(ExportTracesTask::new(ctx, service.clone())));
+                            }
+                        }
+                        ServiceInstance::Dynamic(dynamic_service)
+                        | ServiceInstance::Auth(dynamic_service)
+                        | ServiceInstance::RateLimit(dynamic_service)
+                        | ServiceInstance::RateLimitCheck(dynamic_service)
+                        | ServiceInstance::RateLimitReport(dynamic_service) => {
+                            let body_values = action.collect_body_values(request_data);
+                            if !body_values.is_empty() {
+                                tasks.push(Box::new(
+                                    TokenUsageTask::with_expected_response_fields(body_values),
+                                ));
+                            }
+
+                            let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
+                                ctx,
+                                action.id.clone(),
+                                Rc::clone(dynamic_service),
+                                var.clone(),
+                                message_builder.clone(),
+                                on_reply.clone(),
+                                vec![action.predicate.clone()],
+                                action.dependencies.clone(),
+                                action.is_guard,
+                            ));
+                            let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                            if tracing_enabled {
+                                let span_label = match service {
+                                    ServiceInstance::Auth(_) => "auth",
+                                    ServiceInstance::RateLimit(_)
+                                    | ServiceInstance::RateLimitCheck(_) => "ratelimit",
+                                    ServiceInstance::RateLimitReport(_) => "ratelimit_report",
+                                    _ => "dynamic",
+                                };
+                                tasks.push(Box::new(TracingDecoratorTask::new(
+                                    span_label,
+                                    task,
+                                    action.sources.clone(),
+                                )));
+                            } else {
+                                tasks.push(task);
+                            }
+                        }
                     }
                 }
-                ServiceInstance::Dynamic(dynamic_service)
-                | ServiceInstance::Auth(dynamic_service)
-                | ServiceInstance::RateLimit(dynamic_service)
-                | ServiceInstance::RateLimitCheck(dynamic_service)
-                | ServiceInstance::RateLimitReport(dynamic_service) => {
-                    let message_builder = match &action.message_builder {
-                        Some(mb) => mb.clone(),
-                        None => {
-                            tracing::error!("Dynamic action missing message_builder");
-                            continue;
-                        }
-                    };
-
-                    // Restrict to Report and Dynamic for now
-                    if matches!(
-                        &action.service,
-                        ServiceInstance::RateLimitReport(_) | ServiceInstance::Dynamic(_)
-                    ) {
-                        let body_values = action.collect_body_values(request_data);
-                        if !body_values.is_empty() {
-                            tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
-                                body_values,
-                            )));
-                        }
-                    }
-
-                    let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        Rc::clone(dynamic_service),
-                        action.scope.clone(),
-                        message_builder,
-                        action.on_reply.clone(),
-                        action.predicates.clone(),
-                        action.dependencies.clone(),
-                        action.is_guard,
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    if tracing_enabled {
-                        let span_label = match &action.service {
-                            //todo(@adam-cattermole): drop this in favour of method/service once other service types removed
-                            ServiceInstance::Auth(_) => "auth",
-                            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
-                                "ratelimit"
-                            }
-                            ServiceInstance::RateLimitReport(_) => "ratelimit_report",
-                            _ => "dynamic",
-                        };
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            span_label,
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
+                Operation::Deny { .. }
+                | Operation::Headers { .. }
+                | Operation::Store { .. }
+                | Operation::Fail { .. } => {
+                    //todo(@adam-cattermole): implement non-gRPC operations
+                    tracing::error!("not implemented yet: {} non-gRPC operation", action.id);
                 }
             }
         }
