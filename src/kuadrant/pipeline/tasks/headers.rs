@@ -36,7 +36,7 @@ enum HeadersMode {
 
 #[derive(Clone)]
 pub struct ModifyHeadersTask {
-    predicate: Predicate,
+    predicate: Option<Predicate>,
     mode: HeadersMode,
     target: HeadersType,
     terminal: bool,
@@ -58,7 +58,7 @@ impl Clone for HeadersMode {
 impl ModifyHeadersTask {
     pub fn new(operation: HeaderOperation, target: HeadersType) -> ModifyHeadersTask {
         ModifyHeadersTask {
-            predicate: Predicate::new("true").expect("Valid predicate"),
+            predicate: None,
             mode: HeadersMode::Concrete { operation },
             target,
             terminal: false,
@@ -72,7 +72,7 @@ impl ModifyHeadersTask {
         terminal: bool,
     ) -> Self {
         Self {
-            predicate,
+            predicate: Some(predicate),
             mode: HeadersMode::Deferred { headers_expr },
             target,
             terminal,
@@ -82,15 +82,17 @@ impl ModifyHeadersTask {
 
 impl Task for ModifyHeadersTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        match self.predicate.test(ctx) {
-            Ok(AttributeState::Available(true)) => {}
-            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
-            Ok(AttributeState::Pending) => {
-                return TaskOutcome::Requeued(vec![self]);
-            }
-            Err(e) => {
-                error!("Failed to evaluate predicate: {e:?}");
-                return TaskOutcome::Failed;
+        if let Some(ref predicate) = self.predicate {
+            match predicate.test(ctx) {
+                Ok(AttributeState::Available(true)) => {}
+                Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+                Ok(AttributeState::Pending) => {
+                    return TaskOutcome::Requeued(vec![self]);
+                }
+                Err(e) => {
+                    error!("Failed to evaluate predicate: {e:?}");
+                    return TaskOutcome::Failed;
+                }
             }
         }
 

@@ -22,7 +22,7 @@ enum SendReplyMode {
 }
 
 pub struct SendReplyTask {
-    predicate: Predicate,
+    predicate: Option<Predicate>,
     mode: SendReplyMode,
     terminal: bool,
 }
@@ -31,7 +31,7 @@ impl SendReplyTask {
     pub fn new(status_code: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
         METRICS.denied().increment();
         Self {
-            predicate: Predicate::new("true").expect("Valid predicate"),
+            predicate: None,
             mode: SendReplyMode::Concrete {
                 status_code,
                 headers,
@@ -43,7 +43,7 @@ impl SendReplyTask {
 
     pub fn new_deferred(predicate: Predicate, deny_with: Expression, terminal: bool) -> Self {
         Self {
-            predicate,
+            predicate: Some(predicate),
             mode: SendReplyMode::Deferred { deny_with },
             terminal,
         }
@@ -91,15 +91,17 @@ impl TryFrom<Value> for SendReplyTask {
 impl Task for SendReplyTask {
     #[tracing::instrument(name = "send_reply", skip(self, ctx))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        match self.predicate.test(ctx) {
-            Ok(AttributeState::Available(true)) => {}
-            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
-            Ok(AttributeState::Pending) => {
-                return TaskOutcome::Requeued(vec![self]);
-            }
-            Err(e) => {
-                error!("Failed to evaluate predicate: {e:?}");
-                return TaskOutcome::Failed;
+        if let Some(ref predicate) = self.predicate {
+            match predicate.test(ctx) {
+                Ok(AttributeState::Available(true)) => {}
+                Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+                Ok(AttributeState::Pending) => {
+                    return TaskOutcome::Requeued(vec![self]);
+                }
+                Err(e) => {
+                    error!("Failed to evaluate predicate: {e:?}");
+                    return TaskOutcome::Failed;
+                }
             }
         }
 
