@@ -111,6 +111,14 @@ impl PipelineFactory {
             }
         }
 
+        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
+            .into_iter()
+            .filter_map(|((domain, field), v)| {
+                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
+            })
+            .collect();
+        request_data.sort_by(|a, b| a.0.cmp(&b.0));
+
         let dev_mode_action = config
             .observability
             .http_header_identifier
@@ -130,7 +138,7 @@ impl PipelineFactory {
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
-            let mut blueprint = Blueprint::compile(config_action_set, &services, &[])?;
+            let mut blueprint = Blueprint::compile(config_action_set, &services, &request_data)?;
             if let Some(dev_mode) = &dev_mode_action {
                 blueprint.actions.push(dev_mode.clone());
             }
@@ -145,14 +153,6 @@ impl PipelineFactory {
                 );
             }
         }
-
-        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
-            .into_iter()
-            .filter_map(|((domain, field), v)| {
-                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
-            })
-            .collect();
-        request_data.sort_by(|a, b| a.0.cmp(&b.0));
 
         Ok(Self {
             index,
