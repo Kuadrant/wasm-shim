@@ -317,10 +317,16 @@ impl Blueprint {
                         }
                     }
                 }
-                Operation::Deny { .. }
-                | Operation::Headers { .. }
-                | Operation::Store { .. }
-                | Operation::Fail { .. } => {
+                Operation::Deny { deny_with } => {
+                    use crate::kuadrant::pipeline::tasks::SendReplyTask;
+                    let task = SendReplyTask::new_deferred(
+                        action.predicate.clone(),
+                        deny_with.clone(),
+                        action.terminal,
+                    );
+                    tasks.push(Box::new(task));
+                }
+                Operation::Headers { .. } | Operation::Store { .. } | Operation::Fail { .. } => {
                     //todo(@adam-cattermole): implement non-gRPC operations
                     tracing::error!("not implemented yet: {} non-gRPC operation", action.id);
                 }
