@@ -6,7 +6,7 @@ use tracing::{debug, error};
 use crate::data::attribute::AttributeState;
 use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Expression;
-use crate::kuadrant::pipeline::blueprint::{Operation, TypedAction};
+use crate::kuadrant::pipeline::blueprint::{Action, Operation};
 use crate::kuadrant::pipeline::tasks::{
     HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, StoreTask, Task, TaskOutcome,
 };
@@ -19,7 +19,7 @@ pub struct DynamicTask {
     service: Rc<DynamicService>,
     name: String,
     message_builder: Expression,
-    on_reply: Vec<TypedAction>,
+    on_reply: Vec<Action>,
     predicates: Vec<Predicate>,
     dependencies: Vec<String>,
     is_guard: bool,
@@ -33,7 +33,7 @@ impl DynamicTask {
         service: Rc<DynamicService>,
         name: String,
         message_builder: Expression,
-        on_reply: Vec<TypedAction>,
+        on_reply: Vec<Action>,
         predicates: Vec<Predicate>,
         dependencies: Vec<String>,
         is_guard: bool,
@@ -47,6 +47,16 @@ impl DynamicTask {
             for action in &on_reply {
                 let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
                 match &action.operation {
+                    Operation::Grpc {
+                        message_builder,
+                        on_reply: nested_on_reply,
+                        ..
+                    } => {
+                        let _ = message_builder.eval(ctx, &mut cel_ctx);
+                        for nested_action in nested_on_reply {
+                            let _ = nested_action.predicate.test_with_ctx(ctx, &mut cel_ctx);
+                        }
+                    }
                     Operation::Deny { deny_with } => {
                         let _ = deny_with.eval(ctx, &mut cel_ctx);
                     }
@@ -172,7 +182,7 @@ fn process_dynamic_response(
     task_id: &str,
     token_id: u32,
     name: &str,
-    on_reply: &[TypedAction],
+    on_reply: &[Action],
 ) -> TaskOutcome {
     let span = tracing::debug_span!(
         "dynamic_response",
@@ -295,6 +305,38 @@ fn process_dynamic_response(
                 error!("Action failure: {log_message}");
                 return TaskOutcome::Failed;
             }
+            Operation::Grpc {
+                service,
+                var,
+                message_builder,
+                on_reply: nested_on_reply,
+            } => match service {
+                crate::services::ServiceInstance::Dynamic(dynamic_service)
+                | crate::services::ServiceInstance::Auth(dynamic_service)
+                | crate::services::ServiceInstance::RateLimit(dynamic_service)
+                | crate::services::ServiceInstance::RateLimitCheck(dynamic_service)
+                | crate::services::ServiceInstance::RateLimitReport(dynamic_service) => {
+                    let task = Box::new(DynamicTask::new_with_attributes(
+                        ctx,
+                        action.id.clone(),
+                        Rc::clone(dynamic_service),
+                        var.clone(),
+                        message_builder.clone(),
+                        nested_on_reply.clone(),
+                        vec![action.predicate.clone()],
+                        action.dependencies.clone(),
+                        action.is_guard,
+                    ));
+                    if action.terminal {
+                        return TaskOutcome::Terminate(task);
+                    }
+                    tasks.push(task);
+                }
+                _ => {
+                    error!("Unsupported service type for nested gRPC operation");
+                    return TaskOutcome::Failed;
+                }
+            },
         }
     }
 

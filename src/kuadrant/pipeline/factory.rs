@@ -9,7 +9,7 @@ use crate::data::{
     Expression,
 };
 use crate::filter::DescriptorManager;
-use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError};
+use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError, Operation};
 use crate::kuadrant::pipeline::executor::Pipeline;
 
 use crate::kuadrant::ReqRespCtx;
@@ -111,24 +111,36 @@ impl PipelineFactory {
             }
         }
 
+        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
+            .into_iter()
+            .filter_map(|((domain, field), v)| {
+                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
+            })
+            .collect();
+        request_data.sort_by(|a, b| a.0.cmp(&b.0));
+
+        //todo(@adam-cattermole): lets clean this up
+        #[allow(clippy::expect_used)]
         let dev_mode_action = config
             .observability
             .http_header_identifier
             .map(|header| Action {
                 id: "kuadrant.devMode".to_string(),
-                service: tracing_service.clone(),
-                scope: header,
-                predicates: vec![],
-                conditional_data: Default::default(),
+                predicate: Predicate::new("true").expect("Valid predicate"),
+                terminal: false,
+                operation: Operation::Grpc {
+                    service: tracing_service.clone(),
+                    var: header,
+                    message_builder: Expression::new("true").expect("Valid expression"),
+                    on_reply: vec![],
+                },
                 dependencies: Default::default(),
                 sources: vec![],
-                message_builder: None,
-                on_reply: vec![],
                 is_guard: true,
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
-            let mut blueprint = Blueprint::compile(config_action_set, &services)?;
+            let mut blueprint = Blueprint::compile(config_action_set, &services, &request_data)?;
             if let Some(dev_mode) = &dev_mode_action {
                 blueprint.actions.push(dev_mode.clone());
             }
@@ -143,14 +155,6 @@ impl PipelineFactory {
                 );
             }
         }
-
-        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
-            .into_iter()
-            .filter_map(|((domain, field), v)| {
-                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
-            })
-            .collect();
-        request_data.sort_by(|a, b| a.0.cmp(&b.0));
 
         Ok(Self {
             index,

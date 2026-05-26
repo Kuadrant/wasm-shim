@@ -2,24 +2,50 @@ use cel::common::types::{CelString, CelUInt};
 use cel::Value;
 use tracing::error;
 
-use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+use crate::data::attribute::AttributeState;
+use crate::data::cel::Predicate;
+use crate::data::Expression;
+use crate::kuadrant::pipeline::tasks::{NoopTerminalTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::metrics::METRICS;
 use crate::services::cel_value_to_header_pairs;
 
+enum SendReplyMode {
+    Concrete {
+        status_code: u32,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
+    },
+    Deferred {
+        deny_with: Expression,
+    },
+}
+
 pub struct SendReplyTask {
-    status_code: u32,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
+    predicate: Option<Predicate>,
+    mode: SendReplyMode,
+    terminal: bool,
 }
 
 impl SendReplyTask {
     pub fn new(status_code: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
         METRICS.denied().increment();
         Self {
-            status_code,
-            headers,
-            body,
+            predicate: None,
+            mode: SendReplyMode::Concrete {
+                status_code,
+                headers,
+                body,
+            },
+            terminal: false,
+        }
+    }
+
+    pub fn new_deferred(predicate: Predicate, deny_with: Expression, terminal: bool) -> Self {
+        Self {
+            predicate: Some(predicate),
+            mode: SendReplyMode::Deferred { deny_with },
+            terminal,
         }
     }
 
@@ -63,10 +89,69 @@ impl TryFrom<Value> for SendReplyTask {
 }
 
 impl Task for SendReplyTask {
-    #[tracing::instrument(name = "send_reply", skip(self, ctx), fields(status_code = %self.status_code))]
+    #[tracing::instrument(name = "send_reply", skip(self, ctx))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        let mut headers_ref: Vec<(&str, &str)> = self
-            .headers
+        if let Some(ref predicate) = self.predicate {
+            match predicate.test(ctx) {
+                Ok(AttributeState::Available(true)) => {}
+                Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+                Ok(AttributeState::Pending) => {
+                    return TaskOutcome::Requeued(vec![self]);
+                }
+                Err(e) => {
+                    error!("Failed to evaluate predicate: {e:?}");
+                    return TaskOutcome::Failed;
+                }
+            }
+        }
+
+        let (status_code, headers, body) = match &self.mode {
+            SendReplyMode::Concrete {
+                status_code,
+                headers,
+                body,
+            } => (*status_code, headers.clone(), body.clone()),
+            SendReplyMode::Deferred { deny_with } => {
+                let mut cel_ctx = cel::Context::default();
+                match deny_with.eval(ctx, &mut cel_ctx) {
+                    Ok(AttributeState::Pending) => {
+                        error!("Unexpected pending state in deny expression");
+                        return TaskOutcome::Failed;
+                    }
+                    Ok(AttributeState::Available(val @ Value::Struct(_))) => {
+                        match SendReplyTask::try_from(val) {
+                            Ok(concrete_task) => {
+                                if let SendReplyMode::Concrete {
+                                    status_code,
+                                    headers,
+                                    body,
+                                } = concrete_task.mode
+                                {
+                                    (status_code, headers, body)
+                                } else {
+                                    error!("Expected concrete task from try_from");
+                                    return TaskOutcome::Failed;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Invalid DenyResponse: {e}");
+                                return TaskOutcome::Failed;
+                            }
+                        }
+                    }
+                    Ok(AttributeState::Available(other)) => {
+                        error!("denyWith must return DenyResponse, got: {other:?}");
+                        return TaskOutcome::Failed;
+                    }
+                    Err(e) => {
+                        error!("Failed to evaluate denyWith expression: {e}");
+                        return TaskOutcome::Failed;
+                    }
+                }
+            }
+        };
+
+        let mut headers_ref: Vec<(&str, &str)> = headers
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
@@ -75,9 +160,15 @@ impl Task for SendReplyTask {
             headers_ref.push((tracker, value));
         }
 
-        let body_bytes = self.body.as_ref().map(|s| s.as_bytes());
-        match ctx.send_http_reply(self.status_code, headers_ref, body_bytes) {
-            Ok(()) => TaskOutcome::Done,
+        let body_bytes = body.as_ref().map(|s| s.as_bytes());
+        match ctx.send_http_reply(status_code, headers_ref, body_bytes) {
+            Ok(()) => {
+                if self.terminal {
+                    TaskOutcome::Terminate(Box::new(NoopTerminalTask))
+                } else {
+                    TaskOutcome::Done
+                }
+            }
             Err(e) => {
                 error!("Failed to send HTTP reply: {:?}", e);
                 TaskOutcome::Failed

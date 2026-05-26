@@ -98,3 +98,11 @@ pub fn noop_response_processor(token_id: u32) -> impl FnOnce(&mut ReqRespCtx) ->
         TaskOutcome::Done
     }
 }
+
+pub struct NoopTerminalTask;
+
+impl Task for NoopTerminalTask {
+    fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+        TaskOutcome::Done
+    }
+}

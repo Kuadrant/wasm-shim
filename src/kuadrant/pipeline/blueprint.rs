@@ -1,4 +1,8 @@
-use crate::configuration;
+#[allow(deprecated)]
+use crate::configuration::{
+    self, translate_legacy_auth_to_typed, translate_legacy_ratelimit_to_typed,
+    translate_legacy_report_to_typed,
+};
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
@@ -22,27 +26,22 @@ pub(crate) struct Blueprint {
 #[derive(Clone)]
 pub(crate) struct Action {
     pub id: String,
-    pub service: ServiceInstance,
-    pub scope: String,
-    pub predicates: Vec<Predicate>,
-    pub conditional_data: Vec<ConditionalData>,
-    pub dependencies: Vec<String>,
-    pub sources: Vec<String>,
-    pub message_builder: Option<Expression>,
-    pub on_reply: Vec<TypedAction>,
-    pub is_guard: bool,
-}
-
-// todo(@adam-cattermole): collapse TypedAction into Action once built-in services are migrated to DynamicTask
-#[derive(Clone)]
-pub(crate) struct TypedAction {
     pub predicate: Predicate,
     pub terminal: bool,
     pub operation: Operation,
+    pub dependencies: Vec<String>,
+    pub sources: Vec<String>,
+    pub is_guard: bool,
 }
 
 #[derive(Clone)]
 pub(crate) enum Operation {
+    Grpc {
+        service: ServiceInstance,
+        var: String,
+        message_builder: Expression,
+        on_reply: Vec<Action>,
+    },
     Deny {
         deny_with: Expression,
     },
@@ -62,70 +61,76 @@ pub(crate) enum Operation {
 
 impl Action {
     pub fn collect_body_values(&self, request_data: &[RequestData]) -> Vec<String> {
-        let mut fields = Vec::new();
+        use std::collections::HashSet;
 
-        for predicate in &self.predicates {
-            fields.extend(predicate.response_body_values().iter().cloned());
-        }
-        for data in &self.conditional_data {
-            for predicate in &data.predicates {
-                fields.extend(predicate.response_body_values().iter().cloned());
+        let mut fields = HashSet::new();
+
+        fields.extend(self.predicate.response_body_values().iter().cloned());
+
+        fields.extend(
+            request_data
+                .iter()
+                .flat_map(|(_, expr)| expr.response_body_values().iter().cloned()),
+        );
+
+        match &self.operation {
+            Operation::Grpc {
+                message_builder,
+                on_reply,
+                ..
+            } => {
+                fields.extend(message_builder.response_body_values().iter().cloned());
+                fields.extend(on_reply.iter().flat_map(|action| {
+                    let mut reply_fields = Vec::new();
+                    reply_fields.extend(action.predicate.response_body_values().iter().cloned());
+                    match &action.operation {
+                        Operation::Grpc {
+                            message_builder,
+                            on_reply: nested_reply,
+                            ..
+                        } => {
+                            reply_fields
+                                .extend(message_builder.response_body_values().iter().cloned());
+                            reply_fields.extend(
+                                nested_reply
+                                    .iter()
+                                    .flat_map(|nested| nested.collect_body_values(&[])),
+                            );
+                        }
+                        Operation::Deny { deny_with } => {
+                            reply_fields.extend(deny_with.response_body_values().iter().cloned());
+                        }
+                        Operation::Headers { headers, .. } => {
+                            reply_fields.extend(headers.response_body_values().iter().cloned());
+                        }
+                        Operation::Store { expression, .. } => {
+                            reply_fields.extend(expression.response_body_values().iter().cloned());
+                        }
+                        Operation::Fail { .. } => {}
+                    }
+                    reply_fields
+                }));
             }
-            for item in &data.data {
-                fields.extend(item.value.response_body_values().iter().cloned());
+            Operation::Deny { deny_with } => {
+                fields.extend(deny_with.response_body_values().iter().cloned());
             }
-        }
-        for (_, expr) in request_data {
-            fields.extend(expr.response_body_values().iter().cloned());
-        }
-        if let Some(mb) = &self.message_builder {
-            fields.extend(mb.response_body_values().iter().cloned());
-        }
-        for on_reply_action in &self.on_reply {
-            fields.extend(
-                on_reply_action
-                    .predicate
-                    .response_body_values()
-                    .iter()
-                    .cloned(),
-            );
-            match &on_reply_action.operation {
-                Operation::Deny { deny_with } => {
-                    fields.extend(deny_with.response_body_values().iter().cloned());
-                }
-                Operation::Headers { headers, .. } => {
-                    fields.extend(headers.response_body_values().iter().cloned());
-                }
-                Operation::Store { expression, .. } => {
-                    fields.extend(expression.response_body_values().iter().cloned());
-                }
-                Operation::Fail { .. } => {}
+            Operation::Headers { headers, .. } => {
+                fields.extend(headers.response_body_values().iter().cloned());
             }
+            Operation::Store { expression, .. } => {
+                fields.extend(expression.response_body_values().iter().cloned());
+            }
+            Operation::Fail { .. } => {}
         }
 
-        fields.dedup();
-        fields
+        fields.into_iter().collect()
     }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ConditionalData {
-    pub predicates: Vec<Predicate>,
-    pub data: Vec<DataItem>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct DataItem {
-    #[allow(dead_code)]
-    pub key: String,
-    pub value: Expression,
 }
 
 #[derive(Debug)]
 pub enum CompileError {
     InvalidRoutePredicate { action_set: String, error: String },
     InvalidActionPredicate { service: String, error: String },
-    InvalidConditionalPredicate(String),
     InvalidDataExpression(String),
     UnknownService(String),
     ServiceCreationFailed(String),
@@ -146,9 +151,6 @@ impl Display for CompileError {
             CompileError::InvalidActionPredicate { service, error } => {
                 write!(f, "Invalid action predicate on {}: {}", service, error)
             }
-            CompileError::InvalidConditionalPredicate(msg) => {
-                write!(f, "Invalid conditional predicate: {}", msg)
-            }
             CompileError::InvalidDataExpression(msg) => {
                 write!(f, "Invalid data expression: {}", msg)
             }
@@ -164,6 +166,7 @@ impl Blueprint {
     pub fn compile(
         config: &configuration::ActionSet,
         services: &HashMap<String, ServiceInstance>,
+        request_data: &[RequestData],
     ) -> Result<Self, CompileError> {
         let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
@@ -189,7 +192,11 @@ impl Blueprint {
                 };
                 match action_config {
                     configuration::ActionConfig::Legacy(action) => {
-                        Action::compile(action, services, id, dependencies)
+                        let legacy_request_data: Vec<((String, String), String)> = request_data
+                            .iter()
+                            .map(|(key, expr)| (key.clone(), expr.source().to_string()))
+                            .collect();
+                        Action::compile(action, services, id, dependencies, &legacy_request_data)
                     }
                     configuration::ActionConfig::Typed(typed) => {
                         Action::compile_typed(typed, services, id, dependencies)
@@ -218,85 +225,123 @@ impl Blueprint {
         let mut tasks: TaskList = Vec::new();
         let mut teardown_tasks: TeardownList = Vec::new();
 
-        let tracing_enabled = self
-            .actions
-            .iter()
-            .any(|action| matches!(action.service, ServiceInstance::Tracing(Some(_))));
+        let tracing_enabled = self.actions.iter().any(|action| {
+            matches!(
+                &action.operation,
+                Operation::Grpc { service, .. } if matches!(service, ServiceInstance::Tracing(Some(_)))
+            )
+        });
 
         for action in &self.actions {
-            let abort_on_failure =
-                action.service.failure_mode() == configuration::FailureMode::Deny;
+            match &action.operation {
+                Operation::Grpc {
+                    service,
+                    var,
+                    message_builder,
+                    on_reply,
+                } => {
+                    let abort_on_failure =
+                        service.failure_mode() == configuration::FailureMode::Deny;
 
-            match &action.service {
-                ServiceInstance::Tracing(service) => {
-                    ctx.set_public_tracker_id(action.scope.clone());
-                    tasks.push(Box::new(ModifyHeadersTask::new(
-                        HeaderOperation::Append(
-                            vec![(action.scope.clone(), ctx.request_id().to_string())].into(),
-                        ),
-                        HeadersType::HttpResponseHeaders,
-                    )));
-                    if let Some(service) = service {
-                        teardown_tasks
-                            .push(Box::new(ExportTracesTask::new(ctx, Rc::clone(service))));
+                    match service {
+                        ServiceInstance::Tracing(tracing_service) => {
+                            ctx.set_public_tracker_id(var.clone());
+                            tasks.push(Box::new(ModifyHeadersTask::new(
+                                HeaderOperation::Append(
+                                    vec![(var.clone(), ctx.request_id().to_string())].into(),
+                                ),
+                                HeadersType::HttpResponseHeaders,
+                            )));
+                            if let Some(service) = tracing_service {
+                                teardown_tasks
+                                    .push(Box::new(ExportTracesTask::new(ctx, service.clone())));
+                            }
+                        }
+                        ServiceInstance::Dynamic(dynamic_service)
+                        | ServiceInstance::Auth(dynamic_service)
+                        | ServiceInstance::RateLimit(dynamic_service)
+                        | ServiceInstance::RateLimitCheck(dynamic_service)
+                        | ServiceInstance::RateLimitReport(dynamic_service) => {
+                            let body_values = action.collect_body_values(request_data);
+                            if !body_values.is_empty() {
+                                tasks.push(Box::new(
+                                    TokenUsageTask::with_expected_response_fields(body_values),
+                                ));
+                            }
+
+                            let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
+                                ctx,
+                                action.id.clone(),
+                                Rc::clone(dynamic_service),
+                                var.clone(),
+                                message_builder.clone(),
+                                on_reply.clone(),
+                                vec![action.predicate.clone()],
+                                action.dependencies.clone(),
+                                action.is_guard,
+                            ));
+                            let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                            if tracing_enabled {
+                                let span_label = match service {
+                                    ServiceInstance::Auth(_) => "auth",
+                                    ServiceInstance::RateLimit(_)
+                                    | ServiceInstance::RateLimitCheck(_) => "ratelimit",
+                                    ServiceInstance::RateLimitReport(_) => "ratelimit_report",
+                                    _ => "dynamic",
+                                };
+                                tasks.push(Box::new(TracingDecoratorTask::new(
+                                    span_label,
+                                    task,
+                                    action.sources.clone(),
+                                )));
+                            } else {
+                                tasks.push(task);
+                            }
+                        }
                     }
                 }
-                ServiceInstance::Dynamic(dynamic_service)
-                | ServiceInstance::Auth(dynamic_service)
-                | ServiceInstance::RateLimit(dynamic_service)
-                | ServiceInstance::RateLimitCheck(dynamic_service)
-                | ServiceInstance::RateLimitReport(dynamic_service) => {
-                    let message_builder = match &action.message_builder {
-                        Some(mb) => mb.clone(),
-                        None => {
-                            tracing::error!("Dynamic action missing message_builder");
-                            continue;
-                        }
-                    };
-
-                    // Restrict to Report and Dynamic for now
-                    if matches!(
-                        &action.service,
-                        ServiceInstance::RateLimitReport(_) | ServiceInstance::Dynamic(_)
-                    ) {
-                        let body_values = action.collect_body_values(request_data);
-                        if !body_values.is_empty() {
-                            tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
-                                body_values,
-                            )));
-                        }
-                    }
-
-                    let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        Rc::clone(dynamic_service),
-                        action.scope.clone(),
-                        message_builder,
-                        action.on_reply.clone(),
-                        action.predicates.clone(),
-                        action.dependencies.clone(),
-                        action.is_guard,
-                    ));
-                    let task = Box::new(FailureModeTask::new(task, abort_on_failure));
-                    if tracing_enabled {
-                        let span_label = match &action.service {
-                            //todo(@adam-cattermole): drop this in favour of method/service once other service types removed
-                            ServiceInstance::Auth(_) => "auth",
-                            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
-                                "ratelimit"
-                            }
-                            ServiceInstance::RateLimitReport(_) => "ratelimit_report",
-                            _ => "dynamic",
-                        };
-                        tasks.push(Box::new(TracingDecoratorTask::new(
-                            span_label,
-                            task,
-                            action.sources.clone(),
-                        )));
-                    } else {
-                        tasks.push(task);
-                    }
+                Operation::Deny { deny_with } => {
+                    use crate::kuadrant::pipeline::tasks::SendReplyTask;
+                    let task = SendReplyTask::new_deferred(
+                        action.predicate.clone(),
+                        deny_with.clone(),
+                        action.terminal,
+                    );
+                    tasks.push(Box::new(task));
+                }
+                Operation::Headers {
+                    target,
+                    headers: headers_expr,
+                } => {
+                    let task = ModifyHeadersTask::new_deferred(
+                        action.predicate.clone(),
+                        headers_expr.clone(),
+                        target.clone(),
+                        action.terminal,
+                    );
+                    tasks.push(Box::new(task));
+                }
+                Operation::Store {
+                    path,
+                    expression,
+                    export_to_host,
+                } => {
+                    use crate::kuadrant::pipeline::tasks::StoreTask;
+                    let task = StoreTask::new_deferred(
+                        action.predicate.clone(),
+                        expression.clone(),
+                        path.clone(),
+                        *export_to_host,
+                        action.terminal,
+                    );
+                    tasks.push(Box::new(task));
+                }
+                Operation::Fail { log_message } => {
+                    tracing::error!(
+                        "Top-level Fail operation is currently unsupported. Action {}: {}",
+                        action.id,
+                        log_message
+                    );
                 }
             }
         }
@@ -306,44 +351,35 @@ impl Blueprint {
 }
 
 impl Action {
+    #[allow(deprecated)]
     fn compile(
         config: &configuration::Action,
         services: &HashMap<String, ServiceInstance>,
         id: String,
         dependencies: Vec<String>,
+        request_data: &[((String, String), String)],
     ) -> Result<Self, CompileError> {
         let service = services
             .get(&config.service)
             .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?;
 
-        let predicates: Vec<Predicate> = config
-            .predicates
-            .iter()
-            .map(|p| Predicate::new(p))
-            .collect::<Result<_, _>>()
-            .map_err(|e| CompileError::InvalidActionPredicate {
-                service: config.service.clone(),
-                error: e.to_string(),
-            })?;
+        let typed_config = match service {
+            ServiceInstance::Auth(_) => translate_legacy_auth_to_typed(config, request_data),
+            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
+                translate_legacy_ratelimit_to_typed(config, request_data)
+            }
+            ServiceInstance::RateLimitReport(_) => {
+                translate_legacy_report_to_typed(config, request_data)
+            }
+            _ => {
+                return Err(CompileError::ServiceCreationFailed(format!(
+                    "Legacy config not supported for service type: {}",
+                    config.service
+                )))
+            }
+        };
 
-        let conditional_data: Vec<ConditionalData> = config
-            .conditional_data
-            .iter()
-            .map(ConditionalData::compile)
-            .collect::<Result<_, _>>()?;
-
-        Ok(Self {
-            id,
-            service: service.clone(),
-            scope: config.scope.clone(),
-            predicates,
-            conditional_data,
-            dependencies,
-            sources: config.sources.clone(),
-            message_builder: None,
-            on_reply: vec![],
-            is_guard: true,
-        })
+        Self::compile_typed(&typed_config, services, id, dependencies)
     }
 
     fn compile_typed(
@@ -352,7 +388,19 @@ impl Action {
         id: String,
         dependencies: Vec<String>,
     ) -> Result<Self, CompileError> {
-        match &typed.operation {
+        let predicate =
+            Predicate::new(&typed.predicate).map_err(|e| CompileError::InvalidActionPredicate {
+                service: match &typed.operation {
+                    configuration::Operation::Grpc(grpc) => grpc.service.clone(),
+                    configuration::Operation::Deny(_) => "deny".to_string(),
+                    configuration::Operation::Headers(_) => "headers".to_string(),
+                    configuration::Operation::Store(_) => "store".to_string(),
+                    configuration::Operation::Fail(_) => "fail".to_string(),
+                },
+                error: e.to_string(),
+            })?;
+
+        let operation = match &typed.operation {
             configuration::Operation::Grpc(grpc) => {
                 let service_instance = services
                     .get(&grpc.service)
@@ -367,68 +415,39 @@ impl Action {
                         | ServiceInstance::RateLimitReport(_)
                 ) {
                     return Err(CompileError::ServiceCreationFailed(format!(
-                        "Service '{}' cannot be used with typed grpc action",
+                        "Service '{}' cannot be used with gRPC action",
                         grpc.service
                     )));
                 }
 
-                let predicate = Predicate::new(&typed.predicate).map_err(|e| {
-                    CompileError::InvalidActionPredicate {
-                        service: grpc.service.clone(),
-                        error: e.to_string(),
-                    }
-                })?;
-
-                let on_reply: Vec<TypedAction> = grpc
+                let on_reply: Vec<Action> = grpc
                     .on_reply
                     .iter()
-                    .map(TypedAction::compile)
+                    .enumerate()
+                    .map(|(idx, typed_action)| {
+                        let reply_id = format!("{}.{}", id, idx);
+                        let reply_deps = if idx > 0 {
+                            vec![format!("{}.{}", id, idx - 1)]
+                        } else {
+                            vec![]
+                        };
+                        Action::compile_typed(typed_action, services, reply_id, reply_deps)
+                    })
                     .collect::<Result<_, _>>()?;
 
-                let message_builder =
-                    Some(Expression::new(&grpc.message_builder).map_err(|e| {
-                        CompileError::InvalidDataExpression(format!(
-                            "Failed to compile message_builder: {e}"
-                        ))
-                    })?);
+                let message_builder = Expression::new(&grpc.message_builder).map_err(|e| {
+                    CompileError::InvalidDataExpression(format!(
+                        "Failed to compile message_builder: {e}"
+                    ))
+                })?;
 
-                Ok(Self {
-                    id,
+                Operation::Grpc {
                     service: service_instance.clone(),
-                    scope: grpc.var.clone(),
-                    predicates: vec![predicate],
-                    conditional_data: vec![],
-                    dependencies,
-                    sources: typed.sources.clone(),
+                    var: grpc.var.clone(),
                     message_builder,
                     on_reply,
-                    is_guard: typed.is_guard,
-                })
-            }
-            _ => Err(CompileError::InvalidDataExpression(
-                "Only gRPC typed actions are currently supported as top-level actions".to_string(),
-            )),
-        }
-    }
-}
-
-impl TypedAction {
-    fn compile(config: &configuration::TypedAction) -> Result<Self, CompileError> {
-        let predicate = Predicate::new(&config.predicate).map_err(|e| {
-            CompileError::InvalidActionPredicate {
-                service: match &config.operation {
-                    configuration::Operation::Deny(_) => "deny",
-                    configuration::Operation::Headers(_) => "headers",
-                    configuration::Operation::Store(_) => "store",
-                    configuration::Operation::Grpc(_) => "grpc",
-                    configuration::Operation::Fail(_) => "fail",
                 }
-                .to_string(),
-                error: e.to_string(),
             }
-        })?;
-
-        let operation = match &config.operation {
             configuration::Operation::Deny(deny) => {
                 let deny_with = Expression::new(&deny.deny_with)?;
                 Operation::Deny { deny_with }
@@ -445,10 +464,9 @@ impl TypedAction {
                 }
             }
             configuration::Operation::Store(store) => {
-                let path = store.path.clone();
                 let expression = Expression::new(&store.value)?;
                 Operation::Store {
-                    path,
+                    path: store.path.clone(),
                     expression,
                     export_to_host: store.export_to_host,
                 }
@@ -456,54 +474,17 @@ impl TypedAction {
             configuration::Operation::Fail(fail) => Operation::Fail {
                 log_message: fail.log_message.clone(),
             },
-            configuration::Operation::Grpc(_) => {
-                return Err(CompileError::InvalidDataExpression(
-                    "gRPC actions cannot be nested inside 'onReply' blocks".to_string(),
-                ));
-            }
         };
 
-        Ok(TypedAction {
+        Ok(Action {
+            id,
             predicate,
-            terminal: config.terminal,
+            terminal: typed.terminal,
             operation,
+            dependencies,
+            sources: typed.sources.clone(),
+            is_guard: typed.is_guard,
         })
-    }
-}
-
-impl ConditionalData {
-    fn compile(config: &configuration::ConditionalData) -> Result<Self, CompileError> {
-        let predicates: Vec<Predicate> = config
-            .predicates
-            .iter()
-            .map(|p| Predicate::new(p))
-            .collect::<Result<_, _>>()
-            .map_err(|e| CompileError::InvalidConditionalPredicate(e.to_string()))?;
-
-        let data: Vec<DataItem> = config
-            .data
-            .iter()
-            .map(DataItem::compile)
-            .collect::<Result<_, _>>()?;
-
-        Ok(Self { predicates, data })
-    }
-}
-
-impl DataItem {
-    fn compile(config: &configuration::DataItem) -> Result<Self, CompileError> {
-        let (key, value) = match &config.item {
-            configuration::DataType::Static(s) => {
-                let expr = Expression::new(&format!("'{}'", s.value))?;
-                (s.key.clone(), expr)
-            }
-            configuration::DataType::Expression(e) => {
-                let expr = Expression::new(&e.value)?;
-                (e.key.clone(), expr)
-            }
-        };
-
-        Ok(Self { key, value })
     }
 }
 
@@ -565,7 +546,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.name, "test-action-set");
@@ -586,7 +567,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.route_predicates.len(), 2);
@@ -605,7 +586,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidRoutePredicate { ref action_set, .. }) if action_set == "test-action-set"
@@ -627,13 +608,12 @@ mod tests {
             sources: vec![],
         };
 
-        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
-        assert_eq!(action.scope, "test-scope");
-        assert_eq!(action.predicates.len(), 2);
         assert!(action.dependencies.is_empty());
+        assert!(matches!(action.operation, Operation::Grpc { .. }));
     }
 
     #[test]
@@ -648,7 +628,7 @@ mod tests {
             sources: vec![],
         };
 
-        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { ref service, .. }) if service == "test-service"
@@ -667,90 +647,10 @@ mod tests {
             sources: vec![],
         };
 
-        let result = Action::compile(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
         assert!(matches!(
             result,
             Err(CompileError::UnknownService(ref service)) if service == "nonexistent-service"
-        ));
-    }
-
-    #[test]
-    fn conditional_data_compiles_with_valid_predicates_and_expressions() {
-        let config = ConfigConditionalData {
-            predicates: vec!["request.method == 'POST'".to_string()],
-            data: vec![ConfigDataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "user".to_string(),
-                    value: "auth.identity.username".to_string(),
-                }),
-            }],
-        };
-
-        let result = ConditionalData::compile(&config);
-        assert!(result.is_ok());
-        let conditional = result.unwrap();
-        assert_eq!(conditional.predicates.len(), 1);
-        assert_eq!(conditional.data.len(), 1);
-        assert_eq!(conditional.data[0].key, "user");
-    }
-
-    #[test]
-    fn conditional_data_fails_on_invalid_predicate() {
-        let config = ConfigConditionalData {
-            predicates: vec!["invalid !!".to_string()],
-            data: vec![],
-        };
-
-        let result = ConditionalData::compile(&config);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidConditionalPredicate(_))
-        ));
-    }
-
-    #[test]
-    fn data_item_compiles_static_value() {
-        let config = ConfigDataItem {
-            item: DataType::Static(StaticItem {
-                key: "limit".to_string(),
-                value: "50".to_string(),
-            }),
-        };
-
-        let result = DataItem::compile(&config);
-        assert!(result.is_ok());
-        let data_item = result.unwrap();
-        assert_eq!(data_item.key, "limit");
-    }
-
-    #[test]
-    fn data_item_compiles_expression_value() {
-        let config = ConfigDataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "host".to_string(),
-                value: "request.host".to_string(),
-            }),
-        };
-
-        let result = DataItem::compile(&config);
-        assert!(result.is_ok());
-        let data_item = result.unwrap();
-        assert_eq!(data_item.key, "host");
-    }
-
-    #[test]
-    fn data_item_fails_on_invalid_expression() {
-        let config = ConfigDataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "test".to_string(),
-                value: "bad syntax !!!".to_string(),
-            }),
-        };
-
-        let result = DataItem::compile(&config);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidDataExpression(_))
         ));
     }
 
@@ -789,15 +689,16 @@ mod tests {
             })],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.name, "complete-test");
         assert_eq!(blueprint.route_predicates.len(), 1);
         assert_eq!(blueprint.actions.len(), 1);
-        assert_eq!(blueprint.actions[0].predicates.len(), 1);
-        assert_eq!(blueprint.actions[0].conditional_data.len(), 1);
-        assert_eq!(blueprint.actions[0].conditional_data[0].data.len(), 2);
+        assert!(matches!(
+            blueprint.actions[0].operation,
+            Operation::Grpc { .. }
+        ));
     }
 
     #[test]
@@ -873,12 +774,20 @@ mod tests {
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
-        assert_eq!(action.scope, "rl_check");
-        assert!(matches!(action.service, ServiceInstance::Dynamic(_)));
-        assert_eq!(action.predicates.len(), 1);
-        assert!(action.message_builder.is_some());
-        assert_eq!(action.on_reply.len(), 5);
-        assert!(action.conditional_data.is_empty());
+        assert!(action.is_guard);
+        assert!(!action.terminal);
+        assert!(matches!(action.operation, Operation::Grpc { .. }));
+        if let Operation::Grpc {
+            ref service,
+            ref var,
+            ref on_reply,
+            ..
+        } = action.operation
+        {
+            assert_eq!(var, "rl_check");
+            assert!(matches!(service, ServiceInstance::Dynamic(_)));
+            assert_eq!(on_reply.len(), 5);
+        }
     }
 
     #[test]
@@ -934,7 +843,9 @@ mod tests {
     }
 
     #[test]
-    fn grpc_in_on_reply_block_is_rejected() {
+    fn grpc_in_on_reply_block_compiles() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
         let nested_grpc = ConfigTypedAction {
             predicate: "true".to_string(),
             terminal: false,
@@ -948,15 +859,17 @@ mod tests {
             }),
         };
 
-        let result = TypedAction::compile(&nested_grpc);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidDataExpression(ref msg)) if msg.contains("cannot be nested")
-        ));
+        let result = Action::compile_typed(&nested_grpc, &services, "parent.0".to_string(), vec![]);
+        assert!(result.is_ok());
+        let action = result.unwrap();
+        assert_eq!(action.id, "parent.0");
+        assert!(matches!(action.operation, Operation::Grpc { .. }));
     }
 
     #[test]
     fn typed_actions_compile() {
+        let services = HashMap::new();
+
         let deny_config = ConfigTypedAction {
             predicate: "result.code == 2".to_string(),
             terminal: true,
@@ -966,7 +879,7 @@ mod tests {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let deny_result = TypedAction::compile(&deny_config);
+        let deny_result = Action::compile_typed(&deny_config, &services, "0".to_string(), vec![]);
         assert!(deny_result.is_ok());
         let deny = deny_result.unwrap();
         assert!(deny.terminal);
@@ -982,7 +895,8 @@ mod tests {
                 headers: "result.resp_headers".to_string(),
             }),
         };
-        let headers_result = TypedAction::compile(&headers_config);
+        let headers_result =
+            Action::compile_typed(&headers_config, &services, "0".to_string(), vec![]);
         assert!(headers_result.is_ok());
         let headers = headers_result.unwrap();
         assert!(!headers.terminal);
@@ -1005,7 +919,7 @@ mod tests {
                 export_to_host: false,
             }),
         };
-        let store_result = TypedAction::compile(&store_config);
+        let store_result = Action::compile_typed(&store_config, &services, "0".to_string(), vec![]);
         assert!(store_result.is_ok());
         let store = store_result.unwrap();
         assert!(!store.terminal);
@@ -1017,6 +931,8 @@ mod tests {
 
     #[test]
     fn typed_action_fails_on_invalid_predicate() {
+        let services = HashMap::new();
+
         let config = ConfigTypedAction {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
@@ -1026,7 +942,7 @@ mod tests {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let result = TypedAction::compile(&config);
+        let result = Action::compile_typed(&config, &services, "0".to_string(), vec![]);
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { .. })
@@ -1077,25 +993,31 @@ mod tests {
             ],
         };
 
-        let result = Blueprint::compile(&config, &services);
+        let result = Blueprint::compile(&config, &services, &[]);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.actions.len(), 2);
 
         assert!(matches!(
-            blueprint.actions[0].service,
-            ServiceInstance::Auth(_)
+            &blueprint.actions[0].operation,
+            Operation::Grpc { .. }
         ));
-        assert!(blueprint.actions[0].message_builder.is_none());
-        assert!(blueprint.actions[0].on_reply.is_empty());
+        if let Operation::Grpc { service, .. } = &blueprint.actions[0].operation {
+            assert!(matches!(service, ServiceInstance::Auth(_)));
+        }
         assert!(blueprint.actions[0].dependencies.is_empty());
 
         assert!(matches!(
-            blueprint.actions[1].service,
-            ServiceInstance::Dynamic(_)
+            &blueprint.actions[1].operation,
+            Operation::Grpc { .. }
         ));
-        assert!(blueprint.actions[1].message_builder.is_some());
-        assert_eq!(blueprint.actions[1].on_reply.len(), 1);
+        if let Operation::Grpc {
+            service, on_reply, ..
+        } = &blueprint.actions[1].operation
+        {
+            assert!(matches!(service, ServiceInstance::Dynamic(_)));
+            assert_eq!(on_reply.len(), 1);
+        }
         assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
     }
 }
