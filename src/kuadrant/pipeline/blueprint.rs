@@ -1,4 +1,8 @@
-use crate::configuration;
+#[allow(deprecated)]
+use crate::configuration::{
+    self, translate_legacy_auth_to_typed, translate_legacy_ratelimit_to_typed,
+    translate_legacy_report_to_typed,
+};
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
@@ -192,7 +196,9 @@ impl Blueprint {
                 };
                 match action_config {
                     configuration::ActionConfig::Legacy(action) => {
-                        Action::compile(action, services, id, dependencies)
+                        // todo(@adam-cattermole): Pass actual request_data
+                        let empty_request_data: &[((String, String), String)] = &[];
+                        Action::compile(action, services, id, dependencies, empty_request_data)
                     }
                     configuration::ActionConfig::Typed(typed) => {
                         Action::compile_typed(typed, services, id, dependencies)
@@ -309,44 +315,35 @@ impl Blueprint {
 }
 
 impl Action {
+    #[allow(deprecated)]
     fn compile(
         config: &configuration::Action,
         services: &HashMap<String, ServiceInstance>,
         id: String,
         dependencies: Vec<String>,
+        request_data: &[((String, String), String)],
     ) -> Result<Self, CompileError> {
         let service = services
             .get(&config.service)
             .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?;
 
-        let predicates: Vec<Predicate> = config
-            .predicates
-            .iter()
-            .map(|p| Predicate::new(p))
-            .collect::<Result<_, _>>()
-            .map_err(|e| CompileError::InvalidActionPredicate {
-                service: config.service.clone(),
-                error: e.to_string(),
-            })?;
+        let typed_config = match service {
+            ServiceInstance::Auth(_) => translate_legacy_auth_to_typed(config, request_data),
+            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
+                translate_legacy_ratelimit_to_typed(config, request_data)
+            }
+            ServiceInstance::RateLimitReport(_) => {
+                translate_legacy_report_to_typed(config, request_data)
+            }
+            _ => {
+                return Err(CompileError::ServiceCreationFailed(format!(
+                    "Legacy config not supported for service type: {}",
+                    config.service
+                )))
+            }
+        };
 
-        let conditional_data: Vec<ConditionalData> = config
-            .conditional_data
-            .iter()
-            .map(ConditionalData::compile)
-            .collect::<Result<_, _>>()?;
-
-        Ok(Self {
-            id,
-            service: service.clone(),
-            scope: config.scope.clone(),
-            predicates,
-            conditional_data,
-            dependencies,
-            sources: config.sources.clone(),
-            message_builder: None,
-            on_reply: vec![],
-            is_guard: true,
-        })
+        Self::compile_typed(&typed_config, services, id, dependencies)
     }
 
     fn compile_typed(
