@@ -127,24 +127,10 @@ impl Action {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ConditionalData {
-    pub predicates: Vec<Predicate>,
-    pub data: Vec<DataItem>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct DataItem {
-    #[allow(dead_code)]
-    pub key: String,
-    pub value: Expression,
-}
-
 #[derive(Debug)]
 pub enum CompileError {
     InvalidRoutePredicate { action_set: String, error: String },
     InvalidActionPredicate { service: String, error: String },
-    InvalidConditionalPredicate(String),
     InvalidDataExpression(String),
     UnknownService(String),
     ServiceCreationFailed(String),
@@ -164,9 +150,6 @@ impl Display for CompileError {
             }
             CompileError::InvalidActionPredicate { service, error } => {
                 write!(f, "Invalid action predicate on {}: {}", service, error)
-            }
-            CompileError::InvalidConditionalPredicate(msg) => {
-                write!(f, "Invalid conditional predicate: {}", msg)
             }
             CompileError::InvalidDataExpression(msg) => {
                 write!(f, "Invalid data expression: {}", msg)
@@ -505,42 +488,6 @@ impl Action {
     }
 }
 
-impl ConditionalData {
-    fn compile(config: &configuration::ConditionalData) -> Result<Self, CompileError> {
-        let predicates: Vec<Predicate> = config
-            .predicates
-            .iter()
-            .map(|p| Predicate::new(p))
-            .collect::<Result<_, _>>()
-            .map_err(|e| CompileError::InvalidConditionalPredicate(e.to_string()))?;
-
-        let data: Vec<DataItem> = config
-            .data
-            .iter()
-            .map(DataItem::compile)
-            .collect::<Result<_, _>>()?;
-
-        Ok(Self { predicates, data })
-    }
-}
-
-impl DataItem {
-    fn compile(config: &configuration::DataItem) -> Result<Self, CompileError> {
-        let (key, value) = match &config.item {
-            configuration::DataType::Static(s) => {
-                let expr = Expression::new(&format!("'{}'", s.value))?;
-                (s.key.clone(), expr)
-            }
-            configuration::DataType::Expression(e) => {
-                let expr = Expression::new(&e.value)?;
-                (e.key.clone(), expr)
-            }
-        };
-
-        Ok(Self { key, value })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,86 +651,6 @@ mod tests {
         assert!(matches!(
             result,
             Err(CompileError::UnknownService(ref service)) if service == "nonexistent-service"
-        ));
-    }
-
-    #[test]
-    fn conditional_data_compiles_with_valid_predicates_and_expressions() {
-        let config = ConfigConditionalData {
-            predicates: vec!["request.method == 'POST'".to_string()],
-            data: vec![ConfigDataItem {
-                item: DataType::Expression(ExpressionItem {
-                    key: "user".to_string(),
-                    value: "auth.identity.username".to_string(),
-                }),
-            }],
-        };
-
-        let result = ConditionalData::compile(&config);
-        assert!(result.is_ok());
-        let conditional = result.unwrap();
-        assert_eq!(conditional.predicates.len(), 1);
-        assert_eq!(conditional.data.len(), 1);
-        assert_eq!(conditional.data[0].key, "user");
-    }
-
-    #[test]
-    fn conditional_data_fails_on_invalid_predicate() {
-        let config = ConfigConditionalData {
-            predicates: vec!["invalid !!".to_string()],
-            data: vec![],
-        };
-
-        let result = ConditionalData::compile(&config);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidConditionalPredicate(_))
-        ));
-    }
-
-    #[test]
-    fn data_item_compiles_static_value() {
-        let config = ConfigDataItem {
-            item: DataType::Static(StaticItem {
-                key: "limit".to_string(),
-                value: "50".to_string(),
-            }),
-        };
-
-        let result = DataItem::compile(&config);
-        assert!(result.is_ok());
-        let data_item = result.unwrap();
-        assert_eq!(data_item.key, "limit");
-    }
-
-    #[test]
-    fn data_item_compiles_expression_value() {
-        let config = ConfigDataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "host".to_string(),
-                value: "request.host".to_string(),
-            }),
-        };
-
-        let result = DataItem::compile(&config);
-        assert!(result.is_ok());
-        let data_item = result.unwrap();
-        assert_eq!(data_item.key, "host");
-    }
-
-    #[test]
-    fn data_item_fails_on_invalid_expression() {
-        let config = ConfigDataItem {
-            item: DataType::Expression(ExpressionItem {
-                key: "test".to_string(),
-                value: "bad syntax !!!".to_string(),
-            }),
-        };
-
-        let result = DataItem::compile(&config);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidDataExpression(_))
         ));
     }
 
