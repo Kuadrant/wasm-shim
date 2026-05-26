@@ -885,7 +885,6 @@ fn properties<'e>(
 }
 
 #[cfg(feature = "debug-host-behaviour")]
-#[allow(dead_code)]
 pub fn debug_all_well_known_attributes() {
     let attributes = new_well_known_attribute_map();
     attributes.iter().for_each(|(key, value_type)| {

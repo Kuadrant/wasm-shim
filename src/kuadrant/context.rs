@@ -166,24 +166,6 @@ impl ReqRespCtx {
         self.get_attribute_ref(&path.into())
     }
 
-    #[allow(dead_code)]
-    pub fn get_required<T: AttributeValue>(
-        &self,
-        path: impl Into<Path>,
-    ) -> Result<T, AttributeError> {
-        let path = path.into();
-        match self.get_attribute_ref::<T>(&path)? {
-            AttributeState::Available(Some(value)) => Ok(value),
-            AttributeState::Available(None) => {
-                Err(AttributeError::Retrieval(format!("{} not set", path)))
-            }
-            AttributeState::Pending => Err(AttributeError::NotAvailable(format!(
-                "{} still pending",
-                path
-            ))),
-        }
-    }
-
     pub fn get_request_header(&self, key: &str) -> Option<String> {
         match self
             .backend
@@ -310,23 +292,6 @@ impl ReqRespCtx {
             }
             Err(e) => Err(e),
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn eval_request_data(&self) -> Vec<request_data::RequestDataEntry> {
-        let mut cel_ctx = cel::Context::default();
-        let Some(ref expressions) = self.request_data else {
-            return Vec::new();
-        };
-        expressions
-            .iter()
-            .map(|((domain, field), expr)| request_data::RequestDataEntry {
-                domain: domain.clone(),
-                field: field.clone(),
-                result: expr.eval(self, &mut cel_ctx),
-                source: expr.to_string(),
-            })
-            .collect()
     }
 
     pub fn set_attribute(
@@ -536,24 +501,10 @@ impl Default for TracingContext {
     }
 }
 
-pub mod request_data {
-    use crate::data::cel::EvalResult;
-
-    #[allow(dead_code)]
-    pub struct RequestDataEntry {
-        pub domain: String,
-        pub field: String,
-        pub result: EvalResult,
-        #[allow(dead_code)]
-        pub source: String,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::attribute::AttributeState;
-    use crate::data::cel::Expression;
     use crate::kuadrant::resolver::MockWasmHost;
     use std::sync::Arc;
 
@@ -609,74 +560,6 @@ mod tests {
 
         assert!(method.is_ok());
         assert!(path.is_ok());
-    }
-
-    #[test]
-    fn test_request_data() {
-        use std::collections::HashMap;
-
-        let backend = Arc::new(MockWasmHost::new());
-
-        let request_data = vec![
-            (
-                ("metrics.labels".to_string(), "user".to_string()),
-                Expression::new("auth.identity.user").unwrap(),
-            ),
-            (
-                ("metrics.labels".to_string(), "group".to_string()),
-                Expression::new("auth.identity.group").unwrap(),
-            ),
-        ];
-
-        // Without request_data
-        let ctx_empty = ReqRespCtx::new(backend.clone());
-        let results_empty = ctx_empty.eval_request_data();
-        assert!(results_empty.is_empty());
-
-        // With request_data and stored auth values
-        let identity_map: HashMap<cel::objects::Key, cel::Value> = HashMap::from([
-            (
-                cel::objects::Key::String(Arc::new("user".to_string())),
-                cel::Value::String(Arc::new("alice".to_string())),
-            ),
-            (
-                cel::objects::Key::String(Arc::new("group".to_string())),
-                cel::Value::String(Arc::new("admin".to_string())),
-            ),
-        ]);
-        let auth_map: HashMap<cel::objects::Key, cel::Value> = HashMap::from([(
-            cel::objects::Key::String(Arc::new("identity".to_string())),
-            cel::Value::Map(cel::objects::Map::from(identity_map)),
-        )]);
-        let mut ctx = ReqRespCtx::new(backend).with_request_data(request_data);
-        ctx.store_value(
-            "auth".to_string(),
-            cel::Value::Map(cel::objects::Map::from(auth_map)),
-        );
-        let results = ctx.eval_request_data();
-        assert_eq!(results.len(), 2);
-
-        // Check metrics.labels.user result
-        let user_result = results
-            .iter()
-            .find(|entry| entry.domain == "metrics.labels" && entry.field == "user");
-        assert!(user_result.is_some());
-        let entry = user_result.unwrap();
-        assert!(entry.result.is_ok());
-        if let Ok(AttributeState::Available(cel::Value::String(user))) = &entry.result {
-            assert_eq!(user.as_ref(), "alice");
-        }
-
-        // Check metrics.labels.group result
-        let group_result = results
-            .iter()
-            .find(|entry| entry.domain == "metrics.labels" && entry.field == "group");
-        assert!(group_result.is_some());
-        let entry = group_result.unwrap();
-        assert!(entry.result.is_ok());
-        if let Ok(AttributeState::Available(cel::Value::String(group))) = &entry.result {
-            assert_eq!(group.as_ref(), "admin");
-        }
     }
 
     #[test]
