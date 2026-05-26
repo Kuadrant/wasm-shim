@@ -29,7 +29,6 @@ pub struct SendReplyTask {
 
 impl SendReplyTask {
     pub fn new(status_code: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
-        METRICS.denied().increment();
         Self {
             predicate: None,
             mode: SendReplyMode::Concrete {
@@ -159,6 +158,8 @@ impl Task for SendReplyTask {
         if let Some((tracker, value)) = ctx.tracker() {
             headers_ref.push((tracker, value));
         }
+
+        METRICS.denied().increment();
 
         let body_bytes = body.as_ref().map(|s| s.as_bytes());
         match ctx.send_http_reply(status_code, headers_ref, body_bytes) {
