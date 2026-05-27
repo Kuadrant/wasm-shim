@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+mod body_parser;
+
 use tracing::error;
 
 use crate::data::attribute::AttributeState;

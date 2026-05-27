@@ -284,7 +284,6 @@ impl ReqRespCtx {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn get_http_request_body(
         &self,
         start: usize,
