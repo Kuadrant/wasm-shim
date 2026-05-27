@@ -7,7 +7,7 @@ FROM mirror.gcr.io/library/alpine:3.23 AS wasm-shim-build
 ARG GITHUB_SHA
 ENV GITHUB_SHA=${GITHUB_SHA:-unknown}
 
-ARG RUSTC_VERSION=1.88.0
+ARG RUSTC_VERSION=1.92.0
 RUN apk update \
     && apk upgrade \
     && apk add build-base binutils-gold openssl3-dev protoc curl \
