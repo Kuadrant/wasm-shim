@@ -8,11 +8,11 @@ use crate::data::cel::{Predicate, PredicateVec};
 use crate::data::Expression;
 use crate::kuadrant::pipeline::blueprint::{Action, Operation};
 use crate::kuadrant::pipeline::tasks::{
-    HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, StoreTask, Task, TaskOutcome,
+    HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, Task, TaskOutcome,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
-use crate::services::{cel_value_to_header_pairs, DynamicService};
+use crate::services::{cel_value_to_header_pairs, DynamicService, MessageConverter};
 
 pub struct DynamicTask {
     task_id: String,
@@ -289,8 +289,23 @@ fn process_dynamic_response(
                 expression,
                 export_to_host,
             } => match expression.eval(ctx, &mut cel_ctx) {
+                // todo(@adam-cattermole): this should be delegated to the StoreTask
                 Ok(AttributeState::Available(val)) => {
-                    tasks.push(Box::new(StoreTask::new(path.clone(), val, *export_to_host)));
+                    if *export_to_host {
+                        match MessageConverter::cel_value_to_bytes(&val) {
+                            Ok(bytes) => {
+                                if let Err(e) = ctx.set_attribute(path, &bytes) {
+                                    error!("Failed to store attribute {path}: {e:?}");
+                                    return TaskOutcome::Failed;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to convert value to bytes for '{path}': {e}");
+                                return TaskOutcome::Failed;
+                            }
+                        }
+                    }
+                    ctx.store_value(path.clone(), val);
                 }
                 Ok(AttributeState::Pending) => {
                     error!("Unexpected pending state in onReply store for '{path}'");

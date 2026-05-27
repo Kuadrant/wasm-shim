@@ -327,7 +327,7 @@ impl Blueprint {
                     export_to_host,
                 } => {
                     use crate::kuadrant::pipeline::tasks::StoreTask;
-                    let task = StoreTask::new_deferred(
+                    let task = StoreTask::new(
                         action.predicate.clone(),
                         expression.clone(),
                         path.clone(),
