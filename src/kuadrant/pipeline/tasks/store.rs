@@ -196,3 +196,178 @@ impl Task for StoreTask {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::cel::Predicate;
+    use crate::data::Expression;
+    use crate::kuadrant::MockWasmHost;
+    use std::sync::Arc;
+
+    fn make_store_task(predicate: &str, expression: &str, path: &str) -> Box<StoreTask> {
+        Box::new(StoreTask::new(
+            Predicate::new(predicate).unwrap(),
+            Expression::new(expression).unwrap(),
+            path.to_string(),
+            false,
+            false,
+        ))
+    }
+
+    #[test]
+    fn body_field_extracted_and_stored() {
+        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
+
+        let mock_host =
+            MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.request_body.set_buffer_size(31, true);
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx.get_stored_value("request.llm.model").unwrap();
+        assert_eq!(stored, &cel::Value::String(Arc::new("gpt-4".to_string())));
+    }
+
+    #[test]
+    fn requeues_when_body_not_available() {
+        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
+
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        assert!(matches!(
+            task.apply(&mut ctx),
+            TaskOutcome::Requeued(ref tasks) if tasks.len() == 1
+        ));
+    }
+
+    #[test]
+    fn requeues_when_field_not_yet_found() {
+        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
+
+        let mock_host = MockWasmHost::new().with_request_body(br#"{"stream":tr"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.request_body.set_buffer_size(12, false);
+
+        assert!(matches!(
+            task.apply(&mut ctx),
+            TaskOutcome::Requeued(ref tasks) if tasks.len() == 1
+        ));
+    }
+
+    #[test]
+    fn fails_when_end_of_stream_without_field() {
+        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
+
+        let mock_host = MockWasmHost::new().with_request_body(br#"{"stream":true}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.request_body.set_buffer_size(15, true);
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Failed));
+    }
+
+    #[test]
+    fn response_body_field_extracted() {
+        let task = make_store_task("true", "responseBodyJSON('/usage')", "response.usage");
+
+        let mock_host = MockWasmHost::new().with_response_body(br#"{"usage":42}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(12, true);
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx.get_stored_value("response.usage").unwrap();
+        assert_eq!(stored, &cel::Value::Int(42));
+    }
+
+    #[test]
+    fn predicate_false_skips_store() {
+        let task = make_store_task("false", "requestBodyJSON('/model')", "request.llm.model");
+
+        let mock_host = MockWasmHost::new().with_request_body(br#"{"model":"gpt-4"}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.request_body.set_buffer_size(18, true);
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert!(ctx.get_stored_value("request.llm.model").is_none());
+    }
+
+    #[test]
+    fn multi_field_expression() {
+        let task = make_store_task(
+            "true",
+            "requestBodyJSON('/model') + ':' + requestBodyJSON('/stream')",
+            "request.llm.combined",
+        );
+
+        let mock_host =
+            MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":"yes"}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.request_body.set_buffer_size(31, true);
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx.get_stored_value("request.llm.combined").unwrap();
+        assert_eq!(
+            stored,
+            &cel::Value::String(Arc::new("gpt-4:yes".to_string()))
+        );
+    }
+
+    #[test]
+    fn no_body_parser_when_expression_has_no_body_refs() {
+        let task = make_store_task("true", "'static_value'", "some.path");
+
+        let mock_host = MockWasmHost::new();
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx.get_stored_value("some.path").unwrap();
+        assert_eq!(
+            stored,
+            &cel::Value::String(Arc::new("static_value".to_string()))
+        );
+    }
+
+    #[test]
+    fn multi_chunk_body_parsing() {
+        let mut task: Box<dyn Task> =
+            make_store_task("true", "requestBodyJSON('/stream')", "request.llm.stream");
+
+        // {"model":"gpt-4","stream":true}
+        // The '/stream' field appears later in the JSON
+        let mock_host =
+            MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        // Chunk 1: partial body - hasn't reached 'stream' field yet
+        ctx.request_body.set_buffer_size(10, false);
+        task = match task.apply(&mut ctx) {
+            TaskOutcome::Requeued(mut tasks) => {
+                assert_eq!(tasks.len(), 1);
+                tasks.remove(0)
+            }
+            _ => unreachable!("Expected requeue after chunk 1"),
+        };
+
+        // Chunk 2: more data - still incomplete
+        ctx.request_body.set_buffer_size(20, false);
+        task = match task.apply(&mut ctx) {
+            TaskOutcome::Requeued(mut tasks) => {
+                assert_eq!(tasks.len(), 1);
+                tasks.remove(0)
+            }
+            _ => unreachable!("Expected requeue after chunk 2"),
+        };
+
+        // Chunk 3: complete body with all fields
+        ctx.request_body.set_buffer_size(31, true);
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx.get_stored_value("request.llm.stream").unwrap();
+        assert_eq!(stored, &cel::Value::Bool(true));
+    }
+}

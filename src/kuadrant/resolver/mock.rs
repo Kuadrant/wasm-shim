@@ -54,7 +54,6 @@ impl MockWasmHost {
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_request_body(mut self, bytes: &[u8]) -> Self {
         self.request_body = Some(bytes.to_vec());
         self
