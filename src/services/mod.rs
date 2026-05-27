@@ -6,7 +6,9 @@ use std::{rc::Rc, time::Duration};
 mod dynamic;
 mod tracing;
 
-pub use dynamic::converters::{cel_value_to_header_pairs, MessageConverter};
+pub use dynamic::converters::{
+    cel_value_to_header_pairs, deny_response_struct_def, MessageConverter,
+};
 pub use dynamic::DynamicService;
 pub use tracing::TracingService;
 

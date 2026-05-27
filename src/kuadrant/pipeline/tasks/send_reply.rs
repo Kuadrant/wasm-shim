@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use cel::common::types::{CelString, CelUInt};
-use cel::Value;
+use cel::{Env, Value};
 use tracing::error;
 
 use crate::data::attribute::AttributeState;
@@ -8,35 +10,30 @@ use crate::data::Expression;
 use crate::kuadrant::pipeline::tasks::{NoopTerminalTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::metrics::METRICS;
-use crate::services::cel_value_to_header_pairs;
-
-enum SendReplyMode {
-    Concrete {
-        status_code: u32,
-        headers: Vec<(String, String)>,
-        body: Option<String>,
-    },
-    Deferred {
-        deny_with: Expression,
-    },
-}
+use crate::services::{cel_value_to_header_pairs, deny_response_struct_def};
 
 pub struct SendReplyTask {
     predicate: Option<Predicate>,
-    mode: SendReplyMode,
+    deny_with: Expression,
     terminal: bool,
 }
 
 impl SendReplyTask {
     pub fn new(status_code: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
-        METRICS.denied().increment();
+        let headers = headers
+            .into_iter()
+            .map(|(h, v)| format!("['''{h}''', '''{v}''']"))
+            .collect::<Vec<String>>()
+            .join(", ");
+        let body_field = body.map(|b| format!("body: '''{b}'''")).unwrap_or_default();
+        let expr = format!(
+            "DenyResponse {{ status: {status_code}u, headers: [{headers}], {body_field} }}"
+        );
+        #[allow(clippy::expect_used)]
+        let deny_with = Expression::new(&expr).expect("Needs to be valid CEL!");
         Self {
             predicate: None,
-            mode: SendReplyMode::Concrete {
-                status_code,
-                headers,
-                body,
-            },
+            deny_with,
             terminal: false,
         }
     }
@@ -44,7 +41,7 @@ impl SendReplyTask {
     pub fn new_deferred(predicate: Predicate, deny_with: Expression, terminal: bool) -> Self {
         Self {
             predicate: Some(predicate),
-            mode: SendReplyMode::Deferred { deny_with },
+            deny_with,
             terminal,
         }
     }
@@ -105,48 +102,46 @@ impl Task for SendReplyTask {
             }
         }
 
-        let (status_code, headers, body) = match &self.mode {
-            SendReplyMode::Concrete {
-                status_code,
-                headers,
-                body,
-            } => (*status_code, headers.clone(), body.clone()),
-            SendReplyMode::Deferred { deny_with } => {
-                let mut cel_ctx = cel::Context::default();
-                match deny_with.eval(ctx, &mut cel_ctx) {
-                    Ok(AttributeState::Pending) => {
-                        error!("Unexpected pending state in deny expression");
+        let (status_code, headers, body) = {
+            let mut env = Env::stdlib();
+            env.add_struct(deny_response_struct_def());
+            let mut cel_ctx = cel::Context::with_env(Arc::new(env));
+            match self.deny_with.eval(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Pending) => {
+                    error!("Unexpected pending state in deny expression");
+                    return TaskOutcome::Failed;
+                }
+                Ok(AttributeState::Available(val @ Value::Struct(_))) => {
+                    let Value::Struct(deny_response) = val else {
+                        error!("Invalid DenyResponse: {val:?}");
                         return TaskOutcome::Failed;
-                    }
-                    Ok(AttributeState::Available(val @ Value::Struct(_))) => {
-                        match SendReplyTask::try_from(val) {
-                            Ok(concrete_task) => {
-                                if let SendReplyMode::Concrete {
-                                    status_code,
-                                    headers,
-                                    body,
-                                } = concrete_task.mode
-                                {
-                                    (status_code, headers, body)
-                                } else {
-                                    error!("Expected concrete task from try_from");
-                                    return TaskOutcome::Failed;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Invalid DenyResponse: {e}");
-                                return TaskOutcome::Failed;
-                            }
-                        }
-                    }
-                    Ok(AttributeState::Available(other)) => {
-                        error!("denyWith must return DenyResponse, got: {other:?}");
-                        return TaskOutcome::Failed;
-                    }
-                    Err(e) => {
-                        error!("Failed to evaluate denyWith expression: {e}");
-                        return TaskOutcome::Failed;
-                    }
+                    };
+
+                    let status = deny_response
+                        .field_value("status")
+                        .and_then(|v| v.downcast_ref::<CelUInt>())
+                        .map(|v| *v.inner() as u32);
+
+                    let body = deny_response
+                        .field_value("body")
+                        .and_then(|v| v.downcast_ref::<CelString>())
+                        .map(|v| v.inner().to_string())
+                        .filter(|s| !s.is_empty());
+
+                    let headers = deny_response
+                        .field_value("headers")
+                        .and_then(|v| Value::try_from(v).ok())
+                        .map(|v| cel_value_to_header_pairs(&v))
+                        .unwrap_or_default();
+                    (status.unwrap_or(500u32), headers, body)
+                }
+                Ok(AttributeState::Available(other)) => {
+                    error!("denyWith must return DenyResponse, got: {other:?}");
+                    return TaskOutcome::Failed;
+                }
+                Err(e) => {
+                    error!("Failed to evaluate denyWith expression: {e}");
+                    return TaskOutcome::Failed;
                 }
             }
         };
@@ -159,6 +154,8 @@ impl Task for SendReplyTask {
         if let Some((tracker, value)) = ctx.tracker() {
             headers_ref.push((tracker, value));
         }
+
+        METRICS.denied().increment();
 
         let body_bytes = body.as_ref().map(|s| s.as_bytes());
         match ctx.send_http_reply(status_code, headers_ref, body_bytes) {
@@ -190,7 +187,13 @@ mod tests {
 
         let task = Box::new(SendReplyTask::new(
             403,
-            vec![("content-type".to_string(), "text/plain".to_string())],
+            vec![
+                ("content-type".to_string(), "text/plain".to_string()),
+                (
+                    "WWW-Authenticate".to_string(),
+                    "APIKEY realm=\"api-key-users\"".to_string(),
+                ),
+            ],
             Some("Access Denied".to_string()),
         ));
 
