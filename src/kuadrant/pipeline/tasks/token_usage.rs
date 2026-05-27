@@ -61,8 +61,8 @@ impl Task for TokenUsageTask {
             }
         };
 
-        if ctx.response_body_buffer_size() > 0 {
-            match ctx.get_http_response_body(0, ctx.response_body_buffer_size()) {
+        if ctx.response_body.buffer_size() > 0 {
+            match ctx.get_http_response_body(0, ctx.response_body.buffer_size()) {
                 Ok(AttributeState::Available(Some(bytes))) => {
                     strategy.feed_buffer(bytes);
                 }
@@ -80,21 +80,21 @@ impl Task for TokenUsageTask {
             }
         }
 
-        if ctx.is_end_of_stream() {
+        if ctx.response_body.is_end_of_stream() {
             for field in &task.expected_response_fields {
                 if let Some(json_value) = strategy.extract_property(field) {
                     match json_value {
-                        Value::Bool(b) => ctx.set_response_body_value(field, b),
+                        Value::Bool(b) => ctx.response_body.set_value(field, b),
                         Value::Number(n) => {
                             if let Some(u) = n.as_u64() {
-                                ctx.set_response_body_value(field, u);
+                                ctx.response_body.set_value(field, u);
                             } else if let Some(i) = n.as_i64() {
-                                ctx.set_response_body_value(field, i);
+                                ctx.response_body.set_value(field, i);
                             } else if let Some(f) = n.as_f64() {
-                                ctx.set_response_body_value(field, f);
+                                ctx.response_body.set_value(field, f);
                             }
                         }
-                        Value::String(s) => ctx.set_response_body_value(field, s),
+                        Value::String(s) => ctx.response_body.set_value(field, s),
                         Value::Null | Value::Array(_) | Value::Object(_) => {
                             warn!("Unsupported json value type: {:?}", json_value);
                         }
@@ -214,7 +214,7 @@ mod tests {
         let headers = vec![("content-type".to_string(), "application/json".to_string())];
         let mock_backend = MockWasmHost::new().with_map("response.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_current_response_body_buffer_size(0, false);
+        ctx.response_body.set_buffer_size(0, false);
 
         let task = Box::new(TokenUsageTask::new());
 
@@ -227,7 +227,7 @@ mod tests {
         let headers = vec![("content-type".to_string(), "application/json".to_string())];
         let mock_backend = MockWasmHost::new().with_map("response.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
-        ctx.set_current_response_body_buffer_size(0, true);
+        ctx.response_body.set_buffer_size(0, true);
 
         let task = Box::new(TokenUsageTask::new());
 

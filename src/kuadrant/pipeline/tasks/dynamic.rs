@@ -96,7 +96,7 @@ impl Task for DynamicTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
             Ok(AttributeState::Pending) => {
-                return if ctx.is_end_of_stream() {
+                return if ctx.response_body.is_end_of_stream() {
                     TaskOutcome::Failed
                 } else {
                     TaskOutcome::Requeued(vec![self])
@@ -126,7 +126,7 @@ impl Task for DynamicTask {
             let mut cel_ctx = cel::Context::with_env(env);
             let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
-                    return if ctx.is_end_of_stream() {
+                    return if ctx.response_body.is_end_of_stream() {
                         TaskOutcome::Failed
                     } else {
                         TaskOutcome::Requeued(vec![self])

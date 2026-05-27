@@ -272,7 +272,7 @@ impl Expression {
         {
             let mut response_json_map = HashMap::new();
             for field_key in &self.response_body_values {
-                match req_ctx.get_response_body_value(field_key) {
+                match req_ctx.response_body.get_value(field_key) {
                     Some(value) => {
                         response_json_map.insert(field_key.clone(), value.clone());
                     }
@@ -289,7 +289,7 @@ impl Expression {
         {
             let mut request_json_map = HashMap::new();
             for field_key in &self.request_body_values {
-                match req_ctx.get_request_body_value(field_key) {
+                match req_ctx.request_body.get_value(field_key) {
                     Some(value) => {
                         request_json_map.insert(field_key.clone(), value.clone());
                     }
@@ -1266,7 +1266,7 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
         let mut cel_ctx = cel::Context::default();
-        req_ctx.set_response_body_value("bar", 42);
+        req_ctx.response_body.set_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
             expr.eval(&req_ctx, &mut cel_ctx).unwrap()
@@ -1289,7 +1289,7 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
 
-        req_ctx.set_response_body_value("foo", 58);
+        req_ctx.response_body.set_value("foo", 58);
         assert_eq!(
             AttributeState::Pending,
             expr.eval(&req_ctx, &mut cel_ctx).unwrap()
@@ -1301,8 +1301,8 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
         let mut cel_ctx = cel::Context::default();
-        req_ctx.set_response_body_value("tokens", 100);
-        req_ctx.set_response_body_value("model", "gpt-4");
+        req_ctx.response_body.set_value("tokens", 100);
+        req_ctx.response_body.set_value("model", "gpt-4");
 
         let expr1 = Expression::new("responseBodyJSON('tokens') > 50").unwrap();
         assert_eq!(
@@ -1325,7 +1325,7 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
         let mut cel_ctx = cel::Context::default();
-        req_ctx.set_request_body_value("bar", 42);
+        req_ctx.request_body.set_value("bar", 42);
         assert_eq!(
             AttributeState::Available(Value::Bool(true)),
             expr.eval(&req_ctx, &mut cel_ctx).unwrap()
@@ -1347,7 +1347,7 @@ mod tests {
             Expression::new("requestBodyJSON('foo') + requestBodyJSON('bar') == 100").unwrap();
         let mock_host = MockWasmHost::new();
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
-        req_ctx.set_request_body_value("foo", 58);
+        req_ctx.request_body.set_value("foo", 58);
         let mut cel_ctx = cel::Context::default();
         assert_eq!(
             AttributeState::Pending,
@@ -1360,8 +1360,8 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
         let mut cel_ctx = cel::Context::default();
-        req_ctx.set_request_body_value("tokens", 100);
-        req_ctx.set_request_body_value("model", "gpt-4");
+        req_ctx.request_body.set_value("tokens", 100);
+        req_ctx.request_body.set_value("model", "gpt-4");
 
         let expr1 = Expression::new("requestBodyJSON('tokens') > 50").unwrap();
         assert_eq!(

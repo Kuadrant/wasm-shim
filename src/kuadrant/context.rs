@@ -20,16 +20,12 @@ pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
     request_data: Option<Vec<RequestData>>,
-    request_body_size: usize,
-    request_end_of_stream: bool,
-    response_body_size: usize,
-    response_end_of_stream: bool,
+    pub request_body: BodyContext,
+    pub response_body: BodyContext,
     // todo(refactor): we should handle token here
     grpc_response_data: Option<(u32, usize)>,
     tracing: TracingContext,
     tracker: Tracker,
-    request_body_values: HashMap<String, Value>,
-    response_body_values: HashMap<String, Value>,
     stored_values: BTreeMap<String, Value>,
     pub barrier: Barrier,
 }
@@ -46,15 +42,11 @@ impl ReqRespCtx {
             backend,
             cache: Arc::new(AttributeCache::new()),
             request_data: None,
-            request_body_size: 0,
-            request_end_of_stream: false,
-            response_body_size: 0,
-            response_end_of_stream: false,
+            request_body: BodyContext::default(),
+            response_body: BodyContext::default(),
             grpc_response_data: None,
             tracing: TracingContext::default(),
             tracker: Tracker::default(),
-            request_body_values: HashMap::new(),
-            response_body_values: HashMap::new(),
             stored_values: BTreeMap::new(),
             barrier: Barrier::default(),
         }
@@ -110,16 +102,6 @@ impl ReqRespCtx {
 
     pub fn set_hostname(&mut self, hostname: String) {
         self.tracing.hostname = Some(hostname);
-    }
-
-    pub fn set_current_request_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
-        self.request_body_size = body_size;
-        self.request_end_of_stream = end_of_stream;
-    }
-
-    pub fn set_current_response_body_buffer_size(&mut self, body_size: usize, end_of_stream: bool) {
-        self.response_body_size = body_size;
-        self.response_end_of_stream = end_of_stream;
     }
 
     pub fn set_grpc_response_data(
@@ -302,14 +284,6 @@ impl ReqRespCtx {
         }
     }
 
-    pub fn is_end_of_stream(&self) -> bool {
-        self.response_end_of_stream
-    }
-
-    pub fn response_body_buffer_size(&self) -> usize {
-        self.response_body_size
-    }
-
     pub(crate) fn get_http_response_body(
         &self,
         start: usize,
@@ -391,23 +365,6 @@ impl ReqRespCtx {
             None => None,
             Some(id) => Some((id.as_str(), self.request_id())),
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn set_request_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
-        self.request_body_values.insert(key.into(), value.into());
-    }
-
-    pub fn get_request_body_value(&self, key: &str) -> Option<&Value> {
-        self.request_body_values.get(key)
-    }
-
-    pub fn set_response_body_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
-        self.response_body_values.insert(key.into(), value.into());
-    }
-
-    pub fn get_response_body_value(&self, key: &str) -> Option<&Value> {
-        self.response_body_values.get(key)
     }
 
     pub fn store_value(&mut self, path: String, value: Value) {
@@ -512,6 +469,36 @@ impl Barrier {
     #[cfg(test)]
     pub fn count(&self) -> u32 {
         self.count
+    }
+}
+
+#[derive(Default)]
+pub struct BodyContext {
+    buffer_size: usize,
+    end_of_stream: bool,
+    values: HashMap<String, Value>,
+}
+
+impl BodyContext {
+    pub fn buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+
+    pub fn is_end_of_stream(&self) -> bool {
+        self.end_of_stream
+    }
+
+    pub fn set_buffer_size(&mut self, size: usize, end_of_stream: bool) {
+        self.buffer_size = size;
+        self.end_of_stream = end_of_stream;
+    }
+
+    pub fn set_value<K: Into<String>, V: Into<Value>>(&mut self, key: K, value: V) {
+        self.values.insert(key.into(), value.into());
+    }
+
+    pub fn get_value(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
     }
 }
 

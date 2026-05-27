@@ -133,7 +133,8 @@ impl HttpContext for KuadrantFilter {
         if let Some(mut pipeline) = self.pipeline.take() {
             pipeline
                 .ctx
-                .set_current_request_body_buffer_size(buffer_size, end_of_stream);
+                .request_body
+                .set_buffer_size(buffer_size, end_of_stream);
             match pipeline.eval() {
                 PipelineState::InProgress(p) => {
                     self.pipeline = Some(*p);
@@ -180,7 +181,8 @@ impl HttpContext for KuadrantFilter {
         if let Some(mut pipeline) = self.pipeline.take() {
             pipeline
                 .ctx
-                .set_current_response_body_buffer_size(buffer_size, end_of_stream);
+                .response_body
+                .set_buffer_size(buffer_size, end_of_stream);
             match pipeline.eval() {
                 PipelineState::InProgress(p) => {
                     self.pipeline = Some(*p);
