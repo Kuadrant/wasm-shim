@@ -327,14 +327,23 @@ impl Blueprint {
                     export_to_host,
                 } => {
                     use crate::kuadrant::pipeline::tasks::StoreTask;
-                    let task = StoreTask::new(
+                    match StoreTask::new(
                         action.predicate.clone(),
                         expression.clone(),
                         path.clone(),
                         *export_to_host,
                         action.terminal,
-                    );
-                    tasks.push(Box::new(task));
+                    ) {
+                        Ok(task) => tasks.push(Box::new(task)),
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to create StoreTask for path '{}': {}. Action {} will be skipped.",
+                                path,
+                                e,
+                                action.id
+                            );
+                        }
+                    }
                 }
                 Operation::Fail { log_message } => {
                     tracing::error!(

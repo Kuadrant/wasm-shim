@@ -3,7 +3,7 @@ mod body_parser;
 use body_parser::BodyParser;
 use tracing::error;
 
-use crate::data::attribute::AttributeState;
+use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::Predicate;
 use crate::data::Expression;
 use crate::kuadrant::pipeline::tasks::{NoopTerminalTask, Task, TaskOutcome};
@@ -31,23 +31,23 @@ impl StoreTask {
         path: String,
         export_to_host: bool,
         terminal: bool,
-    ) -> Self {
-        let body_parser = create_body_parser(&predicate, &expression);
-        Self {
+    ) -> Result<Self, AttributeError> {
+        let body_parser = create_body_parser(&predicate, &expression)?;
+        Ok(Self {
             predicate: Some(predicate),
             expression,
             path,
             export_to_host,
             terminal,
             body_parser,
-        }
+        })
     }
 }
 
 fn create_body_parser(
     predicate: &Predicate,
     expression: &Expression,
-) -> Option<(BodySource, BodyParser)> {
+) -> Result<Option<(BodySource, BodyParser)>, AttributeError> {
     let mut request_fields: Vec<String> = Vec::new();
     let mut response_fields: Vec<String> = Vec::new();
 
@@ -60,25 +60,19 @@ fn create_body_parser(
     if !request_fields.is_empty() {
         request_fields.sort();
         request_fields.dedup();
-        match BodyParser::new(request_fields) {
-            Ok(parser) => Some((BodySource::Request, parser)),
-            Err(e) => {
-                error!("Failed to create body parser: {e}");
-                None
-            }
-        }
+        let parser = BodyParser::new(request_fields).map_err(|e| {
+            AttributeError::Parse(format!("Failed to create request body parser: {}", e))
+        })?;
+        Ok(Some((BodySource::Request, parser)))
     } else if !response_fields.is_empty() {
         response_fields.sort();
         response_fields.dedup();
-        match BodyParser::new(response_fields) {
-            Ok(parser) => Some((BodySource::Response, parser)),
-            Err(e) => {
-                error!("Failed to create body parser: {e}");
-                None
-            }
-        }
+        let parser = BodyParser::new(response_fields).map_err(|e| {
+            AttributeError::Parse(format!("Failed to create response body parser: {}", e))
+        })?;
+        Ok(Some((BodySource::Response, parser)))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -206,13 +200,16 @@ mod tests {
     use std::sync::Arc;
 
     fn make_store_task(predicate: &str, expression: &str, path: &str) -> Box<StoreTask> {
-        Box::new(StoreTask::new(
-            Predicate::new(predicate).unwrap(),
-            Expression::new(expression).unwrap(),
-            path.to_string(),
-            false,
-            false,
-        ))
+        Box::new(
+            StoreTask::new(
+                Predicate::new(predicate).unwrap(),
+                Expression::new(expression).unwrap(),
+                path.to_string(),
+                false,
+                false,
+            )
+            .unwrap(),
+        )
     }
 
     #[test]
@@ -330,6 +327,20 @@ mod tests {
             stored,
             &cel::Value::String(Arc::new("static_value".to_string()))
         );
+    }
+
+    #[test]
+    fn invalid_json_pointer_fails_task_creation() {
+        // Invalid JSON pointer format - acutejson expects RFC 6901 format
+        let result = StoreTask::new(
+            Predicate::new("true").unwrap(),
+            Expression::new("requestBodyJSON('not-a-valid-pointer')").unwrap(),
+            "some.path".to_string(),
+            false,
+            false,
+        );
+
+        assert!(result.is_err(), "Expected error for invalid JSON pointer");
     }
 
     #[test]
