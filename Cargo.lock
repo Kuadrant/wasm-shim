@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "cel"
 version = "0.13.0"
-source = "git+https://github.com/cel-rust/cel-rust.git?branch=master#d23d0a77f4d593dba16abd0452261c6147dc9ba1"
+source = "git+https://github.com/cel-rust/cel-rust.git?rev=d23d0a7#d23d0a77f4d593dba16abd0452261c6147dc9ba1"
 dependencies = [
  "antlr4rust",
  "chrono",
@@ -1594,7 +1594,7 @@ dependencies = [
 [[package]]
 name = "proxy-wasm"
 version = "0.2.3-dev"
-source = "git+https://github.com/Kuadrant/proxy-wasm-rust-sdk.git?branch=kuadrant#ceeb7c1f5263c30d835d87eee11660348d2179e8"
+source = "git+https://github.com/Kuadrant/proxy-wasm-rust-sdk.git?rev=ceeb7c1#ceeb7c1f5263c30d835d87eee11660348d2179e8"
 dependencies = [
  "hashbrown 0.15.5",
  "log",
@@ -1603,7 +1603,7 @@ dependencies = [
 [[package]]
 name = "proxy-wasm-test-framework"
 version = "0.1.0"
-source = "git+https://github.com/Kuadrant/wasm-test-framework.git?branch=kuadrant#33b318b5e110a6514e1021530c84a8fa50362e45"
+source = "git+https://github.com/Kuadrant/wasm-test-framework.git?rev=33b318b#33b318b5e110a6514e1021530c84a8fa50362e45"
 dependencies = [
  "anyhow",
  "lazy_static",
