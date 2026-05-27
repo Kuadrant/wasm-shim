@@ -316,6 +316,11 @@ impl Expression {
         data::AttributeMap::new(self.attributes.clone()).into(req_ctx)
     }
 
+    #[allow(dead_code)]
+    pub fn request_body_values(&self) -> &[String] {
+        &self.request_body_values
+    }
+
     pub fn response_body_values(&self) -> &[String] {
         &self.response_body_values
     }
@@ -554,6 +559,11 @@ impl Predicate {
                 err.to_string(),
             )),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn request_body_values(&self) -> &[String] {
+        self.expression.request_body_values()
     }
 
     pub fn response_body_values(&self) -> &[String] {
