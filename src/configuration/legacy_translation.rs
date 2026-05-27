@@ -48,9 +48,15 @@ pub(super) mod ratelimit {
             for item in &cd.data {
                 match &item.item {
                     DataType::Static(s) if s.key == attr_key => {
+                        if attr_key == "ratelimit.hits_addend" {
+                            return Some(format!("uint({})", s.value));
+                        }
                         return Some(format!(r#""{}""#, escape_cel_string(&s.value)));
                     }
                     DataType::Expression(e) if e.key == attr_key => {
+                        if attr_key == "ratelimit.hits_addend" {
+                            return Some(format!("uint({})", e.value));
+                        }
                         return Some(e.value.clone());
                     }
                     _ => {}
@@ -701,7 +707,7 @@ pub(super) mod ratelimit {
                 Operation::Grpc(grpc_op) if
                     grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
     domain: "default",
-    hits_addend: responseBodyJSON('/usage/total_tokens'),
+    hits_addend: uint(responseBodyJSON('/usage/total_tokens')),
     descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "user", value: string(auth.identity.username) }] }]
 }"# &&
                     grpc_op.on_reply.len() == 1
@@ -759,7 +765,7 @@ pub(super) mod ratelimit {
                 Operation::Grpc(grpc_op) if
                     grpc_op.message_builder == r#"envoy.service.ratelimit.v3.RateLimitRequest {
     domain: "report-full",
-    hits_addend: responseBodyJSON('/usage/total_tokens'),
+    hits_addend: uint(responseBodyJSON('/usage/total_tokens')),
     descriptors: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((auth.identity.tier == 'gold') ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "priority", value: "high" }] : []) + [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "endpoint", value: string(request.path) }] }, envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: "zone", value: string("east") }] }]
 }"# &&
                     grpc_op.on_reply.len() == 1
