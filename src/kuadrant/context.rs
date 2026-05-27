@@ -284,6 +284,19 @@ impl ReqRespCtx {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn get_http_request_body(
+        &self,
+        start: usize,
+        body_size: usize,
+    ) -> Result<AttributeState<Option<Vec<u8>>>, AttributeError> {
+        match self.backend.get_http_request_body(start, body_size) {
+            Ok(maybe_bytes) => Ok(AttributeState::Available(maybe_bytes)),
+            Err(AttributeError::NotAvailable(_)) => Ok(AttributeState::Pending),
+            Err(e) => Err(e),
+        }
+    }
+
     pub(crate) fn get_http_response_body(
         &self,
         start: usize,

@@ -83,6 +83,26 @@ impl AttributeResolver for ProxyWasmHost {
         }
     }
 
+    fn get_http_request_body(
+        &self,
+        start: usize,
+        max_size: usize,
+    ) -> Result<Option<proxy_wasm::types::Bytes>, AttributeError> {
+        match hostcalls::get_buffer(
+            proxy_wasm::types::BufferType::HttpRequestBody,
+            start,
+            max_size,
+        ) {
+            Ok(bytes) => Ok(bytes),
+            Err(Status::BadArgument) => {
+                Err(AttributeError::NotAvailable("request.body".to_string()))
+            }
+            Err(e) => Err(AttributeError::Retrieval(format!(
+                "Error getting http request body buffer: {e:?}"
+            ))),
+        }
+    }
+
     fn get_http_response_body(
         &self,
         start: usize,

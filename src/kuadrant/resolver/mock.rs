@@ -11,6 +11,7 @@ pub struct MockWasmHost {
     maps: Mutex<HashMap<String, Vec<(String, String)>>>,
     grpc_response: Mutex<Option<Vec<u8>>>,
     pending_properties: Vec<Path>,
+    request_body: Option<Vec<u8>>,
     response_body: Option<Vec<u8>>,
 }
 
@@ -27,6 +28,7 @@ impl MockWasmHost {
             maps: Mutex::new(HashMap::new()),
             grpc_response: Mutex::new(None),
             pending_properties: Vec::new(),
+            request_body: None,
             response_body: None,
         }
     }
@@ -49,6 +51,12 @@ impl MockWasmHost {
 
     pub fn with_pending_property(mut self, path: Path) -> Self {
         self.pending_properties.push(path);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_request_body(mut self, bytes: &[u8]) -> Self {
+        self.request_body = Some(bytes.to_vec());
         self
     }
 
@@ -163,6 +171,23 @@ impl AttributeResolver for MockWasmHost {
         Ok(())
     }
 
+    fn get_http_request_body(
+        &self,
+        start: usize,
+        max_size: usize,
+    ) -> Result<Option<Vec<u8>>, AttributeError> {
+        match &self.request_body {
+            Some(body) => {
+                let buf_end_index = std::cmp::min(start + max_size, body.len());
+                if start >= body.len() {
+                    return Ok(Some(Vec::new()));
+                }
+                Ok(Some(body[start..buf_end_index].to_vec()))
+            }
+            None => Ok(None),
+        }
+    }
+
     fn get_http_response_body(
         &self,
         start: usize,
@@ -171,10 +196,10 @@ impl AttributeResolver for MockWasmHost {
         match &self.response_body {
             Some(body) => {
                 let buf_end_index = std::cmp::min(start + max_size, body.len());
-                let mut dst = vec![0; buf_end_index];
-                assert!(start <= buf_end_index, "messed up with the indexes!");
-                dst.clone_from_slice(&body[start..buf_end_index]);
-                Ok(Some(dst))
+                if start >= body.len() {
+                    return Ok(Some(Vec::new()));
+                }
+                Ok(Some(body[start..buf_end_index].to_vec()))
             }
             None => Ok(None),
         }
