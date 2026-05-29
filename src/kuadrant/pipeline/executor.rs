@@ -67,10 +67,12 @@ impl Pipeline {
         self.deferred_tasks = deferred
             .into_iter()
             .map(|(token_id, task)| {
+                let is_guard = task.is_guard();
                 // Create a new PendingTask with no-op processor
                 let pending = Box::new(PendingTask::new(
                     task.id().unwrap_or_default(),
-                    Box::new(noop_response_processor(token_id)),
+                    Box::new(noop_response_processor(token_id, is_guard)),
+                    is_guard,
                 )) as Box<dyn Task>;
                 (token_id, pending)
             })
@@ -84,9 +86,11 @@ impl Pipeline {
                 TeardownOutcome::Done => {}
                 TeardownOutcome::Deferred(token_id) => {
                     // Create a no-op PendingTask for this deferred teardown action
+                    // Teardown tasks (trace export) are currently not guards
                     let pending = Box::new(PendingTask::new(
                         format!("teardown_{}", token_id),
-                        Box::new(noop_response_processor(token_id)),
+                        Box::new(noop_response_processor(token_id, false)),
+                        false,
                     ));
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
                         error!("Duplicate token_id during teardown: {}", token_id);
@@ -262,6 +266,7 @@ mod tests {
                         }
                         complete_outcome
                     }),
+                    is_guard,
                 )),
             }
         }
@@ -272,6 +277,10 @@ mod tests {
 
         fn dependencies(&self) -> &[String] {
             &self.dependencies
+        }
+
+        fn is_guard(&self) -> bool {
+            self.is_guard
         }
     }
 

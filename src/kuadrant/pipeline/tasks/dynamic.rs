@@ -93,6 +93,10 @@ impl Task for DynamicTask {
         &self.dependencies
     }
 
+    fn is_guard(&self) -> bool {
+        self.is_guard
+    }
+
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         match self.predicates.apply(ctx) {
             Ok(AttributeState::Pending) => {
@@ -171,6 +175,7 @@ impl Task for DynamicTask {
                     }
                     outcome
                 }),
+                is_guard,
             )),
         }
     }
