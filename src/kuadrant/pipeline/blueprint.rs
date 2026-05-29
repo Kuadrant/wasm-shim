@@ -185,13 +185,13 @@ impl Blueprint {
             .enumerate()
             .map(|(i, action_config)| {
                 let id = i.to_string();
-                let dependencies = if i > 0 {
-                    vec![(i - 1).to_string()]
-                } else {
-                    vec![]
-                };
                 match action_config {
                     configuration::ActionConfig::Legacy(action) => {
+                        let dependencies = if i > 0 {
+                            vec![(i - 1).to_string()]
+                        } else {
+                            vec![]
+                        };
                         let legacy_request_data: Vec<((String, String), String)> = request_data
                             .iter()
                             .map(|(key, expr)| (key.clone(), expr.source().to_string()))
@@ -199,7 +199,7 @@ impl Blueprint {
                         Action::compile(action, services, id, dependencies, &legacy_request_data)
                     }
                     configuration::ActionConfig::Typed(typed) => {
-                        Action::compile_typed(typed, services, id, dependencies)
+                        Action::compile_typed(typed, services, id, vec![])
                     }
                 }
             })
@@ -435,12 +435,7 @@ impl Action {
                     .enumerate()
                     .map(|(idx, typed_action)| {
                         let reply_id = format!("{}.{}", id, idx);
-                        let reply_deps = if idx > 0 {
-                            vec![format!("{}.{}", id, idx - 1)]
-                        } else {
-                            vec![]
-                        };
-                        Action::compile_typed(typed_action, services, reply_id, reply_deps)
+                        Action::compile_typed(typed_action, services, reply_id, vec![])
                     })
                     .collect::<Result<_, _>>()?;
 
@@ -1027,6 +1022,7 @@ mod tests {
             assert!(matches!(service, ServiceInstance::Dynamic(_)));
             assert_eq!(on_reply.len(), 1);
         }
-        assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
+
+        assert!(blueprint.actions[1].dependencies.is_empty());
     }
 }
