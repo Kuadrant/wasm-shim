@@ -1,7 +1,7 @@
 use crate::data::attribute::{AttributeState, Path};
 use crate::data::cel::Predicate;
 use crate::data::{Expression, Headers};
-use crate::kuadrant::pipeline::tasks::{NoopTerminalTask, Task, TaskOutcome};
+use crate::kuadrant::pipeline::tasks::{SendReplyTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::services::cel_value_to_header_pairs;
 use tracing::{debug, error};
@@ -145,7 +145,7 @@ impl Task for ModifyHeadersTask {
                 match ctx.set_attribute_map(&path, existing_headers) {
                     Ok(AttributeState::Available(_)) => {
                         if self.terminal {
-                            TaskOutcome::Terminate(Box::new(NoopTerminalTask))
+                            TaskOutcome::Terminate(Box::new(SendReplyTask::default()))
                         } else {
                             TaskOutcome::Done
                         }
