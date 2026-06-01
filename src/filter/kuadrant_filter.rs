@@ -31,12 +31,13 @@ impl KuadrantFilter {
 
     #[allow(clippy::expect_used)]
     fn should_resume(&self) -> bool {
-        self.pipeline
-            .as_ref()
-            .expect("pipeline must be present")
-            .is_terminated()
-            .not()
-            && self.should_pause().not()
+        let pipeline = self.pipeline.as_ref().expect("pipeline must be present");
+
+        if pipeline.is_terminated() && self.in_response_phase {
+            return self.should_pause().not();
+        }
+
+        pipeline.is_terminated().not() && self.should_pause().not()
     }
 }
 
@@ -59,7 +60,7 @@ impl Context for KuadrantFilter {
                         self.context_id,
                         should_resume
                     );
-                    should_resume || self.force_resume
+                    should_resume || self.force_resume || self.in_response_phase
                 }
             };
 
