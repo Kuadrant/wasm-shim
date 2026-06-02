@@ -32,18 +32,24 @@ pub trait Task {
     fn dependencies(&self) -> &[String] {
         &[]
     }
+
+    fn is_guard(&self) -> bool {
+        false
+    }
 }
 
 pub struct PendingTask {
     task_id: String,
     process_response: Box<ResponseProcessor>,
+    is_guard: bool,
 }
 
 impl PendingTask {
-    pub fn new(task_id: String, process_response: Box<ResponseProcessor>) -> Self {
+    pub fn new(task_id: String, process_response: Box<ResponseProcessor>, is_guard: bool) -> Self {
         Self {
             task_id,
             process_response,
+            is_guard,
         }
     }
 }
@@ -54,6 +60,9 @@ impl Task for PendingTask {
     }
     fn id(&self) -> Option<String> {
         Some(self.task_id.clone())
+    }
+    fn is_guard(&self) -> bool {
+        self.is_guard
     }
 }
 
@@ -77,8 +86,14 @@ pub enum TeardownOutcome {
     Deferred(u32),
 }
 
-pub fn noop_response_processor(token_id: u32) -> impl FnOnce(&mut ReqRespCtx) -> TaskOutcome {
+pub fn noop_response_processor(
+    token_id: u32,
+    is_guard: bool,
+) -> impl FnOnce(&mut ReqRespCtx) -> TaskOutcome {
     move |ctx: &mut ReqRespCtx| {
+        if is_guard {
+            ctx.barrier.lower();
+        }
         match ctx.get_grpc_response_data() {
             Ok((status_code, _response_size)) => {
                 if status_code != 0 {

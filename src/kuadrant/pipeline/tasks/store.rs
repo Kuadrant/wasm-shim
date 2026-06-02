@@ -3,7 +3,7 @@ use tracing::error;
 use crate::data::attribute::AttributeState;
 use crate::data::cel::Predicate;
 use crate::data::Expression;
-use crate::kuadrant::pipeline::tasks::{NoopTerminalTask, Task, TaskOutcome};
+use crate::kuadrant::pipeline::tasks::{SendReplyTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::services::MessageConverter;
 use cel::Value;
@@ -110,7 +110,7 @@ impl Task for StoreTask {
         ctx.store_value(self.path.clone(), value);
 
         if self.terminal {
-            TaskOutcome::Terminate(Box::new(NoopTerminalTask))
+            TaskOutcome::Terminate(Box::new(SendReplyTask::default()))
         } else {
             TaskOutcome::Done
         }
