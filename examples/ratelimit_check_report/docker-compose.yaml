@@ -30,7 +30,7 @@ services:
       - ./envoy.yaml:/etc/envoy.yaml
       - ../../target/wasm32-wasip1/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
   limitador:
-    image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:v2.2.0}
+    image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:latest}
     container_name: limitador
     command:
       - --rls-ip
