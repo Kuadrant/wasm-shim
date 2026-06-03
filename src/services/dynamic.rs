@@ -53,6 +53,14 @@ impl DynamicService {
         self.failure_mode
     }
 
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
     pub fn cel_env(&self) -> Result<Arc<Env>, ServiceError> {
         match self.cel_env.get() {
             Some(env) => Ok(Arc::clone(env)),

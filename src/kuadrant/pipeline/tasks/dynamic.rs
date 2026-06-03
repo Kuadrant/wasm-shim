@@ -115,9 +115,14 @@ impl Task for DynamicTask {
         }
 
         let token_id = {
-            let _span =
-                tracing::debug_span!("dynamic_request", task_id = self.task_id, name = self.name)
-                    .entered();
+            let _span = tracing::debug_span!(
+                "grpc_request",
+                task_id = self.task_id,
+                name = self.name,
+                grpc_service = self.service.service_name(),
+                grpc_method = self.service.method()
+            )
+            .entered();
 
             let env = match self.service.cel_env() {
                 Ok(env) => env,
@@ -190,9 +195,11 @@ fn process_dynamic_response(
     on_reply: &[Action],
 ) -> TaskOutcome {
     let span = tracing::debug_span!(
-        "dynamic_response",
+        "grpc_response",
         task_id = task_id,
         token_id = token_id,
+        grpc_service = service.service_name(),
+        grpc_method = service.method(),
         grpc_status_code = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
         otel.status_message = tracing::field::Empty
