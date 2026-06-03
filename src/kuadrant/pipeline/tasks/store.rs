@@ -77,7 +77,6 @@ fn create_body_parser(
 }
 
 impl Task for StoreTask {
-    #[tracing::instrument(name = "store", skip(self, ctx), level = tracing::Level::TRACE)]
     fn apply(mut self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some((ref source, ref mut parser)) = self.body_parser {
             let body_ctx = match source {
@@ -148,6 +147,8 @@ impl Task for StoreTask {
                 }
             }
         }
+
+        let _span = tracing::debug_span!("store").entered();
 
         let mut cel_ctx = cel::Context::default();
         let value = match self.expression.eval(ctx, &mut cel_ctx) {

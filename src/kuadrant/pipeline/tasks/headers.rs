@@ -96,6 +96,8 @@ impl Task for ModifyHeadersTask {
             }
         }
 
+        let _span = tracing::debug_span!("headers").entered();
+
         let operation = match &self.mode {
             HeadersMode::Concrete { operation } => operation.clone(),
             HeadersMode::Deferred { headers_expr } => {
