@@ -337,6 +337,7 @@ fn process_dynamic_response(
                 var,
                 message_builder,
                 on_reply: nested_on_reply,
+                ..
             } => match service {
                 crate::services::ServiceInstance::Dynamic(dynamic_service)
                 | crate::services::ServiceInstance::Auth(dynamic_service)

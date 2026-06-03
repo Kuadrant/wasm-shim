@@ -72,6 +72,8 @@ pub struct GrpcOperation {
     pub message_builder: String,
     #[serde(default)]
     pub on_reply: Vec<TypedAction>,
+    #[serde(default)]
+    pub label: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]

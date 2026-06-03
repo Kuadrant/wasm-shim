@@ -4,16 +4,16 @@ use crate::kuadrant::ReqRespCtx;
 pub struct TracingDecoratorTask {
     pub task: Box<dyn Task>,
     pub span: Option<tracing::Span>,
-    pub span_name: &'static str,
+    pub action: String,
     pub sources: Vec<String>,
 }
 
 impl TracingDecoratorTask {
-    pub fn new(span_name: &'static str, task: Box<dyn Task>, sources: Vec<String>) -> Self {
+    pub fn new(action: String, task: Box<dyn Task>, sources: Vec<String>) -> Self {
         Self {
             task,
             span: None,
-            span_name,
+            action,
             sources,
         }
     }
@@ -21,14 +21,16 @@ impl TracingDecoratorTask {
     fn ensure_span(&mut self) -> &tracing::Span {
         self.span.get_or_insert_with(|| {
             let span = tracing::info_span!(
-                "task_wrapper",
+                "grpc",
                 task_id = ?self.task.id(),
                 sources = ?self.sources,
-                otel.name = tracing::field::Empty,
+                action = tracing::field::Empty,
                 otel.status_code = tracing::field::Empty,
                 otel.status_message = tracing::field::Empty
             );
-            span.record("otel.name", self.span_name);
+            if !self.action.is_empty() {
+                span.record("action", self.action.as_str());
+            }
             span
         })
     }
@@ -45,18 +47,19 @@ impl Task for TracingDecoratorTask {
                 pending: Box::new(TracingDecoratorTask {
                     task: pending,
                     span: Some(span.clone()),
-                    span_name: self.span_name,
+                    action: self.action.clone(),
                     sources: self.sources,
                 }),
             },
             TaskOutcome::Requeued(tasks) => {
+                let action = self.action.clone();
                 let wrapped = tasks
                     .into_iter()
                     .map(|task| {
                         Box::new(TracingDecoratorTask {
                             task,
                             span: Some(span.clone()),
-                            span_name: self.span_name,
+                            action: action.clone(),
                             sources: self.sources.clone(),
                         }) as Box<dyn Task>
                     })
@@ -67,8 +70,8 @@ impl Task for TracingDecoratorTask {
                 TaskOutcome::Terminate(Box::new(TracingDecoratorTask {
                     task,
                     span: Some(span.clone()),
-                    span_name: self.span_name,
-                    sources: self.sources.clone(),
+                    action: self.action.clone(),
+                    sources: self.sources,
                 }))
             }
             outcome => outcome,
