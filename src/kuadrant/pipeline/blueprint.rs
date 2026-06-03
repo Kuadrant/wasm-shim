@@ -276,7 +276,7 @@ impl Blueprint {
                                 var.clone(),
                                 message_builder.clone(),
                                 on_reply.clone(),
-                                vec![action.predicate.clone()],
+                                action.predicate.clone(),
                                 action.dependencies.clone(),
                                 action.is_guard,
                             ));

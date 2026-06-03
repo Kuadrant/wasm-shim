@@ -4,7 +4,7 @@ use cel::Value;
 use tracing::{debug, error};
 
 use crate::data::attribute::AttributeState;
-use crate::data::cel::{Predicate, PredicateVec};
+use crate::data::cel::Predicate;
 use crate::data::Expression;
 use crate::kuadrant::pipeline::blueprint::{Action, Operation};
 use crate::kuadrant::pipeline::tasks::{
@@ -20,7 +20,7 @@ pub struct DynamicTask {
     name: String,
     message_builder: Expression,
     on_reply: Vec<Action>,
-    predicates: Vec<Predicate>,
+    predicate: Predicate,
     dependencies: Vec<String>,
     is_guard: bool,
 }
@@ -34,12 +34,12 @@ impl DynamicTask {
         name: String,
         message_builder: Expression,
         on_reply: Vec<Action>,
-        predicates: Vec<Predicate>,
+        predicate: Predicate,
         dependencies: Vec<String>,
         is_guard: bool,
     ) -> Self {
         // Warm up the cache
-        let _ = predicates.apply(ctx);
+        let _ = predicate.test(ctx);
         if let Ok(env) = service.cel_env() {
             let mut cel_ctx = cel::Context::with_env(env);
             let _ = message_builder.eval(ctx, &mut cel_ctx);
@@ -77,7 +77,7 @@ impl DynamicTask {
             name,
             message_builder,
             on_reply,
-            predicates,
+            predicate,
             dependencies,
             is_guard,
         }
@@ -98,7 +98,7 @@ impl Task for DynamicTask {
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        match self.predicates.apply(ctx) {
+        match self.predicate.test(ctx) {
             Ok(AttributeState::Pending) => {
                 return if ctx.response_body.is_end_of_stream() {
                     TaskOutcome::Failed
@@ -343,7 +343,7 @@ fn process_dynamic_response(
                         var.clone(),
                         message_builder.clone(),
                         nested_on_reply.clone(),
-                        vec![action.predicate.clone()],
+                        action.predicate.clone(),
                         action.dependencies.clone(),
                         action.is_guard,
                     ));
