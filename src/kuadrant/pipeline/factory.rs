@@ -1,8 +1,4 @@
-#[allow(deprecated)]
-use crate::configuration::{
-    translate_legacy_auth_to_typed, translate_legacy_ratelimit_to_typed,
-    translate_legacy_report_to_typed, ActionConfig, PluginConfiguration,
-};
+use crate::configuration::PluginConfiguration;
 use crate::data::{
     attribute::AttributeState,
     cel::{Predicate, PredicateVec},
@@ -85,31 +81,6 @@ impl PipelineFactory {
                 ((domain.to_owned(), field.to_owned()), v.clone())
             })
             .collect();
-
-        for action_set in &mut config.action_sets {
-            for action in &mut action_set.actions {
-                if let ActionConfig::Legacy(legacy) = action {
-                    if let Some(
-                        ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_),
-                    ) = services.get(&legacy.service)
-                    {
-                        #[allow(deprecated)]
-                        let typed = translate_legacy_ratelimit_to_typed(legacy, &request_data_raw);
-                        *action = ActionConfig::Typed(typed);
-                    } else if let Some(ServiceInstance::Auth(_)) = services.get(&legacy.service) {
-                        #[allow(deprecated)]
-                        let typed = translate_legacy_auth_to_typed(legacy, &request_data_raw);
-                        *action = ActionConfig::Typed(typed);
-                    } else if let Some(ServiceInstance::RateLimitReport(_)) =
-                        services.get(&legacy.service)
-                    {
-                        #[allow(deprecated)]
-                        let typed = translate_legacy_report_to_typed(legacy, &request_data_raw);
-                        *action = ActionConfig::Typed(typed);
-                    }
-                }
-            }
-        }
 
         let mut request_data: Vec<((String, String), Expression)> = request_data_raw
             .into_iter()
