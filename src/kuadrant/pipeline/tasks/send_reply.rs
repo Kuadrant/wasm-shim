@@ -86,7 +86,6 @@ impl TryFrom<Value> for SendReplyTask {
 }
 
 impl Task for SendReplyTask {
-    #[tracing::instrument(name = "send_reply", skip(self, ctx))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some(ref predicate) = self.predicate {
             match predicate.test(ctx) {
@@ -101,6 +100,9 @@ impl Task for SendReplyTask {
                 }
             }
         }
+
+        let span = tracing::info_span!("send_reply", status_code = tracing::field::Empty);
+        let _guard = span.enter();
 
         let (status_code, headers, body) = {
             let mut env = Env::stdlib();
@@ -145,6 +147,8 @@ impl Task for SendReplyTask {
                 }
             }
         };
+
+        span.record("status_code", status_code);
 
         let mut headers_ref: Vec<(&str, &str)> = headers
             .iter()
