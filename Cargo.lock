@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "acutejson"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dcf88076a0ca61bc588ab3b779bc2e70f83ee79012e6a49809508c902be90ee"
+
+[[package]]
 name = "addr2line"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2505,6 +2511,7 @@ dependencies = [
 name = "wasm-shim"
 version = "0.13.0-dev"
 dependencies = [
+ "acutejson",
  "cel",
  "chrono",
  "const_format",

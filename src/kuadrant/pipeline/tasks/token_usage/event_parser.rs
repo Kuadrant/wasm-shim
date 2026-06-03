@@ -192,7 +192,7 @@ mod tests {
         let buf2 = String::from(" event\n\n");
         let mock_backend2 = MockWasmHost::new().with_response_body(buf2.as_bytes());
         let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2));
-        ctx2.set_current_response_body_buffer_size(buf2.len(), true);
+        ctx2.response_body.set_buffer_size(buf2.len(), true);
 
         let events2 = event_parser
             .parse(buf2.into())

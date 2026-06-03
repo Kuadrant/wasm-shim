@@ -28,6 +28,11 @@ pub trait AttributeResolver: Send + Sync {
         map_type: proxy_wasm::types::MapType,
         value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError>;
+    fn get_http_request_body(
+        &self,
+        start: usize,
+        max_size: usize,
+    ) -> Result<Option<Vec<u8>>, AttributeError>;
     fn get_http_response_body(
         &self,
         start: usize,
