@@ -64,7 +64,7 @@ impl PipelineFactory {
             .drain()
             .map(|(name, service_config)| {
                 let instance = ServiceInstance::from_config(service_config, descriptor_manager)
-                    .map_err(|e| CompileError::ServiceCreationFailed(format!("{}", e)))?;
+                    .map_err(|e| CompileError::ServiceCreationFailed(e.to_string()))?;
                 Ok((name, instance))
             })
             .collect::<Result<_, CompileError>>()?;
