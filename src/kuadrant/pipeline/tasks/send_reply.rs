@@ -100,8 +100,8 @@ impl TryFrom<Value> for SendReplyTask {
 }
 
 impl Task for SendReplyTask {
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {

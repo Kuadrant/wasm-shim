@@ -80,8 +80,8 @@ fn create_body_parser(
 }
 
 impl Task for StoreTask {
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
 
     fn apply(mut self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {

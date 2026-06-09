@@ -85,8 +85,8 @@ impl DynamicTask {
 }
 
 impl Task for DynamicTask {
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
 
     fn dependencies(&self) -> &[String] {
@@ -170,7 +170,7 @@ impl Task for DynamicTask {
         TaskOutcome::Deferred {
             token_id,
             pending: Box::new(PendingTask::new(
-                self.task_id,
+                task_id.clone(),
                 Box::new(move |ctx| {
                     let outcome = process_dynamic_response(
                         ctx, &service, &task_id, token_id, &var, &on_reply,

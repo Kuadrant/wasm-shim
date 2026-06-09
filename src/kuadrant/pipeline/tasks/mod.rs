@@ -25,9 +25,7 @@ pub type ResponseProcessor = dyn FnOnce(&mut ReqRespCtx) -> TaskOutcome;
 pub trait Task {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome;
 
-    fn id(&self) -> Option<String> {
-        None
-    }
+    fn id(&self) -> &str;
 
     fn dependencies(&self) -> &[String] {
         &[]
@@ -58,8 +56,8 @@ impl Task for PendingTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         (self.process_response)(ctx)
     }
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
     fn is_guard(&self) -> bool {
         self.is_guard
@@ -117,6 +115,10 @@ pub fn noop_response_processor(
 pub struct NoopTerminalTask;
 
 impl Task for NoopTerminalTask {
+    fn id(&self) -> &str {
+        "noop"
+    }
+
     fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
         TaskOutcome::Done
     }
