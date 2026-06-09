@@ -148,9 +148,14 @@ impl Action {
                     }
                 }
             }
-            Operation::Fail { log_message: _ } => {
-                // todo(@adam-cattermole): Do something with the failure operation
-                None
+            Operation::Fail { log_message } => {
+                use crate::kuadrant::pipeline::tasks::FailTask;
+                Some(Box::new(FailTask::new(
+                    self.id.clone(),
+                    self.predicate.clone(),
+                    log_message.clone(),
+                    self.terminal,
+                )))
             }
         }
     }
