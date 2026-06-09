@@ -150,8 +150,8 @@ impl Action {
                     }
                 }
             }
-            Operation::Fail { log_message } => {
-                tracing::error!("Fail operation: Action {}: {}", self.id, log_message);
+            Operation::Fail { log_message: _ } => {
+                // todo(@adam-cattermole): Do something with the failure operation
                 None
             }
         }

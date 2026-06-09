@@ -108,7 +108,8 @@ impl Task for SendReplyTask {
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some(ref predicate) = self.predicate {
-            match predicate.test(ctx) {
+            let mut cel_ctx = ctx.cel.new_ctx(&*self);
+            match predicate.test(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Available(true)) => {}
                 Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
                 Ok(AttributeState::Pending) => {
