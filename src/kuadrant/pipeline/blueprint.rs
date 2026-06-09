@@ -249,6 +249,7 @@ impl Blueprint {
                         ServiceInstance::Tracing(tracing_service) => {
                             ctx.set_public_tracker_id(var.clone());
                             tasks.push(Box::new(ModifyHeadersTask::new(
+                                action.id.clone(),
                                 HeaderOperation::Append(
                                     vec![(var.clone(), ctx.request_id().to_string())].into(),
                                 ),
@@ -298,6 +299,7 @@ impl Blueprint {
                 Operation::Deny { deny_with } => {
                     use crate::kuadrant::pipeline::tasks::SendReplyTask;
                     let task = SendReplyTask::new_deferred(
+                        action.id.clone(),
                         action.predicate.clone(),
                         deny_with.clone(),
                         action.terminal,
@@ -309,6 +311,7 @@ impl Blueprint {
                     headers: headers_expr,
                 } => {
                     let task = ModifyHeadersTask::new_deferred(
+                        action.id.clone(),
                         action.predicate.clone(),
                         headers_expr.clone(),
                         target.clone(),
@@ -323,6 +326,7 @@ impl Blueprint {
                 } => {
                     use crate::kuadrant::pipeline::tasks::StoreTask;
                     match StoreTask::new(
+                        action.id.clone(),
                         action.predicate.clone(),
                         expression.clone(),
                         path.clone(),
