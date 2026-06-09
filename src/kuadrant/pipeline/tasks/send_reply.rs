@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use cel::common::types::{CelString, CelUInt};
-use cel::{Env, Value};
+use cel::Value;
 use tracing::error;
 
 use crate::data::attribute::AttributeState;
@@ -104,6 +102,10 @@ impl Task for SendReplyTask {
         &self.task_id
     }
 
+    fn cel_types(&self) -> Vec<cel::StructDef> {
+        vec![deny_response_struct_def()]
+    }
+
     #[tracing::instrument(name = "send_reply", skip(self, ctx))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some(ref predicate) = self.predicate {
@@ -121,9 +123,7 @@ impl Task for SendReplyTask {
         }
 
         let (status_code, headers, body) = {
-            let mut env = Env::stdlib();
-            env.add_struct(deny_response_struct_def());
-            let mut cel_ctx = cel::Context::with_env(Arc::new(env));
+            let mut cel_ctx = ctx.cel.new_ctx(&*self);
             match self.deny_with.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
                     error!("Unexpected pending state in deny expression");

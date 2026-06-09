@@ -111,7 +111,7 @@ impl Task for ModifyHeadersTask {
         let operation = match &self.mode {
             HeadersMode::Concrete { operation } => operation.clone(),
             HeadersMode::Deferred { headers_expr } => {
-                let mut cel_ctx = cel::Context::default();
+                let mut cel_ctx = ctx.cel.new_ctx(&*self);
                 match headers_expr.eval(ctx, &mut cel_ctx) {
                     Ok(AttributeState::Pending) => {
                         error!("Unexpected pending state in headers expression");
