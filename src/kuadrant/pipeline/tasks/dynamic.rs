@@ -161,10 +161,10 @@ impl Task for DynamicTask {
 
 fn process_dynamic_response(
     ctx: &mut ReqRespCtx,
-    _service: &DynamicService,
+    service: &DynamicService,
     task_id: &str,
     token_id: u32,
-    _name: &str,
+    name: &str,
     on_reply: Vec<Box<dyn Task>>,
 ) -> TaskOutcome {
     let span = tracing::debug_span!(
@@ -177,7 +177,7 @@ fn process_dynamic_response(
     )
     .entered();
 
-    let (status_code, _response_size) = match ctx.get_grpc_response_data() {
+    let (status_code, response_size) = match ctx.get_grpc_response_data() {
         Ok(data) => data,
         Err(e) => {
             record_error!("Failed to get gRPC response: {e:?}");
@@ -196,6 +196,40 @@ fn process_dynamic_response(
         return TaskOutcome::Done;
     }
 
-    // todo(@adam-cattermole): Add response variable binding here with ctx.cel.add_scoped_binding()
-    TaskOutcome::Requeued(on_reply)
+    let cel_value = match service.get_response_cel_value(ctx, response_size) {
+        Ok(val) => val,
+        Err(e) => {
+            error!("Failed to get response CEL value: {e}");
+            return TaskOutcome::Failed;
+        }
+    };
+
+    ctx.cel
+        .add_scoped_binding(task_id, name.to_string(), cel_value);
+
+    let mut remaining_tasks: Vec<Box<dyn Task>> = Vec::new();
+    for child in on_reply {
+        match child.apply(ctx) {
+            TaskOutcome::Done => {}
+            TaskOutcome::Terminate(t) => return TaskOutcome::Terminate(t),
+            TaskOutcome::Deferred {
+                token_id: _,
+                pending: _,
+            } => {
+                todo!("(@adam-cattermole): this is new and yet to be supported - deferred tasks generating deferred tasks")
+            }
+            TaskOutcome::Requeued(mut requeued) => {
+                remaining_tasks.append(&mut requeued);
+            }
+            TaskOutcome::Failed => {
+                return TaskOutcome::Failed;
+            }
+        }
+    }
+
+    if remaining_tasks.is_empty() {
+        TaskOutcome::Done
+    } else {
+        TaskOutcome::Requeued(remaining_tasks)
+    }
 }
