@@ -63,12 +63,11 @@ fn is_map_field(field: &FieldDescriptor) -> bool {
 pub struct DescriptorConverter;
 
 impl DescriptorConverter {
-    /// Register a message descriptor and all its nested message types with the CEL environment
-    /// This must be called before evaluating CEL expressions that construct these messages
-    pub fn register_message_types(
-        env: &mut Env,
+    /// Returns a vector of [`StructDef`]s for the given [`MessageDescriptor`], including all nested message types.
+    pub fn collect_struct_defs(
         descriptor: &MessageDescriptor,
-    ) -> Result<(), ConversionError> {
+    ) -> Result<Vec<StructDef>, ConversionError> {
+        let mut defs = Vec::new();
         let mut to_register = vec![descriptor.clone()];
         let mut visited = HashSet::new();
 
@@ -88,9 +87,20 @@ impl DescriptorConverter {
             }
 
             let struct_def = Self::to_struct_def(&desc)?;
-            env.add_struct(struct_def);
+            defs.push(struct_def);
         }
 
+        Ok(defs)
+    }
+
+    pub fn register_message_types(
+        env: &mut Env,
+        descriptor: &MessageDescriptor,
+    ) -> Result<(), ConversionError> {
+        let defs = Self::collect_struct_defs(descriptor)?;
+        for def in defs {
+            env.add_struct(def);
+        }
         Ok(())
     }
 

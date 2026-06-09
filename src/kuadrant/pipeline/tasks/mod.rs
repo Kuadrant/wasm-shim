@@ -34,6 +34,10 @@ pub trait Task {
     fn is_guard(&self) -> bool {
         false
     }
+
+    fn cel_types(&self) -> Vec<cel::StructDef> {
+        vec![]
+    }
 }
 
 pub struct PendingTask {

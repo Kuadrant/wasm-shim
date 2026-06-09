@@ -136,11 +136,11 @@ impl DynamicService {
         Ok(method)
     }
 
-    fn input_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
+    pub fn input_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
         Ok(self.method_descriptor()?.input())
     }
 
-    fn output_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
+    pub fn output_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
         Ok(self.method_descriptor()?.output())
     }
 
