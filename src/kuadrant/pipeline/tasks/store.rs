@@ -16,6 +16,7 @@ enum BodySource {
 }
 
 pub struct StoreTask {
+    task_id: String,
     predicate: Option<Predicate>,
     expression: Expression,
     path: String,
@@ -26,6 +27,7 @@ pub struct StoreTask {
 
 impl StoreTask {
     pub fn new(
+        task_id: String,
         predicate: Predicate,
         expression: Expression,
         path: String,
@@ -34,6 +36,7 @@ impl StoreTask {
     ) -> Result<Self, AttributeError> {
         let body_parser = create_body_parser(&predicate, &expression)?;
         Ok(Self {
+            task_id,
             predicate: Some(predicate),
             expression,
             path,
@@ -77,6 +80,10 @@ fn create_body_parser(
 }
 
 impl Task for StoreTask {
+    fn id(&self) -> Option<String> {
+        Some(self.task_id.clone())
+    }
+
     #[tracing::instrument(name = "store", skip(self, ctx), level = tracing::Level::TRACE)]
     fn apply(mut self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some((ref source, ref mut parser)) = self.body_parser {
@@ -202,6 +209,7 @@ mod tests {
     fn make_store_task(predicate: &str, expression: &str, path: &str) -> Box<StoreTask> {
         Box::new(
             StoreTask::new(
+                "0".to_string(),
                 Predicate::new(predicate).unwrap(),
                 Expression::new(expression).unwrap(),
                 path.to_string(),
@@ -333,6 +341,7 @@ mod tests {
     fn invalid_json_pointer_fails_task_creation() {
         // Invalid JSON pointer format - acutejson expects RFC 6901 format
         let result = StoreTask::new(
+            "0".to_string(),
             Predicate::new("true").unwrap(),
             Expression::new("requestBodyJSON('not-a-valid-pointer')").unwrap(),
             "some.path".to_string(),

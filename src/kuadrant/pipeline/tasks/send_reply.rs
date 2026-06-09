@@ -13,13 +13,19 @@ use crate::metrics::METRICS;
 use crate::services::{cel_value_to_header_pairs, deny_response_struct_def};
 
 pub struct SendReplyTask {
+    task_id: String,
     predicate: Option<Predicate>,
     deny_with: Expression,
     terminal: bool,
 }
 
 impl SendReplyTask {
-    pub fn new(status_code: u32, headers: Vec<(String, String)>, body: Option<String>) -> Self {
+    pub fn new(
+        task_id: String,
+        status_code: u32,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
+    ) -> Self {
         let headers = headers
             .into_iter()
             .map(|(h, v)| format!("['''{h}''', '''{v}''']"))
@@ -32,14 +38,21 @@ impl SendReplyTask {
         #[allow(clippy::expect_used)]
         let deny_with = Expression::new(&expr).expect("Needs to be valid CEL!");
         Self {
+            task_id,
             predicate: None,
             deny_with,
             terminal: false,
         }
     }
 
-    pub fn new_deferred(predicate: Predicate, deny_with: Expression, terminal: bool) -> Self {
+    pub fn new_deferred(
+        task_id: String,
+        predicate: Predicate,
+        deny_with: Expression,
+        terminal: bool,
+    ) -> Self {
         Self {
+            task_id,
             predicate: Some(predicate),
             deny_with,
             terminal,
@@ -48,6 +61,7 @@ impl SendReplyTask {
 
     pub fn default() -> Self {
         Self::new(
+            "default".to_string(),
             500,
             Vec::new(),
             Some("Internal Server Error.\n".to_string()),
@@ -81,11 +95,15 @@ impl TryFrom<Value> for SendReplyTask {
             .map(|v| cel_value_to_header_pairs(&v))
             .unwrap_or_default();
 
-        Ok(Self::new(status, headers, body))
+        Ok(Self::new("from_value".to_string(), status, headers, body))
     }
 }
 
 impl Task for SendReplyTask {
+    fn id(&self) -> Option<String> {
+        Some(self.task_id.clone())
+    }
+
     #[tracing::instrument(name = "send_reply", skip(self, ctx))]
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some(ref predicate) = self.predicate {
@@ -186,6 +204,7 @@ mod tests {
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
 
         let task = Box::new(SendReplyTask::new(
+            "0".to_string(),
             403,
             vec![
                 ("content-type".to_string(), "text/plain".to_string()),
@@ -206,7 +225,7 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
 
-        let task = Box::new(SendReplyTask::new(429, vec![], None));
+        let task = Box::new(SendReplyTask::new("0".to_string(), 429, vec![], None));
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Done));

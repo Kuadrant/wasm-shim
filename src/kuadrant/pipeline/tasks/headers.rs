@@ -36,6 +36,7 @@ enum HeadersMode {
 
 #[derive(Clone)]
 pub struct ModifyHeadersTask {
+    task_id: String,
     predicate: Option<Predicate>,
     mode: HeadersMode,
     target: HeadersType,
@@ -56,8 +57,13 @@ impl Clone for HeadersMode {
 }
 
 impl ModifyHeadersTask {
-    pub fn new(operation: HeaderOperation, target: HeadersType) -> ModifyHeadersTask {
+    pub fn new(
+        task_id: String,
+        operation: HeaderOperation,
+        target: HeadersType,
+    ) -> ModifyHeadersTask {
         ModifyHeadersTask {
+            task_id,
             predicate: None,
             mode: HeadersMode::Concrete { operation },
             target,
@@ -66,12 +72,14 @@ impl ModifyHeadersTask {
     }
 
     pub fn new_deferred(
+        task_id: String,
         predicate: Predicate,
         headers_expr: Expression,
         target: HeadersType,
         terminal: bool,
     ) -> Self {
         Self {
+            task_id,
             predicate: Some(predicate),
             mode: HeadersMode::Deferred { headers_expr },
             target,
@@ -81,6 +89,10 @@ impl ModifyHeadersTask {
 }
 
 impl Task for ModifyHeadersTask {
+    fn id(&self) -> Option<String> {
+        Some(self.task_id.clone())
+    }
+
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some(ref predicate) = self.predicate {
             match predicate.test(ctx) {
@@ -189,6 +201,7 @@ mod tests {
         let new_headers: Headers = vec![("New-Key".to_string(), "New-Value".to_string())].into();
 
         let task = Box::new(ModifyHeadersTask::new(
+            "0".to_string(),
             HeaderOperation::Append(new_headers),
             HeadersType::HttpRequestHeaders,
         ));
@@ -222,6 +235,7 @@ mod tests {
             vec![("Content-Type".to_string(), "application/json".to_string())].into();
 
         let task = Box::new(ModifyHeadersTask::new(
+            "0".to_string(),
             HeaderOperation::Set(new_headers),
             HeadersType::HttpRequestHeaders,
         ));
@@ -254,6 +268,7 @@ mod tests {
         let keys_to_remove = vec!["API-Key-To-Remove".to_string()];
 
         let task = Box::new(ModifyHeadersTask::new(
+            "0".to_string(),
             HeaderOperation::Remove(keys_to_remove),
             HeadersType::HttpResponseHeaders,
         ));

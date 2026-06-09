@@ -275,6 +275,7 @@ fn process_dynamic_response(
                     let pairs = cel_value_to_header_pairs(val);
                     if !pairs.is_empty() {
                         tasks.push(Box::new(ModifyHeadersTask::new(
+                            "inline_response_header".to_string(),
                             HeaderOperation::Set(pairs.into()),
                             target.clone(),
                         )));
