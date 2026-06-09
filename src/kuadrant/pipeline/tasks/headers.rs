@@ -29,49 +29,17 @@ impl From<&HeadersType> for Path {
     }
 }
 
-enum HeadersMode {
-    Concrete { operation: HeaderOperation },
-    Deferred { headers_expr: Expression },
-}
-
 #[derive(Clone)]
 pub struct ModifyHeadersTask {
     task_id: String,
-    predicate: Option<Predicate>,
-    mode: HeadersMode,
+    predicate: Predicate,
+    headers_expr: Expression,
     target: HeadersType,
     terminal: bool,
 }
 
-impl Clone for HeadersMode {
-    fn clone(&self) -> Self {
-        match self {
-            HeadersMode::Concrete { operation } => HeadersMode::Concrete {
-                operation: operation.clone(),
-            },
-            HeadersMode::Deferred { headers_expr } => HeadersMode::Deferred {
-                headers_expr: headers_expr.clone(),
-            },
-        }
-    }
-}
-
 impl ModifyHeadersTask {
     pub fn new(
-        task_id: String,
-        operation: HeaderOperation,
-        target: HeadersType,
-    ) -> ModifyHeadersTask {
-        ModifyHeadersTask {
-            task_id,
-            predicate: None,
-            mode: HeadersMode::Concrete { operation },
-            target,
-            terminal: false,
-        }
-    }
-
-    pub fn new_deferred(
         task_id: String,
         predicate: Predicate,
         headers_expr: Expression,
@@ -80,8 +48,8 @@ impl ModifyHeadersTask {
     ) -> Self {
         Self {
             task_id,
-            predicate: Some(predicate),
-            mode: HeadersMode::Deferred { headers_expr },
+            predicate,
+            headers_expr,
             target,
             terminal,
         }
@@ -94,42 +62,34 @@ impl Task for ModifyHeadersTask {
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        if let Some(ref predicate) = self.predicate {
-            let mut cel_ctx = ctx.cel.new_ctx(&*self);
-            match predicate.test(ctx, &mut cel_ctx) {
-                Ok(AttributeState::Available(true)) => {}
-                Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
-                Ok(AttributeState::Pending) => {
-                    return TaskOutcome::Requeued(vec![self]);
-                }
-                Err(e) => {
-                    error!("Failed to evaluate predicate: {e:?}");
-                    return TaskOutcome::Failed;
-                }
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+        match self.predicate.test(ctx, &mut cel_ctx) {
+            Ok(AttributeState::Available(true)) => {}
+            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+            Ok(AttributeState::Pending) => {
+                return TaskOutcome::Requeued(vec![self]);
+            }
+            Err(e) => {
+                error!("Failed to evaluate predicate: {e:?}");
+                return TaskOutcome::Failed;
             }
         }
 
-        let operation = match &self.mode {
-            HeadersMode::Concrete { operation } => operation.clone(),
-            HeadersMode::Deferred { headers_expr } => {
-                let mut cel_ctx = ctx.cel.new_ctx(&*self);
-                match headers_expr.eval(ctx, &mut cel_ctx) {
-                    Ok(AttributeState::Pending) => {
-                        error!("Unexpected pending state in headers expression");
-                        return TaskOutcome::Failed;
-                    }
-                    Ok(AttributeState::Available(ref val)) => {
-                        let pairs = cel_value_to_header_pairs(val);
-                        if pairs.is_empty() {
-                            return TaskOutcome::Done;
-                        }
-                        HeaderOperation::Set(pairs.into())
-                    }
-                    Err(e) => {
-                        error!("Failed to evaluate headers expression: {e}");
-                        return TaskOutcome::Failed;
-                    }
+        let operation = match self.headers_expr.eval(ctx, &mut cel_ctx) {
+            Ok(AttributeState::Pending) => {
+                error!("Unexpected pending state in headers expression");
+                return TaskOutcome::Failed;
+            }
+            Ok(AttributeState::Available(ref val)) => {
+                let pairs = cel_value_to_header_pairs(val);
+                if pairs.is_empty() {
+                    return TaskOutcome::Done;
                 }
+                HeaderOperation::Set(pairs.into())
+            }
+            Err(e) => {
+                error!("Failed to evaluate headers expression: {e}");
+                return TaskOutcome::Failed;
             }
         };
 
@@ -188,6 +148,9 @@ impl Task for ModifyHeadersTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::attribute::Path;
+    use crate::data::cel::Predicate;
+    use crate::data::Expression;
     use crate::kuadrant::MockWasmHost;
     use std::sync::Arc;
 
@@ -199,12 +162,15 @@ mod tests {
         let backend = Arc::new(mock_host);
         let mut ctx = ReqRespCtx::new(backend);
 
-        let new_headers: Headers = vec![("New-Key".to_string(), "New-Value".to_string())].into();
+        let predicate = Predicate::new("true").unwrap();
+        let headers_expr = Expression::new("[['New-Key', 'New-Value']]").unwrap();
 
         let task = Box::new(ModifyHeadersTask::new(
             "0".to_string(),
-            HeaderOperation::Append(new_headers),
+            predicate,
+            headers_expr,
             HeadersType::HttpRequestHeaders,
+            false,
         ));
 
         let outcome = task.apply(&mut ctx);
@@ -232,13 +198,15 @@ mod tests {
         let backend = Arc::new(mock_host);
         let mut ctx = ReqRespCtx::new(backend);
 
-        let new_headers: Headers =
-            vec![("Content-Type".to_string(), "application/json".to_string())].into();
+        let predicate = Predicate::new("true").unwrap();
+        let headers_expr = Expression::new("[['Content-Type', 'application/json']]").unwrap();
 
         let task = Box::new(ModifyHeadersTask::new(
             "0".to_string(),
-            HeaderOperation::Set(new_headers),
+            predicate,
+            headers_expr,
             HeadersType::HttpRequestHeaders,
+            false,
         ));
 
         let outcome = task.apply(&mut ctx);
@@ -256,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_headers_task() {
+    fn empty_headers_expr_returns_done() {
         let existing_headers = vec![
             ("API-Key-To-Remove".to_string(), "API-Value".to_string()),
             ("X-Origin".to_string(), "Kuadrant".to_string()),
@@ -266,24 +234,18 @@ mod tests {
         let backend = Arc::new(mock_host);
         let mut ctx = ReqRespCtx::new(backend);
 
-        let keys_to_remove = vec!["API-Key-To-Remove".to_string()];
+        let predicate = Predicate::new("true").unwrap();
+        let headers_expr = Expression::new("[]").unwrap();
 
         let task = Box::new(ModifyHeadersTask::new(
             "0".to_string(),
-            HeaderOperation::Remove(keys_to_remove),
+            predicate,
+            headers_expr,
             HeadersType::HttpResponseHeaders,
+            false,
         ));
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Done));
-
-        let result: Result<AttributeState<Option<Headers>>, _> =
-            ctx.get_attribute_ref(&Path::from(&HeadersType::HttpResponseHeaders));
-
-        assert!(matches!(result, Ok(AttributeState::Available(Some(_)))));
-        if let Ok(AttributeState::Available(Some(headers))) = result {
-            assert_eq!(headers.len(), 1);
-            assert_eq!(headers.get("X-Origin"), Some("Kuadrant"));
-        }
     }
 }

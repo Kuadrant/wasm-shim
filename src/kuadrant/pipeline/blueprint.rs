@@ -5,8 +5,8 @@ use crate::configuration::{
 };
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
-    ModifyHeadersTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    DynamicTask, ExportTracesTask, FailureModeTask, HeadersType, ModifyHeadersTask, Task,
+    TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -93,19 +93,25 @@ impl Action {
                     }
                     ServiceInstance::Tracing(_) => {
                         ctx.set_public_tracker_id(var.clone());
+                        #[allow(clippy::expect_used)]
+                        let predicate = Predicate::new("true").expect("Needs to be valid!");
+                        #[allow(clippy::expect_used)]
+                        let headers_expr =
+                            Expression::new(&format!("[['{var}', '{}']]", ctx.request_id()))
+                                .expect("Needs to be valid CEL!");
                         Some(Box::new(ModifyHeadersTask::new(
                             self.id.clone(),
-                            HeaderOperation::Append(
-                                vec![(var.clone(), ctx.request_id().to_string())].into(),
-                            ),
+                            predicate,
+                            headers_expr,
                             HeadersType::HttpResponseHeaders,
+                            false,
                         )))
                     }
                 }
             }
             Operation::Deny { deny_with } => {
                 use crate::kuadrant::pipeline::tasks::SendReplyTask;
-                Some(Box::new(SendReplyTask::new_deferred(
+                Some(Box::new(SendReplyTask::new(
                     self.id.clone(),
                     self.predicate.clone(),
                     deny_with.clone(),
@@ -115,7 +121,7 @@ impl Action {
             Operation::Headers {
                 target,
                 headers: headers_expr,
-            } => Some(Box::new(ModifyHeadersTask::new_deferred(
+            } => Some(Box::new(ModifyHeadersTask::new(
                 self.id.clone(),
                 self.predicate.clone(),
                 headers_expr.clone(),
