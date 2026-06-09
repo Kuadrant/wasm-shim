@@ -7,7 +7,7 @@ mod dynamic;
 mod tracing;
 
 pub use dynamic::converters::{
-    cel_value_to_header_pairs, deny_response_struct_def, MessageConverter,
+    cel_value_to_header_pairs, deny_response_struct_def, DescriptorConverter, MessageConverter,
 };
 pub use dynamic::DynamicService;
 pub use tracing::TracingService;

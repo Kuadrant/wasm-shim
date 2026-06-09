@@ -1,9 +1,7 @@
-use std::cell::OnceCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
 
-use cel::{Context, Env, Value};
+use cel::Value;
 use prost::Message;
 use prost_reflect::DynamicMessage;
 use tracing::debug;
@@ -15,7 +13,7 @@ use crate::kuadrant::ReqRespCtx;
 
 pub mod converters;
 
-use converters::{deny_response_struct_def, DescriptorConverter, MessageConverter};
+use converters::MessageConverter;
 
 pub struct DynamicService {
     upstream_name: String,
@@ -24,7 +22,6 @@ pub struct DynamicService {
     timeout: Duration,
     failure_mode: FailureMode,
     descriptor_manager: Rc<DescriptorManager>,
-    cel_env: OnceCell<Arc<Env>>,
 }
 
 impl DynamicService {
@@ -45,33 +42,11 @@ impl DynamicService {
             timeout,
             failure_mode,
             descriptor_manager,
-            cel_env: Default::default(),
         }
     }
 
     pub fn failure_mode(&self) -> FailureMode {
         self.failure_mode
-    }
-
-    pub fn cel_env(&self) -> Result<Arc<Env>, ServiceError> {
-        match self.cel_env.get() {
-            Some(env) => Ok(Arc::clone(env)),
-            None => {
-                let input_descriptor = self.input_descriptor()?;
-                let output_descriptor = self.output_descriptor()?;
-                let mut env = Env::stdlib();
-                DescriptorConverter::register_message_types(&mut env, &input_descriptor).map_err(
-                    |e| ServiceError::Dispatch(format!("Failed to register message types: {}", e)),
-                )?;
-                DescriptorConverter::register_message_types(&mut env, &output_descriptor).map_err(
-                    |e| ServiceError::Dispatch(format!("Failed to register message types: {}", e)),
-                )?;
-                env.add_struct(deny_response_struct_def());
-                let env_arc = Arc::new(env);
-                let _ = self.cel_env.set(Arc::clone(&env_arc));
-                Ok(env_arc)
-            }
-        }
     }
 
     pub fn dispatch_value(
@@ -128,29 +103,22 @@ impl DynamicService {
         Ok(method)
     }
 
-    fn input_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
+    pub fn input_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
         Ok(self.method_descriptor()?.input())
     }
 
-    fn output_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
+    pub fn output_descriptor(&self) -> Result<prost_reflect::MessageDescriptor, ServiceError> {
         Ok(self.method_descriptor()?.output())
     }
 
-    pub fn response_cel_context(
+    pub fn get_response_cel_value(
         &self,
         ctx: &mut ReqRespCtx,
         response_size: usize,
-        name: &str,
-    ) -> Result<Context<'_>, ServiceError> {
+    ) -> Result<Value, ServiceError> {
         let response = self.get_response(ctx, response_size)?;
-        let cel_value = MessageConverter::dynamic_message_to_cel(&response).map_err(|e| {
-            ServiceError::Decode(format!("Failed to convert message to CEL: {}", e))
-        })?;
-        let env = self.cel_env()?;
-
-        let mut cel_ctx = Context::with_env(env);
-        cel_ctx.add_variable_from_value(name, cel_value);
-        Ok(cel_ctx)
+        MessageConverter::dynamic_message_to_cel(&response)
+            .map_err(|e| ServiceError::Decode(format!("Failed to convert message to CEL: {}", e)))
     }
 }
 
@@ -190,9 +158,14 @@ impl Service for DynamicService {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::filter::{DescriptorKey, DescriptorManager};
-    use cel::Program;
+    use crate::{
+        filter::{DescriptorKey, DescriptorManager},
+        services::DescriptorConverter,
+    };
+    use cel::{Context, Env, Program};
     use prost_reflect::DescriptorPool;
     use prost_types::{
         field_descriptor_proto, DescriptorProto, FieldDescriptorProto, FileDescriptorProto,
@@ -279,8 +252,11 @@ mod tests {
         let input_desc = method_desc.input();
 
         let mut env = Env::stdlib();
-        DescriptorConverter::register_message_types(&mut env, &input_desc)
-            .expect("Failed to register types");
+        for def in DescriptorConverter::collect_struct_defs(&input_desc)
+            .expect("Failed to collect struct defs")
+        {
+            env.add_struct(def);
+        }
 
         let cel_ctx = Context::with_env(Arc::new(env));
         let program = Program::compile(cel_expression).expect("Failed to compile");

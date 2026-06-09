@@ -5,8 +5,8 @@ use crate::configuration::{
 };
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
-    DynamicTask, ExportTracesTask, FailureModeTask, HeaderOperation, HeadersType,
-    ModifyHeadersTask, Task, TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    DynamicTask, ExportTracesTask, FailureModeTask, HeadersType, ModifyHeadersTask, Task,
+    TeardownAction, TokenUsageTask, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -60,6 +60,112 @@ pub(crate) enum Operation {
 }
 
 impl Action {
+    fn to_core_task(&self, ctx: &mut ReqRespCtx) -> Option<Box<dyn Task>> {
+        match &self.operation {
+            Operation::Grpc {
+                service,
+                var,
+                message_builder,
+                on_reply,
+            } => {
+                let children: Vec<Box<dyn Task>> = on_reply
+                    .iter()
+                    .filter_map(|a| a.to_core_task(ctx))
+                    .collect();
+
+                match service {
+                    ServiceInstance::Dynamic(dynamic_service)
+                    | ServiceInstance::Auth(dynamic_service)
+                    | ServiceInstance::RateLimit(dynamic_service)
+                    | ServiceInstance::RateLimitCheck(dynamic_service)
+                    | ServiceInstance::RateLimitReport(dynamic_service) => {
+                        Some(Box::new(DynamicTask::new_with_attributes(
+                            ctx,
+                            self.id.clone(),
+                            Rc::clone(dynamic_service),
+                            var.clone(),
+                            message_builder.clone(),
+                            children,
+                            self.predicate.clone(),
+                            self.dependencies.clone(),
+                            self.is_guard,
+                        )))
+                    }
+                    ServiceInstance::Tracing(_) => {
+                        ctx.set_public_tracker_id(var.clone());
+                        #[allow(clippy::expect_used)]
+                        let predicate = Predicate::new("true").expect("Needs to be valid!");
+                        #[allow(clippy::expect_used)]
+                        let headers_expr =
+                            Expression::new(&format!("[['{var}', '{}']]", ctx.request_id()))
+                                .expect("Needs to be valid CEL!");
+                        Some(Box::new(ModifyHeadersTask::new(
+                            self.id.clone(),
+                            predicate,
+                            headers_expr,
+                            HeadersType::HttpResponseHeaders,
+                            false,
+                        )))
+                    }
+                }
+            }
+            Operation::Deny { deny_with } => {
+                use crate::kuadrant::pipeline::tasks::SendReplyTask;
+                Some(Box::new(SendReplyTask::new(
+                    self.id.clone(),
+                    self.predicate.clone(),
+                    deny_with.clone(),
+                    self.terminal,
+                )))
+            }
+            Operation::Headers {
+                target,
+                headers: headers_expr,
+            } => Some(Box::new(ModifyHeadersTask::new(
+                self.id.clone(),
+                self.predicate.clone(),
+                headers_expr.clone(),
+                target.clone(),
+                self.terminal,
+            ))),
+            Operation::Store {
+                path,
+                expression,
+                export_to_host,
+            } => {
+                use crate::kuadrant::pipeline::tasks::StoreTask;
+                match StoreTask::new(
+                    self.id.clone(),
+                    self.predicate.clone(),
+                    expression.clone(),
+                    path.clone(),
+                    *export_to_host,
+                    self.terminal,
+                ) {
+                    Ok(task) => Some(Box::new(task)),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to create StoreTask for path '{}': {}. Action {} will be skipped.",
+                            path,
+                            e,
+                            self.id
+                        );
+                        None
+                    }
+                }
+            }
+            Operation::Fail { log_message } => {
+                use crate::kuadrant::pipeline::tasks::FailTask;
+                Some(Box::new(FailTask::new(
+                    self.id.clone(),
+                    self.predicate.clone(),
+                    log_message.clone(),
+                    self.terminal,
+                )))
+            }
+        }
+    }
+
     pub fn collect_body_values(&self, request_data: &[RequestData]) -> Vec<String> {
         use std::collections::HashSet;
 
@@ -234,53 +340,33 @@ impl Blueprint {
 
         for action in &self.actions {
             match &action.operation {
-                Operation::Grpc {
-                    service,
-                    var,
-                    message_builder,
-                    on_reply,
-                } => {
-                    let abort_on_failure =
-                        service.failure_mode() == configuration::FailureMode::Deny;
-
-                    match service {
-                        ServiceInstance::Tracing(tracing_service) => {
-                            ctx.set_public_tracker_id(var.clone());
-                            tasks.push(Box::new(ModifyHeadersTask::new(
-                                HeaderOperation::Append(
-                                    vec![(var.clone(), ctx.request_id().to_string())].into(),
-                                ),
-                                HeadersType::HttpResponseHeaders,
-                            )));
-                            if let Some(service) = tracing_service {
-                                teardown_tasks
-                                    .push(Box::new(ExportTracesTask::new(ctx, service.clone())));
-                            }
+                Operation::Grpc { service, .. } => match service {
+                    ServiceInstance::Tracing(tracing_service) => {
+                        if let Some(task) = action.to_core_task(ctx) {
+                            tasks.push(task);
                         }
-                        ServiceInstance::Dynamic(dynamic_service)
-                        | ServiceInstance::Auth(dynamic_service)
-                        | ServiceInstance::RateLimit(dynamic_service)
-                        | ServiceInstance::RateLimitCheck(dynamic_service)
-                        | ServiceInstance::RateLimitReport(dynamic_service) => {
-                            let body_values = action.collect_body_values(request_data);
-                            if !body_values.is_empty() {
-                                tasks.push(Box::new(
-                                    TokenUsageTask::with_expected_response_fields(body_values),
-                                ));
-                            }
+                        if let Some(service) = tracing_service {
+                            teardown_tasks
+                                .push(Box::new(ExportTracesTask::new(ctx, service.clone())));
+                        }
+                    }
+                    ServiceInstance::Dynamic(_)
+                    | ServiceInstance::Auth(_)
+                    | ServiceInstance::RateLimit(_)
+                    | ServiceInstance::RateLimitCheck(_)
+                    | ServiceInstance::RateLimitReport(_) => {
+                        let body_values = action.collect_body_values(request_data);
+                        if !body_values.is_empty() {
+                            tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
+                                body_values,
+                            )));
+                        }
 
-                            let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
-                                ctx,
-                                action.id.clone(),
-                                Rc::clone(dynamic_service),
-                                var.clone(),
-                                message_builder.clone(),
-                                on_reply.clone(),
-                                action.predicate.clone(),
-                                action.dependencies.clone(),
-                                action.is_guard,
-                            ));
-                            let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                        if let Some(mut task) = action.to_core_task(ctx) {
+                            let abort_on_failure =
+                                service.failure_mode() == configuration::FailureMode::Deny;
+                            task = Box::new(FailureModeTask::new(task, abort_on_failure));
+
                             if tracing_enabled {
                                 let span_label = match service {
                                     ServiceInstance::Auth(_) => "auth",
@@ -289,68 +375,21 @@ impl Blueprint {
                                     ServiceInstance::RateLimitReport(_) => "ratelimit_report",
                                     _ => "dynamic",
                                 };
-                                tasks.push(Box::new(TracingDecoratorTask::new(
+                                task = Box::new(TracingDecoratorTask::new(
                                     span_label,
                                     task,
                                     action.sources.clone(),
-                                )));
-                            } else {
-                                tasks.push(task);
+                                ));
                             }
+
+                            tasks.push(task);
                         }
                     }
-                }
-                Operation::Deny { deny_with } => {
-                    use crate::kuadrant::pipeline::tasks::SendReplyTask;
-                    let task = SendReplyTask::new_deferred(
-                        action.predicate.clone(),
-                        deny_with.clone(),
-                        action.terminal,
-                    );
-                    tasks.push(Box::new(task));
-                }
-                Operation::Headers {
-                    target,
-                    headers: headers_expr,
-                } => {
-                    let task = ModifyHeadersTask::new_deferred(
-                        action.predicate.clone(),
-                        headers_expr.clone(),
-                        target.clone(),
-                        action.terminal,
-                    );
-                    tasks.push(Box::new(task));
-                }
-                Operation::Store {
-                    path,
-                    expression,
-                    export_to_host,
-                } => {
-                    use crate::kuadrant::pipeline::tasks::StoreTask;
-                    match StoreTask::new(
-                        action.predicate.clone(),
-                        expression.clone(),
-                        path.clone(),
-                        *export_to_host,
-                        action.terminal,
-                    ) {
-                        Ok(task) => tasks.push(Box::new(task)),
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to create StoreTask for path '{}': {}. Action {} will be skipped.",
-                                path,
-                                e,
-                                action.id
-                            );
-                        }
+                },
+                _ => {
+                    if let Some(task) = action.to_core_task(ctx) {
+                        tasks.push(task);
                     }
-                }
-                Operation::Fail { log_message } => {
-                    tracing::error!(
-                        "Top-level Fail operation is currently unsupported. Action {}: {}",
-                        action.id,
-                        log_message
-                    );
                 }
             }
         }

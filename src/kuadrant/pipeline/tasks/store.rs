@@ -16,6 +16,7 @@ enum BodySource {
 }
 
 pub struct StoreTask {
+    task_id: String,
     predicate: Option<Predicate>,
     expression: Expression,
     path: String,
@@ -26,6 +27,7 @@ pub struct StoreTask {
 
 impl StoreTask {
     pub fn new(
+        task_id: String,
         predicate: Predicate,
         expression: Expression,
         path: String,
@@ -34,6 +36,7 @@ impl StoreTask {
     ) -> Result<Self, AttributeError> {
         let body_parser = create_body_parser(&predicate, &expression)?;
         Ok(Self {
+            task_id,
             predicate: Some(predicate),
             expression,
             path,
@@ -77,6 +80,10 @@ fn create_body_parser(
 }
 
 impl Task for StoreTask {
+    fn id(&self) -> &str {
+        &self.task_id
+    }
+
     #[tracing::instrument(name = "store", skip(self, ctx), level = tracing::Level::TRACE)]
     fn apply(mut self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         if let Some((ref source, ref mut parser)) = self.body_parser {
@@ -135,8 +142,10 @@ impl Task for StoreTask {
             parser.populate(body_ctx_mut);
         }
 
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+
         if let Some(ref predicate) = self.predicate {
-            match predicate.test(ctx) {
+            match predicate.test(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Available(true)) => {}
                 Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
                 Ok(AttributeState::Pending) => {
@@ -148,8 +157,6 @@ impl Task for StoreTask {
                 }
             }
         }
-
-        let mut cel_ctx = cel::Context::default();
         let value = match self.expression.eval(ctx, &mut cel_ctx) {
             Ok(AttributeState::Pending) => {
                 return TaskOutcome::Requeued(vec![self]);
@@ -202,6 +209,7 @@ mod tests {
     fn make_store_task(predicate: &str, expression: &str, path: &str) -> Box<StoreTask> {
         Box::new(
             StoreTask::new(
+                "0".to_string(),
                 Predicate::new(predicate).unwrap(),
                 Expression::new(expression).unwrap(),
                 path.to_string(),
@@ -333,6 +341,7 @@ mod tests {
     fn invalid_json_pointer_fails_task_creation() {
         // Invalid JSON pointer format - acutejson expects RFC 6901 format
         let result = StoreTask::new(
+            "0".to_string(),
             Predicate::new("true").unwrap(),
             Expression::new("requestBodyJSON('not-a-valid-pointer')").unwrap(),
             "some.path".to_string(),

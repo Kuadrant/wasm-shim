@@ -75,7 +75,7 @@ impl Task for TracingDecoratorTask {
         }
     }
 
-    fn id(&self) -> Option<String> {
+    fn id(&self) -> &str {
         self.task.id()
     }
 
