@@ -12,7 +12,9 @@ use crate::kuadrant::pipeline::tasks::{
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
-use crate::services::{cel_value_to_header_pairs, DynamicService, MessageConverter};
+use crate::services::{
+    cel_value_to_header_pairs, DescriptorConverter, DynamicService, MessageConverter,
+};
 
 pub struct DynamicTask {
     task_id: String,
@@ -95,6 +97,20 @@ impl Task for DynamicTask {
 
     fn is_guard(&self) -> bool {
         self.is_guard
+    }
+
+    fn cel_types(&self) -> Vec<cel::StructDef> {
+        (|| -> Result<Vec<cel::StructDef>, Box<dyn std::error::Error>> {
+            let input_desc = self.service.input_descriptor()?;
+            let output_desc = self.service.output_descriptor()?;
+            let mut types = DescriptorConverter::collect_struct_defs(&input_desc)?;
+            types.extend(DescriptorConverter::collect_struct_defs(&output_desc)?);
+            Ok(types)
+        })()
+        .unwrap_or_else(|e| {
+            error!("Failed to collect CEL types: {}", e);
+            vec![]
+        })
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
