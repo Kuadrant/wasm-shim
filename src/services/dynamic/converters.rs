@@ -1,6 +1,6 @@
 use cel::common::types::*;
 use cel::objects::Key;
-use cel::{Env, StructDef, Value};
+use cel::{StructDef, Value};
 use prost_reflect::Cardinality;
 use prost_reflect::{
     DynamicMessage, FieldDescriptor, Kind as ProtoKind, MapKey, MessageDescriptor, ReflectMessage,
@@ -91,17 +91,6 @@ impl DescriptorConverter {
         }
 
         Ok(defs)
-    }
-
-    pub fn register_message_types(
-        env: &mut Env,
-        descriptor: &MessageDescriptor,
-    ) -> Result<(), ConversionError> {
-        let defs = Self::collect_struct_defs(descriptor)?;
-        for def in defs {
-            env.add_struct(def);
-        }
-        Ok(())
     }
 
     /// Convert a protobuf MessageDescriptor to a CEL StructDef
@@ -890,7 +879,7 @@ impl MessageConverter {
 mod tests {
     use super::*;
     use cel::common::value::Val;
-    use cel::{Context, Program};
+    use cel::{Context, Env, Program};
     use prost::Message;
     use prost_types::{field_descriptor_proto, DescriptorProto, FieldDescriptorProto};
     use prost_types::{FileDescriptorProto, FileDescriptorSet, OneofDescriptorProto};
@@ -1051,8 +1040,11 @@ mod tests {
 
         // Register all message types
         let mut env = cel::Env::stdlib();
-        DescriptorConverter::register_message_types(&mut env, &outer_descriptor)
-            .expect("Failed to register types");
+        for def in DescriptorConverter::collect_struct_defs(&outer_descriptor)
+            .expect("Failed to collect struct defs")
+        {
+            env.add_struct(def);
+        }
 
         let ctx = Context::with_env(Arc::new(env));
 
@@ -1454,8 +1446,11 @@ mod tests {
             .expect("MapMessage not found");
 
         let mut env = cel::Env::stdlib();
-        DescriptorConverter::register_message_types(&mut env, &descriptor)
-            .expect("Failed to register types");
+        for def in DescriptorConverter::collect_struct_defs(&descriptor)
+            .expect("Failed to collect struct defs")
+        {
+            env.add_struct(def);
+        }
 
         let ctx = Context::with_env(Arc::new(env));
 
@@ -1896,10 +1891,16 @@ mod tests {
             .expect("Failed to get Request descriptor");
 
         let mut env = Env::default();
-        DescriptorConverter::register_message_types(&mut env, &timestamp_desc)
-            .expect("Failed to register Timestamp");
-        DescriptorConverter::register_message_types(&mut env, &request_desc)
-            .expect("Failed to register Request");
+        for def in DescriptorConverter::collect_struct_defs(&timestamp_desc)
+            .expect("Failed to collect struct defs")
+        {
+            env.add_struct(def);
+        }
+        for def in DescriptorConverter::collect_struct_defs(&request_desc)
+            .expect("Failed to collect struct defs")
+        {
+            env.add_struct(def);
+        }
 
         // Create a CEL timestamp: 2024-05-16 12:00:00 UTC (1715875200 seconds, 123456789 nanos)
         let dt: DateTime<FixedOffset> = DateTime::from_timestamp(1715875200, 123456789)
