@@ -12,7 +12,7 @@ use crate::services::{cel_value_to_header_pairs, deny_response_struct_def};
 
 pub struct SendReplyTask {
     task_id: String,
-    predicate: Option<Predicate>,
+    predicate: Predicate,
     deny_with: Expression,
     terminal: bool,
 }
@@ -20,80 +20,32 @@ pub struct SendReplyTask {
 impl SendReplyTask {
     pub fn new(
         task_id: String,
-        status_code: u32,
-        headers: Vec<(String, String)>,
-        body: Option<String>,
-    ) -> Self {
-        let headers = headers
-            .into_iter()
-            .map(|(h, v)| format!("['''{h}''', '''{v}''']"))
-            .collect::<Vec<String>>()
-            .join(", ");
-        let body_field = body.map(|b| format!("body: '''{b}'''")).unwrap_or_default();
-        let expr = format!(
-            "DenyResponse {{ status: {status_code}u, headers: [{headers}], {body_field} }}"
-        );
-        #[allow(clippy::expect_used)]
-        let deny_with = Expression::new(&expr).expect("Needs to be valid CEL!");
-        Self {
-            task_id,
-            predicate: None,
-            deny_with,
-            terminal: false,
-        }
-    }
-
-    pub fn new_deferred(
-        task_id: String,
         predicate: Predicate,
         deny_with: Expression,
         terminal: bool,
     ) -> Self {
         Self {
             task_id,
-            predicate: Some(predicate),
+            predicate,
             deny_with,
             terminal,
         }
     }
 
     pub fn default() -> Self {
-        Self::new(
-            "default".to_string(),
-            500,
-            Vec::new(),
-            Some("Internal Server Error.\n".to_string()),
+        #[allow(clippy::expect_used)]
+        let deny_with = Expression::new(
+            r#"DenyResponse { status: 500u, headers: [], body: 'Internal Server Error.\n' }"#,
         )
-    }
-}
-
-impl TryFrom<Value> for SendReplyTask {
-    type Error = String;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        let Value::Struct(deny_response) = value else {
-            return Err(format!("expected DenyResponse struct, got: {value:?}"));
-        };
-
-        let status = deny_response
-            .field_value("status")
-            .and_then(|v| v.downcast_ref::<CelUInt>())
-            .map(|v| *v.inner() as u32)
-            .ok_or("DenyResponse missing or invalid 'status' field")?;
-
-        let body = deny_response
-            .field_value("body")
-            .and_then(|v| v.downcast_ref::<CelString>())
-            .map(|v| v.inner().to_string())
-            .filter(|s| !s.is_empty());
-
-        let headers = deny_response
-            .field_value("headers")
-            .and_then(|v| Value::try_from(v).ok())
-            .map(|v| cel_value_to_header_pairs(&v))
-            .unwrap_or_default();
-
-        Ok(Self::new("from_value".to_string(), status, headers, body))
+        .expect("Needs to be valid CEL!");
+        #[allow(clippy::expect_used)]
+        let predicate = Predicate::new("true").expect("Needs to be valid!");
+        Self {
+            task_id: "default".to_string(),
+            predicate,
+            deny_with,
+            terminal: false,
+        }
     }
 }
 
@@ -107,18 +59,16 @@ impl Task for SendReplyTask {
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        if let Some(ref predicate) = self.predicate {
-            let mut cel_ctx = ctx.cel.new_ctx(&*self);
-            match predicate.test(ctx, &mut cel_ctx) {
-                Ok(AttributeState::Available(true)) => {}
-                Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
-                Ok(AttributeState::Pending) => {
-                    return TaskOutcome::Requeued(vec![self]);
-                }
-                Err(e) => {
-                    error!("Failed to evaluate predicate: {e:?}");
-                    return TaskOutcome::Failed;
-                }
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+        match self.predicate.test(ctx, &mut cel_ctx) {
+            Ok(AttributeState::Available(true)) => {}
+            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+            Ok(AttributeState::Pending) => {
+                return TaskOutcome::Requeued(vec![self]);
+            }
+            Err(e) => {
+                error!("Failed to evaluate predicate: {e:?}");
+                return TaskOutcome::Failed;
             }
         }
 
@@ -126,7 +76,6 @@ impl Task for SendReplyTask {
         let _guard = span.enter();
 
         let (status_code, headers, body) = {
-            let mut cel_ctx = ctx.cel.new_ctx(&*self);
             match self.deny_with.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
                     error!("Unexpected pending state in deny expression");
@@ -208,17 +157,15 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
 
+        let predicate = Predicate::new("true").unwrap();
+        let deny_with = Expression::new(
+            "DenyResponse { status: 403u, headers: [['content-type', 'text/plain'], ['WWW-Authenticate', 'APIKEY realm=\"api-key-users\"']], body: 'Access Denied' }"
+        ).unwrap();
         let task = Box::new(SendReplyTask::new(
             "0".to_string(),
-            403,
-            vec![
-                ("content-type".to_string(), "text/plain".to_string()),
-                (
-                    "WWW-Authenticate".to_string(),
-                    "APIKEY realm=\"api-key-users\"".to_string(),
-                ),
-            ],
-            Some("Access Denied".to_string()),
+            predicate,
+            deny_with,
+            false,
         ));
 
         let outcome = task.apply(&mut ctx);
@@ -230,7 +177,15 @@ mod tests {
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
 
-        let task = Box::new(SendReplyTask::new("0".to_string(), 429, vec![], None));
+        let predicate = Predicate::new("true").unwrap();
+        let deny_with =
+            Expression::new("DenyResponse { status: 429u, headers: [], body: '' }").unwrap();
+        let task = Box::new(SendReplyTask::new(
+            "0".to_string(),
+            predicate,
+            deny_with,
+            false,
+        ));
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Done));

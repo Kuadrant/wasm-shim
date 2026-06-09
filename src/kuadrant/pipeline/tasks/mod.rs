@@ -12,7 +12,7 @@ pub use dynamic::DynamicTask;
 pub use export_traces::ExportTracesTask;
 pub use fail::FailTask;
 pub use failure_mode::FailureModeTask;
-pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
+pub use headers::{HeadersType, ModifyHeadersTask};
 pub use send_reply::SendReplyTask;
 pub use store::StoreTask;
 pub use token_usage::TokenUsageTask;

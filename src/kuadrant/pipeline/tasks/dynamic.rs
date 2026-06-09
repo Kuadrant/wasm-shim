@@ -215,29 +215,5 @@ fn process_dynamic_response(
     ctx.cel
         .add_scoped_binding(task_id, var.to_string(), cel_value);
 
-    let mut remaining_tasks: Vec<Box<dyn Task>> = Vec::new();
-    for child in on_reply {
-        match child.apply(ctx) {
-            TaskOutcome::Done => {}
-            TaskOutcome::Terminate(t) => return TaskOutcome::Terminate(t),
-            TaskOutcome::Deferred {
-                token_id: _,
-                pending: _,
-            } => {
-                todo!("(@adam-cattermole): this is new and yet to be supported - deferred tasks generating deferred tasks")
-            }
-            TaskOutcome::Requeued(mut requeued) => {
-                remaining_tasks.append(&mut requeued);
-            }
-            TaskOutcome::Failed => {
-                return TaskOutcome::Failed;
-            }
-        }
-    }
-
-    if remaining_tasks.is_empty() {
-        TaskOutcome::Done
-    } else {
-        TaskOutcome::Requeued(remaining_tasks)
-    }
+    TaskOutcome::Requeued(on_reply)
 }
