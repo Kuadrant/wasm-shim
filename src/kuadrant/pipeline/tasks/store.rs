@@ -157,7 +157,7 @@ impl Task for StoreTask {
 
         let _span = tracing::debug_span!("store").entered();
 
-        let mut cel_ctx = cel::Context::default();
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
         let value = match self.expression.eval(ctx, &mut cel_ctx) {
             Ok(AttributeState::Pending) => {
                 return TaskOutcome::Requeued(vec![self]);
