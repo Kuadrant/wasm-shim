@@ -30,7 +30,7 @@ pub struct DynamicTask {
 impl DynamicTask {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_attributes(
-        ctx: &ReqRespCtx,
+        ctx: &mut ReqRespCtx,
         task_id: String,
         service: Rc<DynamicService>,
         var: String,
@@ -40,40 +40,7 @@ impl DynamicTask {
         dependencies: Vec<String>,
         is_guard: bool,
     ) -> Self {
-        // Warm up the cache
-        let _ = predicate.test(ctx);
-        if let Ok(env) = service.cel_env() {
-            let mut cel_ctx = cel::Context::with_env(env);
-            let _ = message_builder.eval(ctx, &mut cel_ctx);
-
-            for action in &on_reply {
-                let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
-                match &action.operation {
-                    Operation::Grpc {
-                        message_builder,
-                        on_reply: nested_on_reply,
-                        ..
-                    } => {
-                        let _ = message_builder.eval(ctx, &mut cel_ctx);
-                        for nested_action in nested_on_reply {
-                            let _ = nested_action.predicate.test_with_ctx(ctx, &mut cel_ctx);
-                        }
-                    }
-                    Operation::Deny { deny_with } => {
-                        let _ = deny_with.eval(ctx, &mut cel_ctx);
-                    }
-                    Operation::Headers { headers, .. } => {
-                        let _ = headers.eval(ctx, &mut cel_ctx);
-                    }
-                    Operation::Store { expression, .. } => {
-                        let _ = expression.eval(ctx, &mut cel_ctx);
-                    }
-                    Operation::Fail { .. } => {}
-                }
-            }
-        }
-
-        Self {
+        let task = Self {
             task_id,
             service,
             var,
@@ -82,6 +49,41 @@ impl DynamicTask {
             predicate,
             dependencies,
             is_guard,
+        };
+
+        task.warm(ctx);
+        task
+    }
+
+    fn warm(&self, ctx: &mut ReqRespCtx) {
+        let _ = self.predicate.test(ctx);
+        let mut cel_ctx = ctx.cel.new_ctx(self);
+        let _ = self.message_builder.eval(ctx, &mut cel_ctx);
+
+        for action in &self.on_reply {
+            let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
+            match &action.operation {
+                Operation::Grpc {
+                    message_builder,
+                    on_reply: nested_on_reply,
+                    ..
+                } => {
+                    let _ = message_builder.eval(ctx, &mut cel_ctx);
+                    for nested_action in nested_on_reply {
+                        let _ = nested_action.predicate.test_with_ctx(ctx, &mut cel_ctx);
+                    }
+                }
+                Operation::Deny { deny_with } => {
+                    let _ = deny_with.eval(ctx, &mut cel_ctx);
+                }
+                Operation::Headers { headers, .. } => {
+                    let _ = headers.eval(ctx, &mut cel_ctx);
+                }
+                Operation::Store { expression, .. } => {
+                    let _ = expression.eval(ctx, &mut cel_ctx);
+                }
+                Operation::Fail { .. } => {}
+            }
         }
     }
 }
@@ -140,15 +142,7 @@ impl Task for DynamicTask {
             )
             .entered();
 
-            let env = match self.service.cel_env() {
-                Ok(env) => env,
-                Err(e) => {
-                    error!("Failed to get CEL environment: {e}");
-                    return TaskOutcome::Failed;
-                }
-            };
-
-            let mut cel_ctx = cel::Context::with_env(env);
+            let mut cel_ctx = ctx.cel.new_ctx(&*self);
             let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
                     return if ctx.response_body.is_end_of_stream() {
