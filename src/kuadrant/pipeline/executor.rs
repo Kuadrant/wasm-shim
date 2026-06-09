@@ -70,7 +70,7 @@ impl Pipeline {
                 let is_guard = task.is_guard();
                 // Create a new PendingTask with no-op processor
                 let pending = Box::new(PendingTask::new(
-                    task.id().unwrap_or_default(),
+                    task.id().to_string(),
                     Box::new(noop_response_processor(token_id, is_guard)),
                     is_guard,
                 )) as Box<dyn Task>;
@@ -113,12 +113,10 @@ impl Pipeline {
                 continue;
             }
 
-            let task_id = task.id();
+            let task_id = task.id().to_string();
             match task.apply(&mut self.ctx) {
                 TaskOutcome::Done => {
-                    if let Some(id) = task_id {
-                        self.completed_tasks.insert(id);
-                    }
+                    self.completed_tasks.insert(task_id);
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
@@ -162,17 +160,13 @@ impl Pipeline {
                 Ok(_) => {}
                 Err(err) => error!("Failed to set gRPC response data: {}", err),
             };
-            let task_id = pending.id();
+            let task_id = pending.id().to_string();
             match pending.apply(&mut self.ctx) {
                 TaskOutcome::Done => {
-                    if let Some(id) = task_id {
-                        self.completed_tasks.insert(id);
-                    }
+                    self.completed_tasks.insert(task_id);
                 }
                 TaskOutcome::Requeued(tasks) => {
-                    if let Some(id) = task_id {
-                        self.completed_tasks.insert(id);
-                    }
+                    self.completed_tasks.insert(task_id);
                     for task in tasks.into_iter().rev() {
                         self.task_queue.insert(0, task);
                     }
@@ -271,8 +265,8 @@ mod tests {
             }
         }
 
-        fn id(&self) -> Option<String> {
-            Some(self.id.clone())
+        fn id(&self) -> &str {
+            &self.id
         }
 
         fn dependencies(&self) -> &[String] {

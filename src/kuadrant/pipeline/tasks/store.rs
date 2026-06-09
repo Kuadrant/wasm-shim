@@ -80,8 +80,8 @@ fn create_body_parser(
 }
 
 impl Task for StoreTask {
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
 
     #[tracing::instrument(name = "store", skip(self, ctx), level = tracing::Level::TRACE)]

@@ -39,7 +39,7 @@ impl Task for FailureModeTask {
         }
     }
 
-    fn id(&self) -> Option<String> {
+    fn id(&self) -> &str {
         self.task.id()
     }
 

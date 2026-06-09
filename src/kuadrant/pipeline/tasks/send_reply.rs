@@ -100,8 +100,8 @@ impl TryFrom<Value> for SendReplyTask {
 }
 
 impl Task for SendReplyTask {
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
 
     #[tracing::instrument(name = "send_reply", skip(self, ctx))]
