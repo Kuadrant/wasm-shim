@@ -50,8 +50,8 @@ impl DynamicTask {
     }
 
     fn warm(&self, ctx: &mut ReqRespCtx) {
-        let _ = self.predicate.test(ctx);
         let mut cel_ctx = ctx.cel.new_ctx(self);
+        let _ = self.predicate.test(ctx, &mut cel_ctx);
         let _ = self.message_builder.eval(ctx, &mut cel_ctx);
     }
 }
@@ -84,7 +84,8 @@ impl Task for DynamicTask {
     }
 
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        match self.predicate.test(ctx) {
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+        match self.predicate.test(ctx, &mut cel_ctx) {
             Ok(AttributeState::Pending) => {
                 return if ctx.response_body.is_end_of_stream() {
                     TaskOutcome::Failed

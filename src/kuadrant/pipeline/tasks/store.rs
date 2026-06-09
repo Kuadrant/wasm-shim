@@ -142,8 +142,10 @@ impl Task for StoreTask {
             parser.populate(body_ctx_mut);
         }
 
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+
         if let Some(ref predicate) = self.predicate {
-            match predicate.test(ctx) {
+            match predicate.test(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Available(true)) => {}
                 Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
                 Ok(AttributeState::Pending) => {
@@ -155,8 +157,6 @@ impl Task for StoreTask {
                 }
             }
         }
-
-        let mut cel_ctx = ctx.cel.new_ctx(&*self);
         let value = match self.expression.eval(ctx, &mut cel_ctx) {
             Ok(AttributeState::Pending) => {
                 return TaskOutcome::Requeued(vec![self]);
