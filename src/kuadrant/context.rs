@@ -1,12 +1,13 @@
-use cel::Value;
+use cel::{Context, Env, Value};
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
+use crate::kuadrant::pipeline::tasks::Task;
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -28,6 +29,7 @@ pub struct ReqRespCtx {
     tracker: Tracker,
     stored_values: BTreeMap<String, Value>,
     pub barrier: Barrier,
+    pub cel: CelScope,
 }
 
 impl Default for ReqRespCtx {
@@ -49,6 +51,7 @@ impl ReqRespCtx {
             tracker: Tracker::default(),
             stored_values: BTreeMap::new(),
             barrier: Barrier::default(),
+            cel: CelScope::default(),
         }
     }
 
@@ -467,7 +470,7 @@ impl Barrier {
         match self.count.checked_sub(1) {
             Some(new_value) => self.count = new_value,
             None => {
-                tracing::error!(
+                error!(
                     "Attempted to lower upstream barrier when count is already 0 - mismatched raise/lower pairs"
                 );
             }
@@ -511,6 +514,43 @@ impl BodyContext {
 
     pub fn get_value(&self, key: &str) -> Option<&Value> {
         self.values.get(key)
+    }
+}
+
+pub struct CelScope {
+    env: Arc<Env>,
+    registered: HashSet<String>,
+}
+
+impl Default for CelScope {
+    fn default() -> Self {
+        Self {
+            env: Arc::new(Env::stdlib()),
+            registered: HashSet::new(),
+        }
+    }
+}
+
+impl CelScope {
+    pub fn new_ctx(&mut self, task: &dyn Task) -> Context<'static> {
+        let task_id = task.id();
+
+        if !self.registered.contains(task.id()) {
+            let types = task.cel_types();
+            if !types.is_empty() {
+                match Arc::get_mut(&mut self.env) {
+                    Some(env) => {
+                        for type_def in types {
+                            env.add_struct(type_def);
+                        }
+                    }
+                    None => error!("Failed to add CEL types: Arc refcount > 1"),
+                }
+            }
+            self.registered.insert(task_id.to_string());
+        }
+
+        Context::with_env(Arc::clone(&self.env))
     }
 }
 
