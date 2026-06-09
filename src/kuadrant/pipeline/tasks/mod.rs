@@ -1,5 +1,6 @@
 mod dynamic;
 mod export_traces;
+mod fail;
 mod failure_mode;
 mod headers;
 mod send_reply;
@@ -9,6 +10,7 @@ mod tracing_decorator;
 
 pub use dynamic::DynamicTask;
 pub use export_traces::ExportTracesTask;
+pub use fail::FailTask;
 pub use failure_mode::FailureModeTask;
 pub use headers::{HeaderOperation, HeadersType, ModifyHeadersTask};
 pub use send_reply::SendReplyTask;
