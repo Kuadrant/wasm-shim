@@ -267,8 +267,17 @@ pub(super) mod ratelimit {
     ) -> TypedAction {
         const RESPONSE_VAR: &str = "ratelimit_response";
 
-        let message_builder =
-            build_ratelimit_message_builder(&action.scope, &action.conditional_data, request_data);
+        let request_only_data: Vec<_> = request_data
+            .iter()
+            .filter(|((_domain, _field), expr)| !expr.contains("responseBodyJSON("))
+            .cloned()
+            .collect();
+
+        let message_builder = build_ratelimit_message_builder(
+            &action.scope,
+            &action.conditional_data,
+            &request_only_data,
+        );
 
         let predicate = build_ratelimit_predicate(&action.predicates, &action.conditional_data);
 
@@ -846,7 +855,13 @@ pub(super) mod auth {
         scope: &str,
         request_data: &[((String, String), String)],
     ) -> String {
-        let metadata_context = build_metadata_context_cel(request_data);
+        let request_only_data: Vec<_> = request_data
+            .iter()
+            .filter(|((_domain, _field), expr)| !expr.contains("responseBodyJSON("))
+            .cloned()
+            .collect();
+
+        let metadata_context = build_metadata_context_cel(&request_only_data);
 
         format!(
             r#"envoy.service.auth.v3.CheckRequest {{
