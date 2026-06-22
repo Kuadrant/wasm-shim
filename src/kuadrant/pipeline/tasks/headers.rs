@@ -6,7 +6,7 @@ use crate::kuadrant::ReqRespCtx;
 use crate::services::cel_value_to_header_pairs;
 use tracing::{debug, error};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum HeadersType {
     HttpRequestHeaders,
     HttpResponseHeaders,
@@ -124,6 +124,8 @@ impl Task for ModifyHeadersTask {
         let result: Result<AttributeState<Option<Headers>>, _> = ctx.get_attribute_ref(&path);
         match result {
             Ok(AttributeState::Available(Some(mut existing_headers))) => {
+                let _span = tracing::debug_span!("headers", target = ?self.target).entered();
+
                 match &operation {
                     HeaderOperation::Append(headers) => {
                         debug!("Appending {} headers", headers.len());
@@ -158,6 +160,7 @@ impl Task for ModifyHeadersTask {
                 }
             }
             Ok(AttributeState::Available(None)) => {
+                let _span = tracing::debug_span!("headers", target = ?self.target).entered();
                 error!(
                     "Unexpected state: getting headers returned AttributeState::Available(None)"
                 );
@@ -165,6 +168,7 @@ impl Task for ModifyHeadersTask {
             }
             Ok(AttributeState::Pending) => TaskOutcome::Requeued(vec![self]),
             Err(e) => {
+                let _span = tracing::debug_span!("headers", target = ?self.target).entered();
                 error!("Failed to get attribute reference: {e:?}");
                 TaskOutcome::Failed
             }

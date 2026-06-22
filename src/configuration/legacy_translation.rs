@@ -293,6 +293,7 @@ pub(super) mod ratelimit {
                 service: action.service.clone(),
                 message_builder,
                 on_reply,
+                label: "ratelimit".to_string(),
             }),
         }
     }
@@ -330,6 +331,7 @@ pub(super) mod ratelimit {
                 service: action.service.clone(),
                 message_builder,
                 on_reply,
+                label: "ratelimit_report".to_string(),
             }),
         }
     }
@@ -923,6 +925,7 @@ pub(super) mod auth {
                 service: action.service.clone(),
                 message_builder,
                 on_reply,
+                label: "auth".to_string(),
             }),
         }
     }

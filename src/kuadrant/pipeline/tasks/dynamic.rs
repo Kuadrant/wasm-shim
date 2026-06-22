@@ -17,7 +17,7 @@ use crate::services::{cel_value_to_header_pairs, DynamicService, MessageConverte
 pub struct DynamicTask {
     task_id: String,
     service: Rc<DynamicService>,
-    name: String,
+    var: String,
     message_builder: Expression,
     on_reply: Vec<Action>,
     predicate: Predicate,
@@ -31,7 +31,7 @@ impl DynamicTask {
         ctx: &ReqRespCtx,
         task_id: String,
         service: Rc<DynamicService>,
-        name: String,
+        var: String,
         message_builder: Expression,
         on_reply: Vec<Action>,
         predicate: Predicate,
@@ -74,7 +74,7 @@ impl DynamicTask {
         Self {
             task_id,
             service,
-            name,
+            var,
             message_builder,
             on_reply,
             predicate,
@@ -115,9 +115,14 @@ impl Task for DynamicTask {
         }
 
         let token_id = {
-            let _span =
-                tracing::debug_span!("dynamic_request", task_id = self.task_id, name = self.name)
-                    .entered();
+            let _span = tracing::debug_span!(
+                "grpc_request",
+                task_id = self.task_id,
+                var = self.var,
+                grpc_service = self.service.service_name(),
+                grpc_method = self.service.method()
+            )
+            .entered();
 
             let env = match self.service.cel_env() {
                 Ok(env) => env,
@@ -154,7 +159,7 @@ impl Task for DynamicTask {
 
         let service = self.service.clone();
         let task_id = self.task_id.clone();
-        let name = self.name.clone();
+        let var = self.var.clone();
         let on_reply = self.on_reply.clone();
         let is_guard = self.is_guard;
 
@@ -168,7 +173,7 @@ impl Task for DynamicTask {
                 self.task_id,
                 Box::new(move |ctx| {
                     let outcome = process_dynamic_response(
-                        ctx, &service, &task_id, token_id, &name, &on_reply,
+                        ctx, &service, &task_id, token_id, &var, &on_reply,
                     );
                     if is_guard {
                         ctx.barrier.lower();
@@ -190,9 +195,11 @@ fn process_dynamic_response(
     on_reply: &[Action],
 ) -> TaskOutcome {
     let span = tracing::debug_span!(
-        "dynamic_response",
+        "grpc_response",
         task_id = task_id,
         token_id = token_id,
+        grpc_service = service.service_name(),
+        grpc_method = service.method(),
         grpc_status_code = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
         otel.status_message = tracing::field::Empty
@@ -330,6 +337,7 @@ fn process_dynamic_response(
                 var,
                 message_builder,
                 on_reply: nested_on_reply,
+                ..
             } => match service {
                 crate::services::ServiceInstance::Dynamic(dynamic_service)
                 | crate::services::ServiceInstance::Auth(dynamic_service)

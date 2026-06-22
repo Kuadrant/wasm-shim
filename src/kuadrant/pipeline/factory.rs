@@ -104,6 +104,7 @@ impl PipelineFactory {
                     var: header,
                     message_builder: Expression::new("true").expect("Valid expression"),
                     on_reply: vec![],
+                    label: String::new(),
                 },
                 dependencies: Default::default(),
                 sources: vec![],

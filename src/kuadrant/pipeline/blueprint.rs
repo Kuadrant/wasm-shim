@@ -41,6 +41,7 @@ pub(crate) enum Operation {
         var: String,
         message_builder: Expression,
         on_reply: Vec<Action>,
+        label: String,
     },
     Deny {
         deny_with: Expression,
@@ -239,6 +240,7 @@ impl Blueprint {
                     var,
                     message_builder,
                     on_reply,
+                    label,
                 } => {
                     let abort_on_failure =
                         service.failure_mode() == configuration::FailureMode::Deny;
@@ -282,15 +284,8 @@ impl Blueprint {
                             ));
                             let task = Box::new(FailureModeTask::new(task, abort_on_failure));
                             if tracing_enabled {
-                                let span_label = match service {
-                                    ServiceInstance::Auth(_) => "auth",
-                                    ServiceInstance::RateLimit(_)
-                                    | ServiceInstance::RateLimitCheck(_) => "ratelimit",
-                                    ServiceInstance::RateLimitReport(_) => "ratelimit_report",
-                                    _ => "dynamic",
-                                };
                                 tasks.push(Box::new(TracingDecoratorTask::new(
-                                    span_label,
+                                    label.clone(),
                                     task,
                                     action.sources.clone(),
                                 )));
@@ -455,6 +450,7 @@ impl Action {
                     var: grpc.var.clone(),
                     message_builder,
                     on_reply,
+                    label: grpc.label.clone(),
                 }
             }
             configuration::Operation::Deny(deny) => {
@@ -776,6 +772,7 @@ mod tests {
                         }),
                     },
                 ],
+                label: String::new(),
             }),
         };
 
@@ -813,6 +810,7 @@ mod tests {
                 service: "nonexistent".to_string(),
                 message_builder: "test.Request{}".to_string(),
                 on_reply: vec![],
+                label: String::new(),
             }),
         };
 
@@ -841,6 +839,7 @@ mod tests {
                 service: "tracing-svc".to_string(),
                 message_builder: "test.Request{}".to_string(),
                 on_reply: vec![],
+                label: String::new(),
             }),
         };
 
@@ -865,6 +864,7 @@ mod tests {
                 service: "svc".to_string(),
                 message_builder: "test.Request{}".to_string(),
                 on_reply: vec![],
+                label: String::new(),
             }),
         };
 
@@ -997,6 +997,7 @@ mod tests {
                                 deny_with: "DenyResponse{status: 429u}".to_string(),
                             }),
                         }],
+                        label: String::new(),
                     }),
                 }),
             ],
