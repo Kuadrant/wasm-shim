@@ -37,8 +37,14 @@ impl SpanProcessor for SpanProcessorHandle {
 }
 
 #[derive(Debug)]
+struct BufferState {
+    queue: VecDeque<SpanData>,
+    logged_full: bool,
+}
+
+#[derive(Debug)]
 pub struct BufferingSpanProcessor {
-    buffer: Mutex<VecDeque<SpanData>>,
+    buffer: Mutex<BufferState>,
     max_buffer_size: usize,
 }
 
@@ -50,37 +56,38 @@ impl BufferingSpanProcessor {
 
     pub fn with_capacity(max_buffer_size: usize) -> Self {
         Self {
-            buffer: Mutex::new(VecDeque::with_capacity(max_buffer_size)),
+            buffer: Mutex::new(BufferState {
+                queue: VecDeque::with_capacity(max_buffer_size),
+                logged_full: false,
+            }),
             max_buffer_size,
         }
     }
 
     /// Take all pending spans from the buffer, clearing it
     pub fn take_pending_spans(&self) -> Vec<SpanData> {
-        let mut buffer = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
-        std::mem::take(&mut *buffer).into()
+        let mut state = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        state.logged_full = false;
+        std::mem::take(&mut state.queue).into()
     }
 
     /// Get the number of pending spans in the buffer
     pub fn pending_count(&self) -> usize {
-        self.buffer.lock().unwrap_or_else(|e| e.into_inner()).len()
+        let state = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        state.queue.len()
     }
 
     /// Check if there are any pending spans
     pub fn has_pending_spans(&self) -> bool {
-        !self
-            .buffer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
+        let state = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        !state.queue.is_empty()
     }
 
     /// Clear all pending spans without returning them
     pub fn clear(&self) {
-        self.buffer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        let mut state = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        state.queue.clear();
+        state.logged_full = false;
     }
 
     /// Get the maximum buffer size
@@ -101,18 +108,21 @@ impl SpanProcessor for BufferingSpanProcessor {
     }
 
     fn on_end(&self, span: SpanData) {
-        let mut buffer = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
 
         // FIFO
-        if buffer.len() >= self.max_buffer_size {
-            tracing::warn!(
-                "Span buffer full ({}), dropping oldest span",
-                self.max_buffer_size
-            );
-            buffer.pop_front();
+        if state.queue.len() >= self.max_buffer_size {
+            if !state.logged_full {
+                tracing::warn!(
+                    "Tracing span buffer full ({}), dropping oldest spans to prevent memory growth",
+                    self.max_buffer_size
+                );
+                state.logged_full = true;
+            }
+            state.queue.pop_front();
         }
 
-        buffer.push_back(span);
+        state.queue.push_back(span);
     }
 
     fn force_flush(&self) -> OTelSdkResult {
