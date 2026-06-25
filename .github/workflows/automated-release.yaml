@@ -23,13 +23,13 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.gitRef }}
-          token: ${{ secrets.KUADRANT_WORKFLOWS_PAT }}
+          token: ${{ secrets.KUADRANT_DEV_PAT }}
 
       - name: Prepare release
         uses: ./.github/actions/prepare-release
         with:
           version: ${{ github.event.inputs.wasmShimVersion }}
-          push-branch: 'true'
+          push-branch: "true"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Pull Request
@@ -44,7 +44,7 @@ jobs:
           base: ${{ env.BASE_BRANCH }}
           branch: release-${{ env.WASM_SHIM_VERSION }}
           delete-branch: true
-          title: '[Release] WASM Shim v${{ env.WASM_SHIM_VERSION }}'
+          title: "[Release] WASM Shim v${{ env.WASM_SHIM_VERSION }}"
           body: |
             Prepare release for WASM Shim version ${{ env.WASM_SHIM_VERSION }}
 
