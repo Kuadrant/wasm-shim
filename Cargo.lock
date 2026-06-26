@@ -606,9 +606,9 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "foldhash"
-version = "0.1.5"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
@@ -808,20 +808,14 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
 ]
-
-[[package]]
-name = "hashbrown"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 
 [[package]]
 name = "heck"
@@ -1599,10 +1593,10 @@ dependencies = [
 
 [[package]]
 name = "proxy-wasm"
-version = "0.2.3-dev"
-source = "git+https://github.com/Kuadrant/proxy-wasm-rust-sdk.git?rev=ceeb7c1#ceeb7c1f5263c30d835d87eee11660348d2179e8"
+version = "0.2.5"
+source = "git+https://github.com/Kuadrant/proxy-wasm-rust-sdk.git?rev=6ceedbb#6ceedbbdd07a048a65d197c9bbb1f950884561fb"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown 0.16.0",
  "log",
 ]
 
@@ -2509,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-shim"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "acutejson",
  "cel",
