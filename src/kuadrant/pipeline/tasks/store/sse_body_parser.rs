@@ -1,5 +1,13 @@
+use std::collections::HashMap;
+
+use cel::Value;
 use core::time::Duration;
 use sse_line_parser::RawEventLine;
+use tracing::error;
+
+use super::body_parser::{parse_json_scalar, BodyParser};
+use crate::data::attribute::AttributeError;
+use crate::kuadrant::context::BodyContext;
 
 mod sse_line_parser;
 
@@ -116,6 +124,100 @@ impl EventBuilder {
         }
 
         Some(event)
+    }
+}
+
+// todo(@adam-cattermole): remove once StoreTask uses SseBodyParser
+#[allow(dead_code)]
+pub(crate) struct SseBodyParser {
+    fields: Vec<String>,
+    event_parser: EventParser,
+    last_two_events: [Option<Event>; 2],
+    extracted: HashMap<String, Value>,
+    complete: bool,
+}
+
+#[allow(dead_code)]
+impl SseBodyParser {
+    pub fn new(fields: Vec<String>) -> Self {
+        Self {
+            fields,
+            event_parser: EventParser::default(),
+            last_two_events: [None, None],
+            extracted: HashMap::new(),
+            complete: false,
+        }
+    }
+
+    fn push_event(&mut self, event: Event) {
+        self.last_two_events[1] = self.last_two_events[0].take();
+        self.last_two_events[0] = Some(event);
+    }
+
+    fn finalize(&mut self) {
+        self.complete = true;
+        let penultimate = match &self.last_two_events[1] {
+            Some(event) => &event.data,
+            None => return,
+        };
+
+        let json: serde_json::Value = match serde_json::from_str(penultimate) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Failed to parse penultimate SSE event as JSON: {e}");
+                return;
+            }
+        };
+
+        for field in &self.fields {
+            if let Some(value) = json.pointer(field) {
+                let cel_value = match value {
+                    serde_json::Value::String(s) => Value::String(std::sync::Arc::new(s.clone())),
+                    other => parse_json_scalar(&other.to_string()),
+                };
+                self.extracted.insert(field.clone(), cel_value);
+            }
+        }
+    }
+}
+
+impl BodyParser for SseBodyParser {
+    fn bytes_consumed(&self) -> usize {
+        0
+    }
+
+    fn is_complete(&self) -> bool {
+        self.complete && self.remaining_fields().is_empty()
+    }
+
+    fn remaining_fields(&self) -> Vec<&String> {
+        self.fields
+            .iter()
+            .filter(|f| !self.extracted.contains_key(f.as_str()))
+            .collect()
+    }
+
+    fn feed(&mut self, chunk: &[u8]) -> Result<(), AttributeError> {
+        if self.complete {
+            return Ok(());
+        }
+
+        let events = self
+            .event_parser
+            .parse(chunk.to_vec())
+            .map_err(|e| AttributeError::Parse(format!("SSE parse error: {e}")))?;
+
+        for event in events {
+            self.push_event(event);
+        }
+
+        Ok(())
+    }
+
+    fn populate(&self, body_ctx: &mut BodyContext) {
+        for (field, value) in &self.extracted {
+            body_ctx.set_value(field, value.clone());
+        }
     }
 }
 
