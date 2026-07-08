@@ -122,8 +122,6 @@ impl EventBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kuadrant::{MockWasmHost, ReqRespCtx};
-    use std::sync::Arc;
 
     #[test]
     fn test_one_complete_event() {
@@ -188,12 +186,7 @@ mod tests {
             }]
         );
 
-        // Now send the completion of the partial event
         let buf2 = String::from(" event\n\n");
-        let mock_backend2 = MockWasmHost::new().with_response_body(buf2.as_bytes());
-        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2));
-        ctx2.response_body.set_buffer_size(buf2.len(), true);
-
         let events2 = event_parser
             .parse(buf2.into())
             .expect("should not return parsing error");

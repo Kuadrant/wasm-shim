@@ -1,12 +1,11 @@
+use super::store::sse_body_parser;
 use crate::data::attribute::AttributeState;
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
-use event_parser::Event;
 use serde_json::Value;
+use sse_body_parser::Event;
 use tracing::{debug, error, warn};
-
-mod event_parser;
 
 pub struct TokenUsageTask {
     strategy: Option<Box<dyn ExtractionStrategy>>,
@@ -134,7 +133,7 @@ trait ExtractionStrategy {
 }
 
 struct SseStrategy {
-    event_parser: event_parser::EventParser,
+    event_parser: sse_body_parser::EventParser,
     // Stores the last two events: [second_to_last, last]
     last_two_events: [Option<Event>; 2],
     parsed_json: Option<Value>,
@@ -143,7 +142,7 @@ struct SseStrategy {
 impl SseStrategy {
     fn new() -> Self {
         Self {
-            event_parser: event_parser::EventParser::default(),
+            event_parser: sse_body_parser::EventParser::default(),
             last_two_events: [None, None],
             parsed_json: None,
         }

@@ -1,4 +1,5 @@
 mod body_parser;
+pub(super) mod sse_body_parser;
 
 use body_parser::BodyParser;
 use tracing::error;
