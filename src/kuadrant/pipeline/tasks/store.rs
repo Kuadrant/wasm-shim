@@ -1,7 +1,9 @@
 mod body_parser;
+mod json_body_parser;
 pub(super) mod sse_body_parser;
 
 use body_parser::BodyParser;
+use json_body_parser::JsonBodyParser;
 use tracing::error;
 
 use crate::data::attribute::{AttributeError, AttributeState};
@@ -23,7 +25,7 @@ pub struct StoreTask {
     path: String,
     export_to_host: bool,
     terminal: bool,
-    body_parser: Option<(BodySource, BodyParser)>,
+    body_parser: Option<(BodySource, JsonBodyParser)>,
     _reservation: PathReservation,
 }
 
@@ -55,7 +57,7 @@ impl StoreTask {
 fn create_body_parser(
     predicate: &Predicate,
     expression: &Expression,
-) -> Result<Option<(BodySource, BodyParser)>, AttributeError> {
+) -> Result<Option<(BodySource, JsonBodyParser)>, AttributeError> {
     let mut request_fields: Vec<String> = Vec::new();
     let mut response_fields: Vec<String> = Vec::new();
 
@@ -68,14 +70,14 @@ fn create_body_parser(
     if !request_fields.is_empty() {
         request_fields.sort();
         request_fields.dedup();
-        let parser = BodyParser::new(request_fields).map_err(|e| {
+        let parser = JsonBodyParser::new(request_fields).map_err(|e| {
             AttributeError::Parse(format!("Failed to create request body parser: {}", e))
         })?;
         Ok(Some((BodySource::Request, parser)))
     } else if !response_fields.is_empty() {
         response_fields.sort();
         response_fields.dedup();
-        let parser = BodyParser::new(response_fields).map_err(|e| {
+        let parser = JsonBodyParser::new(response_fields).map_err(|e| {
             AttributeError::Parse(format!("Failed to create response body parser: {}", e))
         })?;
         Ok(Some((BodySource::Response, parser)))
