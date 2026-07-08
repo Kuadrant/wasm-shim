@@ -1,6 +1,8 @@
 use cel::{Context, Env, Value};
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{debug, error, warn};
 
@@ -27,7 +29,7 @@ pub struct ReqRespCtx {
     grpc_response_data: Option<(u32, usize)>,
     tracing: TracingContext,
     tracker: Tracker,
-    stored_values: BTreeMap<String, Value>,
+    pub values: ValueStore,
     pub barrier: Barrier,
     pub cel: CelScope,
 }
@@ -49,7 +51,7 @@ impl ReqRespCtx {
             grpc_response_data: None,
             tracing: TracingContext::default(),
             tracker: Tracker::default(),
-            stored_values: BTreeMap::new(),
+            values: ValueStore::default(),
             barrier: Barrier::default(),
             cel: CelScope::default(),
         }
@@ -381,25 +383,6 @@ impl ReqRespCtx {
             Some(id) => Some((id.as_str(), self.request_id())),
         }
     }
-
-    pub fn store_value(&mut self, path: String, value: Value) {
-        self.stored_values.insert(path, value);
-    }
-
-    pub fn get_stored_value(&self, path: &str) -> Option<&Value> {
-        self.stored_values.get(path)
-    }
-
-    pub fn stored_value_paths(&self) -> impl Iterator<Item = &str> {
-        self.stored_values.keys().map(|s| s.as_str())
-    }
-
-    pub fn has_stored_prefix(&self, prefix: &str) -> bool {
-        self.stored_values
-            .range::<String, _>(prefix.to_string()..)
-            .next()
-            .is_some_and(|(k, _)| k.starts_with(prefix))
-    }
 }
 
 struct Tracker {
@@ -572,6 +555,77 @@ impl CelScope {
 
 fn is_ancestor(scope_id: &str, task_id: &str) -> bool {
     task_id == scope_id || task_id.starts_with(&format!("{}.", scope_id))
+}
+
+pub struct PathReservation {
+    path: String,
+    registry: Rc<RefCell<HashMap<String, usize>>>,
+}
+
+impl PathReservation {
+    fn new(path: String, registry: &Rc<RefCell<HashMap<String, usize>>>) -> Self {
+        *registry.borrow_mut().entry(path.clone()).or_insert(0) += 1;
+        Self {
+            path,
+            registry: Rc::clone(registry),
+        }
+    }
+}
+
+impl Drop for PathReservation {
+    fn drop(&mut self) {
+        let mut map = self.registry.borrow_mut();
+        match map.entry(self.path.clone()) {
+            Entry::Occupied(mut entry) => {
+                *entry.get_mut() -= 1;
+                if *entry.get() == 0 {
+                    entry.remove();
+                }
+            }
+            Entry::Vacant(_) => {
+                error!(
+                    "PathReservation dropped for '{}' but no reservation found",
+                    self.path
+                );
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ValueStore {
+    values: BTreeMap<String, Value>,
+    reserved: Rc<RefCell<HashMap<String, usize>>>,
+}
+
+impl ValueStore {
+    pub fn get(&self, path: &str) -> Option<&Value> {
+        self.values.get(path)
+    }
+
+    pub fn is_pending(&self, path: &str) -> bool {
+        !self.values.contains_key(path) && self.reserved.borrow().contains_key(path)
+    }
+
+    pub fn has_prefix(&self, prefix: &str) -> bool {
+        self.values
+            .range::<String, _>(prefix.to_string()..)
+            .next()
+            .is_some_and(|(k, _)| k.starts_with(prefix))
+            || self.reserved.borrow().keys().any(|p| p.starts_with(prefix))
+    }
+
+    pub fn store(&mut self, path: String, value: Value) {
+        self.values.insert(path, value);
+    }
+
+    pub fn reserve(&self, path: String) -> PathReservation {
+        PathReservation::new(path, &self.reserved)
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(|s| s.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -875,5 +929,44 @@ mod tests {
 
         // Parent relationship is not symmetric
         assert!(!is_ancestor("0.0", "0"));
+    }
+
+    #[test]
+    fn reservation_registers_and_clears_on_drop() {
+        let ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+
+        {
+            let _reservation = ctx.values.reserve("auth.complete".to_string());
+            assert!(ctx.values.is_pending("auth.complete"));
+        }
+
+        assert!(!ctx.values.is_pending("auth.complete"));
+        assert!(ctx.values.get("auth.complete").is_none());
+    }
+
+    #[test]
+    fn multiple_reservations_independent_lifecycle() {
+        let ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+
+        let r1 = ctx.values.reserve("a.b".to_string());
+        let _r2 = ctx.values.reserve("x.y".to_string());
+
+        assert!(ctx.values.is_pending("a.b"));
+        assert!(ctx.values.is_pending("x.y"));
+
+        drop(r1);
+        assert!(!ctx.values.is_pending("a.b"));
+        assert!(ctx.values.is_pending("x.y"));
+    }
+
+    #[test]
+    fn has_prefix_matches_reserved_descendants() {
+        let ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let _reservation = ctx.values.reserve("auth.identity.username".to_string());
+
+        assert!(ctx.values.has_prefix("auth."));
+        assert!(ctx.values.has_prefix("auth.identity."));
+        assert!(!ctx.values.has_prefix("other."));
+        assert!(!ctx.values.is_pending("auth"));
     }
 }
