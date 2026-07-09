@@ -452,6 +452,67 @@ mod tests {
     }
 
     #[test]
+    fn sse_response_body_field_extracted() {
+        let sse_data = b"data: {\"id\":\"chunk1\"}\n\ndata: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        let headers = vec![("content-type".to_string(), "text/event-stream".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_response_body(sse_data)
+            .with_map("response.headers".to_string(), headers);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(sse_data.len(), true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON('/usage/total_tokens')",
+            "response.usage.total_tokens",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        assert_eq!(
+            ctx.values.get("response.usage.total_tokens"),
+            Some(&cel::Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_response_missing_field_fails() {
+        let sse_data = b"data: {\"other\":1}\n\ndata: [DONE]\n\n";
+        let headers = vec![("content-type".to_string(), "text/event-stream".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_response_body(sse_data)
+            .with_map("response.headers".to_string(), headers);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(sse_data.len(), true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON('/usage/total_tokens')",
+            "response.usage.total_tokens",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Failed));
+    }
+
+    #[test]
+    fn response_json_when_not_sse() {
+        let headers = vec![("content-type".to_string(), "application/json".to_string())];
+        let mock_host = MockWasmHost::new()
+            .with_response_body(br#"{"usage":42}"#)
+            .with_map("response.headers".to_string(), headers);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(12, true);
+
+        let task = make_store_task(&ctx, "true", "responseBodyJSON('/usage')", "response.usage");
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        assert_eq!(ctx.values.get("response.usage"), Some(&cel::Value::Int(42)));
+    }
+
+    #[test]
     fn multi_chunk_body_parsing() {
         // {"model":"gpt-4","stream":true}
         // The '/stream' field appears later in the JSON

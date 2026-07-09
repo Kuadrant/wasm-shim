@@ -494,4 +494,142 @@ mod tests {
             }]
         );
     }
+
+    #[test]
+    fn sse_body_parser_extracts_from_penultimate_event() {
+        let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
+
+        let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize();
+
+        assert!(parser.is_complete());
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_multi_chunk() {
+        let mut parser = SseBodyParser::new(vec!["/usage/prompt_tokens".to_string()]);
+
+        parser
+            .feed(b"data: {\"id\":\"chunk1\"}\n\n")
+            .expect("feed should succeed");
+        parser
+            .feed(b"data: {\"usage\":{\"prompt_tokens\":10}}\n\ndata: [DONE]\n\n")
+            .expect("feed should succeed");
+        parser.finalize();
+
+        assert!(parser.is_complete());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/prompt_tokens"),
+            Some(&Value::Int(10))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_missing_field() {
+        let mut parser = SseBodyParser::new(vec!["/nonexistent".to_string()]);
+
+        let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize();
+
+        assert!(!parser.is_complete());
+        assert_eq!(parser.remaining_fields(), vec![&"/nonexistent".to_string()]);
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert!(body_ctx.get_value("/nonexistent").is_none());
+    }
+
+    #[test]
+    fn sse_body_parser_only_done_event() {
+        let mut parser = SseBodyParser::new(vec!["/usage".to_string()]);
+
+        let chunk = b"data: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize();
+
+        assert!(!parser.is_complete());
+        assert_eq!(parser.remaining_fields(), vec![&"/usage".to_string()]);
+    }
+
+    #[test]
+    fn sse_body_parser_bytes_consumed_always_zero() {
+        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+        assert_eq!(parser.bytes_consumed(), 0);
+
+        parser
+            .feed(b"data: {\"field\":1}\n\n")
+            .expect("feed should succeed");
+        assert_eq!(parser.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn sse_body_parser_multiple_fields() {
+        let mut parser = SseBodyParser::new(vec![
+            "/usage/prompt_tokens".to_string(),
+            "/usage/total_tokens".to_string(),
+        ]);
+
+        let chunk =
+            b"data: {\"usage\":{\"prompt_tokens\":10,\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize();
+
+        assert!(parser.is_complete());
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/prompt_tokens"),
+            Some(&Value::Int(10))
+        );
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_not_complete_before_finalize() {
+        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+
+        parser
+            .feed(b"data: {\"field\":1}\n\ndata: [DONE]\n\n")
+            .expect("feed should succeed");
+
+        assert!(!parser.is_complete());
+
+        parser.finalize();
+        assert!(parser.is_complete());
+    }
+
+    #[test]
+    fn sse_body_parser_preserves_string_type() {
+        let mut parser = SseBodyParser::new(vec!["/model".to_string(), "/count".to_string()]);
+
+        let chunk = b"data: {\"model\":\"42\",\"count\":42}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/model"),
+            Some(&Value::String(std::sync::Arc::new("42".to_string())))
+        );
+        assert_eq!(body_ctx.get_value("/count"), Some(&Value::Int(42)));
+    }
 }
