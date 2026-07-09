@@ -81,6 +81,8 @@ impl BodyParser for JsonBodyParser {
         self.bytes_consumed
     }
 
+    fn finalize(&mut self) {}
+
     fn is_complete(&self) -> bool {
         self.complete
     }

@@ -127,8 +127,6 @@ impl EventBuilder {
     }
 }
 
-// todo(@adam-cattermole): remove once StoreTask uses SseBodyParser
-#[allow(dead_code)]
 pub(crate) struct SseBodyParser {
     fields: Vec<String>,
     event_parser: EventParser,
@@ -137,7 +135,6 @@ pub(crate) struct SseBodyParser {
     complete: bool,
 }
 
-#[allow(dead_code)]
 impl SseBodyParser {
     pub fn new(fields: Vec<String>) -> Self {
         Self {
@@ -152,6 +149,12 @@ impl SseBodyParser {
     fn push_event(&mut self, event: Event) {
         self.last_two_events[1] = self.last_two_events[0].take();
         self.last_two_events[0] = Some(event);
+    }
+}
+
+impl BodyParser for SseBodyParser {
+    fn bytes_consumed(&self) -> usize {
+        0
     }
 
     fn finalize(&mut self) {
@@ -178,12 +181,6 @@ impl SseBodyParser {
                 self.extracted.insert(field.clone(), cel_value);
             }
         }
-    }
-}
-
-impl BodyParser for SseBodyParser {
-    fn bytes_consumed(&self) -> usize {
-        0
     }
 
     fn is_complete(&self) -> bool {

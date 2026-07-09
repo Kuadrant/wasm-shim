@@ -5,6 +5,7 @@ use crate::kuadrant::context::BodyContext;
 
 pub(super) trait BodyParser {
     fn feed(&mut self, chunk: &[u8]) -> Result<(), AttributeError>;
+    fn finalize(&mut self);
     fn is_complete(&self) -> bool;
     fn remaining_fields(&self) -> Vec<&String>;
     fn populate(&self, body_ctx: &mut BodyContext);

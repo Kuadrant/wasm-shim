@@ -4,18 +4,27 @@ pub(super) mod sse_body_parser;
 
 use body_parser::BodyParser;
 use json_body_parser::JsonBodyParser;
+use sse_body_parser::SseBodyParser;
 use tracing::error;
 
 use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::Predicate;
 use crate::data::Expression;
+use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{SendReplyTask, Task, TaskOutcome};
 use crate::kuadrant::{PathReservation, ReqRespCtx};
 use crate::services::MessageConverter;
 
+#[derive(Clone, Copy)]
 enum BodySource {
     Request,
     Response,
+}
+
+enum BodyParseState {
+    NotNeeded,
+    Pending(BodySource, Vec<String>),
+    Active(BodySource, Box<dyn BodyParser>),
 }
 
 pub struct StoreTask {
@@ -25,7 +34,7 @@ pub struct StoreTask {
     path: String,
     export_to_host: bool,
     terminal: bool,
-    body_parser: Option<(BodySource, JsonBodyParser)>,
+    body_parse_state: BodyParseState,
     _reservation: PathReservation,
 }
 
@@ -39,7 +48,7 @@ impl StoreTask {
         export_to_host: bool,
         terminal: bool,
     ) -> Result<Self, AttributeError> {
-        let body_parser = create_body_parser(&predicate, &expression)?;
+        let body_parse_state = Self::initial_body_state(&predicate, &expression);
         let reservation = ctx.values.reserve(path.clone());
         Ok(Self {
             task_id,
@@ -48,41 +57,69 @@ impl StoreTask {
             path,
             export_to_host,
             terminal,
-            body_parser,
+            body_parse_state,
             _reservation: reservation,
         })
     }
-}
 
-fn create_body_parser(
-    predicate: &Predicate,
-    expression: &Expression,
-) -> Result<Option<(BodySource, JsonBodyParser)>, AttributeError> {
-    let mut request_fields: Vec<String> = Vec::new();
-    let mut response_fields: Vec<String> = Vec::new();
+    fn initial_body_state(predicate: &Predicate, expression: &Expression) -> BodyParseState {
+        let mut request_fields: Vec<String> = Vec::new();
+        let mut response_fields: Vec<String> = Vec::new();
 
-    request_fields.extend_from_slice(predicate.request_body_values());
-    request_fields.extend_from_slice(expression.request_body_values());
+        request_fields.extend_from_slice(predicate.request_body_values());
+        request_fields.extend_from_slice(expression.request_body_values());
 
-    response_fields.extend_from_slice(predicate.response_body_values());
-    response_fields.extend_from_slice(expression.response_body_values());
+        response_fields.extend_from_slice(predicate.response_body_values());
+        response_fields.extend_from_slice(expression.response_body_values());
 
-    if !request_fields.is_empty() {
-        request_fields.sort();
-        request_fields.dedup();
-        let parser = JsonBodyParser::new(request_fields).map_err(|e| {
-            AttributeError::Parse(format!("Failed to create request body parser: {}", e))
-        })?;
-        Ok(Some((BodySource::Request, parser)))
-    } else if !response_fields.is_empty() {
-        response_fields.sort();
-        response_fields.dedup();
-        let parser = JsonBodyParser::new(response_fields).map_err(|e| {
-            AttributeError::Parse(format!("Failed to create response body parser: {}", e))
-        })?;
-        Ok(Some((BodySource::Response, parser)))
-    } else {
-        Ok(None)
+        if !request_fields.is_empty() {
+            request_fields.sort();
+            request_fields.dedup();
+            BodyParseState::Pending(BodySource::Request, request_fields)
+        } else if !response_fields.is_empty() {
+            response_fields.sort();
+            response_fields.dedup();
+            BodyParseState::Pending(BodySource::Response, response_fields)
+        } else {
+            BodyParseState::NotNeeded
+        }
+    }
+
+    fn create_parser(
+        ctx: &ReqRespCtx,
+        source: BodySource,
+        fields: &[String],
+    ) -> Result<Option<Box<dyn BodyParser>>, AttributeError> {
+        match source {
+            BodySource::Request => {
+                let parser = JsonBodyParser::new(fields.to_vec()).map_err(|e| {
+                    AttributeError::Parse(format!("Failed to create request body parser: {e}"))
+                })?;
+                Ok(Some(Box::new(parser)))
+            }
+            BodySource::Response => {
+                let is_sse = match ctx.get_attribute_ref::<Headers>(&"response.headers".into()) {
+                    Ok(AttributeState::Available(Some(headers))) => headers
+                        .get("content-type")
+                        .is_some_and(|ct| ct.contains("text/event-stream")),
+                    Ok(AttributeState::Available(None)) => false,
+                    Ok(AttributeState::Pending) => return Ok(None),
+                    Err(e) => {
+                        error!("Failed to get response headers: {e:?}");
+                        false
+                    }
+                };
+
+                if is_sse {
+                    Ok(Some(Box::new(SseBodyParser::new(fields.to_vec()))))
+                } else {
+                    let parser = JsonBodyParser::new(fields.to_vec()).map_err(|e| {
+                        AttributeError::Parse(format!("Failed to create response body parser: {e}"))
+                    })?;
+                    Ok(Some(Box::new(parser)))
+                }
+            }
+        }
     }
 }
 
@@ -92,7 +129,23 @@ impl Task for StoreTask {
     }
 
     fn apply(mut self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        if let Some((ref source, ref mut parser)) = self.body_parser {
+        if let BodyParseState::Pending(source, ref fields) = self.body_parse_state {
+            let result = Self::create_parser(ctx, source, fields);
+            match result {
+                Ok(Some(parser)) => {
+                    self.body_parse_state = BodyParseState::Active(source, parser);
+                }
+                Ok(None) => {
+                    return TaskOutcome::Requeued(vec![self]);
+                }
+                Err(e) => {
+                    error!("Failed to create body parser: {e}");
+                    return TaskOutcome::Failed;
+                }
+            }
+        }
+
+        if let BodyParseState::Active(source, ref mut parser) = self.body_parse_state {
             let body_ctx = match source {
                 BodySource::Request => &ctx.request_body,
                 BodySource::Response => &ctx.response_body,
@@ -119,7 +172,9 @@ impl Task for StoreTask {
                         error!("Expected body bytes but got None");
                         return TaskOutcome::Failed;
                     }
-                    Ok(AttributeState::Pending) => return TaskOutcome::Requeued(vec![self]),
+                    Ok(AttributeState::Pending) => {
+                        return TaskOutcome::Requeued(vec![self]);
+                    }
                     Err(e) => {
                         error!("Failed to read body bytes: {e}");
                         return TaskOutcome::Failed;
@@ -132,13 +187,16 @@ impl Task for StoreTask {
                 }
             }
 
-            if body_ctx.is_end_of_stream() && !parser.is_complete() {
-                let remaining: Vec<&String> = parser.remaining_fields();
-                error!(
-                    "Body stream ended without finding fields {:?} for '{}'",
-                    remaining, self.path
-                );
-                return TaskOutcome::Failed;
+            if body_ctx.is_end_of_stream() {
+                parser.finalize();
+                if !parser.is_complete() {
+                    let remaining: Vec<&String> = parser.remaining_fields();
+                    error!(
+                        "Body stream ended without finding fields {:?} for '{}'",
+                        remaining, self.path
+                    );
+                    return TaskOutcome::Failed;
+                }
             }
 
             let body_ctx_mut = match source {
@@ -378,20 +436,19 @@ mod tests {
     }
 
     #[test]
-    fn invalid_json_pointer_fails_task_creation() {
-        // Invalid JSON pointer format - acutejson expects RFC 6901 format
-        let ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
-        let result = StoreTask::new(
+    fn invalid_json_pointer_fails_apply() {
+        let mock_host = MockWasmHost::new().with_request_body(br#"{"key":"value"}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.request_body.set_buffer_size(15, true);
+
+        let task = make_store_task(
             &ctx,
-            "0".to_string(),
-            Predicate::new("true").unwrap(),
-            Expression::new("requestBodyJSON('not-a-valid-pointer')").unwrap(),
-            "some.path".to_string(),
-            false,
-            false,
+            "true",
+            "requestBodyJSON('not-a-valid-pointer')",
+            "some.path",
         );
 
-        assert!(result.is_err(), "Expected error for invalid JSON pointer");
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Failed));
     }
 
     #[test]
