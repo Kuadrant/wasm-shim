@@ -31,3 +31,7 @@ runs:
         elif [ "$RUNNER_OS" == "macOS" ]; then
           brew install protobuf
         fi
+
+    - name: Fetch crate sources and registry index entries
+      shell: bash
+      run: cargo fetch --locked
