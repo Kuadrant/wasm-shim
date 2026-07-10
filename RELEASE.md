@@ -49,11 +49,34 @@ The `release.yaml` file at the repository root is the machine-readable source of
 4. Actions → "Release" → "Run workflow"
    - **release-branch**: `release-0.13`
 
+## Repository Configuration
+
+### Required Secrets
+
+Configure these in Settings → Secrets and variables → Actions → Repository secrets:
+
+| Secret | Description |
+|--------|-------------|
+| `IMG_REGISTRY_USERNAME` | Container registry username or robot account |
+| `IMG_REGISTRY_TOKEN` | Container registry password or token |
+
+### Optional Variables
+
+Configure these in Settings → Secrets and variables → Actions → Repository variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IMG_REGISTRY_ORG` | `kuadrant` | Container registry organization/namespace (e.g., your Quay.io org for forks) |
+
+### Required Repository Settings
+
+- **Actions → General → Workflow permissions**: "Allow GitHub Actions to create and approve pull requests" must be enabled (required by the pre-release workflow to open PRs)
+
 ## Details
 
 - **Version format**: semver without `v` prefix in `release.yaml` (e.g., `0.13.0`, not `v0.13.0`)
 - **Release branches**: `release-0.13`, `release-0.14`, etc. — one branch per minor version, shared by all patches
 - **Version gate**: A CI check on release branch PRs validates that `release.yaml` has a concrete version (not `0.0.0`)
 - **On `main`**: `release.yaml` always has version `0.0.0` (sentinel for active development)
-- **Artifacts built during release**: WASM binary (attached to GitHub Release) and container image (pushed to `quay.io/kuadrant/wasm-shim`)
+- **Artifacts built during release**: WASM binary (attached to GitHub Release) and container image (pushed to `quay.io/<IMG_REGISTRY_ORG>/wasm-shim`)
 - **GitHub Release is always the last step** — if any preceding step fails, no release is created
