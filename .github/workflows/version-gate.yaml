@@ -1,0 +1,64 @@
+---
+name: Version Gate
+
+on:
+  pull_request:
+    branches:
+      - 'release-[0-9]+.[0-9]+'
+    paths:
+      - 'release.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-version:
+    name: Validate Release Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+
+      - name: Validate version is not sentinel
+        run: |
+          VERSION=$(yq '.wasm-shim.version' release.yaml)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not parse version from release.yaml"
+            exit 1
+          fi
+          if [ "$VERSION" = "0.0.0" ]; then
+            echo "::error::version in release.yaml is 0.0.0 — must be a concrete version on release branches"
+            exit 1
+          fi
+          echo "Version: $VERSION"
+
+      - name: Validate dependency versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FAILED=0
+
+          DEPS=$(yq -o=json '.dependencies // {}' release.yaml)
+          for DEP_NAME in $(echo "$DEPS" | jq -r 'keys[]'); do
+            DEP_VERSION=$(echo "$DEPS" | jq -r --arg k "$DEP_NAME" '.[$k]')
+
+            if [ "$DEP_VERSION" = "0.0.0" ]; then
+              echo "::error::Dependency $DEP_NAME has version 0.0.0 — must be a concrete released version"
+              FAILED=1
+              continue
+            fi
+
+            DEP_TAG="v$DEP_VERSION"
+            if ! gh api "repos/Kuadrant/$DEP_NAME/releases/tags/$DEP_TAG" > /dev/null 2>&1; then
+              echo "::error::GitHub Release $DEP_TAG not found for dependency $DEP_NAME in Kuadrant/$DEP_NAME"
+              FAILED=1
+            else
+              echo "Dependency $DEP_NAME: release $DEP_TAG exists"
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "All dependency versions validated"
