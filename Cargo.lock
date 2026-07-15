@@ -1138,6 +1138,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "kuadrant-filter"
+version = "0.13.0-dev"
+dependencies = [
+ "acutejson",
+ "cel",
+ "chrono",
+ "lazy_static",
+ "log",
+ "nom 8.0.0",
+ "opentelemetry",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "prost",
+ "prost-build",
+ "prost-reflect",
+ "prost-types",
+ "radix_trie",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2505,31 +2532,20 @@ dependencies = [
 name = "wasm-shim"
 version = "0.13.0-dev"
 dependencies = [
- "acutejson",
- "cel",
- "chrono",
  "const_format",
- "lazy_static",
+ "kuadrant-filter",
  "log",
- "nom 8.0.0",
  "opentelemetry",
- "opentelemetry-proto",
  "opentelemetry_sdk",
- "prost",
- "prost-build",
  "prost-reflect",
  "prost-types",
  "proxy-wasm",
  "proxy-wasm-test-framework",
- "radix_trie",
- "serde",
  "serde_json",
  "serial_test",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "urlencoding",
- "uuid",
 ]
 
 [[package]]

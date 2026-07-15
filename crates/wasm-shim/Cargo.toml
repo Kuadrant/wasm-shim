@@ -1,0 +1,37 @@
+[package]
+name = "wasm-shim"
+version = "0.13.0-dev"
+edition = "2021"
+authors = ["Alex Snaps <asnaps@redhat.com>", "Eguzki Astiz Lezaun <eguzki@redhat.com>", "Didier Di Cesare <dcesare@redhat.com>", "Adam Cattermole <acatterm@redhat.com>", "Rahul Anand <rahulanand16nov@gmail.com>"]
+description = "Wasm module connecting envoy and authorino/limitador"
+license = "Apache-2.0"
+keywords = ["rate-limiting", "rate", "limiter", "envoy", "rls"]
+categories = ["web-programming"]
+homepage = "https://kuadrant.io"
+repository = "https://github.com/Kuadrant/wasm-shim"
+documentation = "https://kuadrant.io"
+readme = "../../README.md"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kuadrant-filter.workspace = true
+proxy-wasm.workspace = true
+const_format.workspace = true
+log.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+
+[dev-dependencies]
+proxy-wasm-test-framework.workspace = true
+serial_test.workspace = true
+prost-reflect.workspace = true
+prost-types.workspace = true
+
+[lints]
+workspace = true
