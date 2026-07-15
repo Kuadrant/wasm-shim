@@ -87,7 +87,11 @@ impl Task for DynamicTask {
         let mut cel_ctx = ctx.cel.new_ctx(&*self);
         match self.predicate.test(ctx, &mut cel_ctx) {
             Ok(AttributeState::Pending) => {
-                return if ctx.response_body.is_end_of_stream() {
+                return if (self.predicate.has_request_body_deps()
+                    && ctx.request_body.is_end_of_stream())
+                    || (self.predicate.has_response_body_deps()
+                        && ctx.response_body.is_end_of_stream())
+                {
                     TaskOutcome::Failed
                 } else {
                     TaskOutcome::Requeued(vec![self])
@@ -114,7 +118,11 @@ impl Task for DynamicTask {
             let mut cel_ctx = ctx.cel.new_ctx(&*self);
             let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
-                    return if ctx.response_body.is_end_of_stream() {
+                    return if (self.message_builder.has_request_body_deps()
+                        && ctx.request_body.is_end_of_stream())
+                        || (self.message_builder.has_response_body_deps()
+                            && ctx.response_body.is_end_of_stream())
+                    {
                         TaskOutcome::Failed
                     } else {
                         TaskOutcome::Requeued(vec![self])

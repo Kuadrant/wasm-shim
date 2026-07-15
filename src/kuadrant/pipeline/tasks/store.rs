@@ -7,7 +7,7 @@ use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::Predicate;
 use crate::data::Expression;
 use crate::kuadrant::pipeline::tasks::{SendReplyTask, Task, TaskOutcome};
-use crate::kuadrant::ReqRespCtx;
+use crate::kuadrant::{PathReservation, ReqRespCtx};
 use crate::services::MessageConverter;
 
 enum BodySource {
@@ -23,10 +23,12 @@ pub struct StoreTask {
     export_to_host: bool,
     terminal: bool,
     body_parser: Option<(BodySource, BodyParser)>,
+    _reservation: PathReservation,
 }
 
 impl StoreTask {
     pub fn new(
+        ctx: &ReqRespCtx,
         task_id: String,
         predicate: Predicate,
         expression: Expression,
@@ -35,6 +37,7 @@ impl StoreTask {
         terminal: bool,
     ) -> Result<Self, AttributeError> {
         let body_parser = create_body_parser(&predicate, &expression)?;
+        let reservation = ctx.values.reserve(path.clone());
         Ok(Self {
             task_id,
             predicate: Some(predicate),
@@ -43,6 +46,7 @@ impl StoreTask {
             export_to_host,
             terminal,
             body_parser,
+            _reservation: reservation,
         })
     }
 }
@@ -190,7 +194,7 @@ impl Task for StoreTask {
                 }
             }
         }
-        ctx.store_value(self.path.clone(), value);
+        ctx.values.store(self.path.clone(), value);
 
         if self.terminal {
             TaskOutcome::Terminate(Box::new(SendReplyTask::default()))
@@ -208,9 +212,15 @@ mod tests {
     use crate::kuadrant::MockWasmHost;
     use std::sync::Arc;
 
-    fn make_store_task(predicate: &str, expression: &str, path: &str) -> Box<StoreTask> {
+    fn make_store_task(
+        ctx: &ReqRespCtx,
+        predicate: &str,
+        expression: &str,
+        path: &str,
+    ) -> Box<StoreTask> {
         Box::new(
             StoreTask::new(
+                ctx,
                 "0".to_string(),
                 Predicate::new(predicate).unwrap(),
                 Expression::new(expression).unwrap(),
@@ -224,25 +234,37 @@ mod tests {
 
     #[test]
     fn body_field_extracted_and_stored() {
-        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
-
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.request_body.set_buffer_size(31, true);
 
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "requestBodyJSON('/model')",
+            "request.llm.model",
+        );
+
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
-        let stored = ctx.get_stored_value("request.llm.model").unwrap();
-        assert_eq!(stored, &cel::Value::String(Arc::new("gpt-4".to_string())));
+        assert_eq!(
+            ctx.values.get("request.llm.model"),
+            Some(&cel::Value::String(Arc::new("gpt-4".to_string())))
+        );
     }
 
     #[test]
     fn requeues_when_body_not_available() {
-        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
-
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "requestBodyJSON('/model')",
+            "request.llm.model",
+        );
 
         assert!(matches!(
             task.apply(&mut ctx),
@@ -252,11 +274,16 @@ mod tests {
 
     #[test]
     fn requeues_when_field_not_yet_found() {
-        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
-
         let mock_host = MockWasmHost::new().with_request_body(br#"{"stream":tr"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.request_body.set_buffer_size(12, false);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "requestBodyJSON('/model')",
+            "request.llm.model",
+        );
 
         assert!(matches!(
             task.apply(&mut ctx),
@@ -266,83 +293,93 @@ mod tests {
 
     #[test]
     fn fails_when_end_of_stream_without_field() {
-        let task = make_store_task("true", "requestBodyJSON('/model')", "request.llm.model");
-
         let mock_host = MockWasmHost::new().with_request_body(br#"{"stream":true}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.request_body.set_buffer_size(15, true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "requestBodyJSON('/model')",
+            "request.llm.model",
+        );
 
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Failed));
     }
 
     #[test]
     fn response_body_field_extracted() {
-        let task = make_store_task("true", "responseBodyJSON('/usage')", "response.usage");
-
         let mock_host = MockWasmHost::new().with_response_body(br#"{"usage":42}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.response_body.set_buffer_size(12, true);
 
+        let task = make_store_task(&ctx, "true", "responseBodyJSON('/usage')", "response.usage");
+
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
-        let stored = ctx.get_stored_value("response.usage").unwrap();
-        assert_eq!(stored, &cel::Value::Int(42));
+        assert_eq!(ctx.values.get("response.usage"), Some(&cel::Value::Int(42)));
     }
 
     #[test]
     fn predicate_false_skips_store() {
-        let task = make_store_task("false", "requestBodyJSON('/model')", "request.llm.model");
-
         let mock_host = MockWasmHost::new().with_request_body(br#"{"model":"gpt-4"}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.request_body.set_buffer_size(18, true);
 
+        let task = make_store_task(
+            &ctx,
+            "false",
+            "requestBodyJSON('/model')",
+            "request.llm.model",
+        );
+
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
-        assert!(ctx.get_stored_value("request.llm.model").is_none());
+        assert!(ctx.values.get("request.llm.model").is_none());
     }
 
     #[test]
     fn multi_field_expression() {
-        let task = make_store_task(
-            "true",
-            "requestBodyJSON('/model') + ':' + requestBodyJSON('/stream')",
-            "request.llm.combined",
-        );
-
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":"yes"}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.request_body.set_buffer_size(31, true);
 
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "requestBodyJSON('/model') + ':' + requestBodyJSON('/stream')",
+            "request.llm.combined",
+        );
+
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
-        let stored = ctx.get_stored_value("request.llm.combined").unwrap();
         assert_eq!(
-            stored,
-            &cel::Value::String(Arc::new("gpt-4:yes".to_string()))
+            ctx.values.get("request.llm.combined"),
+            Some(&cel::Value::String(Arc::new("gpt-4:yes".to_string())))
         );
     }
 
     #[test]
     fn no_body_parser_when_expression_has_no_body_refs() {
-        let task = make_store_task("true", "'static_value'", "some.path");
-
         let mock_host = MockWasmHost::new();
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
 
+        let task = make_store_task(&ctx, "true", "'static_value'", "some.path");
+
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
-        let stored = ctx.get_stored_value("some.path").unwrap();
         assert_eq!(
-            stored,
-            &cel::Value::String(Arc::new("static_value".to_string()))
+            ctx.values.get("some.path"),
+            Some(&cel::Value::String(Arc::new("static_value".to_string())))
         );
     }
 
     #[test]
     fn invalid_json_pointer_fails_task_creation() {
         // Invalid JSON pointer format - acutejson expects RFC 6901 format
+        let ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
         let result = StoreTask::new(
+            &ctx,
             "0".to_string(),
             Predicate::new("true").unwrap(),
             Expression::new("requestBodyJSON('not-a-valid-pointer')").unwrap(),
@@ -356,14 +393,18 @@ mod tests {
 
     #[test]
     fn multi_chunk_body_parsing() {
-        let mut task: Box<dyn Task> =
-            make_store_task("true", "requestBodyJSON('/stream')", "request.llm.stream");
-
         // {"model":"gpt-4","stream":true}
         // The '/stream' field appears later in the JSON
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let mut task: Box<dyn Task> = make_store_task(
+            &ctx,
+            "true",
+            "requestBodyJSON('/stream')",
+            "request.llm.stream",
+        );
 
         // Chunk 1: partial body - hasn't reached 'stream' field yet
         ctx.request_body.set_buffer_size(10, false);
@@ -389,7 +430,9 @@ mod tests {
         ctx.request_body.set_buffer_size(31, true);
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
-        let stored = ctx.get_stored_value("request.llm.stream").unwrap();
-        assert_eq!(stored, &cel::Value::Bool(true));
+        assert_eq!(
+            ctx.values.get("request.llm.stream"),
+            Some(&cel::Value::Bool(true))
+        );
     }
 }

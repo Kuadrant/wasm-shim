@@ -43,7 +43,10 @@ impl Task for FailTask {
             }
             Ok(AttributeState::Available(false)) => TaskOutcome::Done,
             Ok(AttributeState::Pending) => {
-                if ctx.response_body.is_end_of_stream() {
+                if (self.predicate.has_request_body_deps() && ctx.request_body.is_end_of_stream())
+                    || (self.predicate.has_response_body_deps()
+                        && ctx.response_body.is_end_of_stream())
+                {
                     TaskOutcome::Failed
                 } else {
                     TaskOutcome::Requeued(vec![self])

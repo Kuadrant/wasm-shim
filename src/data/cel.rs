@@ -257,12 +257,12 @@ impl Expression {
             }
         }
 
-        for path in req_ctx.stored_value_paths() {
+        for path in req_ctx.values.paths() {
             let root = path.split('.').next().unwrap_or(path);
             if root == path {
                 let key: Key = root.into();
                 if !map.contains_key(&key) {
-                    if let Some(value) = req_ctx.get_stored_value(path) {
+                    if let Some(value) = req_ctx.values.get(path) {
                         cel_ctx.add_variable_from_value(root, value.clone());
                     }
                 }
@@ -322,6 +322,14 @@ impl Expression {
 
     pub fn response_body_values(&self) -> &[String] {
         &self.response_body_values
+    }
+
+    pub fn has_request_body_deps(&self) -> bool {
+        !self.request_body_values.is_empty()
+    }
+
+    pub fn has_response_body_deps(&self) -> bool {
+        !self.response_body_values.is_empty()
     }
 
     // todo(@adam-cattermole): Temporary method for legacy config translation, remove when legacy support is dropped
@@ -557,6 +565,14 @@ impl Predicate {
 
     pub fn response_body_values(&self) -> &[String] {
         self.expression.response_body_values()
+    }
+
+    pub fn has_request_body_deps(&self) -> bool {
+        self.expression.has_request_body_deps()
+    }
+
+    pub fn has_response_body_deps(&self) -> bool {
+        self.expression.has_response_body_deps()
     }
 }
 
@@ -973,13 +989,16 @@ pub mod data {
                 format!("{}.{}", path_prefix, key)
             };
 
-            if let Some(stored_val) = req_ctx.get_stored_value(&current_path) {
+            if let Some(stored_val) = req_ctx.values.get(&current_path) {
                 out.insert(key.into(), stored_val.clone());
                 continue;
             }
+            if req_ctx.values.is_pending(&current_path) {
+                return Ok(AttributeState::Pending);
+            }
             if path_prefix.is_empty()
                 && !is_host_property_root(&key)
-                && !req_ctx.has_stored_prefix(&format!("{}.", key))
+                && !req_ctx.values.has_prefix(&format!("{}.", key))
             {
                 continue;
             }
@@ -1152,7 +1171,7 @@ mod tests {
             cel::objects::Key::String(Arc::new("identity".to_string())),
             Value::Map(cel::objects::Map::from(leaf_map)),
         )]);
-        ctx.store_value(
+        ctx.values.store(
             "auth".to_string(),
             Value::Map(cel::objects::Map::from(auth_map)),
         );
@@ -1813,7 +1832,7 @@ mod tests {
             cel::objects::Key::String(Arc::new("identity".to_string())),
             Value::Map(cel::objects::Map::from(identity_map)),
         )]);
-        req_ctx.store_value(
+        req_ctx.values.store(
             "auth".to_string(),
             Value::Map(cel::objects::Map::from(auth_map)),
         );
@@ -1838,7 +1857,7 @@ mod tests {
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
         let mut cel_ctx = cel::Context::default();
 
-        req_ctx.store_value(
+        req_ctx.values.store(
             "request.custom".to_string(),
             Value::String(Arc::new("stored_data".to_string())),
         );
@@ -1862,9 +1881,70 @@ mod tests {
         let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
         let mut cel_ctx = cel::Context::default();
 
-        req_ctx.store_value("myvar".to_string(), Value::Int(42));
+        req_ctx.values.store("myvar".to_string(), Value::Int(42));
 
         let expr = Expression::new("myvar == 42").expect("valid CEL");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+    }
+
+    #[test]
+    fn reserved_path_returns_pending() {
+        let req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+
+        let _reservation = req_ctx.values.reserve("myvar.value".to_string());
+
+        let expr = Expression::new("myvar.value").expect("valid CEL");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Pending);
+    }
+
+    #[test]
+    fn stored_value_takes_precedence_over_reservation() {
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+
+        let _reservation = req_ctx.values.reserve("myvar.value".to_string());
+        req_ctx
+            .values
+            .store("myvar.value".to_string(), Value::Int(99));
+
+        let expr = Expression::new("myvar.value == 99").expect("valid CEL");
+        let result = expr
+            .eval(&req_ctx, &mut cel_ctx)
+            .expect("evaluation should succeed");
+        assert_eq!(result, AttributeState::Available(Value::Bool(true)));
+    }
+
+    #[test]
+    fn dropped_reservation_is_not_pending() {
+        let req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+
+        let reservation = req_ctx.values.reserve("myvar.value".to_string());
+        drop(reservation);
+
+        let predicate = Predicate::new("myvar.value == null").expect("valid CEL");
+        let result = predicate.test(&req_ctx, &mut cel_ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sibling_reservation_does_not_block_stored_value() {
+        let mut req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+
+        let _reservation = req_ctx.values.reserve("kuadrant.auth.complete".to_string());
+        req_ctx
+            .values
+            .store("kuadrant.ratelimit.complete".to_string(), Value::Bool(true));
+
+        let expr = Expression::new("kuadrant.ratelimit.complete == true").expect("valid CEL");
         let result = expr
             .eval(&req_ctx, &mut cel_ctx)
             .expect("evaluation should succeed");

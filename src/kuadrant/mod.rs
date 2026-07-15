@@ -7,5 +7,5 @@ mod resolver;
 pub use resolver::MockWasmHost;
 
 pub(crate) use cache::CachedValue;
-pub(crate) use context::ReqRespCtx;
+pub(crate) use context::{PathReservation, ReqRespCtx};
 pub(crate) use pipeline::{Pipeline, PipelineFactory, PipelineState};

@@ -137,6 +137,7 @@ impl Action {
             } => {
                 use crate::kuadrant::pipeline::tasks::StoreTask;
                 match StoreTask::new(
+                    ctx,
                     self.id.clone(),
                     self.predicate.clone(),
                     expression.clone(),
