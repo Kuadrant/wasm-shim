@@ -1,25 +1,21 @@
 use std::rc::Rc;
 
-use cel::Value;
 use tracing::{debug, error};
 
 use crate::data::attribute::AttributeState;
 use crate::data::cel::Predicate;
 use crate::data::Expression;
-use crate::kuadrant::pipeline::blueprint::{Action, Operation};
-use crate::kuadrant::pipeline::tasks::{
-    HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, Task, TaskOutcome,
-};
+use crate::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
 use crate::kuadrant::ReqRespCtx;
 use crate::record_error;
-use crate::services::{cel_value_to_header_pairs, DynamicService, MessageConverter};
+use crate::services::{DescriptorConverter, DynamicService};
 
 pub struct DynamicTask {
     task_id: String,
     service: Rc<DynamicService>,
     var: String,
     message_builder: Expression,
-    on_reply: Vec<Action>,
+    on_reply: Vec<Box<dyn Task>>,
     predicate: Predicate,
     dependencies: Vec<String>,
     is_guard: bool,
@@ -28,50 +24,17 @@ pub struct DynamicTask {
 impl DynamicTask {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_attributes(
-        ctx: &ReqRespCtx,
+        ctx: &mut ReqRespCtx,
         task_id: String,
         service: Rc<DynamicService>,
         var: String,
         message_builder: Expression,
-        on_reply: Vec<Action>,
+        on_reply: Vec<Box<dyn Task>>,
         predicate: Predicate,
         dependencies: Vec<String>,
         is_guard: bool,
     ) -> Self {
-        // Warm up the cache
-        let _ = predicate.test(ctx);
-        if let Ok(env) = service.cel_env() {
-            let mut cel_ctx = cel::Context::with_env(env);
-            let _ = message_builder.eval(ctx, &mut cel_ctx);
-
-            for action in &on_reply {
-                let _ = action.predicate.test_with_ctx(ctx, &mut cel_ctx);
-                match &action.operation {
-                    Operation::Grpc {
-                        message_builder,
-                        on_reply: nested_on_reply,
-                        ..
-                    } => {
-                        let _ = message_builder.eval(ctx, &mut cel_ctx);
-                        for nested_action in nested_on_reply {
-                            let _ = nested_action.predicate.test_with_ctx(ctx, &mut cel_ctx);
-                        }
-                    }
-                    Operation::Deny { deny_with } => {
-                        let _ = deny_with.eval(ctx, &mut cel_ctx);
-                    }
-                    Operation::Headers { headers, .. } => {
-                        let _ = headers.eval(ctx, &mut cel_ctx);
-                    }
-                    Operation::Store { expression, .. } => {
-                        let _ = expression.eval(ctx, &mut cel_ctx);
-                    }
-                    Operation::Fail { .. } => {}
-                }
-            }
-        }
-
-        Self {
+        let task = Self {
             task_id,
             service,
             var,
@@ -80,13 +43,22 @@ impl DynamicTask {
             predicate,
             dependencies,
             is_guard,
-        }
+        };
+
+        task.warm(ctx);
+        task
+    }
+
+    fn warm(&self, ctx: &mut ReqRespCtx) {
+        let mut cel_ctx = ctx.cel.new_ctx(self);
+        let _ = self.predicate.test(ctx, &mut cel_ctx);
+        let _ = self.message_builder.eval(ctx, &mut cel_ctx);
     }
 }
 
 impl Task for DynamicTask {
-    fn id(&self) -> Option<String> {
-        Some(self.task_id.clone())
+    fn id(&self) -> &str {
+        &self.task_id
     }
 
     fn dependencies(&self) -> &[String] {
@@ -97,8 +69,23 @@ impl Task for DynamicTask {
         self.is_guard
     }
 
+    fn cel_types(&self) -> Vec<cel::StructDef> {
+        (|| -> Result<Vec<cel::StructDef>, Box<dyn std::error::Error>> {
+            let input_desc = self.service.input_descriptor()?;
+            let output_desc = self.service.output_descriptor()?;
+            let mut types = DescriptorConverter::collect_struct_defs(&input_desc)?;
+            types.extend(DescriptorConverter::collect_struct_defs(&output_desc)?);
+            Ok(types)
+        })()
+        .unwrap_or_else(|e| {
+            error!("Failed to collect CEL types: {}", e);
+            vec![]
+        })
+    }
+
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
-        match self.predicate.test(ctx) {
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+        match self.predicate.test(ctx, &mut cel_ctx) {
             Ok(AttributeState::Pending) => {
                 return if ctx.response_body.is_end_of_stream() {
                     TaskOutcome::Failed
@@ -124,15 +111,7 @@ impl Task for DynamicTask {
             )
             .entered();
 
-            let env = match self.service.cel_env() {
-                Ok(env) => env,
-                Err(e) => {
-                    error!("Failed to get CEL environment: {e}");
-                    return TaskOutcome::Failed;
-                }
-            };
-
-            let mut cel_ctx = cel::Context::with_env(env);
+            let mut cel_ctx = ctx.cel.new_ctx(&*self);
             let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
                 Ok(AttributeState::Pending) => {
                     return if ctx.response_body.is_end_of_stream() {
@@ -160,7 +139,7 @@ impl Task for DynamicTask {
         let service = self.service.clone();
         let task_id = self.task_id.clone();
         let var = self.var.clone();
-        let on_reply = self.on_reply.clone();
+        let on_reply = self.on_reply;
         let is_guard = self.is_guard;
 
         if is_guard {
@@ -170,11 +149,10 @@ impl Task for DynamicTask {
         TaskOutcome::Deferred {
             token_id,
             pending: Box::new(PendingTask::new(
-                self.task_id,
+                task_id.clone(),
                 Box::new(move |ctx| {
-                    let outcome = process_dynamic_response(
-                        ctx, &service, &task_id, token_id, &var, &on_reply,
-                    );
+                    let outcome =
+                        process_dynamic_response(ctx, &service, &task_id, token_id, &var, on_reply);
                     if is_guard {
                         ctx.barrier.lower();
                     }
@@ -191,13 +169,14 @@ fn process_dynamic_response(
     service: &DynamicService,
     task_id: &str,
     token_id: u32,
-    name: &str,
-    on_reply: &[Action],
+    var: &str,
+    on_reply: Vec<Box<dyn Task>>,
 ) -> TaskOutcome {
     let span = tracing::debug_span!(
         "grpc_response",
         task_id = task_id,
         token_id = token_id,
+        var = var,
         grpc_service = service.service_name(),
         grpc_method = service.method(),
         grpc_status_code = tracing::field::Empty,
@@ -221,156 +200,20 @@ fn process_dynamic_response(
     }
 
     if on_reply.is_empty() {
-        debug!("No onReply actions, completing");
+        debug!("No onReply tasks, completing");
         return TaskOutcome::Done;
     }
 
-    let mut cel_ctx = match service.response_cel_context(ctx, response_size, name) {
-        Ok(c) => c,
+    let cel_value = match service.get_response_cel_value(ctx, response_size) {
+        Ok(val) => val,
         Err(e) => {
-            record_error!("Failed to build response context: {e:?}");
+            error!("Failed to get response CEL value: {e}");
             return TaskOutcome::Failed;
         }
     };
 
-    let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+    ctx.cel
+        .add_scoped_binding(task_id, var.to_string(), cel_value);
 
-    for action in on_reply {
-        match action.predicate.test_with_ctx(ctx, &mut cel_ctx) {
-            Ok(AttributeState::Available(true)) => {}
-            Ok(AttributeState::Available(false)) => continue,
-            Ok(AttributeState::Pending) => {
-                //todo(@adam-cattermole): if we requeue here, we lose predicates as headers/store/sendreply are not modelled with predicates
-            }
-            Err(e) => {
-                error!("Failed to apply predicates: {e:?}");
-                return TaskOutcome::Failed;
-            }
-        }
-
-        match &action.operation {
-            Operation::Deny { deny_with } => match deny_with.eval(ctx, &mut cel_ctx) {
-                Ok(AttributeState::Pending) => {
-                    error!("Unexpected pending state in onReply deny");
-                    return TaskOutcome::Failed;
-                }
-                Ok(AttributeState::Available(val @ Value::Struct(_))) => {
-                    match SendReplyTask::try_from(val) {
-                        Ok(task) => {
-                            if action.terminal {
-                                return TaskOutcome::Terminate(Box::new(task));
-                            }
-                            tasks.push(Box::new(task));
-                        }
-                        Err(e) => {
-                            error!("Invalid DenyResponse: {e}");
-                            return TaskOutcome::Failed;
-                        }
-                    }
-                }
-                Ok(AttributeState::Available(other)) => {
-                    error!("denyWith must return DenyResponse, got: {other:?}");
-                    return TaskOutcome::Failed;
-                }
-                Err(e) => {
-                    error!("Failed to evaluate denyWith expression: {e}");
-                    return TaskOutcome::Failed;
-                }
-            },
-            Operation::Headers { target, headers } => match headers.eval(ctx, &mut cel_ctx) {
-                Ok(AttributeState::Available(ref val)) => {
-                    let pairs = cel_value_to_header_pairs(val);
-                    if !pairs.is_empty() {
-                        tasks.push(Box::new(ModifyHeadersTask::new(
-                            HeaderOperation::Set(pairs.into()),
-                            target.clone(),
-                        )));
-                    }
-                }
-                Ok(AttributeState::Pending) => {
-                    error!("Unexpected pending state in onReply headers");
-                    return TaskOutcome::Failed;
-                }
-                Err(e) => {
-                    error!("Failed to evaluate headers expression: {e}");
-                    return TaskOutcome::Failed;
-                }
-            },
-            Operation::Store {
-                path,
-                expression,
-                export_to_host,
-            } => match expression.eval(ctx, &mut cel_ctx) {
-                // todo(@adam-cattermole): this should be delegated to the StoreTask
-                Ok(AttributeState::Available(val)) => {
-                    if *export_to_host {
-                        match MessageConverter::cel_value_to_bytes(&val) {
-                            Ok(bytes) => {
-                                if let Err(e) = ctx.set_attribute(path, &bytes) {
-                                    error!("Failed to store attribute {path}: {e:?}");
-                                    return TaskOutcome::Failed;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to convert value to bytes for '{path}': {e}");
-                                return TaskOutcome::Failed;
-                            }
-                        }
-                    }
-                    ctx.store_value(path.clone(), val);
-                }
-                Ok(AttributeState::Pending) => {
-                    error!("Unexpected pending state in onReply store for '{path}'");
-                    return TaskOutcome::Failed;
-                }
-                Err(e) => {
-                    error!("Failed to evaluate store expression for '{path}': {e}");
-                    return TaskOutcome::Failed;
-                }
-            },
-            Operation::Fail { log_message } => {
-                error!("Action failure: {log_message}");
-                return TaskOutcome::Failed;
-            }
-            Operation::Grpc {
-                service,
-                var,
-                message_builder,
-                on_reply: nested_on_reply,
-                ..
-            } => match service {
-                crate::services::ServiceInstance::Dynamic(dynamic_service)
-                | crate::services::ServiceInstance::Auth(dynamic_service)
-                | crate::services::ServiceInstance::RateLimit(dynamic_service)
-                | crate::services::ServiceInstance::RateLimitCheck(dynamic_service)
-                | crate::services::ServiceInstance::RateLimitReport(dynamic_service) => {
-                    let task = Box::new(DynamicTask::new_with_attributes(
-                        ctx,
-                        action.id.clone(),
-                        Rc::clone(dynamic_service),
-                        var.clone(),
-                        message_builder.clone(),
-                        nested_on_reply.clone(),
-                        action.predicate.clone(),
-                        action.dependencies.clone(),
-                        action.is_guard,
-                    ));
-                    if action.terminal {
-                        return TaskOutcome::Terminate(task);
-                    }
-                    tasks.push(task);
-                }
-                _ => {
-                    error!("Unsupported service type for nested gRPC operation");
-                    return TaskOutcome::Failed;
-                }
-            },
-        }
-    }
-
-    if tasks.is_empty() {
-        TaskOutcome::Done
-    } else {
-        TaskOutcome::Requeued(tasks)
-    }
+    TaskOutcome::Requeued(on_reply)
 }

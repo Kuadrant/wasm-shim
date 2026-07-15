@@ -1,12 +1,13 @@
-use cel::Value;
+use cel::{Context, Env, Value};
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
 use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
+use crate::kuadrant::pipeline::tasks::Task;
 use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -28,6 +29,7 @@ pub struct ReqRespCtx {
     tracker: Tracker,
     stored_values: BTreeMap<String, Value>,
     pub barrier: Barrier,
+    pub cel: CelScope,
 }
 
 impl Default for ReqRespCtx {
@@ -49,6 +51,7 @@ impl ReqRespCtx {
             tracker: Tracker::default(),
             stored_values: BTreeMap::new(),
             barrier: Barrier::default(),
+            cel: CelScope::default(),
         }
     }
 
@@ -467,7 +470,7 @@ impl Barrier {
         match self.count.checked_sub(1) {
             Some(new_value) => self.count = new_value,
             None => {
-                tracing::error!(
+                error!(
                     "Attempted to lower upstream barrier when count is already 0 - mismatched raise/lower pairs"
                 );
             }
@@ -512,6 +515,63 @@ impl BodyContext {
     pub fn get_value(&self, key: &str) -> Option<&Value> {
         self.values.get(key)
     }
+}
+
+pub struct CelScope {
+    env: Arc<Env>,
+    registered: HashSet<String>,
+    bindings: BTreeMap<String, Vec<(String, Value)>>,
+}
+
+impl Default for CelScope {
+    fn default() -> Self {
+        Self {
+            env: Arc::new(Env::stdlib()),
+            registered: HashSet::new(),
+            bindings: BTreeMap::new(),
+        }
+    }
+}
+
+impl CelScope {
+    pub fn new_ctx(&mut self, task: &dyn Task) -> Context<'static> {
+        let task_id = task.id();
+
+        if !self.registered.contains(task_id) {
+            let types = task.cel_types();
+            if types.is_empty() {
+                self.registered.insert(task_id.to_string());
+            } else if let Some(env) = Arc::get_mut(&mut self.env) {
+                for type_def in types {
+                    env.add_struct(type_def);
+                }
+                self.registered.insert(task_id.to_string());
+            } else {
+                error!("Failed to add CEL types: Arc refcount > 1");
+            }
+        }
+
+        let mut ctx = Context::with_env(Arc::clone(&self.env));
+        for (scope_id, scope_bindings) in &self.bindings {
+            if is_ancestor(scope_id, task_id) {
+                for (name, value) in scope_bindings {
+                    ctx.add_variable_from_value(name, value.clone());
+                }
+            }
+        }
+        ctx
+    }
+
+    pub fn add_scoped_binding(&mut self, task_id: &str, name: String, val: Value) {
+        self.bindings
+            .entry(task_id.to_string())
+            .or_default()
+            .push((name, val));
+    }
+}
+
+fn is_ancestor(scope_id: &str, task_id: &str) -> bool {
+    task_id == scope_id || task_id.starts_with(&format!("{}.", scope_id))
 }
 
 #[cfg(test)]
@@ -753,5 +813,67 @@ mod tests {
             result2,
             Ok(AttributeState::Available(Some(ref s))) if s == "external-user-id"
         ));
+    }
+
+    #[test]
+    fn test_cel_scope_hierarchical_bindings() {
+        use crate::kuadrant::pipeline::tasks::{Task, TaskOutcome};
+
+        struct MockTask {
+            id: String,
+        }
+        impl Task for MockTask {
+            fn id(&self) -> &str {
+                &self.id
+            }
+            fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+                TaskOutcome::Done
+            }
+        }
+
+        let mut scope = CelScope::default();
+
+        // Task "0" gets a binding
+        scope.add_scoped_binding(
+            "0",
+            "my_response".to_string(),
+            Value::String(Arc::new("user123".to_string())),
+        );
+
+        // Task "0.0" should see "my_response" from parent "0"
+        let task_0_0 = MockTask {
+            id: "0.0".to_string(),
+        };
+        let ctx_0_0 = scope.new_ctx(&task_0_0);
+        assert!(ctx_0_0.get_variable("my_response").is_some());
+
+        // Task "1" should NOT see "my_response" (different branch)
+        let task_1 = MockTask {
+            id: "1".to_string(),
+        };
+        let ctx_1 = scope.new_ctx(&task_1);
+        assert!(ctx_1.get_variable("my_response").is_none());
+    }
+
+    #[test]
+    fn test_is_ancestor() {
+        // Same task
+        assert!(is_ancestor("0", "0"));
+
+        // Direct child
+        assert!(is_ancestor("0", "0.0"));
+
+        // Nested child
+        assert!(is_ancestor("0", "0.0.1"));
+
+        // Different branch
+        assert!(!is_ancestor("0", "1"));
+        assert!(!is_ancestor("0", "1.0"));
+
+        // Sibling
+        assert!(!is_ancestor("0.0", "0.1"));
+
+        // Parent relationship is not symmetric
+        assert!(!is_ancestor("0.0", "0"));
     }
 }

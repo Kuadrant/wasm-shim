@@ -534,16 +534,7 @@ impl Predicate {
         })
     }
 
-    pub fn test(&self, req_ctx: &ReqRespCtx) -> PredicateResult {
-        let mut cel_ctx = Context::default();
-        self.test_with_ctx(req_ctx, &mut cel_ctx)
-    }
-
-    pub fn test_with_ctx(
-        &self,
-        req_ctx: &ReqRespCtx,
-        cel_ctx: &mut Context<'_>,
-    ) -> PredicateResult {
+    pub fn test(&self, req_ctx: &ReqRespCtx, cel_ctx: &mut Context<'_>) -> PredicateResult {
         match self.expression.eval(req_ctx, cel_ctx) {
             Ok(AttributeState::Pending) => Ok(AttributeState::Pending),
             Ok(AttributeState::Available(value)) => match value {
@@ -592,8 +583,9 @@ impl PredicateVec for Vec<Predicate> {
             .collect();
         req_ctx.ensure_attributes(&paths);
 
+        let mut cel_ctx = Context::default();
         for predicate in self.iter() {
-            match predicate.test(req_ctx)? {
+            match predicate.test(req_ctx, &mut cel_ctx)? {
                 AttributeState::Pending => {
                     return Ok(AttributeState::Pending);
                 }
@@ -1091,7 +1083,7 @@ mod tests {
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel::objects::ValueType;
-    use cel::Value;
+    use cel::{Context, Value};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -1102,7 +1094,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
         assert_eq!(
-            predicate.test(&ctx).expect("This must evaluate properly!"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("This must evaluate properly!"),
             AttributeState::Available(true)
         );
     }
@@ -1239,7 +1233,9 @@ mod tests {
         )
         .expect("This is valid!");
         assert_eq!(
-            predicate.test(&ctx).expect("This must evaluate properly!"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("This must evaluate properly!"),
             AttributeState::Available(true)
         );
 
@@ -1253,7 +1249,9 @@ mod tests {
         )
         .expect("This is valid!");
         assert_eq!(
-            predicate.test(&ctx).expect("This must evaluate properly!"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("This must evaluate properly!"),
             AttributeState::Available(true)
         );
 
@@ -1263,7 +1261,9 @@ mod tests {
         let predicate =
             Predicate::route_rule("queryMap(request.query) == {'👾': ''}").expect("This is valid!");
         assert_eq!(
-            predicate.test(&ctx).expect("This must evaluate properly!"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("This must evaluate properly!"),
             AttributeState::Available(true)
         );
     }
@@ -1394,7 +1394,10 @@ mod tests {
             "'👾' in queryMap(request.query) ? queryMap(request.query)['👾'] == '123' : false",
         )
         .expect("This is valid!");
-        assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
+        assert_eq!(
+            predicate.test(&ctx, &mut Context::default()),
+            Ok(AttributeState::Available(true))
+        );
 
         let headers = vec![
             ("X-Auth".to_string(), "kuadrant".to_string()),
@@ -1404,7 +1407,10 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate =
             Predicate::route_rule("request.headers.exists(h, h.lowerAscii() == 'x-auth' && request.headers[h] == 'kuadrant')").expect("This is valid!");
-        assert_eq!(predicate.test(&ctx), Ok(AttributeState::Available(true)));
+        assert_eq!(
+            predicate.test(&ctx, &mut Context::default()),
+            Ok(AttributeState::Available(true))
+        );
     }
 
     #[test]
@@ -1474,7 +1480,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
 
         let predicate = Predicate::new("source.port == 65432").expect("This is valid CEL!");
-        let result = predicate.test(&ctx).expect("Test should succeed");
+        let result = predicate
+            .test(&ctx, &mut Context::default())
+            .expect("Test should succeed");
 
         assert_eq!(result, AttributeState::Pending);
     }
@@ -1603,7 +1611,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("request.grpc.service == 'UserService'").expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(true)
         );
     }
@@ -1623,7 +1633,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("request.grpc.method == 'GetUser'").expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(true)
         );
     }
@@ -1640,7 +1652,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("has(request.grpc)").expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(true)
         );
     }
@@ -1654,7 +1668,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("has(request.grpc)").expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(false)
         );
     }
@@ -1668,7 +1684,9 @@ mod tests {
         let ctx = ReqRespCtx::new(Arc::new(mock_host));
         let predicate = Predicate::new("has(request.grpc)").expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(false)
         );
     }
@@ -1687,7 +1705,9 @@ mod tests {
             Predicate::new("has(request.grpc) && request.grpc.service == 'UserService'")
                 .expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(true)
         );
     }
@@ -1703,7 +1723,9 @@ mod tests {
             Predicate::new("has(request.grpc) && request.grpc.service == 'UserService'")
                 .expect("valid CEL");
         assert_eq!(
-            predicate.test(&ctx).expect("must evaluate"),
+            predicate
+                .test(&ctx, &mut Context::default())
+                .expect("must evaluate"),
             AttributeState::Available(false)
         );
     }
