@@ -1,0 +1,639 @@
+use crate::configuration::PluginConfiguration;
+use crate::data::{
+    attribute::AttributeState,
+    cel::{Predicate, PredicateVec},
+    Expression,
+};
+use crate::descriptor_manager::DescriptorManager;
+use crate::kuadrant::pipeline::blueprint::{Action, Blueprint, CompileError, Operation};
+use crate::kuadrant::pipeline::executor::Pipeline;
+
+use crate::kuadrant::ReqRespCtx;
+use crate::services::ServiceInstance;
+use radix_trie::Trie;
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::rc::Rc;
+use std::sync::Arc;
+use tracing::debug;
+
+type RequestData = ((String, String), Expression);
+
+pub struct PipelineFactory {
+    index: Trie<String, Vec<Rc<Blueprint>>>,
+    request_data: Arc<Vec<RequestData>>,
+    fallback_blueprint: Option<Rc<Blueprint>>,
+}
+
+#[derive(Debug)]
+pub enum BuildError {
+    DataPending(String),
+    EvaluationError(String),
+}
+
+impl Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildError::DataPending(msg) => write!(f, "Data pending: {}", msg),
+            BuildError::EvaluationError(msg) => write!(f, "Evaluation error: {}", msg),
+        }
+    }
+}
+
+impl Default for PipelineFactory {
+    fn default() -> Self {
+        Self {
+            index: Trie::new(),
+            request_data: Arc::new(Vec::new()),
+            fallback_blueprint: None,
+        }
+    }
+}
+
+impl PipelineFactory {
+    pub fn try_from(
+        mut config: PluginConfiguration,
+        descriptor_manager: &Rc<DescriptorManager>,
+    ) -> Result<Self, CompileError> {
+        let services: HashMap<String, ServiceInstance> = config
+            .services
+            .drain()
+            .map(|(name, service_config)| {
+                let instance = ServiceInstance::from_config(service_config, descriptor_manager)
+                    .map_err(|e| CompileError::ServiceCreationFailed(e.to_string()))?;
+                Ok((name, instance))
+            })
+            .collect::<Result<_, CompileError>>()?;
+
+        let tracing_service = config
+            .observability
+            .tracing
+            .as_ref()
+            .and_then(|tracing| services.get(&tracing.service))
+            .cloned()
+            .unwrap_or(ServiceInstance::Tracing(None));
+
+        let request_data_raw: Vec<((String, String), String)> = config
+            .request_data
+            .iter()
+            .map(|(k, v)| {
+                let (domain, field) = domain_and_field_name(k);
+                ((domain.to_owned(), field.to_owned()), v.clone())
+            })
+            .collect();
+
+        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
+            .into_iter()
+            .filter_map(|((domain, field), v)| {
+                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
+            })
+            .collect();
+        request_data.sort_by(|a, b| a.0.cmp(&b.0));
+
+        //todo(@adam-cattermole): lets clean this up
+        #[allow(clippy::expect_used)]
+        let dev_mode_action = config
+            .observability
+            .http_header_identifier
+            .map(|header| Action {
+                id: "kuadrant.devMode".to_string(),
+                predicate: Predicate::new("true").expect("Valid predicate"),
+                terminal: false,
+                operation: Operation::Grpc {
+                    service: tracing_service.clone(),
+                    var: header,
+                    message_builder: Expression::new("true").expect("Valid expression"),
+                    on_reply: vec![],
+                    label: String::new(),
+                },
+                dependencies: Default::default(),
+                sources: vec![],
+                is_guard: true,
+            });
+        let mut index = Trie::new();
+        for config_action_set in &config.action_sets {
+            let mut blueprint = Blueprint::compile(config_action_set, &services, &request_data)?;
+            if let Some(dev_mode) = &dev_mode_action {
+                blueprint.actions.push(dev_mode.clone());
+            }
+
+            let blueprint = Rc::new(blueprint);
+            for hostname in &config_action_set.route_rule_conditions.hostnames {
+                let key = reverse_subdomain(hostname);
+                index.map_with_default(
+                    key,
+                    |blueprints| blueprints.push(Rc::clone(&blueprint)),
+                    vec![Rc::clone(&blueprint)],
+                );
+            }
+        }
+
+        Ok(Self {
+            index,
+            request_data: Arc::new(request_data),
+            fallback_blueprint: dev_mode_action.map(|action| {
+                Blueprint {
+                    name: "kuadrant.devMode".to_string(),
+                    route_predicates: vec![],
+                    actions: vec![action],
+                }
+                .into()
+            }),
+        })
+    }
+
+    pub fn build(&self, mut ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
+        let blueprint = match self.select_blueprint(&mut ctx)? {
+            Some(bp) => bp,
+            None => return Ok(None),
+        };
+        ctx.set_action_set_name(blueprint.name.clone());
+
+        // Clone request_data with fresh expressions for this request
+        // This ensures each concurrent request has its own response_props state
+        let request_data: Vec<RequestData> = self
+            .request_data
+            .iter()
+            .map(|((domain, field), expr)| ((domain.clone(), field.clone()), expr.clone()))
+            .collect();
+
+        let mut ctx = ctx.with_request_data(request_data.clone());
+        ctx.extract_trace_context();
+
+        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx, &request_data);
+        if tasks.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            Pipeline::new(ctx)
+                .with_tasks(tasks)
+                .with_teardown_tasks(teardown_tasks),
+        ))
+    }
+
+    fn select_blueprint(&self, ctx: &mut ReqRespCtx) -> Result<Option<Rc<Blueprint>>, BuildError> {
+        let hostname = self.get_hostname(ctx)?;
+        ctx.set_hostname(hostname.clone());
+
+        let candidates = match self.index.get_ancestor_value(&reverse_subdomain(&hostname)) {
+            Some(blueprints) => blueprints,
+            None => {
+                debug!("No matching blueprint found for hostname: {}", hostname);
+                return Ok(None);
+            }
+        };
+
+        for blueprint in candidates {
+            if self.route_predicates_match(&blueprint.route_predicates, &blueprint.name, ctx)? {
+                debug!(
+                    "Selected blueprint {} for hostname: {}",
+                    blueprint.name, hostname
+                );
+                return Ok(Some(Rc::clone(blueprint)));
+            }
+        }
+
+        debug!("No matching blueprint found for hostname: {}", hostname);
+        Ok(self.fallback_blueprint.clone())
+    }
+
+    fn get_hostname(&self, ctx: &ReqRespCtx) -> Result<String, BuildError> {
+        match ctx.get_attribute::<String>("request.host") {
+            Ok(AttributeState::Available(Some(host))) => {
+                let split_host = host.split_once(':').map_or(host.as_str(), |(h, _)| h);
+                Ok(split_host.to_owned())
+            }
+            Ok(AttributeState::Available(None)) => Err(BuildError::EvaluationError(
+                "hostname not found".to_string(),
+            )),
+            Ok(AttributeState::Pending) => Err(BuildError::DataPending("hostname".to_string())),
+            Err(e) => Err(BuildError::EvaluationError(e.to_string())),
+        }
+    }
+
+    fn route_predicates_match(
+        &self,
+        predicates: &Vec<Predicate>,
+        blueprint_name: &str,
+        ctx: &ReqRespCtx,
+    ) -> Result<bool, BuildError> {
+        match predicates.apply(ctx) {
+            Ok(AttributeState::Available(result)) => Ok(result),
+            Ok(AttributeState::Pending) => Err(BuildError::DataPending(format!(
+                "route predicate: {}",
+                blueprint_name
+            ))),
+            Err(e) => Err(BuildError::EvaluationError(format!(
+                "route predicate evaluation failed: {}",
+                e
+            ))),
+        }
+    }
+}
+
+fn reverse_subdomain(subdomain: &str) -> String {
+    let mut s = subdomain.to_string();
+    s.push('.');
+    if s.starts_with('*') {
+        s.remove(0);
+    } else {
+        s.insert(0, '$');
+    }
+    s.chars().rev().collect()
+}
+
+fn domain_and_field_name(name: &str) -> (&str, &str) {
+    let haystack = &name[..name
+        .char_indices()
+        .rfind(|(_, c)| c.is_alphabetic())
+        .map(|(i, _)| i)
+        .unwrap_or_default()];
+    haystack
+        .rfind('.')
+        .map(|i| {
+            if i == 0 || i == name.len() - 1 {
+                ("", name)
+            } else {
+                (&name[..i], &name[i + 1..])
+            }
+        })
+        .unwrap_or(("", name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::{
+        Action, ActionConfig, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType,
+        Timeout,
+    };
+    use crate::descriptor_manager::DescriptorManager;
+    use crate::kuadrant::MockWasmHost;
+
+    fn build_test_config(
+        hostnames: Vec<String>,
+        predicates: Vec<String>,
+        service_name: &str,
+    ) -> PluginConfiguration {
+        let mut services = HashMap::new();
+        services.insert(
+            service_name.to_string(),
+            Service {
+                service_type: ServiceType::Auth,
+                endpoint: "test-cluster".to_string(),
+                failure_mode: FailureMode::Deny,
+                timeout: Timeout::default(),
+                grpc_service: None,
+                grpc_method: None,
+            },
+        );
+
+        PluginConfiguration::new(
+            services,
+            vec![ActionSet {
+                name: "test-action-set".to_string(),
+                route_rule_conditions: RouteRuleConditions {
+                    hostnames,
+                    predicates,
+                },
+                actions: vec![ActionConfig::Legacy(Action {
+                    service: service_name.to_string(),
+                    scope: "test-scope".to_string(),
+                    predicates: vec![],
+                    conditional_data: vec![],
+                    sources: vec![],
+                })],
+            }],
+        )
+    }
+
+    #[test]
+    fn reverse_subdomain_exact_match() {
+        assert_eq!(reverse_subdomain("example.com"), ".moc.elpmaxe$");
+    }
+
+    #[test]
+    fn reverse_subdomain_wildcard() {
+        assert_eq!(reverse_subdomain("*.example.com"), ".moc.elpmaxe.");
+    }
+
+    #[test]
+    fn domain_and_field_name_splits_correctly() {
+        assert_eq!(
+            domain_and_field_name("auth.identity.user"),
+            ("auth.identity", "user")
+        );
+        assert_eq!(domain_and_field_name("request.path"), ("request", "path"));
+        assert_eq!(domain_and_field_name("simple"), ("", "simple"));
+    }
+
+    #[test]
+    fn domain_and_field_name_handles_edge_cases() {
+        assert_eq!(domain_and_field_name(".field"), ("", ".field"));
+        assert_eq!(domain_and_field_name("field."), ("", "field."));
+        assert_eq!(domain_and_field_name("a.b.c.d"), ("a.b.c", "d"));
+    }
+
+    #[test]
+    fn factory_creates_from_valid_config() {
+        let config = build_test_config(vec!["example.com".to_string()], vec![], "test-service");
+
+        let result = PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default()));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn factory_fails_on_invalid_predicate() {
+        let mut services = HashMap::new();
+        services.insert(
+            "test-service".to_string(),
+            Service {
+                service_type: ServiceType::Auth,
+                endpoint: "test-cluster".to_string(),
+                failure_mode: FailureMode::Deny,
+                timeout: Timeout::default(),
+                grpc_service: None,
+                grpc_method: None,
+            },
+        );
+
+        let config = PluginConfiguration::new(
+            services,
+            vec![ActionSet {
+                name: "test-action-set".to_string(),
+                route_rule_conditions: RouteRuleConditions {
+                    hostnames: vec!["example.com".to_string()],
+                    predicates: vec!["invalid syntax !!!".to_string()],
+                },
+                actions: vec![],
+            }],
+        );
+
+        let result = PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_returns_none_when_hostname_does_not_match() {
+        let config = build_test_config(vec!["example.com".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "other.com".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn build_returns_pipeline_when_hostname_matches_exact() {
+        let config = build_test_config(vec!["example.com".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn build_returns_pipeline_when_hostname_matches_wildcard() {
+        let config = build_test_config(vec!["*.example.com".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "api.example.com".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn build_returns_none_when_wildcard_does_not_match_base_domain() {
+        let config = build_test_config(vec!["*.example.com".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn build_returns_pipeline_when_route_predicates_match() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec!["request.method == 'GET'".to_string()],
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec())
+            .with_property("request.method".into(), "GET".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn build_returns_none_when_route_predicates_do_not_match() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec!["request.method == 'GET'".to_string()],
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec())
+            .with_property("request.method".into(), "POST".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn build_returns_none_when_predicate_attribute_is_missing() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec!["request.method == 'GET'".to_string()],
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec());
+        // request.method is not set, so it defaults to null in CEL
+        // null == 'GET' evaluates to false (boolean), so predicate doesn't match
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none()); // Predicate doesn't match
+    }
+
+    #[test]
+    fn build_returns_error_when_route_predicate_returns_null() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec!["request.method".to_string()], // This returns null when request.method is missing
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec());
+        // request.method is missing, so the expression evaluates to null (not a boolean)
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(matches!(result, Err(BuildError::EvaluationError(_))));
+    }
+
+    #[test]
+    fn build_returns_error_when_route_predicate_is_non_boolean() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec!["request.method".to_string()], // Returns a string not a boolean
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec())
+            .with_property("request.method".into(), "GET".as_bytes().to_vec()); // Method IS set
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(matches!(result, Err(BuildError::EvaluationError(_))));
+    }
+
+    #[test]
+    fn build_handles_multiple_route_predicates() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec![
+                "request.method == 'POST'".to_string(),
+                "request.path.startsWith('/api')".to_string(),
+            ],
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec())
+            .with_property("request.method".into(), "POST".as_bytes().to_vec())
+            .with_property("request.path".into(), "/api/users".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn build_fails_when_one_of_multiple_predicates_fails() {
+        let config = build_test_config(
+            vec!["example.com".to_string()],
+            vec![
+                "request.method == 'POST'".to_string(),
+                "request.path.startsWith('/api')".to_string(),
+            ],
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec())
+            .with_property("request.method".into(), "GET".as_bytes().to_vec()) // Doesn't match
+            .with_property("request.path".into(), "/api/users".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let result = factory.build(ctx);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn factory_stores_request_data() {
+        let mut services = HashMap::new();
+        services.insert(
+            "test-service".to_string(),
+            Service {
+                service_type: ServiceType::Auth,
+                endpoint: "test-cluster".to_string(),
+                failure_mode: FailureMode::Deny,
+                timeout: Timeout::default(),
+                grpc_service: None,
+                grpc_method: None,
+            },
+        );
+
+        let mut request_data = HashMap::new();
+        request_data.insert(
+            "metrics.labels.user".to_string(),
+            "auth.identity.username".to_string(),
+        );
+
+        let config = PluginConfiguration {
+            request_data,
+            ..PluginConfiguration::new(services, vec![])
+        };
+
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+        assert_eq!(factory.request_data.len(), 1);
+    }
+
+    #[test]
+    fn factory_handles_multiple_hostnames_for_same_action_set() {
+        let config = build_test_config(
+            vec!["example.com".to_string(), "*.api.example.com".to_string()],
+            vec![],
+            "test-service",
+        );
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        // Test exact match
+        let mock_host1 = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec());
+        let ctx1 = ReqRespCtx::new(Arc::new(mock_host1));
+        assert!(factory.build(ctx1).unwrap().is_some());
+
+        // Test wildcard match
+        let mock_host2 = MockWasmHost::new().with_property(
+            "request.host".into(),
+            "v1.api.example.com".as_bytes().to_vec(),
+        );
+        let ctx2 = ReqRespCtx::new(Arc::new(mock_host2));
+        assert!(factory.build(ctx2).unwrap().is_some());
+    }
+}

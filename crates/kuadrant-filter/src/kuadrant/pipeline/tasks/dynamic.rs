@@ -1,0 +1,227 @@
+use std::rc::Rc;
+
+use tracing::{debug, error};
+
+use crate::data::attribute::AttributeState;
+use crate::data::cel::Predicate;
+use crate::data::Expression;
+use crate::kuadrant::pipeline::tasks::{PendingTask, Task, TaskOutcome};
+use crate::kuadrant::ReqRespCtx;
+use crate::record_error;
+use crate::services::{DescriptorConverter, DynamicService};
+
+pub struct DynamicTask {
+    task_id: String,
+    service: Rc<DynamicService>,
+    var: String,
+    message_builder: Expression,
+    on_reply: Vec<Box<dyn Task>>,
+    predicate: Predicate,
+    dependencies: Vec<String>,
+    is_guard: bool,
+}
+
+impl DynamicTask {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_attributes(
+        ctx: &mut ReqRespCtx,
+        task_id: String,
+        service: Rc<DynamicService>,
+        var: String,
+        message_builder: Expression,
+        on_reply: Vec<Box<dyn Task>>,
+        predicate: Predicate,
+        dependencies: Vec<String>,
+        is_guard: bool,
+    ) -> Self {
+        let task = Self {
+            task_id,
+            service,
+            var,
+            message_builder,
+            on_reply,
+            predicate,
+            dependencies,
+            is_guard,
+        };
+
+        task.warm(ctx);
+        task
+    }
+
+    fn warm(&self, ctx: &mut ReqRespCtx) {
+        let mut cel_ctx = ctx.cel.new_ctx(self);
+        let _ = self.predicate.test(ctx, &mut cel_ctx);
+        let _ = self.message_builder.eval(ctx, &mut cel_ctx);
+    }
+}
+
+impl Task for DynamicTask {
+    fn id(&self) -> &str {
+        &self.task_id
+    }
+
+    fn dependencies(&self) -> &[String] {
+        &self.dependencies
+    }
+
+    fn is_guard(&self) -> bool {
+        self.is_guard
+    }
+
+    fn cel_types(&self) -> Vec<cel::StructDef> {
+        (|| -> Result<Vec<cel::StructDef>, Box<dyn std::error::Error>> {
+            let input_desc = self.service.input_descriptor()?;
+            let output_desc = self.service.output_descriptor()?;
+            let mut types = DescriptorConverter::collect_struct_defs(&input_desc)?;
+            types.extend(DescriptorConverter::collect_struct_defs(&output_desc)?);
+            Ok(types)
+        })()
+        .unwrap_or_else(|e| {
+            error!("Failed to collect CEL types: {}", e);
+            vec![]
+        })
+    }
+
+    fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
+        let mut cel_ctx = ctx.cel.new_ctx(&*self);
+        match self.predicate.test(ctx, &mut cel_ctx) {
+            Ok(AttributeState::Pending) => {
+                return if (self.predicate.has_request_body_deps()
+                    && ctx.request_body.is_end_of_stream())
+                    || (self.predicate.has_response_body_deps()
+                        && ctx.response_body.is_end_of_stream())
+                {
+                    TaskOutcome::Failed
+                } else {
+                    TaskOutcome::Requeued(vec![self])
+                };
+            }
+            Ok(AttributeState::Available(false)) => return TaskOutcome::Done,
+            Ok(AttributeState::Available(true)) => {}
+            Err(e) => {
+                error!("Failed to apply predicates: {e:?}");
+                return TaskOutcome::Failed;
+            }
+        }
+
+        let token_id = {
+            let _span = tracing::debug_span!(
+                "grpc_request",
+                task_id = self.task_id,
+                var = self.var,
+                grpc_service = self.service.service_name(),
+                grpc_method = self.service.method()
+            )
+            .entered();
+
+            let mut cel_ctx = ctx.cel.new_ctx(&*self);
+            let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
+                Ok(AttributeState::Pending) => {
+                    return if (self.message_builder.has_request_body_deps()
+                        && ctx.request_body.is_end_of_stream())
+                        || (self.message_builder.has_response_body_deps()
+                            && ctx.response_body.is_end_of_stream())
+                    {
+                        TaskOutcome::Failed
+                    } else {
+                        TaskOutcome::Requeued(vec![self])
+                    };
+                }
+                Ok(AttributeState::Available(val)) => val,
+                Err(e) => {
+                    error!("Failed to evaluate message builder: {e}");
+                    return TaskOutcome::Failed;
+                }
+            };
+
+            match self.service.dispatch_value(ctx, &cel_value) {
+                Ok(id) => id,
+                Err(e) => {
+                    error!("Failed to dispatch dynamic service: {e}");
+                    return TaskOutcome::Failed;
+                }
+            }
+        };
+
+        let service = self.service.clone();
+        let task_id = self.task_id.clone();
+        let var = self.var.clone();
+        let on_reply = self.on_reply;
+        let is_guard = self.is_guard;
+
+        if is_guard {
+            ctx.barrier.raise();
+        }
+
+        TaskOutcome::Deferred {
+            token_id,
+            pending: Box::new(PendingTask::new(
+                task_id.clone(),
+                Box::new(move |ctx| {
+                    let outcome =
+                        process_dynamic_response(ctx, &service, &task_id, token_id, &var, on_reply);
+                    if is_guard {
+                        ctx.barrier.lower();
+                    }
+                    outcome
+                }),
+                is_guard,
+            )),
+        }
+    }
+}
+
+fn process_dynamic_response(
+    ctx: &mut ReqRespCtx,
+    service: &DynamicService,
+    task_id: &str,
+    token_id: u32,
+    var: &str,
+    on_reply: Vec<Box<dyn Task>>,
+) -> TaskOutcome {
+    let span = tracing::debug_span!(
+        "grpc_response",
+        task_id = task_id,
+        token_id = token_id,
+        var = var,
+        grpc_service = service.service_name(),
+        grpc_method = service.method(),
+        grpc_status_code = tracing::field::Empty,
+        otel.status_code = tracing::field::Empty,
+        otel.status_message = tracing::field::Empty
+    )
+    .entered();
+
+    let (status_code, response_size) = match ctx.get_grpc_response_data() {
+        Ok(data) => data,
+        Err(e) => {
+            record_error!("Failed to get gRPC response: {e:?}");
+            return TaskOutcome::Failed;
+        }
+    };
+    span.record("grpc_status_code", status_code);
+
+    if status_code != crate::GrpcStatus::Ok as u32 {
+        record_error!("gRPC status code is not OK");
+        return TaskOutcome::Failed;
+    }
+
+    if on_reply.is_empty() {
+        debug!("No onReply tasks, completing");
+        return TaskOutcome::Done;
+    }
+
+    let cel_value = match service.get_response_cel_value(ctx, response_size) {
+        Ok(val) => val,
+        Err(e) => {
+            error!("Failed to get response CEL value: {e}");
+            return TaskOutcome::Failed;
+        }
+    };
+
+    ctx.cel
+        .add_scoped_binding(task_id, var.to_string(), cel_value);
+
+    TaskOutcome::Requeued(on_reply)
+}
