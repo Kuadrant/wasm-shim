@@ -515,6 +515,26 @@ mod tests {
     }
 
     #[test]
+    fn sse_body_parser_multiline_json_data() {
+        let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
+
+        let chunk = b"data: {\"usage\":\n\
+                       data: {\"total_tokens\":42}}\n\n\
+                       data: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize();
+
+        assert!(parser.is_complete());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
     fn sse_body_parser_multi_chunk() {
         let mut parser = SseBodyParser::new(vec!["/usage/prompt_tokens".to_string()]);
 
