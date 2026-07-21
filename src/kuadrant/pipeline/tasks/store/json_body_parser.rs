@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use cel::Value;
@@ -13,6 +14,7 @@ pub(crate) struct JsonBodyParser {
     fields: Vec<String>,
     parser: Option<acutejson::Parser>,
     buffers: Rc<RefCell<HashMap<String, Vec<u8>>>>,
+    matched: Rc<RefCell<HashSet<String>>>,
     extracted: HashMap<String, Value>,
     bytes_consumed: usize,
     complete: bool,
@@ -21,24 +23,23 @@ pub(crate) struct JsonBodyParser {
 impl JsonBodyParser {
     pub fn new(fields: Vec<String>) -> Result<Self, AttributeError> {
         let buffers: Rc<RefCell<HashMap<String, Vec<u8>>>> = Rc::new(RefCell::new(HashMap::new()));
+        let matched: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
         let results: Rc<RefCell<HashMap<String, Vec<u8>>>> = Rc::clone(&buffers);
 
         let mut builder = acutejson::Builder::new();
         for field in &fields {
             let field_name = field.clone();
             let field_buffers = Rc::clone(&results);
+            let field_matched = Rc::clone(&matched);
             field_buffers
                 .borrow_mut()
                 .insert(field_name.clone(), Vec::new());
 
-            builder = match builder.register(field, move |bytes, is_complete| {
+            builder = match builder.register(field, move |bytes, _is_complete| {
+                field_matched.borrow_mut().insert(field_name.clone());
                 let mut bufs = field_buffers.borrow_mut();
                 if let Some(buf) = bufs.get_mut(&field_name) {
                     buf.extend_from_slice(bytes);
-
-                    if is_complete && std::str::from_utf8(buf).is_err() {
-                        error!("Body field value is not valid UTF-8");
-                    }
                 } else {
                     error!("Buffer not found for field {}", field_name);
                 }
@@ -57,22 +58,26 @@ impl JsonBodyParser {
             fields,
             parser: Some(builder.build()),
             buffers,
+            matched,
             extracted: HashMap::new(),
             bytes_consumed: 0,
             complete: false,
         })
     }
 
-    fn finalize_extracted(&mut self) {
+    fn finalize_extracted(&mut self) -> Result<(), AttributeError> {
         let buffers = self.buffers.borrow();
+        let matched = self.matched.borrow();
         for (field, raw_bytes) in buffers.iter() {
-            if let Ok(raw_value) = std::str::from_utf8(raw_bytes) {
-                if !raw_value.is_empty() {
-                    let value = parse_json_scalar(raw_value);
-                    self.extracted.insert(field.clone(), value);
-                }
+            if matched.contains(field) {
+                let raw_value = std::str::from_utf8(raw_bytes).map_err(|e| {
+                    AttributeError::Parse(format!("Body field '{field}' is not valid UTF-8: {e}"))
+                })?;
+                let value = parse_json_scalar(raw_value);
+                self.extracted.insert(field.clone(), value);
             }
         }
+        Ok(())
     }
 }
 
@@ -87,7 +92,7 @@ impl BodyParser for JsonBodyParser {
                 .finish()
                 .map_err(|e| AttributeError::Parse(format!("JSON finalize error: {e}")))?;
         }
-        self.finalize_extracted();
+        self.finalize_extracted()?;
         Ok(())
     }
 
@@ -99,6 +104,8 @@ impl BodyParser for JsonBodyParser {
     }
 
     fn feed(&mut self, chunk: &[u8]) -> Result<(), AttributeError> {
+        self.bytes_consumed += chunk.len();
+
         if self.complete {
             return Ok(());
         }
@@ -111,7 +118,7 @@ impl BodyParser for JsonBodyParser {
         match parser.feed(chunk) {
             Ok(acutejson::Status::Done) => {
                 self.complete = true;
-                self.finalize_extracted();
+                self.finalize_extracted()?;
             }
             Ok(acutejson::Status::NeedMore) => {}
             Err(e) => {
@@ -120,7 +127,6 @@ impl BodyParser for JsonBodyParser {
             }
         }
 
-        self.bytes_consumed += chunk.len();
         Ok(())
     }
 
@@ -236,5 +242,21 @@ mod tests {
 
         parser.feed(br#":1}"#).unwrap();
         assert_eq!(parser.bytes_consumed(), 7);
+    }
+
+    #[test]
+    fn empty_string_value_is_extracted() {
+        let mut parser = JsonBodyParser::new(vec!["/name".to_string()]).unwrap();
+
+        parser.feed(br#"{"name":""}"#).unwrap();
+
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/name"),
+            Some(&Value::String(Arc::new(String::new())))
+        );
     }
 }
