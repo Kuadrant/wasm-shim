@@ -26,6 +26,8 @@ jobs:
         with:
           ref: ${{ inputs.release-branch }}
 
+      - uses: ./.github/actions/install-yq
+
       - name: Parse version from release.yaml
         id: parse
         run: |

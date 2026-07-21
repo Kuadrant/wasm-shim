@@ -55,6 +55,8 @@ runs:
           fi
         fi
 
+    - uses: ./.github/actions/install-yq
+
     - name: Update release.yaml version
       shell: bash
       run: |

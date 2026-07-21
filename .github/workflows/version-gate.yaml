@@ -19,6 +19,8 @@ jobs:
       - name: Checkout PR branch
         uses: actions/checkout@v6
 
+      - uses: ./.github/actions/install-yq
+
       - name: Validate version is not sentinel
         run: |
           VERSION=$(yq '.wasm-shim.version' release.yaml)
