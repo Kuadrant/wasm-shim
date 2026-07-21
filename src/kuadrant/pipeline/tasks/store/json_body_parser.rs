@@ -81,10 +81,14 @@ impl BodyParser for JsonBodyParser {
         self.bytes_consumed
     }
 
-    fn finalize(&mut self) {}
-
-    fn is_complete(&self) -> bool {
-        self.complete
+    fn finalize(&mut self) -> Result<(), AttributeError> {
+        if let Some(ref mut parser) = self.parser {
+            parser
+                .finish()
+                .map_err(|e| AttributeError::Parse(format!("JSON finalize error: {e}")))?;
+        }
+        self.finalize_extracted();
+        Ok(())
     }
 
     fn remaining_fields(&self) -> Vec<&String> {

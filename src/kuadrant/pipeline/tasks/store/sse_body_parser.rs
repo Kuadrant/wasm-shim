@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 
-use cel::Value;
-use core::time::Duration;
-use sse_line_parser::RawEventLine;
-use tracing::error;
-
 use super::body_parser::{parse_json_scalar, BodyParser};
 use crate::data::attribute::AttributeError;
 use crate::kuadrant::context::BodyContext;
+use cel::Value;
+use core::time::Duration;
+use sse_line_parser::RawEventLine;
 
 mod sse_line_parser;
 
@@ -150,6 +148,11 @@ impl SseBodyParser {
         self.last_two_events[1] = self.last_two_events[0].take();
         self.last_two_events[0] = Some(event);
     }
+
+    #[cfg(test)]
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
 }
 
 impl BodyParser for SseBodyParser {
@@ -157,20 +160,18 @@ impl BodyParser for SseBodyParser {
         0
     }
 
-    fn finalize(&mut self) {
+    fn finalize(&mut self) -> Result<(), AttributeError> {
         self.complete = true;
         let penultimate = match &self.last_two_events[1] {
             Some(event) => &event.data,
-            None => return,
+            None => return Ok(()),
         };
 
-        let json: serde_json::Value = match serde_json::from_str(penultimate) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Failed to parse penultimate SSE event as JSON: {e}");
-                return;
-            }
-        };
+        let json: serde_json::Value = serde_json::from_str(penultimate).map_err(|e| {
+            AttributeError::Parse(format!(
+                "Failed to parse penultimate SSE event as JSON: {e}"
+            ))
+        })?;
 
         for field in &self.fields {
             if let Some(value) = json.pointer(field) {
@@ -181,10 +182,7 @@ impl BodyParser for SseBodyParser {
                 self.extracted.insert(field.clone(), cel_value);
             }
         }
-    }
-
-    fn is_complete(&self) -> bool {
-        self.complete && self.remaining_fields().is_empty()
+        Ok(())
     }
 
     fn remaining_fields(&self) -> Vec<&String> {
@@ -501,7 +499,7 @@ mod tests {
 
         let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
         assert!(parser.remaining_fields().is_empty());
@@ -518,11 +516,9 @@ mod tests {
     fn sse_body_parser_multiline_json_data() {
         let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
 
-        let chunk = b"data: {\"usage\":\n\
-                       data: {\"total_tokens\":42}}\n\n\
-                       data: [DONE]\n\n";
+        let chunk = b"data: {\"usage\":\ndata: {\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
 
@@ -544,7 +540,7 @@ mod tests {
         parser
             .feed(b"data: {\"usage\":{\"prompt_tokens\":10}}\n\ndata: [DONE]\n\n")
             .expect("feed should succeed");
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
 
@@ -562,9 +558,9 @@ mod tests {
 
         let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
 
-        assert!(!parser.is_complete());
+        assert!(parser.is_complete());
         assert_eq!(parser.remaining_fields(), vec![&"/nonexistent".to_string()]);
 
         let mut body_ctx = BodyContext::default();
@@ -578,10 +574,20 @@ mod tests {
 
         let chunk = b"data: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
 
-        assert!(!parser.is_complete());
+        assert!(parser.is_complete());
         assert_eq!(parser.remaining_fields(), vec![&"/usage".to_string()]);
+    }
+
+    #[test]
+    fn sse_body_parser_finalize_returns_error_on_invalid_json() {
+        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+
+        let chunk = b"data: not valid json\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+
+        assert!(parser.finalize().is_err());
     }
 
     #[test]
@@ -605,7 +611,7 @@ mod tests {
         let chunk =
             b"data: {\"usage\":{\"prompt_tokens\":10,\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
         assert!(parser.remaining_fields().is_empty());
@@ -632,7 +638,7 @@ mod tests {
 
         assert!(!parser.is_complete());
 
-        parser.finalize();
+        parser.finalize().expect("finalize should succeed");
         assert!(parser.is_complete());
     }
 

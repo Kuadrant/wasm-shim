@@ -188,8 +188,11 @@ impl Task for StoreTask {
             }
 
             if body_ctx.is_end_of_stream() {
-                parser.finalize();
-                if !parser.is_complete() {
+                if let Err(e) = parser.finalize() {
+                    error!("Failed to finalize body parser for '{}': {e}", self.path);
+                    return TaskOutcome::Failed;
+                }
+                if !parser.remaining_fields().is_empty() {
                     let remaining: Vec<&String> = parser.remaining_fields();
                     error!(
                         "Body stream ended without finding fields {:?} for '{}'",
