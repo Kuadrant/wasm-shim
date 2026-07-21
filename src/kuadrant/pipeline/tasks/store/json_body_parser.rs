@@ -130,3 +130,111 @@ impl BodyParser for JsonBodyParser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn single_chunk_extracts_field() {
+        let mut parser = JsonBodyParser::new(vec!["/model".to_string()]).unwrap();
+
+        parser.feed(br#"{"model":"gpt-4"}"#).unwrap();
+
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/model"),
+            Some(&Value::String(Arc::new("gpt-4".to_string())))
+        );
+    }
+
+    #[test]
+    fn chunked_feed_extracts_field() {
+        let mut parser = JsonBodyParser::new(vec!["/stream".to_string()]).unwrap();
+
+        parser.feed(br#"{"model":"gpt"#).unwrap();
+        assert_eq!(parser.remaining_fields(), vec![&"/stream".to_string()]);
+
+        parser.feed(br#"-4","stream":true}"#).unwrap();
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value("/stream"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn missing_field_remains_in_remaining() {
+        let mut parser = JsonBodyParser::new(vec!["/missing".to_string()]).unwrap();
+
+        parser.feed(br#"{"other":1}"#).unwrap();
+        parser.finalize().unwrap();
+
+        assert_eq!(parser.remaining_fields(), vec![&"/missing".to_string()]);
+    }
+
+    #[test]
+    fn multiple_fields_extracted() {
+        let mut parser = JsonBodyParser::new(vec!["/a".to_string(), "/b".to_string()]).unwrap();
+
+        parser.feed(br#"{"a":10,"b":"hello"}"#).unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value("/a"), Some(&Value::Int(10)));
+        assert_eq!(
+            body_ctx.get_value("/b"),
+            Some(&Value::String(Arc::new("hello".to_string())))
+        );
+    }
+
+    #[test]
+    fn malformed_json_returns_error() {
+        let mut parser = JsonBodyParser::new(vec!["/field".to_string()]).unwrap();
+
+        assert!(parser.feed(b"{not valid json}").is_err());
+    }
+
+    #[test]
+    fn finalize_catches_truncated_json() {
+        let mut parser = JsonBodyParser::new(vec!["/field".to_string()]).unwrap();
+
+        parser.feed(br#"{"field": "#).unwrap();
+        assert!(parser.finalize().is_err());
+    }
+
+    #[test]
+    fn invalid_json_pointer_returns_error() {
+        assert!(JsonBodyParser::new(vec!["no-leading-slash".to_string()]).is_err());
+    }
+
+    #[test]
+    fn nested_field_extracted() {
+        let mut parser = JsonBodyParser::new(vec!["/usage/total_tokens".to_string()]).unwrap();
+
+        parser.feed(br#"{"usage":{"total_tokens":42}}"#).unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn bytes_consumed_tracks_fed_bytes() {
+        let mut parser = JsonBodyParser::new(vec!["/a".to_string()]).unwrap();
+        assert_eq!(parser.bytes_consumed(), 0);
+
+        parser.feed(br#"{"a""#).unwrap();
+        assert_eq!(parser.bytes_consumed(), 4);
+
+        parser.feed(br#":1}"#).unwrap();
+        assert_eq!(parser.bytes_consumed(), 7);
+    }
+}
