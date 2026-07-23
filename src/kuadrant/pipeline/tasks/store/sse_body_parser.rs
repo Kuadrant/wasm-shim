@@ -1,3 +1,9 @@
+use std::collections::HashMap;
+
+use super::body_parser::{parse_json_scalar, BodyParser};
+use crate::data::attribute::AttributeError;
+use crate::kuadrant::context::BodyContext;
+use cel::Value;
 use core::time::Duration;
 use sse_line_parser::RawEventLine;
 
@@ -119,11 +125,100 @@ impl EventBuilder {
     }
 }
 
+pub(crate) struct SseBodyParser {
+    fields: Vec<String>,
+    event_parser: EventParser,
+    last_two_events: [Option<Event>; 2],
+    extracted: HashMap<String, Value>,
+    complete: bool,
+}
+
+impl SseBodyParser {
+    pub fn new(fields: Vec<String>) -> Self {
+        Self {
+            fields,
+            event_parser: EventParser::default(),
+            last_two_events: [None, None],
+            extracted: HashMap::new(),
+            complete: false,
+        }
+    }
+
+    fn push_event(&mut self, event: Event) {
+        self.last_two_events[1] = self.last_two_events[0].take();
+        self.last_two_events[0] = Some(event);
+    }
+
+    #[cfg(test)]
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
+}
+
+impl BodyParser for SseBodyParser {
+    fn bytes_consumed(&self) -> usize {
+        0
+    }
+
+    fn finalize(&mut self) -> Result<(), AttributeError> {
+        self.complete = true;
+        let penultimate = match &self.last_two_events[1] {
+            Some(event) => &event.data,
+            None => return Ok(()),
+        };
+
+        let json: serde_json::Value = serde_json::from_str(penultimate).map_err(|e| {
+            AttributeError::Parse(format!(
+                "Failed to parse penultimate SSE event as JSON: {e}"
+            ))
+        })?;
+
+        for field in &self.fields {
+            if let Some(value) = json.pointer(field) {
+                let cel_value = match value {
+                    serde_json::Value::String(s) => Value::String(std::sync::Arc::new(s.clone())),
+                    other => parse_json_scalar(&other.to_string()),
+                };
+                self.extracted.insert(field.clone(), cel_value);
+            }
+        }
+        Ok(())
+    }
+
+    fn remaining_fields(&self) -> Vec<&String> {
+        self.fields
+            .iter()
+            .filter(|f| !self.extracted.contains_key(f.as_str()))
+            .collect()
+    }
+
+    fn feed(&mut self, chunk: &[u8]) -> Result<(), AttributeError> {
+        if self.complete {
+            return Ok(());
+        }
+
+        let events = self
+            .event_parser
+            .parse(chunk.to_vec())
+            .map_err(|e| AttributeError::Parse(format!("SSE parse error: {e}")))?;
+
+        for event in events {
+            self.push_event(event);
+        }
+
+        Ok(())
+    }
+
+    fn populate(&self, body_ctx: &mut BodyContext) {
+        for (field, value) in &self.extracted {
+            body_ctx.set_value(field, value.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kuadrant::{MockWasmHost, ReqRespCtx};
-    use std::sync::Arc;
 
     #[test]
     fn test_one_complete_event() {
@@ -188,12 +283,7 @@ mod tests {
             }]
         );
 
-        // Now send the completion of the partial event
         let buf2 = String::from(" event\n\n");
-        let mock_backend2 = MockWasmHost::new().with_response_body(buf2.as_bytes());
-        let mut ctx2 = ReqRespCtx::new(Arc::new(mock_backend2));
-        ctx2.response_body.set_buffer_size(buf2.len(), true);
-
         let events2 = event_parser
             .parse(buf2.into())
             .expect("should not return parsing error");
@@ -401,5 +491,171 @@ mod tests {
                 ..Default::default()
             }]
         );
+    }
+
+    #[test]
+    fn sse_body_parser_extracts_from_penultimate_event() {
+        let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
+
+        let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.is_complete());
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_multiline_json_data() {
+        let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
+
+        let chunk = b"data: {\"usage\":\ndata: {\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.is_complete());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_multi_chunk() {
+        let mut parser = SseBodyParser::new(vec!["/usage/prompt_tokens".to_string()]);
+
+        parser
+            .feed(b"data: {\"id\":\"chunk1\"}\n\n")
+            .expect("feed should succeed");
+        parser
+            .feed(b"data: {\"usage\":{\"prompt_tokens\":10}}\n\ndata: [DONE]\n\n")
+            .expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.is_complete());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/prompt_tokens"),
+            Some(&Value::Int(10))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_missing_field() {
+        let mut parser = SseBodyParser::new(vec!["/nonexistent".to_string()]);
+
+        let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.is_complete());
+        assert_eq!(parser.remaining_fields(), vec![&"/nonexistent".to_string()]);
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert!(body_ctx.get_value("/nonexistent").is_none());
+    }
+
+    #[test]
+    fn sse_body_parser_only_done_event() {
+        let mut parser = SseBodyParser::new(vec!["/usage".to_string()]);
+
+        let chunk = b"data: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.is_complete());
+        assert_eq!(parser.remaining_fields(), vec![&"/usage".to_string()]);
+    }
+
+    #[test]
+    fn sse_body_parser_finalize_returns_error_on_invalid_json() {
+        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+
+        let chunk = b"data: not valid json\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+
+        assert!(parser.finalize().is_err());
+    }
+
+    #[test]
+    fn sse_body_parser_bytes_consumed_always_zero() {
+        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+        assert_eq!(parser.bytes_consumed(), 0);
+
+        parser
+            .feed(b"data: {\"field\":1}\n\n")
+            .expect("feed should succeed");
+        assert_eq!(parser.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn sse_body_parser_multiple_fields() {
+        let mut parser = SseBodyParser::new(vec![
+            "/usage/prompt_tokens".to_string(),
+            "/usage/total_tokens".to_string(),
+        ]);
+
+        let chunk =
+            b"data: {\"usage\":{\"prompt_tokens\":10,\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.is_complete());
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/usage/prompt_tokens"),
+            Some(&Value::Int(10))
+        );
+        assert_eq!(
+            body_ctx.get_value("/usage/total_tokens"),
+            Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_body_parser_not_complete_before_finalize() {
+        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+
+        parser
+            .feed(b"data: {\"field\":1}\n\ndata: [DONE]\n\n")
+            .expect("feed should succeed");
+
+        assert!(!parser.is_complete());
+
+        parser.finalize().expect("finalize should succeed");
+        assert!(parser.is_complete());
+    }
+
+    #[test]
+    fn sse_body_parser_preserves_string_type() {
+        let mut parser = SseBodyParser::new(vec!["/model".to_string(), "/count".to_string()]);
+
+        let chunk = b"data: {\"model\":\"42\",\"count\":42}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value("/model"),
+            Some(&Value::String(std::sync::Arc::new("42".to_string())))
+        );
+        assert_eq!(body_ctx.get_value("/count"), Some(&Value::Int(42)));
     }
 }
