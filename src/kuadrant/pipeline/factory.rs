@@ -119,7 +119,7 @@ impl PipelineFactory {
 
             let blueprint = Rc::new(blueprint);
             for hostname in &config_action_set.route_rule_conditions.hostnames {
-                let key = reverse_subdomain(hostname);
+                let key = reverse_subdomain(&hostname.to_ascii_lowercase());
                 index.map_with_default(
                     key,
                     |blueprints| blueprints.push(Rc::clone(&blueprint)),
@@ -202,7 +202,7 @@ impl PipelineFactory {
         match ctx.get_attribute::<String>("request.host") {
             Ok(AttributeState::Available(Some(host))) => {
                 let split_host = host.split_once(':').map_or(host.as_str(), |(h, _)| h);
-                Ok(split_host.to_owned())
+                Ok(split_host.to_ascii_lowercase())
             }
             Ok(AttributeState::Available(None)) => Err(BuildError::EvaluationError(
                 "hostname not found".to_string(),
@@ -610,6 +610,42 @@ mod tests {
         let factory =
             PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
         assert_eq!(factory.request_data.len(), 1);
+    }
+
+    #[test]
+    fn build_matches_hostname_case_insensitively() {
+        let config = build_test_config(vec!["Example.COM".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "example.com".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert!(factory.build(ctx).unwrap().is_some());
+    }
+
+    #[test]
+    fn build_matches_mixed_case_request_hostname() {
+        let config = build_test_config(vec!["api.example.com".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "API.Example.COM".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert!(factory.build(ctx).unwrap().is_some());
+    }
+
+    #[test]
+    fn build_matches_wildcard_case_insensitively() {
+        let config = build_test_config(vec!["*.Example.COM".to_string()], vec![], "test-service");
+        let factory =
+            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+
+        let mock_host = MockWasmHost::new()
+            .with_property("request.host".into(), "API.example.com".as_bytes().to_vec());
+        let ctx = ReqRespCtx::new(Arc::new(mock_host));
+        assert!(factory.build(ctx).unwrap().is_some());
     }
 
     #[test]
