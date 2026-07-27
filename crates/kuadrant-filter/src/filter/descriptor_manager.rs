@@ -4,7 +4,7 @@ use crate::proto::kuadrant::v1::{
 use prost::Message;
 use prost_reflect::DescriptorPool;
 use prost_types::FileDescriptorSet;
-use proxy_wasm::traits::Context;
+use crate::kuadrant::resolver::AttributeResolver;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -218,7 +218,7 @@ impl DescriptorManager {
             .collect()
     }
 
-    pub fn fetch_missing(&self, ctx: &dyn Context) -> Result<(), String> {
+    pub fn fetch_missing(&self, ctx: &dyn AttributeResolver) -> Result<(), String> {
         let missing = self.get_missing();
 
         if missing.is_empty() {
@@ -259,10 +259,10 @@ impl DescriptorManager {
                 "kuadrant.v1.DescriptorService",
                 "GetServiceDescriptors",
                 vec![],
-                Some(&request_bytes),
+                request_bytes,
                 DESCRIPTOR_FETCH_TIMEOUT,
             )
-            .map_err(|status| format!("could not dispatch descriptor fetch: {:?}", status))?;
+            .map_err(|e| format!("could not dispatch descriptor fetch: {:?}", e))?;
 
         debug!(
             "Dispatched descriptor fetch for {} services (token: {})",
