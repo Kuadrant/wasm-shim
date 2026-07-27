@@ -93,7 +93,7 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_request_headers", self.context_id);
 
         #[cfg(feature = "debug-host-behaviour")]
-        kuadrant_filter::data::debug_all_well_known_attributes();
+        kuadrant_filter::data::debug_all_well_known_attributes(&crate::wasm_host::ProxyWasmHost);
 
         let ctx = ReqRespCtx::new(Arc::new(crate::wasm_host::ProxyWasmHost));
 

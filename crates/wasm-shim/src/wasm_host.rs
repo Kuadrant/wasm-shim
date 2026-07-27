@@ -7,7 +7,19 @@ use kuadrant_filter::kuadrant::resolver::{AttributeResolver, MapType};
 use kuadrant_filter::metrics::MetricsBackend;
 use kuadrant_filter::services::ServiceError;
 use proxy_wasm::hostcalls;
-use proxy_wasm::types::Status;
+use proxy_wasm::types::{LogLevel, Status};
+use tracing_subscriber::filter::LevelFilter;
+
+pub fn current_log_filter() -> LevelFilter {
+    match hostcalls::get_log_level() {
+        Ok(LogLevel::Trace) => LevelFilter::TRACE,
+        Ok(LogLevel::Debug) => LevelFilter::DEBUG,
+        Ok(LogLevel::Info) => LevelFilter::INFO,
+        Ok(LogLevel::Warn) => LevelFilter::WARN,
+        Ok(LogLevel::Error) | Ok(LogLevel::Critical) => LevelFilter::ERROR,
+        Err(_) => LevelFilter::WARN,
+    }
+}
 
 pub struct ProxyWasmHost;
 

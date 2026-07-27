@@ -8,7 +8,6 @@ pub use propagation::{HeadersExtractor, HeadersInjector};
 use log_layer::LogLayer;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use proxy_wasm::types::LogLevel;
 use std::sync::OnceLock;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -35,17 +34,7 @@ type LogFilterHandle = reload::Handle<
 static OTEL_FILTER_HANDLE: OnceLock<OtelFilterHandle> = OnceLock::new();
 static LOG_FILTER_HANDLE: OnceLock<LogFilterHandle> = OnceLock::new();
 
-fn proxy_log_level_to_filter(level: LogLevel) -> LevelFilter {
-    match level {
-        LogLevel::Trace => LevelFilter::TRACE,
-        LogLevel::Debug => LevelFilter::DEBUG,
-        LogLevel::Info => LevelFilter::INFO,
-        LogLevel::Warn => LevelFilter::WARN,
-        LogLevel::Error | LogLevel::Critical => LevelFilter::ERROR,
-    }
-}
-
-pub fn init_observability(use_tracing: bool, log_level: Option<&str>) {
+pub fn init_observability(use_tracing: bool, log_level: Option<&str>, initial_filter: LevelFilter) {
     let otel_filter = if use_tracing {
         Some(match log_level {
             Some("TRACE") => LevelFilter::TRACE,
@@ -65,7 +54,7 @@ pub fn init_observability(use_tracing: bool, log_level: Option<&str>) {
         if let Err(e) = otel_handle.reload(otel_filter) {
             log::error!("Failed to reload OpenTelemetry filter: {:?}", e);
         }
-        update_log_level();
+        set_log_level(initial_filter);
     } else {
         // Initialise global tracing subscriber and store handles to the filters
         let processor_handle = processor::SpanProcessorHandle;
@@ -74,13 +63,8 @@ pub fn init_observability(use_tracing: bool, log_level: Option<&str>) {
             .build();
         let tracer = provider.tracer("wasm-shim");
 
-        let initial_log_filter = match proxy_wasm::hostcalls::get_log_level() {
-            Ok(level) => proxy_log_level_to_filter(level),
-            Err(_) => LevelFilter::WARN, // Fallback to WARN
-        };
-
         let (otel_filter_layer, otel_filter_handle) = reload::Layer::new(otel_filter);
-        let (log_filter_layer, log_filter_handle) = reload::Layer::new(initial_log_filter);
+        let (log_filter_layer, log_filter_handle) = reload::Layer::new(initial_filter);
 
         let _ = tracing_subscriber::registry()
             .with(
@@ -96,16 +80,8 @@ pub fn init_observability(use_tracing: bool, log_level: Option<&str>) {
     }
 }
 
-pub fn update_log_level() {
+pub fn set_log_level(filter: LevelFilter) {
     if let Some(log_handle) = LOG_FILTER_HANDLE.get() {
-        let envoy_level = match proxy_wasm::hostcalls::get_log_level() {
-            Ok(level) => level,
-            Err(e) => {
-                log::warn!("Failed to get Envoy log level: {:?}", e);
-                return;
-            }
-        };
-        let filter = proxy_log_level_to_filter(envoy_level);
         if let Err(e) = log_handle.reload(filter) {
             log::error!("Failed to reload LogLayer filter: {:?}", e);
         }

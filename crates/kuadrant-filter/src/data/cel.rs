@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 #[cfg(feature = "debug-host-behaviour")]
+use crate::kuadrant::resolver::AttributeResolver;
+#[cfg(feature = "debug-host-behaviour")]
 use tracing::debug;
 use tracing::warn;
 use urlencoding::decode;
@@ -910,10 +912,10 @@ fn properties<'e>(
 }
 
 #[cfg(feature = "debug-host-behaviour")]
-pub fn debug_all_well_known_attributes() {
+pub fn debug_all_well_known_attributes(resolver: &dyn AttributeResolver) {
     let attributes = new_well_known_attribute_map();
     attributes.iter().for_each(|(key, value_type)| {
-        match proxy_wasm::hostcalls::get_property(key.tokens()) {
+        match resolver.get_attribute(key) {
             Ok(opt_bytes) => match opt_bytes {
                 None => debug!("{:#?}({}): None", key, value_type),
                 Some(bytes) => debug!("{:#?}({}): {:?}", key, value_type, bytes),

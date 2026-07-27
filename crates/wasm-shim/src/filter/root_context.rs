@@ -116,7 +116,7 @@ impl RootContext for FilterRoot {
     }
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
-        kuadrant_filter::tracing::update_log_level();
+        kuadrant_filter::tracing::set_log_level(crate::wasm_host::current_log_filter());
         debug!("#{} create_http_context", context_id);
         Some(Box::new(KuadrantFilter::new(
             context_id,
@@ -143,6 +143,7 @@ impl RootContext for FilterRoot {
                 kuadrant_filter::tracing::init_observability(
                     use_tracing_exporter,
                     config.observability.default_level.as_deref(),
+                    crate::wasm_host::current_log_filter(),
                 );
 
                 info!("plugin config parsed: {:?}", config);
