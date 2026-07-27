@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     set_features("WASM_SHIM_FEATURES");
 
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=vendor-protobufs");
+    println!("cargo:rerun-if-changed=../../vendor-protobufs");
     generate_protobuf()
 }
 
@@ -65,8 +65,8 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
 
     println!("Compiling protos...");
     let result = prost_build.compile_protos(
-        &["vendor-protobufs/kuadrant/v1/descriptor_service.proto"],
-        &["vendor-protobufs/kuadrant/"],
+        &["../../vendor-protobufs/kuadrant/v1/descriptor_service.proto"],
+        &["../../vendor-protobufs/kuadrant/"],
     );
 
     match &result {
@@ -84,16 +84,16 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
     ratelimit_config.file_descriptor_set_path(format!("{}/ratelimit_descriptors.bin", out_dir));
     ratelimit_config.compile_protos(
         &[
-            "vendor-protobufs/data-plane-api/envoy/service/ratelimit/v3/rls.proto",
-            "vendor-protobufs/kuadrant/service/ratelimit/v1/ratelimit.proto",
+            "../../vendor-protobufs/data-plane-api/envoy/service/ratelimit/v3/rls.proto",
+            "../../vendor-protobufs/kuadrant/service/ratelimit/v1/ratelimit.proto",
         ],
         &[
-            "vendor-protobufs/data-plane-api/",
-            "vendor-protobufs/protoc-gen-validate/",
-            "vendor-protobufs/udpa/",
-            "vendor-protobufs/xds/",
-            "vendor-protobufs/googleapis/",
-            "vendor-protobufs/kuadrant/",
+            "../../vendor-protobufs/data-plane-api/",
+            "../../vendor-protobufs/protoc-gen-validate/",
+            "../../vendor-protobufs/udpa/",
+            "../../vendor-protobufs/xds/",
+            "../../vendor-protobufs/googleapis/",
+            "../../vendor-protobufs/kuadrant/",
         ],
     )?;
 
@@ -101,13 +101,13 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
     let mut auth_config = prost_build::Config::new();
     auth_config.file_descriptor_set_path(format!("{}/auth_descriptors.bin", out_dir));
     auth_config.compile_protos(
-        &["vendor-protobufs/data-plane-api/envoy/service/auth/v3/external_auth.proto"],
+        &["../../vendor-protobufs/data-plane-api/envoy/service/auth/v3/external_auth.proto"],
         &[
-            "vendor-protobufs/data-plane-api/",
-            "vendor-protobufs/protoc-gen-validate/",
-            "vendor-protobufs/udpa/",
-            "vendor-protobufs/xds/",
-            "vendor-protobufs/googleapis/",
+            "../../vendor-protobufs/data-plane-api/",
+            "../../vendor-protobufs/protoc-gen-validate/",
+            "../../vendor-protobufs/udpa/",
+            "../../vendor-protobufs/xds/",
+            "../../vendor-protobufs/googleapis/",
         ],
     )?;
 
