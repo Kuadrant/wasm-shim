@@ -17,7 +17,6 @@ default = []
 debug-host-behaviour = []
 
 [dependencies]
-proxy-wasm = { git = "https://github.com/Kuadrant/proxy-wasm-rust-sdk.git", rev = "6ceedbb" }
 serde_json = "1.0"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -42,7 +41,6 @@ acutejson = "0.1.0"
 
 
 [dev-dependencies]
-proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", rev = "33b318b" }
 serial_test = "2.0.0"
 
 [build-dependencies]

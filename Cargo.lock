@@ -1155,8 +1155,6 @@ dependencies = [
  "prost-build",
  "prost-reflect",
  "prost-types",
- "proxy-wasm",
- "proxy-wasm-test-framework",
  "radix_trie",
  "serde",
  "serde_json",

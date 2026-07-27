@@ -202,7 +202,7 @@ fn process_dynamic_response(
     };
     span.record("grpc_status_code", status_code);
 
-    if status_code != proxy_wasm::types::Status::Ok as u32 {
+    if status_code != 0 {
         record_error!("gRPC status code is not OK");
         return TaskOutcome::Failed;
     }
