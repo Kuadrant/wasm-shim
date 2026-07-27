@@ -63,7 +63,10 @@ impl FilterRoot {
 
         let has_dynamic_services = self.descriptor_manager.has_expected();
         if has_dynamic_services {
-            if let Err(e) = self.descriptor_manager.fetch_missing(&crate::wasm_host::ProxyWasmHost) {
+            if let Err(e) = self
+                .descriptor_manager
+                .fetch_missing(&crate::wasm_host::ProxyWasmHost)
+            {
                 error!("Failed to fetch descriptors: {}", e);
             }
         }
@@ -161,7 +164,10 @@ impl RootContext for FilterRoot {
     }
 
     fn on_tick(&mut self) {
-        if let Err(e) = self.descriptor_manager.fetch_missing(&crate::wasm_host::ProxyWasmHost) {
+        if let Err(e) = self
+            .descriptor_manager
+            .fetch_missing(&crate::wasm_host::ProxyWasmHost)
+        {
             error!("Failed to fetch missing descriptors on tick: {}", e);
         }
     }

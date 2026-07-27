@@ -2,6 +2,8 @@ use crate::data::attribute::{AttributeError, AttributeState, Path};
 use crate::data::cel::errors::{CelError, EvaluationError};
 use crate::data::grpc::{is_grpc_content_type, parse_grpc_path};
 use crate::data::Headers;
+#[cfg(feature = "debug-host-behaviour")]
+use crate::kuadrant::resolver::AttributeResolver;
 use crate::kuadrant::ReqRespCtx;
 use cel::common::ast::{EntryExpr, Expr, IdedExpr, LiteralValue};
 use cel::extractors::{Arguments, This};
@@ -15,8 +17,6 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
-#[cfg(feature = "debug-host-behaviour")]
-use crate::kuadrant::resolver::AttributeResolver;
 #[cfg(feature = "debug-host-behaviour")]
 use tracing::debug;
 use tracing::warn;
@@ -914,8 +914,9 @@ fn properties<'e>(
 #[cfg(feature = "debug-host-behaviour")]
 pub fn debug_all_well_known_attributes(resolver: &dyn AttributeResolver) {
     let attributes = new_well_known_attribute_map();
-    attributes.iter().for_each(|(key, value_type)| {
-        match resolver.get_attribute(key) {
+    attributes
+        .iter()
+        .for_each(|(key, value_type)| match resolver.get_attribute(key) {
             Ok(opt_bytes) => match opt_bytes {
                 None => debug!("{:#?}({}): None", key, value_type),
                 Some(bytes) => debug!("{:#?}({}): {:?}", key, value_type, bytes),
@@ -923,8 +924,7 @@ pub fn debug_all_well_known_attributes(resolver: &dyn AttributeResolver) {
             Err(err) => {
                 debug!("{:#?}({}): (err) {:?}", key, value_type, err)
             }
-        }
-    })
+        })
 }
 
 pub mod data {

@@ -1,10 +1,10 @@
+use crate::kuadrant::resolver::AttributeResolver;
 use crate::proto::kuadrant::v1::{
     GetServiceDescriptorsRequest, GetServiceDescriptorsResponse, ServiceRef,
 };
 use prost::Message;
 use prost_reflect::DescriptorPool;
 use prost_types::FileDescriptorSet;
-use crate::kuadrant::resolver::AttributeResolver;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
