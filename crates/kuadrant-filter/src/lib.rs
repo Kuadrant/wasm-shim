@@ -13,5 +13,4 @@ pub mod tracing;
 pub(crate) const WASM_SHIM_NAME: &str = env!("CARGO_PKG_NAME");
 pub(crate) const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
-pub(crate) const WASM_SHIM_FEATURES: &str = env!("WASM_SHIM_FEATURES");
 pub(crate) const WASM_SHIM_GIT_HASH: &str = env!("WASM_SHIM_GIT_HASH");
