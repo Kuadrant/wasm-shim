@@ -5,7 +5,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     set_git_hash("WASM_SHIM_GIT_HASH");
     set_profile("WASM_SHIM_PROFILE");
     set_features("WASM_SHIM_FEATURES");
-
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../vendor-protobufs");
     generate_protobuf()

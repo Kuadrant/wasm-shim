@@ -174,7 +174,6 @@ impl DescriptorManager {
         self.embedded.borrow_mut().insert(service, content_hash);
     }
 
-    #[cfg(test)]
     pub fn insert_pool(&self, key: DescriptorKey, pool: DescriptorPool) {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);

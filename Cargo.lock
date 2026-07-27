@@ -2533,6 +2533,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-shim"
+version = "0.13.0-dev"
+dependencies = [
+ "const_format",
+ "kuadrant-filter",
+ "log",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost-reflect",
+ "prost-types",
+ "proxy-wasm",
+ "proxy-wasm-test-framework",
+ "serde_json",
+ "serial_test",
+ "tracing",
+]
+
+[[package]]
 name = "wasmparser"
 version = "0.103.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

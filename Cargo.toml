@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/kuadrant-filter"]
+members = ["crates/kuadrant-filter", "crates/wasm-shim"]
 resolver = "2"

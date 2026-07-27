@@ -1,8 +1,8 @@
 use super::kuadrant_filter::KuadrantFilter;
-use super::DescriptorManager;
-use crate::configuration::PluginConfiguration;
-use crate::kuadrant::PipelineFactory;
-use crate::metrics::METRICS;
+use kuadrant_filter::configuration::PluginConfiguration;
+use kuadrant_filter::filter::DescriptorManager;
+use kuadrant_filter::kuadrant::PipelineFactory;
+use kuadrant_filter::metrics::METRICS;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -116,7 +116,7 @@ impl RootContext for FilterRoot {
     }
 
     fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
-        crate::tracing::update_log_level();
+        kuadrant_filter::tracing::update_log_level();
         debug!("#{} create_http_context", context_id);
         Some(Box::new(KuadrantFilter::new(
             context_id,
@@ -140,7 +140,7 @@ impl RootContext for FilterRoot {
         match serde_json::from_slice::<PluginConfiguration>(&configuration) {
             Ok(config) => {
                 let use_tracing_exporter = config.observability.tracing.is_some();
-                crate::tracing::init_observability(
+                kuadrant_filter::tracing::init_observability(
                     use_tracing_exporter,
                     config.observability.default_level.as_deref(),
                 );
@@ -178,8 +178,8 @@ impl Context for FilterRoot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::PluginConfiguration;
-    use crate::filter::DescriptorKey;
+    use kuadrant_filter::configuration::PluginConfiguration;
+    use kuadrant_filter::filter::DescriptorKey;
     use prost_reflect::DescriptorPool;
     use prost_types::{
         DescriptorProto, FileDescriptorProto, FileDescriptorSet, MethodDescriptorProto,

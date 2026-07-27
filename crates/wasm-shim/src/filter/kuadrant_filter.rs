@@ -1,5 +1,5 @@
-use crate::kuadrant::{Pipeline, PipelineFactory, PipelineState, ReqRespCtx};
-use crate::metrics::METRICS;
+use kuadrant_filter::kuadrant::{Pipeline, PipelineFactory, PipelineState, ReqRespCtx};
+use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
@@ -92,7 +92,7 @@ impl HttpContext for KuadrantFilter {
         debug!("#{} on_http_request_headers", self.context_id);
 
         #[cfg(feature = "debug-host-behaviour")]
-        crate::data::debug_all_well_known_attributes();
+        kuadrant_filter::data::debug_all_well_known_attributes();
 
         let ctx = ReqRespCtx::default();
 
