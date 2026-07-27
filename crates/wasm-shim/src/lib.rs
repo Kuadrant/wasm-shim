@@ -21,6 +21,8 @@ extern "C" fn start() {
     use proxy_wasm::traits::RootContext;
     use proxy_wasm::types::LogLevel;
 
+    kuadrant_filter::metrics::register_backend(Box::new(wasm_host::WasmMetricsBackend));
+
     proxy_wasm::set_log_level(LogLevel::Trace);
 
     std::panic::set_hook(Box::new(|panic_info| {

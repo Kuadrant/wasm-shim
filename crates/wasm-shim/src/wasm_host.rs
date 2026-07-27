@@ -4,11 +4,24 @@ use tracing::{debug, error};
 
 use kuadrant_filter::data::attribute::{AttributeError, Path};
 use kuadrant_filter::kuadrant::resolver::{AttributeResolver, MapType};
+use kuadrant_filter::metrics::MetricsBackend;
 use kuadrant_filter::services::ServiceError;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::Status;
 
 pub struct ProxyWasmHost;
+
+pub struct WasmMetricsBackend;
+
+impl MetricsBackend for WasmMetricsBackend {
+    fn define_counter(&self, name: &str) -> Option<u32> {
+        proxy_wasm::hostcalls::define_metric(proxy_wasm::types::MetricType::Counter, name).ok()
+    }
+
+    fn increment_counter(&self, id: u32, offset: i64) {
+        let _ = proxy_wasm::hostcalls::increment_metric(id, offset);
+    }
+}
 
 fn to_proxy_map_type(map_type: MapType) -> proxy_wasm::types::MapType {
     match map_type {

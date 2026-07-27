@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 const CONFIGS: &str = "kuadrant.configs";
 const HITS: &str = "kuadrant.hits";
@@ -9,6 +9,17 @@ const DENIED: &str = "kuadrant.denied";
 const ERRORS: &str = "kuadrant.errors";
 
 const NOOP: Counter = Counter(None);
+
+pub trait MetricsBackend: Send + Sync {
+    fn define_counter(&self, name: &str) -> Option<u32>;
+    fn increment_counter(&self, id: u32, offset: i64);
+}
+
+static METRICS_BACKEND: OnceLock<Box<dyn MetricsBackend>> = OnceLock::new();
+
+pub fn register_backend(backend: Box<dyn MetricsBackend>) {
+    let _ = METRICS_BACKEND.set(backend);
+}
 
 pub struct Metrics {
     counters: BTreeMap<String, Counter>,
@@ -49,21 +60,10 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         let mut counters = BTreeMap::new();
-
         for metric in [CONFIGS, HITS, MISSES, ALLOW, DENIED, ERRORS] {
-            let result = if cfg!(target_arch = "wasm32") {
-                proxy_wasm::hostcalls::define_metric(proxy_wasm::types::MetricType::Counter, metric)
-            } else {
-                Ok(0)
-            };
-            match result {
-                Ok(id) => {
-                    counters.insert(metric.to_string(), Counter(Some(id)));
-                }
-                Err(_) => tracing::error!("failed to add metric: {}", metric),
-            }
+            let id = METRICS_BACKEND.get().and_then(|b| b.define_counter(metric));
+            counters.insert(metric.to_string(), Counter(id));
         }
-
         Self { counters }
     }
 }
@@ -76,10 +76,8 @@ impl Counter {
     }
 
     pub fn inc_by(&self, offset: i64) {
-        if cfg!(target_arch = "wasm32") {
-            if let Some(id) = self.0 {
-                let _ = proxy_wasm::hostcalls::increment_metric(id, offset);
-            }
+        if let (Some(id), Some(backend)) = (self.0, METRICS_BACKEND.get()) {
+            backend.increment_counter(id, offset);
         }
     }
 }
