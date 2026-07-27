@@ -9,7 +9,16 @@ Every release is split into two workflows with a PR-based review gate between th
 1. **Pre-release** — makes code changes and opens a PR to the release branch
 2. **Release** — tests, tags, builds artifacts, and creates the GitHub Release
 
-The `release.yaml` file at the repository root is the machine-readable source of truth for version information.
+### Source of Truth
+
+**`Cargo.toml` is the authoritative source for the wasm-shim version.** The `release.yaml` file at the repository root is a derived mirror maintained by `sync-release-yaml.sh` for cross-repo tooling compatibility.
+
+Version flows one way: `Cargo.toml` → `sync-release-yaml.sh` → `release.yaml`. Nothing writes to `release.yaml` directly except the sync script.
+
+| State | Branch | `Cargo.toml` | `release.yaml` |
+|-------|--------|-------------|---------------|
+| Development | `main` | `X.Y.0-dev` | `0.0.0` (sentinel) |
+| Release | `release-X.Y` | `X.Y.Z` | `X.Y.Z` (exact match) |
 
 ## Quick Start
 
@@ -17,7 +26,7 @@ The `release.yaml` file at the repository root is the machine-readable source of
    - **version**: Target version (e.g., `0.13.0`)
    - **source-branch**: `main` for new minor releases (default)
 2. **Review and merge the PR** that gets created against the release branch
-   - The version gate check validates `release.yaml` before merge
+   - The version gate checks that `Cargo.toml` and `release.yaml` agree
 3. **Run the release workflow**: Actions → "Release" → "Run workflow"
    - **release-branch**: The release branch (e.g., `release-0.13`)
 4. **Done** — smoke tests run, tag is created, artifacts are built, and the GitHub Release is published
@@ -27,11 +36,11 @@ The `release.yaml` file at the repository root is the machine-readable source of
 1. Actions → "Pre-release" → "Run workflow"
    - **version**: `0.13.0`
    - **source-branch**: `main`
-2. The workflow creates branch `release-0.13` (if it doesn't exist), updates `release.yaml` and `Cargo.toml`, and opens a PR
+2. The workflow creates branch `release-0.13` (if it doesn't exist), updates `Cargo.toml` (then syncs `release.yaml`), and opens a PR
 3. Review and merge the PR (version gate and CI checks must pass)
 4. Actions → "Release" → "Run workflow"
    - **release-branch**: `release-0.13`
-5. The workflow reads the version from `release.yaml`, runs smoke tests, creates tag `v0.13.0`, builds the WASM binary and container image, and creates the GitHub Release
+5. The workflow verifies `Cargo.toml` and `release.yaml` agree, reads the version, runs smoke tests, creates tag `v0.13.0`, builds the WASM binary and container image, and creates the GitHub Release
 
 ## Patch Release
 
@@ -48,6 +57,21 @@ The `release.yaml` file at the repository root is the machine-readable source of
 3. Review and merge the PR (contains both the backported fixes and the version bump)
 4. Actions → "Release" → "Run workflow"
    - **release-branch**: `release-0.13`
+
+## File Inventory
+
+| File | Purpose |
+|------|---------|
+| `Cargo.toml` | **Source of truth** for version |
+| `release.yaml` | Derived mirror for cross-repo tooling |
+| `.github/scripts/sync-release-yaml.sh` | Syncs `release.yaml` from `Cargo.toml` |
+| `.github/scripts/check-versions.sh` | Validates `Cargo.toml` and `release.yaml` agree |
+| `.github/scripts/parse-version.sh` | Reads and decomposes version from `release.yaml` |
+| `.github/scripts/validate-release-yaml.sh` | Validates `release.yaml` on release branches |
+| `.github/actions/prepare-release/action.yaml` | Sets version in `Cargo.toml`, syncs `release.yaml` |
+| `.github/workflows/pre-release.yaml` | Phase 1: prepare release PR |
+| `.github/workflows/release.yaml` | Phase 2: test, tag, build, publish |
+| `.github/workflows/version-gate.yaml` | CI gate: version consistency and release validation |
 
 ## Repository Configuration
 
@@ -74,9 +98,9 @@ Configure these in Settings → Secrets and variables → Actions → Repository
 
 ## Details
 
-- **Version format**: semver without `v` prefix in `release.yaml` (e.g., `0.13.0`, not `v0.13.0`)
+- **Version format**: semver without `v` prefix in `Cargo.toml` and `release.yaml` (e.g., `0.13.0`, not `v0.13.0`)
 - **Release branches**: `release-0.13`, `release-0.14`, etc. — one branch per minor version, shared by all patches
-- **Version gate**: A CI check on release branch PRs validates that `release.yaml` has a concrete version (not `0.0.0`)
-- **On `main`**: `release.yaml` always has version `0.0.0` (sentinel for active development)
+- **Version gate**: A CI check on PRs that touch `Cargo.toml` or `release.yaml` validates consistency. On release branch PRs, it additionally rejects sentinel and dev versions.
+- **On `main`**: `Cargo.toml` has `-dev` suffix, `release.yaml` has `0.0.0` (sentinel)
 - **Artifacts built during release**: WASM binary (attached to GitHub Release) and container image (pushed to `quay.io/<IMG_REGISTRY_ORG>/wasm-shim`)
 - **GitHub Release is always the last step** — if any preceding step fails, no release is created
