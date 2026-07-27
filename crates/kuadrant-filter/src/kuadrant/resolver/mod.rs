@@ -11,21 +11,27 @@ mod mock;
 #[cfg(test)]
 pub use mock::MockWasmHost;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapType {
+    HttpRequestHeaders,
+    HttpResponseHeaders,
+}
+
 pub trait AttributeResolver: Send + Sync {
     fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError>;
     fn get_attribute_map(
         &self,
-        map_type: proxy_wasm::types::MapType,
+        map_type: MapType,
     ) -> Result<Vec<(String, String)>, AttributeError>;
     fn get_attribute_map_value(
         &self,
-        map_type: proxy_wasm::types::MapType,
+        map_type: MapType,
         key: &str,
     ) -> Result<Option<String>, AttributeError>;
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError>;
     fn set_attribute_map(
         &self,
-        map_type: proxy_wasm::types::MapType,
+        map_type: MapType,
         value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError>;
     fn get_http_request_body(

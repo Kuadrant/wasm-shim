@@ -1,4 +1,4 @@
-use super::AttributeResolver;
+use super::{AttributeResolver, MapType};
 use crate::data::attribute::{AttributeError, Path};
 use crate::services::ServiceError;
 use std::collections::HashMap;
@@ -94,17 +94,11 @@ impl AttributeResolver for MockWasmHost {
 
     fn get_attribute_map(
         &self,
-        map_type: proxy_wasm::types::MapType,
+        map_type: MapType,
     ) -> Result<Vec<(String, String)>, AttributeError> {
         let map_key = match map_type {
-            proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
-            proxy_wasm::types::MapType::HttpResponseHeaders => "response.headers",
-            _ => {
-                return Err(AttributeError::Retrieval(format!(
-                    "MockWasmHost does not support map type: {:?}",
-                    map_type
-                )))
-            }
+            MapType::HttpRequestHeaders => "request.headers",
+            MapType::HttpResponseHeaders => "response.headers",
         };
 
         match self.get_map(map_key) {
@@ -118,7 +112,7 @@ impl AttributeResolver for MockWasmHost {
 
     fn get_attribute_map_value(
         &self,
-        map_type: proxy_wasm::types::MapType,
+        map_type: MapType,
         key: &str,
     ) -> Result<Option<String>, AttributeError> {
         let map = self.get_attribute_map(map_type)?;
@@ -144,18 +138,12 @@ impl AttributeResolver for MockWasmHost {
 
     fn set_attribute_map(
         &self,
-        map_type: proxy_wasm::types::MapType,
+        map_type: MapType,
         value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError> {
         let map_key = match map_type {
-            proxy_wasm::types::MapType::HttpRequestHeaders => "request.headers",
-            proxy_wasm::types::MapType::HttpResponseHeaders => "response.headers",
-            _ => {
-                return Err(AttributeError::Set(format!(
-                    "MockWasmHost does not support map type: {:?}",
-                    map_type
-                )))
-            }
+            MapType::HttpRequestHeaders => "request.headers",
+            MapType::HttpResponseHeaders => "response.headers",
         };
 
         let owned_map: Vec<(String, String)> = value

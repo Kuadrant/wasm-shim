@@ -10,7 +10,7 @@ use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, Attribut
 use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::pipeline::tasks::Task;
-use crate::kuadrant::resolver::{AttributeResolver, ProxyWasmHost};
+use crate::kuadrant::resolver::{AttributeResolver, MapType, ProxyWasmHost};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -139,7 +139,7 @@ impl ReqRespCtx {
     pub fn get_request_header(&self, key: &str) -> Option<String> {
         match self
             .backend
-            .get_attribute_map_value(proxy_wasm::types::MapType::HttpRequestHeaders, key)
+            .get_attribute_map_value(MapType::HttpRequestHeaders, key)
         {
             Ok(value) => value,
             Err(e) => {
@@ -162,7 +162,7 @@ impl ReqRespCtx {
             ["request", "headers"] => {
                 match self
                     .backend
-                    .get_attribute_map(proxy_wasm::types::MapType::HttpRequestHeaders)
+                    .get_attribute_map(MapType::HttpRequestHeaders)
                 {
                     Ok(vec) => Ok(CachedValue::Headers(vec.into())),
                     Err(AttributeError::NotAvailable(msg)) => {
@@ -175,7 +175,7 @@ impl ReqRespCtx {
             ["response", "headers"] => {
                 let vec = self
                     .backend
-                    .get_attribute_map(proxy_wasm::types::MapType::HttpResponseHeaders)?;
+                    .get_attribute_map(MapType::HttpResponseHeaders)?;
                 Ok(CachedValue::Headers(vec.into()))
             }
             ["source", "remote_address"] => {
@@ -211,7 +211,7 @@ impl ReqRespCtx {
         match *path.tokens() {
             ["request", "headers"] => {
                 match self.backend.set_attribute_map(
-                    proxy_wasm::types::MapType::HttpRequestHeaders,
+                    MapType::HttpRequestHeaders,
                     value.to_vec(),
                 ) {
                     Ok(()) => self.cache.insert(path.clone(), CachedValue::Headers(value)),
@@ -224,7 +224,7 @@ impl ReqRespCtx {
             }
             ["response", "headers"] => {
                 self.backend.set_attribute_map(
-                    proxy_wasm::types::MapType::HttpResponseHeaders,
+                    MapType::HttpResponseHeaders,
                     value.to_vec(),
                 )?;
                 self.cache.insert(path.clone(), CachedValue::Headers(value))
