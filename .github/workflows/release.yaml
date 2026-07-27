@@ -26,7 +26,16 @@ jobs:
         with:
           ref: ${{ inputs.release-branch }}
 
+      - uses: ./.github/actions/setup-rust-wasm
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: ./.github/actions/install-yq
+
+      - name: Check version consistency
+        run: |
+          chmod +x .github/scripts/check-versions.sh
+          .github/scripts/check-versions.sh
 
       - name: Parse version from release.yaml
         id: parse

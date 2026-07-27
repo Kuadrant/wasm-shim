@@ -55,13 +55,6 @@ runs:
           fi
         fi
 
-    - uses: ./.github/actions/install-yq
-
-    - name: Update release.yaml version
-      shell: bash
-      run: |
-        yq -i '.wasm-shim.version = strenv(WASM_SHIM_VERSION)' release.yaml
-
     - name: Update Cargo.toml version
       shell: bash
       run: |
@@ -75,3 +68,11 @@ runs:
     - name: Update Cargo.lock
       shell: bash
       run: cargo check --target wasm32-wasip1
+
+    - uses: ./.github/actions/install-yq
+
+    - name: Sync release.yaml from Cargo.toml
+      shell: bash
+      run: |
+        chmod +x .github/scripts/sync-release-yaml.sh
+        .github/scripts/sync-release-yaml.sh

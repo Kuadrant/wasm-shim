@@ -154,11 +154,18 @@ jobs:
       - name: Update Cargo.lock
         run: cargo check --target wasm32-wasip1
 
+      - uses: ./.github/actions/install-yq
+
+      - name: Sync release.yaml from Cargo.toml
+        run: |
+          chmod +x .github/scripts/sync-release-yaml.sh
+          .github/scripts/sync-release-yaml.sh
+
       - name: Commit and push changes
         run: |
           git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           git config user.name "${{ github.actor }}"
-          git add Cargo.toml Cargo.lock
+          git add Cargo.toml Cargo.lock release.yaml
           git commit -s -m "chore: bump version to ${{ steps.next.outputs.next-dev }}"
           git push --set-upstream origin "post-release-v${{ needs.setup.outputs.version }}"
 
