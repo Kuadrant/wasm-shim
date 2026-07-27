@@ -7,7 +7,7 @@ pub mod kuadrant;
 pub mod metrics;
 #[allow(unused_imports)]
 pub(crate) mod proto;
-pub(crate) mod services;
+pub mod services;
 pub mod tracing;
 
 pub(crate) const WASM_SHIM_NAME: &str = env!("CARGO_PKG_NAME");

@@ -5,6 +5,7 @@ use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
 use std::ops::Not;
 use std::rc::Rc;
+use std::sync::Arc;
 use tracing::{debug, error, trace, warn};
 
 pub struct KuadrantFilter {
@@ -94,7 +95,7 @@ impl HttpContext for KuadrantFilter {
         #[cfg(feature = "debug-host-behaviour")]
         kuadrant_filter::data::debug_all_well_known_attributes();
 
-        let ctx = ReqRespCtx::default();
+        let ctx = ReqRespCtx::new(Arc::new(crate::wasm_host::ProxyWasmHost));
 
         match self.factory.build(ctx) {
             Ok(Some(pipeline)) => {

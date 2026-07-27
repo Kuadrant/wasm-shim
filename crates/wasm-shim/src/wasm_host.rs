@@ -2,20 +2,18 @@ use std::time::Duration;
 
 use tracing::{debug, error};
 
-use super::{AttributeResolver, MapType};
-use crate::data::attribute::{AttributeError, Path};
-use crate::services::ServiceError;
+use kuadrant_filter::data::attribute::{AttributeError, Path};
+use kuadrant_filter::kuadrant::resolver::{AttributeResolver, MapType};
+use kuadrant_filter::services::ServiceError;
 use proxy_wasm::hostcalls;
 use proxy_wasm::types::Status;
 
 pub struct ProxyWasmHost;
 
-impl From<MapType> for proxy_wasm::types::MapType {
-    fn from(map_type: MapType) -> Self {
-        match map_type {
-            MapType::HttpRequestHeaders => proxy_wasm::types::MapType::HttpRequestHeaders,
-            MapType::HttpResponseHeaders => proxy_wasm::types::MapType::HttpResponseHeaders,
-        }
+fn to_proxy_map_type(map_type: MapType) -> proxy_wasm::types::MapType {
+    match map_type {
+        MapType::HttpRequestHeaders => proxy_wasm::types::MapType::HttpRequestHeaders,
+        MapType::HttpResponseHeaders => proxy_wasm::types::MapType::HttpResponseHeaders,
     }
 }
 
@@ -38,7 +36,7 @@ impl AttributeResolver for ProxyWasmHost {
         map_type: MapType,
     ) -> Result<Vec<(String, String)>, AttributeError> {
         debug!("Getting map: `{:?}`", map_type);
-        match hostcalls::get_map(map_type.into()) {
+        match hostcalls::get_map(to_proxy_map_type(map_type)) {
             Ok(map) if map.is_empty() => Err(AttributeError::NotAvailable(format!(
                 "Map `{:?}` not available in current phase",
                 map_type
@@ -56,7 +54,7 @@ impl AttributeResolver for ProxyWasmHost {
         key: &str,
     ) -> Result<Option<String>, AttributeError> {
         debug!("Getting map value: `{:?}[{key}]`", map_type);
-        match hostcalls::get_map_value(map_type.into(), key) {
+        match hostcalls::get_map_value(to_proxy_map_type(map_type), key) {
             Ok(value) => Ok(value),
             Err(Status::BadArgument) => Err(AttributeError::NotAvailable(format!(
                 "Map `{map_type:?}` not available in current phase",
@@ -83,7 +81,7 @@ impl AttributeResolver for ProxyWasmHost {
         map_type: MapType,
         value: Vec<(&str, &str)>,
     ) -> Result<(), AttributeError> {
-        match hostcalls::set_map(map_type.into(), value) {
+        match hostcalls::set_map(to_proxy_map_type(map_type), value) {
             Ok(_) => Ok(()),
             Err(proxy_wasm::types::Status::BadArgument) => Err(AttributeError::NotAvailable(
                 format!("Map `{:?}` not available in current phase", map_type),
@@ -96,7 +94,7 @@ impl AttributeResolver for ProxyWasmHost {
         &self,
         start: usize,
         max_size: usize,
-    ) -> Result<Option<proxy_wasm::types::Bytes>, AttributeError> {
+    ) -> Result<Option<Vec<u8>>, AttributeError> {
         match hostcalls::get_buffer(
             proxy_wasm::types::BufferType::HttpRequestBody,
             start,
@@ -116,7 +114,7 @@ impl AttributeResolver for ProxyWasmHost {
         &self,
         start: usize,
         max_size: usize,
-    ) -> Result<Option<proxy_wasm::types::Bytes>, AttributeError> {
+    ) -> Result<Option<Vec<u8>>, AttributeError> {
         match hostcalls::get_buffer(
             proxy_wasm::types::BufferType::HttpResponseBody,
             start,

@@ -1,10 +1,10 @@
 use super::kuadrant_filter::KuadrantFilter;
+use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
+use const_format::formatcp;
 use kuadrant_filter::configuration::PluginConfiguration;
 use kuadrant_filter::filter::DescriptorManager;
 use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
-use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
-use const_format::formatcp;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
 use std::rc::Rc;

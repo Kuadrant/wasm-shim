@@ -10,7 +10,7 @@ use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, Attribut
 use crate::data::{Expression, Headers};
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::pipeline::tasks::Task;
-use crate::kuadrant::resolver::{AttributeResolver, MapType, ProxyWasmHost};
+use crate::kuadrant::resolver::{AttributeResolver, MapType};
 use crate::services::ServiceError;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -32,12 +32,6 @@ pub struct ReqRespCtx {
     pub values: ValueStore,
     pub barrier: Barrier,
     pub cel: CelScope,
-}
-
-impl Default for ReqRespCtx {
-    fn default() -> Self {
-        Self::new(Arc::new(ProxyWasmHost))
-    }
 }
 
 impl ReqRespCtx {
@@ -160,10 +154,7 @@ impl ReqRespCtx {
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
-                match self
-                    .backend
-                    .get_attribute_map(MapType::HttpRequestHeaders)
-                {
+                match self.backend.get_attribute_map(MapType::HttpRequestHeaders) {
                     Ok(vec) => Ok(CachedValue::Headers(vec.into())),
                     Err(AttributeError::NotAvailable(msg)) => {
                         // We cannot be Pending on request headers
@@ -210,10 +201,10 @@ impl ReqRespCtx {
     fn store_attribute_headers(&self, path: &Path, value: Headers) -> Result<(), AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {
-                match self.backend.set_attribute_map(
-                    MapType::HttpRequestHeaders,
-                    value.to_vec(),
-                ) {
+                match self
+                    .backend
+                    .set_attribute_map(MapType::HttpRequestHeaders, value.to_vec())
+                {
                     Ok(()) => self.cache.insert(path.clone(), CachedValue::Headers(value)),
                     Err(AttributeError::NotAvailable(msg)) => {
                         // We cannot be Pending on request headers
@@ -223,10 +214,8 @@ impl ReqRespCtx {
                 }
             }
             ["response", "headers"] => {
-                self.backend.set_attribute_map(
-                    MapType::HttpResponseHeaders,
-                    value.to_vec(),
-                )?;
+                self.backend
+                    .set_attribute_map(MapType::HttpResponseHeaders, value.to_vec())?;
                 self.cache.insert(path.clone(), CachedValue::Headers(value))
             }
             _ => Err(AttributeError::Set(

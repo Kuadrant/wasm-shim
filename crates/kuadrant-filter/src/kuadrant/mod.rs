@@ -1,7 +1,7 @@
 mod cache;
 mod context;
 mod pipeline;
-mod resolver;
+pub mod resolver;
 
 #[cfg(test)]
 pub use resolver::MockWasmHost;

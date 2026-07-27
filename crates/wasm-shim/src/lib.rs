@@ -1,6 +1,7 @@
 extern crate core;
 
 mod filter;
+mod wasm_host;
 
 pub(crate) const WASM_SHIM_NAME: &str = env!("CARGO_PKG_NAME");
 pub(crate) const WASM_SHIM_VERSION: &str = env!("CARGO_PKG_VERSION");
