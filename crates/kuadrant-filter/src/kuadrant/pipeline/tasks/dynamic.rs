@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use tracing::{debug, error};
 
@@ -12,7 +12,7 @@ use crate::services::{DescriptorConverter, DynamicService};
 
 pub struct DynamicTask {
     task_id: String,
-    service: Rc<DynamicService>,
+    service: Arc<DynamicService>,
     var: String,
     message_builder: Expression,
     on_reply: Vec<Box<dyn Task>>,
@@ -26,7 +26,7 @@ impl DynamicTask {
     pub fn new_with_attributes(
         ctx: &mut ReqRespCtx,
         task_id: String,
-        service: Rc<DynamicService>,
+        service: Arc<DynamicService>,
         var: String,
         message_builder: Expression,
         on_reply: Vec<Box<dyn Task>>,

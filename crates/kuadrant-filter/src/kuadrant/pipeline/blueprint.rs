@@ -13,7 +13,7 @@ use crate::services::ServiceInstance;
 use cel::ParseErrors;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub type RequestData = ((String, String), Expression);
 
@@ -84,7 +84,7 @@ impl Action {
                         Some(Box::new(DynamicTask::new_with_attributes(
                             ctx,
                             self.id.clone(),
-                            Rc::clone(dynamic_service),
+                            Arc::clone(dynamic_service),
                             var.clone(),
                             message_builder.clone(),
                             children,
@@ -350,7 +350,7 @@ impl Blueprint {
                         }
                         if let Some(service) = tracing_service {
                             teardown_tasks
-                                .push(Box::new(ExportTracesTask::new(ctx, service.clone())));
+                                .push(Box::new(ExportTracesTask::new(ctx, Arc::clone(service))));
                         }
                     }
                     ServiceInstance::Dynamic(_)
@@ -541,13 +541,13 @@ mod tests {
     use crate::filter::DescriptorManager;
     use crate::services::{DynamicService, ServiceInstance};
     use std::collections::HashMap;
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     fn build_test_service(name: &str) -> (String, ServiceInstance) {
-        let descriptor_manager = Rc::new(DescriptorManager::default());
+        let descriptor_manager = Arc::new(DescriptorManager::default());
         (
             name.to_string(),
-            ServiceInstance::Auth(Rc::new(DynamicService::new(
+            ServiceInstance::Auth(Arc::new(DynamicService::new(
                 "test-cluster".to_string(),
                 "envoy.service.auth.v3.Authorization".to_string(),
                 "Check".to_string(),
@@ -559,10 +559,10 @@ mod tests {
     }
 
     fn build_dynamic_service(name: &str) -> (String, ServiceInstance) {
-        let descriptor_manager = Rc::new(DescriptorManager::default());
+        let descriptor_manager = Arc::new(DescriptorManager::default());
         (
             name.to_string(),
-            ServiceInstance::Dynamic(Rc::new(DynamicService::new(
+            ServiceInstance::Dynamic(Arc::new(DynamicService::new(
                 "test-cluster".to_string(),
                 "test.Service".to_string(),
                 "TestMethod".to_string(),
@@ -858,7 +858,7 @@ mod tests {
         use crate::services::TracingService;
         let services = HashMap::from([(
             "tracing-svc".to_string(),
-            ServiceInstance::Tracing(Some(Rc::new(TracingService::new(
+            ServiceInstance::Tracing(Some(Arc::new(TracingService::new(
                 "test-cluster".to_string(),
                 std::time::Duration::from_secs(10),
             )))),

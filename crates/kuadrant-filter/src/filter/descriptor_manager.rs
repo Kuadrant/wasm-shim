@@ -5,11 +5,10 @@ use crate::proto::kuadrant::v1::{
 use prost::Message;
 use prost_reflect::DescriptorPool;
 use prost_types::FileDescriptorSet;
-use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -62,10 +61,10 @@ enum DescriptorState {
 }
 
 pub struct DescriptorManager {
-    pools: RefCell<HashMap<u64, Rc<DescriptorPool>>>,
-    embedded: RefCell<HashMap<String, u64>>,
-    descriptors: RefCell<HashMap<DescriptorKey, DescriptorState>>,
-    descriptor_service: RefCell<Option<String>>,
+    pools: Mutex<HashMap<u64, Arc<DescriptorPool>>>,
+    embedded: Mutex<HashMap<String, u64>>,
+    descriptors: Mutex<HashMap<DescriptorKey, DescriptorState>>,
+    descriptor_service: Mutex<Option<String>>,
 }
 
 impl Default for DescriptorManager {
@@ -110,7 +109,10 @@ impl Default for DescriptorManager {
 
 impl DescriptorManager {
     pub fn set_descriptor_service(&self, service: &str) {
-        let mut current = self.descriptor_service.borrow_mut();
+        let mut current = self
+            .descriptor_service
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if current.as_ref().is_none_or(|s| s != service) {
             *current = Some(service.to_string());
         }
@@ -119,20 +121,23 @@ impl DescriptorManager {
     pub fn add_expected(&self, key: DescriptorKey) {
         let initial_state = self
             .embedded
-            .borrow()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&key.service)
             .map(|&hash| DescriptorState::Embedded(hash))
             .unwrap_or(DescriptorState::Missing);
 
         self.descriptors
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(key)
             .or_insert(initial_state);
     }
 
     pub fn has_expected(&self) -> bool {
         self.descriptors
-            .borrow()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .any(|state| !matches!(state, DescriptorState::Embedded(_)))
     }
@@ -145,16 +150,20 @@ impl DescriptorManager {
         &self,
         cluster: &str,
         service: &str,
-    ) -> Result<Rc<DescriptorPool>, DescriptorError> {
+    ) -> Result<Arc<DescriptorPool>, DescriptorError> {
         let key = DescriptorKey::new(cluster.to_string(), service.to_string());
 
         self.descriptors
-            .borrow()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&key)
             .and_then(|state| match state {
-                DescriptorState::Embedded(hash) | DescriptorState::Resolved(hash) => {
-                    self.pools.borrow().get(hash).map(Rc::clone)
-                }
+                DescriptorState::Embedded(hash) | DescriptorState::Resolved(hash) => self
+                    .pools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(hash)
+                    .map(Arc::clone),
                 _ => None,
             })
             .ok_or_else(|| DescriptorError::NotAvailable {
@@ -167,26 +176,37 @@ impl DescriptorManager {
         let content_hash = hash_bytes(fds_bytes);
 
         self.pools
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(content_hash)
-            .or_insert_with(|| Rc::new(pool.clone()));
+            .or_insert_with(|| Arc::new(pool.clone()));
 
-        self.embedded.borrow_mut().insert(service, content_hash);
+        self.embedded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(service, content_hash);
     }
 
     pub fn insert_pool(&self, key: DescriptorKey, pool: DescriptorPool) {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let hash = hasher.finish();
-        self.pools.borrow_mut().insert(hash, Rc::new(pool));
+        self.pools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(hash, Arc::new(pool));
         self.descriptors
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(key, DescriptorState::Resolved(hash));
     }
 
     fn insert_pool_from_bytes(&self, key: DescriptorKey, fds_bytes: &[u8], pool: DescriptorPool) {
         if matches!(
-            self.descriptors.borrow().get(&key),
+            self.descriptors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key),
             Some(DescriptorState::Embedded(_))
         ) {
             return;
@@ -195,18 +215,21 @@ impl DescriptorManager {
         let content_hash = hash_bytes(fds_bytes);
 
         self.pools
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(content_hash)
-            .or_insert_with(|| Rc::new(pool));
+            .or_insert_with(|| Arc::new(pool));
 
         self.descriptors
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(key, DescriptorState::Resolved(content_hash));
     }
 
     fn get_missing(&self) -> Vec<DescriptorKey> {
         self.descriptors
-            .borrow()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter_map(|(key, state)| {
                 if matches!(state, DescriptorState::Missing) {
@@ -227,7 +250,8 @@ impl DescriptorManager {
 
         let descriptor_service = self
             .descriptor_service
-            .borrow()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .ok_or("descriptor service not configured")?
             .clone();
@@ -270,7 +294,7 @@ impl DescriptorManager {
             token
         );
 
-        let mut descriptors = self.descriptors.borrow_mut();
+        let mut descriptors = self.descriptors.lock().unwrap_or_else(|e| e.into_inner());
         for key in missing {
             descriptors.insert(key, DescriptorState::Pending(token));
         }
@@ -280,7 +304,8 @@ impl DescriptorManager {
 
     pub fn reset_pending(&self, token_id: u32) {
         self.descriptors
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .iter_mut()
             .for_each(|(_, state)| {
                 if matches!(state, DescriptorState::Pending(t) if *t == token_id) {
@@ -292,7 +317,8 @@ impl DescriptorManager {
     pub fn handle_response(&self, token_id: u32, response_bytes: Vec<u8>) -> Result<(), String> {
         let has_pending = self
             .descriptors
-            .borrow()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .any(|state| matches!(state, DescriptorState::Pending(t) if *t == token_id));
 
@@ -478,7 +504,11 @@ mod tests {
     #[test]
     fn test_deduplication_same_descriptor_bytes() {
         let manager = DescriptorManager::default();
-        let initial_pool_count = manager.pools.borrow().len();
+        let initial_pool_count = manager
+            .pools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
 
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
@@ -519,9 +549,16 @@ mod tests {
         let result1 = manager.get_pool("cluster-a", "test.TestService").unwrap();
         let result2 = manager.get_pool("cluster-b", "test.TestService").unwrap();
 
-        assert!(Rc::ptr_eq(&result1, &result2));
+        assert!(Arc::ptr_eq(&result1, &result2));
 
-        assert_eq!(manager.pools.borrow().len(), initial_pool_count + 1);
+        assert_eq!(
+            manager
+                .pools
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len(),
+            initial_pool_count + 1
+        );
     }
 
     #[test]
@@ -591,7 +628,11 @@ mod tests {
         manager.add_expected(key.clone());
 
         assert!(matches!(
-            manager.descriptors.borrow().get(&key),
+            manager
+                .descriptors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key),
             Some(DescriptorState::Embedded(_))
         ),);
 
@@ -639,7 +680,7 @@ mod tests {
         let result_a = manager.get_pool("cluster-a", "test.TestService").unwrap();
         let result_b = manager.get_pool("cluster-b", "test.TestService").unwrap();
 
-        assert!(Rc::ptr_eq(&result_a, &result_b));
+        assert!(Arc::ptr_eq(&result_a, &result_b));
         assert_eq!(
             result_a.services().next().unwrap().parent_file().name(),
             "embedded.proto"
@@ -649,7 +690,11 @@ mod tests {
     #[test]
     fn test_embedded_entries_share_pool_across_clusters() {
         let manager = DescriptorManager::default();
-        let initial_pool_count = manager.pools.borrow().len();
+        let initial_pool_count = manager
+            .pools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
 
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
@@ -683,8 +728,15 @@ mod tests {
         let result_a = manager.get_pool("cluster-a", "test.TestService").unwrap();
         let result_b = manager.get_pool("cluster-b", "test.TestService").unwrap();
 
-        assert!(Rc::ptr_eq(&result_a, &result_b));
-        assert_eq!(manager.pools.borrow().len(), initial_pool_count + 1);
+        assert!(Arc::ptr_eq(&result_a, &result_b));
+        assert_eq!(
+            manager
+                .pools
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len(),
+            initial_pool_count + 1
+        );
     }
 
     #[test]
@@ -698,7 +750,11 @@ mod tests {
         manager.add_expected(key.clone());
 
         assert!(matches!(
-            manager.descriptors.borrow().get(&key),
+            manager
+                .descriptors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key),
             Some(DescriptorState::Embedded(_))
         ));
         assert!(!manager.has_expected());
@@ -710,7 +766,7 @@ mod tests {
                 "envoy.service.ratelimit.v3.RateLimitService",
             )
             .expect("Should have embedded rate limit pool");
-        assert!(Rc::strong_count(&pool) >= 1);
+        assert!(Arc::strong_count(&pool) >= 1);
     }
 
     #[test]
@@ -721,7 +777,11 @@ mod tests {
         manager.add_expected(key.clone());
 
         assert!(matches!(
-            manager.descriptors.borrow().get(&key),
+            manager
+                .descriptors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key),
             Some(DescriptorState::Missing)
         ));
         assert!(manager.has_expected());

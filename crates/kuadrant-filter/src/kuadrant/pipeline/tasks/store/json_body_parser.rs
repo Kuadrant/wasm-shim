@@ -1,7 +1,6 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use cel::Value;
 use tracing::error;
@@ -13,8 +12,8 @@ use crate::kuadrant::context::BodyContext;
 pub(crate) struct JsonBodyParser {
     fields: Vec<String>,
     parser: Option<acutejson::Parser>,
-    buffers: Rc<RefCell<HashMap<String, Vec<u8>>>>,
-    matched: Rc<RefCell<HashSet<String>>>,
+    buffers: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    matched: Arc<Mutex<HashSet<String>>>,
     extracted: HashMap<String, Value>,
     bytes_consumed: usize,
     complete: bool,
@@ -22,22 +21,26 @@ pub(crate) struct JsonBodyParser {
 
 impl JsonBodyParser {
     pub fn new(fields: Vec<String>) -> Result<Self, AttributeError> {
-        let buffers: Rc<RefCell<HashMap<String, Vec<u8>>>> = Rc::new(RefCell::new(HashMap::new()));
-        let matched: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
-        let results: Rc<RefCell<HashMap<String, Vec<u8>>>> = Rc::clone(&buffers);
+        let buffers: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let matched: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let results: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::clone(&buffers);
 
         let mut builder = acutejson::Builder::new();
         for field in &fields {
             let field_name = field.clone();
-            let field_buffers = Rc::clone(&results);
-            let field_matched = Rc::clone(&matched);
+            let field_buffers = Arc::clone(&results);
+            let field_matched = Arc::clone(&matched);
             field_buffers
-                .borrow_mut()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(field_name.clone(), Vec::new());
 
             builder = match builder.register(field, move |bytes, _is_complete| {
-                field_matched.borrow_mut().insert(field_name.clone());
-                let mut bufs = field_buffers.borrow_mut();
+                field_matched
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(field_name.clone());
+                let mut bufs = field_buffers.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(buf) = bufs.get_mut(&field_name) {
                     buf.extend_from_slice(bytes);
                 } else {
@@ -66,8 +69,8 @@ impl JsonBodyParser {
     }
 
     fn finalize_extracted(&mut self) -> Result<(), AttributeError> {
-        let buffers = self.buffers.borrow();
-        let matched = self.matched.borrow();
+        let buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        let matched = self.matched.lock().unwrap_or_else(|e| e.into_inner());
         for (field, raw_bytes) in buffers.iter() {
             if matched.contains(field) {
                 let raw_value = std::str::from_utf8(raw_bytes).map_err(|e| {

@@ -1,7 +1,7 @@
 use crate::configuration::{FailureMode, Service as ServiceConfig, ServiceType};
 use crate::filter::DescriptorManager;
 use crate::kuadrant::ReqRespCtx;
-use std::{rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 mod dynamic;
 mod tracing;
@@ -14,12 +14,12 @@ pub use tracing::TracingService;
 
 #[derive(Clone)]
 pub enum ServiceInstance {
-    Auth(Rc<DynamicService>),
-    RateLimit(Rc<DynamicService>),
-    RateLimitCheck(Rc<DynamicService>),
-    RateLimitReport(Rc<DynamicService>),
-    Tracing(Option<Rc<TracingService>>),
-    Dynamic(Rc<DynamicService>),
+    Auth(Arc<DynamicService>),
+    RateLimit(Arc<DynamicService>),
+    RateLimitCheck(Arc<DynamicService>),
+    RateLimitReport(Arc<DynamicService>),
+    Tracing(Option<Arc<TracingService>>),
+    Dynamic(Arc<DynamicService>),
 }
 
 impl ServiceInstance {
@@ -36,46 +36,48 @@ impl ServiceInstance {
 
     pub fn from_config(
         service: ServiceConfig,
-        descriptor_manager: &Rc<DescriptorManager>,
+        descriptor_manager: &Arc<DescriptorManager>,
     ) -> Result<Self, ServiceError> {
         match service.service_type {
-            ServiceType::Auth => Ok(ServiceInstance::Auth(Rc::new(DynamicService::new(
+            ServiceType::Auth => Ok(ServiceInstance::Auth(Arc::new(DynamicService::new(
                 service.endpoint,
                 "envoy.service.auth.v3.Authorization".to_string(),
                 "Check".to_string(),
                 service.timeout.0,
                 service.failure_mode,
-                Rc::clone(descriptor_manager),
+                Arc::clone(descriptor_manager),
             )))),
-            ServiceType::RateLimit => Ok(ServiceInstance::RateLimit(Rc::new(DynamicService::new(
-                service.endpoint,
-                "envoy.service.ratelimit.v3.RateLimitService".to_string(),
-                "ShouldRateLimit".to_string(),
-                service.timeout.0,
-                service.failure_mode,
-                Rc::clone(descriptor_manager),
-            )))),
-            ServiceType::RateLimitCheck => Ok(ServiceInstance::RateLimitCheck(Rc::new(
+            ServiceType::RateLimit => {
+                Ok(ServiceInstance::RateLimit(Arc::new(DynamicService::new(
+                    service.endpoint,
+                    "envoy.service.ratelimit.v3.RateLimitService".to_string(),
+                    "ShouldRateLimit".to_string(),
+                    service.timeout.0,
+                    service.failure_mode,
+                    Arc::clone(descriptor_manager),
+                ))))
+            }
+            ServiceType::RateLimitCheck => Ok(ServiceInstance::RateLimitCheck(Arc::new(
                 DynamicService::new(
                     service.endpoint,
                     "kuadrant.service.ratelimit.v1.RateLimitService".to_string(),
                     "CheckRateLimit".to_string(),
                     service.timeout.0,
                     service.failure_mode,
-                    Rc::clone(descriptor_manager),
+                    Arc::clone(descriptor_manager),
                 ),
             ))),
-            ServiceType::RateLimitReport => Ok(ServiceInstance::RateLimitReport(Rc::new(
+            ServiceType::RateLimitReport => Ok(ServiceInstance::RateLimitReport(Arc::new(
                 DynamicService::new(
                     service.endpoint,
                     "kuadrant.service.ratelimit.v1.RateLimitService".to_string(),
                     "Report".to_string(),
                     service.timeout.0,
                     service.failure_mode,
-                    Rc::clone(descriptor_manager),
+                    Arc::clone(descriptor_manager),
                 ),
             ))),
-            ServiceType::Tracing => Ok(ServiceInstance::Tracing(Some(Rc::new(
+            ServiceType::Tracing => Ok(ServiceInstance::Tracing(Some(Arc::new(
                 TracingService::new(service.endpoint, service.timeout.0),
             )))),
             ServiceType::Dynamic => {
@@ -86,13 +88,13 @@ impl ServiceInstance {
                     ServiceError::Dispatch("Missing grpc_method for Dynamic service".to_string())
                 })?;
 
-                Ok(ServiceInstance::Dynamic(Rc::new(DynamicService::new(
+                Ok(ServiceInstance::Dynamic(Arc::new(DynamicService::new(
                     service.endpoint,
                     grpc_service.clone(),
                     grpc_method.clone(),
                     service.timeout.0,
                     service.failure_mode,
-                    Rc::clone(descriptor_manager),
+                    Arc::clone(descriptor_manager),
                 ))))
             }
         }
