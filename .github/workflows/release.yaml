@@ -2,48 +2,113 @@
 name: Release
 
 on:
-  pull_request:
-    types:
-    - closed
-    branches:
-      - 'release-[0-9]+.[0-9]+'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release-branch:
+        description: Release branch to release from (e.g., release-0.13)
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  release-wasm-shim:
-    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
-    name: Publish Release
+  read-version:
+    name: Read Version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      tag: ${{ steps.parse.outputs.tag }}
+      prerelease: ${{ steps.parse.outputs.prerelease }}
     steps:
-      - name: Checkout code
+      - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          token: ${{ secrets.KUADRANT_DEV_PAT }}
+          ref: ${{ inputs.release-branch }}
 
-      - name: Extract version from Cargo.toml
-        id: extract_version
-        run: |
-          VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "TAG=v$VERSION" >> $GITHUB_ENV
-          if [[ "$VERSION" =~ - ]]; then
-            echo "PRERELEASE=true" >> $GITHUB_ENV
-          else
-            echo "PRERELEASE=false" >> $GITHUB_ENV
-          fi
+      - uses: ./.github/actions/install-yq
 
-      - name: Check tag presence
-        id: check_tag
+      - name: Parse version from release.yaml
+        id: parse
         run: |
-          if git ls-remote --tags origin | grep -q "refs/tags/${{ env.TAG }}$"; then
-            echo "Tag ${{ env.TAG }} already exists - skipping release"
+          VERSION=$(yq '.wasm-shim.version' release.yaml)
+          if [ -z "$VERSION" ] || [ "$VERSION" = "0.0.0" ]; then
+            echo "::error::release.yaml version is unset or 0.0.0 — run the pre-release workflow first"
             exit 1
-          else
-            echo "Tag ${{ env.TAG }} does not exist - proceeding with release"
           fi
+          TAG="v$VERSION"
+          PRERELEASE=false
+          if echo "$VERSION" | grep -q -- '-'; then
+            PRERELEASE=true
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $VERSION (tag: $TAG, prerelease: $PRERELEASE)"
+
+      - name: Check for existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.parse.outputs.tag }}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::GitHub Release $TAG already exists"
+            exit 1
+          fi
+          echo "No existing release for $TAG — proceeding"
+
+  smoke-tests:
+    name: Smoke Tests
+    needs: read-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-branch }}
+
+      - name: Set up Rust and WASM environment
+        uses: ./.github/actions/setup-rust-wasm
+        with:
+          rust-components: rustfmt, clippy
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: cargo build (wasm)
+        run: cargo build --release --target wasm32-wasip1
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test
+
+  tag:
+    name: Tag
+    needs: [read-version, smoke-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-branch }}
+
+      - name: Create and push tag
+        run: |
+          git tag "${{ needs.read-version.outputs.tag }}"
+          git push origin "${{ needs.read-version.outputs.tag }}"
+
+  build-wasm:
+    name: Build WASM Binary
+    needs: [read-version, tag]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.read-version.outputs.tag }}
 
       - name: Set up Rust and WASM environment
         uses: ./.github/actions/setup-rust-wasm
@@ -55,19 +120,48 @@ jobs:
 
       - name: Rename WASM binary
         run: |
-          cp target/wasm32-wasip1/release/wasm_shim.wasm kuadrant-wasm-shim-${{ env.TAG }}
+          cp target/wasm32-wasip1/release/wasm_shim.wasm "kuadrant-wasm-shim-${{ needs.read-version.outputs.tag }}"
 
-      - name: Create and push tag
-        run: |
-          git tag ${{ env.TAG }}
-          git push origin ${{ env.TAG }}
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-binary
+          path: "kuadrant-wasm-shim-${{ needs.read-version.outputs.tag }}"
+
+  build-image:
+    name: Build Container Image
+    needs: [read-version, tag]
+    uses: ./.github/workflows/build-image.yaml
+    with:
+      ref: ${{ needs.read-version.outputs.tag }}
+      image-tags: >-
+        ${{ needs.read-version.outputs.tag }}${{
+          needs.read-version.outputs.prerelease != 'true' && ' latest' || '' }}
+    secrets:
+      IMG_REGISTRY_USERNAME: ${{ secrets.IMG_REGISTRY_USERNAME }}
+      IMG_REGISTRY_TOKEN: ${{ secrets.IMG_REGISTRY_TOKEN }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: [read-version, build-wasm, build-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.read-version.outputs.tag }}
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-binary
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ env.TAG }}
-          tag_name: ${{ env.TAG }}
-          prerelease: ${{ env.PRERELEASE }}
+          name: ${{ needs.read-version.outputs.tag }}
+          tag_name: ${{ needs.read-version.outputs.tag }}
+          prerelease: ${{ needs.read-version.outputs.prerelease }}
           generate_release_notes: true
-          files: kuadrant-wasm-shim-${{ env.TAG }}
-          token: ${{ secrets.KUADRANT_DEV_PAT }}
+          files: "kuadrant-wasm-shim-${{ needs.read-version.outputs.tag }}"
+          token: ${{ secrets.GITHUB_TOKEN }}

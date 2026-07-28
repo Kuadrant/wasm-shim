@@ -55,6 +55,13 @@ runs:
           fi
         fi
 
+    - uses: ./.github/actions/install-yq
+
+    - name: Update release.yaml version
+      shell: bash
+      run: |
+        yq -i '.wasm-shim.version = strenv(WASM_SHIM_VERSION)' release.yaml
+
     - name: Update Cargo.toml version
       shell: bash
       run: |

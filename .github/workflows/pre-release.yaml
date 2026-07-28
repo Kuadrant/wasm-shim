@@ -1,0 +1,173 @@
+---
+name: Pre-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Target semantic version (e.g., 0.13.0)
+        required: true
+        type: string
+      source-branch:
+        description: Branch to base the pre-release changes on (default main, use release branch for patches)
+        required: false
+        default: "main"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      release-branch: ${{ steps.derive.outputs.release-branch }}
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - name: Validate version
+        id: validate
+        run: |
+          VERSION="${{ inputs.version }}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "::error::version must be valid semver (e.g., 0.13.0, 0.13.1-rc1)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Derive release branch
+        id: derive
+        run: |
+          RELEASE_BRANCH=release-$(echo "${{ steps.validate.outputs.version }}" | sed 's/[+-].*//; s/\.[0-9]*$//')
+          echo "release-branch=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-branch }}
+          fetch-depth: 0
+
+      - name: Create release branch if needed
+        run: |
+          RELEASE_BRANCH="${{ steps.derive.outputs.release-branch }}"
+          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH"; then
+            echo "Branch $RELEASE_BRANCH already exists"
+          else
+            echo "Creating branch $RELEASE_BRANCH from ${{ inputs.source-branch }}"
+            git checkout -b "$RELEASE_BRANCH"
+            git push --set-upstream origin "$RELEASE_BRANCH"
+          fi
+
+  prepare-release:
+    name: Prepare Release
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-branch }}
+
+      - name: Create working branch
+        run: |
+          git checkout -b "pre-release-v${{ needs.setup.outputs.version }}"
+
+      - name: Prepare release
+        uses: ./.github/actions/prepare-release
+        with:
+          version: ${{ needs.setup.outputs.version }}
+          push-branch: "false"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push changes
+        run: |
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git config user.name "${{ github.actor }}"
+          git add -A
+          git commit -s -m "chore: prepare release v${{ needs.setup.outputs.version }}"
+          git push --set-upstream origin "pre-release-v${{ needs.setup.outputs.version }}"
+
+  open-release-pr:
+    name: Open Release Pull Request
+    needs: [setup, prepare-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: "pre-release-v${{ needs.setup.outputs.version }}"
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base "${{ needs.setup.outputs.release-branch }}" \
+            --head "pre-release-v${{ needs.setup.outputs.version }}" \
+            --title "chore: prepare release v${{ needs.setup.outputs.version }}" \
+            --body "Prepare release for wasm-shim version v${{ needs.setup.outputs.version }}.
+
+          This PR updates \`release.yaml\` and \`Cargo.toml\` to version \`${{ needs.setup.outputs.version }}\`.
+
+          Once the version gate check passes and this PR is approved and merged, trigger the **Release** workflow with branch \`${{ needs.setup.outputs.release-branch }}\` to publish the release."
+
+  bump-dev:
+    name: Bump Dev Version
+    needs: [setup, prepare-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-branch }}
+
+      - name: Compute next dev version
+        id: next
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          # Strip any pre-release/build metadata
+          BASE=$(echo "$VERSION" | sed 's/[+-].*//')
+          MAJOR=$(echo "$BASE" | cut -d. -f1)
+          MINOR=$(echo "$BASE" | cut -d. -f2)
+          PATCH=$(echo "$BASE" | cut -d. -f3)
+          if [ "$PATCH" = "0" ]; then
+            NEXT_DEV="${MAJOR}.$((MINOR + 1)).0-dev"
+          else
+            NEXT_DEV="${MAJOR}.${MINOR}.$((PATCH + 1))-dev"
+          fi
+          echo "next-dev=$NEXT_DEV" >> "$GITHUB_OUTPUT"
+
+      - name: Create working branch
+        run: |
+          git checkout -b "post-release-v${{ needs.setup.outputs.version }}"
+
+      - name: Update Cargo.toml to next dev version
+        run: |
+          sed -i '0,/^version = ".*"/s//version = "${{ steps.next.outputs.next-dev }}"/' Cargo.toml
+
+      - name: Set up Rust and WASM environment
+        uses: ./.github/actions/setup-rust-wasm
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Cargo.lock
+        run: cargo check --target wasm32-wasip1
+
+      - name: Commit and push changes
+        run: |
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git config user.name "${{ github.actor }}"
+          git add Cargo.toml Cargo.lock
+          git commit -s -m "chore: bump version to ${{ steps.next.outputs.next-dev }}"
+          git push --set-upstream origin "post-release-v${{ needs.setup.outputs.version }}"
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base "${{ inputs.source-branch }}" \
+            --head "post-release-v${{ needs.setup.outputs.version }}" \
+            --title "chore: bump version to ${{ steps.next.outputs.next-dev }}" \
+            --body "Bump \`Cargo.toml\` version to \`${{ steps.next.outputs.next-dev }}\` after the v${{ needs.setup.outputs.version }} release."
