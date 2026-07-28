@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: fossas/fossa-action@v1.8.0
+      - uses: fossas/fossa-action@v2.0.0
         name: License Scan
         with:
           api-key: ${{secrets.FOSSA_API_TOKEN}}
