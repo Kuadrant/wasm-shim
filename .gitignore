@@ -1,7 +1,8 @@
 /target
 
-/src/proto/*
-!/src/proto/mod.rs
+/crates/kuadrant-filter/src/envoy/*
+/crates/kuadrant-filter/src/proto/*
+!/crates/kuadrant-filter/src/proto/mod.rs
 
 /bin
 

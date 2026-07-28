@@ -1,0 +1,16 @@
+use std::path::Path;
+
+use proxy_wasm_test_framework::types::LogLevel;
+
+pub const LOG_LEVEL: LogLevel = LogLevel::Warn;
+
+#[allow(clippy::unwrap_used)]
+pub fn wasm_module() -> String {
+    let wasm_file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/wasm32-wasip1/release/wasm_shim.wasm");
+    assert!(
+        wasm_file.exists(),
+        "Run `cargo build --release --target=wasm32-wasip1` first"
+    );
+    wasm_file.to_str().unwrap().to_string()
+}
