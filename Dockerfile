@@ -31,8 +31,7 @@ WORKDIR /usr/src/wasm-shim
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 
-COPY src src
-COPY build.rs build.rs
+COPY crates crates
 COPY vendor-protobufs vendor-protobufs
 
 RUN source $HOME/.cargo/env \
