@@ -3,8 +3,10 @@ name: Build WASM Image
 
 on:
   push:
-    branches: ['*']
-    tags: ['*']
+    branches: ["*"]
+    tags: ["*"]
+  pull_request:
+    branches: ["*"]
   workflow_dispatch: {}
 
 env:
@@ -16,6 +18,7 @@ env:
 jobs:
   build:
     name: Build
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -41,7 +44,7 @@ jobs:
           dockerfiles: |
             ./Dockerfile
       - name: Push Image
-        if: ${{ !env.ACT }}
+        if: ${{ !env.ACT && github.event_name != 'pull_request' }}
         id: push-to-quay
         uses: redhat-actions/push-to-registry@v2
         with:

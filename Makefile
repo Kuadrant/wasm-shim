@@ -63,7 +63,7 @@ update-protobufs:
 #	cd vendor-protobufs/data-plane-api/envoy/type/ && \
 #	touch tmp && git merge-file ./matcher/v3/metadata.proto ./tmp ./metadata/v3/metadata.proto --own && rm tmp
 
-RUST_SOURCES := $(shell find $(PROJECT_PATH)/src -name '*.rs')
+RUST_SOURCES := $(shell find $(PROJECT_PATH)/crates -name '*.rs')
 
 $(WASM_RELEASE_BIN): $(RUST_SOURCES)
 	make -C $(PROJECT_PATH) -f $(MKFILE_PATH) build BUILD=$(BUILD)
