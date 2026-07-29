@@ -13,16 +13,15 @@ use crate::services::ServiceInstance;
 use radix_trie::Trie;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::rc::Rc;
 use std::sync::Arc;
 use tracing::debug;
 
 type RequestData = ((String, String), Expression);
 
 pub struct PipelineFactory {
-    index: Trie<String, Vec<Rc<Blueprint>>>,
+    index: Trie<String, Vec<Arc<Blueprint>>>,
     request_data: Arc<Vec<RequestData>>,
-    fallback_blueprint: Option<Rc<Blueprint>>,
+    fallback_blueprint: Option<Arc<Blueprint>>,
 }
 
 #[derive(Debug)]
@@ -53,7 +52,7 @@ impl Default for PipelineFactory {
 impl PipelineFactory {
     pub fn try_from(
         mut config: PluginConfiguration,
-        descriptor_manager: &Rc<DescriptorManager>,
+        descriptor_manager: &Arc<DescriptorManager>,
     ) -> Result<Self, CompileError> {
         let services: HashMap<String, ServiceInstance> = config
             .services
@@ -117,13 +116,13 @@ impl PipelineFactory {
                 blueprint.actions.push(dev_mode.clone());
             }
 
-            let blueprint = Rc::new(blueprint);
+            let blueprint = Arc::new(blueprint);
             for hostname in &config_action_set.route_rule_conditions.hostnames {
                 let key = reverse_subdomain(hostname);
                 index.map_with_default(
                     key,
-                    |blueprints| blueprints.push(Rc::clone(&blueprint)),
-                    vec![Rc::clone(&blueprint)],
+                    |blueprints| blueprints.push(Arc::clone(&blueprint)),
+                    vec![Arc::clone(&blueprint)],
                 );
             }
         }
@@ -172,7 +171,7 @@ impl PipelineFactory {
         ))
     }
 
-    fn select_blueprint(&self, ctx: &mut ReqRespCtx) -> Result<Option<Rc<Blueprint>>, BuildError> {
+    fn select_blueprint(&self, ctx: &mut ReqRespCtx) -> Result<Option<Arc<Blueprint>>, BuildError> {
         let hostname = self.get_hostname(ctx)?;
         ctx.set_hostname(hostname.clone());
 
@@ -190,7 +189,7 @@ impl PipelineFactory {
                     "Selected blueprint {} for hostname: {}",
                     blueprint.name, hostname
                 );
-                return Ok(Some(Rc::clone(blueprint)));
+                return Ok(Some(Arc::clone(blueprint)));
             }
         }
 
@@ -339,7 +338,7 @@ mod tests {
     fn factory_creates_from_valid_config() {
         let config = build_test_config(vec!["example.com".to_string()], vec![], "test-service");
 
-        let result = PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default()));
+        let result = PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default()));
         assert!(result.is_ok());
     }
 
@@ -370,7 +369,7 @@ mod tests {
             }],
         );
 
-        let result = PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default()));
+        let result = PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default()));
         assert!(result.is_err());
     }
 
@@ -378,7 +377,7 @@ mod tests {
     fn build_returns_none_when_hostname_does_not_match() {
         let config = build_test_config(vec!["example.com".to_string()], vec![], "test-service");
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "other.com".as_bytes().to_vec());
@@ -393,7 +392,7 @@ mod tests {
     fn build_returns_pipeline_when_hostname_matches_exact() {
         let config = build_test_config(vec!["example.com".to_string()], vec![], "test-service");
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec());
@@ -408,7 +407,7 @@ mod tests {
     fn build_returns_pipeline_when_hostname_matches_wildcard() {
         let config = build_test_config(vec!["*.example.com".to_string()], vec![], "test-service");
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "api.example.com".as_bytes().to_vec());
@@ -423,7 +422,7 @@ mod tests {
     fn build_returns_none_when_wildcard_does_not_match_base_domain() {
         let config = build_test_config(vec!["*.example.com".to_string()], vec![], "test-service");
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec());
@@ -442,7 +441,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec())
@@ -462,7 +461,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec())
@@ -482,7 +481,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec());
@@ -503,7 +502,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec());
@@ -522,7 +521,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec())
@@ -544,7 +543,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec())
@@ -568,7 +567,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         let mock_host = MockWasmHost::new()
             .with_property("request.host".into(), "example.com".as_bytes().to_vec())
@@ -608,7 +607,7 @@ mod tests {
         };
 
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
         assert_eq!(factory.request_data.len(), 1);
     }
 
@@ -620,7 +619,7 @@ mod tests {
             "test-service",
         );
         let factory =
-            PipelineFactory::try_from(config, &Rc::new(DescriptorManager::default())).unwrap();
+            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
 
         // Test exact match
         let mock_host1 = MockWasmHost::new()

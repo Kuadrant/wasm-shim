@@ -7,7 +7,7 @@ use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
@@ -15,8 +15,8 @@ const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
 pub struct FilterRoot {
     pub context_id: u32,
-    pub pipeline_factory: Rc<PipelineFactory>,
-    pub descriptor_manager: Rc<DescriptorManager>,
+    pub pipeline_factory: Arc<PipelineFactory>,
+    pub descriptor_manager: Arc<DescriptorManager>,
     tick_enabled: bool,
 }
 
@@ -24,8 +24,8 @@ impl FilterRoot {
     pub fn new(context_id: u32) -> Self {
         Self {
             context_id,
-            pipeline_factory: Rc::new(PipelineFactory::default()),
-            descriptor_manager: Rc::new(DescriptorManager::default()),
+            pipeline_factory: Arc::new(PipelineFactory::default()),
+            descriptor_manager: Arc::new(DescriptorManager::default()),
             tick_enabled: false,
         }
     }
@@ -57,7 +57,7 @@ impl FilterRoot {
             }
         };
 
-        self.pipeline_factory = Rc::new(factory);
+        self.pipeline_factory = Arc::new(factory);
         self.descriptor_manager
             .set_descriptor_service(&descriptor_service);
 
@@ -123,7 +123,7 @@ impl RootContext for FilterRoot {
         debug!("#{} create_http_context", context_id);
         Some(Box::new(KuadrantFilter::new(
             context_id,
-            Rc::clone(&self.pipeline_factory),
+            Arc::clone(&self.pipeline_factory),
         )))
     }
 
@@ -223,7 +223,7 @@ mod tests {
         .to_string();
 
         let config = serde_json::from_slice::<PluginConfiguration>(config_str.as_bytes()).unwrap();
-        let descriptor_manager = Rc::new(DescriptorManager::default());
+        let descriptor_manager = Arc::new(DescriptorManager::default());
         let result = PipelineFactory::try_from(config, &descriptor_manager);
         assert!(result.is_err());
     }
@@ -263,7 +263,7 @@ mod tests {
         let pool = DescriptorPool::from_file_descriptor_set(fds)
             .expect("Failed to create descriptor pool");
 
-        let descriptor_manager = Rc::new(DescriptorManager::default());
+        let descriptor_manager = Arc::new(DescriptorManager::default());
         descriptor_manager.insert_pool(
             DescriptorKey::new("test-cluster".to_string(), "test.TestService".to_string()),
             pool,
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_factory_succeeds_without_descriptors() {
-        let descriptor_manager = Rc::new(DescriptorManager::default());
+        let descriptor_manager = Arc::new(DescriptorManager::default());
 
         let config_str = serde_json::json!({
             "services": {

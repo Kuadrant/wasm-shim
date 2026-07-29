@@ -1,9 +1,8 @@
 use cel::{Context, Env, Value};
-use std::cell::{OnceCell, RefCell};
+use std::cell::OnceCell;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, error, warn};
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
@@ -548,22 +547,26 @@ fn is_ancestor(scope_id: &str, task_id: &str) -> bool {
 
 pub struct PathReservation {
     path: String,
-    registry: Rc<RefCell<HashMap<String, usize>>>,
+    registry: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 impl PathReservation {
-    fn new(path: String, registry: &Rc<RefCell<HashMap<String, usize>>>) -> Self {
-        *registry.borrow_mut().entry(path.clone()).or_insert(0) += 1;
+    fn new(path: String, registry: &Arc<Mutex<HashMap<String, usize>>>) -> Self {
+        *registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(path.clone())
+            .or_insert(0) += 1;
         Self {
             path,
-            registry: Rc::clone(registry),
+            registry: Arc::clone(registry),
         }
     }
 }
 
 impl Drop for PathReservation {
     fn drop(&mut self) {
-        let mut map = self.registry.borrow_mut();
+        let mut map = self.registry.lock().unwrap_or_else(|e| e.into_inner());
         match map.entry(self.path.clone()) {
             Entry::Occupied(mut entry) => {
                 *entry.get_mut() -= 1;
@@ -584,7 +587,7 @@ impl Drop for PathReservation {
 #[derive(Default)]
 pub struct ValueStore {
     values: BTreeMap<String, Value>,
-    reserved: Rc<RefCell<HashMap<String, usize>>>,
+    reserved: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 impl ValueStore {
@@ -593,7 +596,12 @@ impl ValueStore {
     }
 
     pub fn is_pending(&self, path: &str) -> bool {
-        !self.values.contains_key(path) && self.reserved.borrow().contains_key(path)
+        !self.values.contains_key(path)
+            && self
+                .reserved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(path)
     }
 
     pub fn has_prefix(&self, prefix: &str) -> bool {
@@ -601,7 +609,12 @@ impl ValueStore {
             .range::<String, _>(prefix.to_string()..)
             .next()
             .is_some_and(|(k, _)| k.starts_with(prefix))
-            || self.reserved.borrow().keys().any(|p| p.starts_with(prefix))
+            || self
+                .reserved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .keys()
+                .any(|p| p.starts_with(prefix))
     }
 
     pub fn store(&mut self, path: String, value: Value) {

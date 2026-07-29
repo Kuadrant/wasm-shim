@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use cel::Value;
@@ -21,7 +21,7 @@ pub struct DynamicService {
     method: String,
     timeout: Duration,
     failure_mode: FailureMode,
-    descriptor_manager: Rc<DescriptorManager>,
+    descriptor_manager: Arc<DescriptorManager>,
 }
 
 impl DynamicService {
@@ -31,7 +31,7 @@ impl DynamicService {
         grpc_method: String,
         timeout: Duration,
         failure_mode: FailureMode,
-        descriptor_manager: Rc<DescriptorManager>,
+        descriptor_manager: Arc<DescriptorManager>,
     ) -> Self {
         descriptor_manager.add_expected(DescriptorKey::new(endpoint.clone(), grpc_service.clone()));
 
@@ -180,7 +180,7 @@ mod tests {
         FileDescriptorSet, MethodDescriptorProto, ServiceDescriptorProto,
     };
 
-    fn create_test_descriptor_manager() -> Rc<DescriptorManager> {
+    fn create_test_descriptor_manager() -> Arc<DescriptorManager> {
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
             package: Some("test".to_string()),
@@ -226,7 +226,7 @@ mod tests {
         let pool = DescriptorPool::from_file_descriptor_set(fds)
             .expect("Failed to create descriptor pool");
 
-        let manager = Rc::new(DescriptorManager::default());
+        let manager = Arc::new(DescriptorManager::default());
         let key = DescriptorKey::new("test-cluster".to_string(), "test.TestService".to_string());
         manager.insert_pool(key, pool);
 

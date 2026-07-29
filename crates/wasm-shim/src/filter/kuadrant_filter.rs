@@ -4,20 +4,19 @@ use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
 use std::ops::Not;
-use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{debug, error, trace, warn};
 
 pub struct KuadrantFilter {
     context_id: u32,
-    factory: Rc<PipelineFactory>,
+    factory: Arc<PipelineFactory>,
     pipeline: Option<Pipeline>,
     in_response_phase: bool,
     force_resume: bool,
 }
 
 impl KuadrantFilter {
-    pub fn new(context_id: u32, factory: Rc<PipelineFactory>) -> Self {
+    pub fn new(context_id: u32, factory: Arc<PipelineFactory>) -> Self {
         Self {
             context_id,
             factory,
