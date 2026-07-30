@@ -44,6 +44,16 @@ impl Task for TokenUsageTask {
     fn apply(self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
         let mut task: TokenUsageTask = self.into();
 
+        // Exit if fields already in context response body.
+        if task
+            .expected_response_fields
+            .iter()
+            .all(|field| ctx.response_body.get_value(field).is_some())
+        {
+            return TaskOutcome::Done;
+        }
+
+        // No stored field info found, proceed with response body extraction
         let mut strategy = match task.strategy.take() {
             Some(s) => s,
             None => {
@@ -219,7 +229,9 @@ mod tests {
         let mut ctx = ReqRespCtx::new(Arc::new(mock_backend));
         ctx.response_body.set_buffer_size(0, false);
 
-        let task = Box::new(TokenUsageTask::new());
+        let task = Box::new(TokenUsageTask::with_expected_response_fields(vec![
+            "/usage/total_tokens".to_string(),
+        ]));
 
         let outcome = task.apply(&mut ctx);
         assert!(matches!(outcome, TaskOutcome::Requeued(_)));
