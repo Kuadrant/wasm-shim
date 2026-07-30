@@ -243,6 +243,7 @@ pub enum CompileError {
     InvalidDataExpression(String),
     UnknownService(String),
     ServiceCreationFailed(String),
+    InvalidOnReplyExecution(String),
 }
 
 impl From<ParseErrors> for CompileError {
@@ -266,6 +267,9 @@ impl Display for CompileError {
             CompileError::UnknownService(srv) => write!(f, "Unknown service: {}", srv),
             CompileError::ServiceCreationFailed(srv) => {
                 write!(f, "Service creation failed: {}", srv)
+            }
+            CompileError::InvalidOnReplyExecution(id) => {
+                write!(f, "on_reply action '{}' must not set execution mode", id)
             }
         }
     }
@@ -291,16 +295,12 @@ impl Blueprint {
         let actions: Vec<Action> = config
             .actions
             .iter()
+            .zip(Self::compute_dependencies(&config.actions))
             .enumerate()
-            .map(|(i, action_config)| {
+            .map(|(i, (action_config, dependencies))| {
                 let id = i.to_string();
                 match action_config {
                     configuration::ActionConfig::Legacy(action) => {
-                        let dependencies = if i > 0 {
-                            vec![(i - 1).to_string()]
-                        } else {
-                            vec![]
-                        };
                         let legacy_request_data: Vec<((String, String), String)> = request_data
                             .iter()
                             .map(|(key, expr)| (key.clone(), expr.source().to_string()))
@@ -308,7 +308,9 @@ impl Blueprint {
                         Action::compile(action, services, id, dependencies, &legacy_request_data)
                     }
                     configuration::ActionConfig::Typed(typed) => {
-                        Action::compile_typed(typed, services, id, vec![])
+                        let mut action = Action::compile_typed(typed, services, id)?;
+                        action.dependencies = dependencies;
+                        Ok(action)
                     }
                 }
             })
@@ -319,6 +321,48 @@ impl Blueprint {
             route_predicates,
             actions,
         })
+    }
+}
+
+impl Blueprint {
+    fn compute_dependencies(actions: &[configuration::ActionConfig]) -> Vec<Vec<String>> {
+        let mut last_fence: Vec<String> = vec![];
+        let mut pending_parallel: Vec<String> = vec![];
+        let mut result = Vec::with_capacity(actions.len());
+
+        for (i, action_config) in actions.iter().enumerate() {
+            let id = i.to_string();
+            match action_config {
+                configuration::ActionConfig::Legacy(action) => {
+                    let _ = action;
+                    let deps = if i > 0 {
+                        vec![(i - 1).to_string()]
+                    } else {
+                        vec![]
+                    };
+                    pending_parallel.push(id);
+                    result.push(deps);
+                }
+                configuration::ActionConfig::Typed(typed) => {
+                    if typed.execution == configuration::Execution::Sequential {
+                        let deps: Vec<String> = last_fence
+                            .iter()
+                            .chain(&pending_parallel)
+                            .cloned()
+                            .collect();
+                        last_fence = vec![id];
+                        pending_parallel = vec![];
+                        result.push(deps);
+                    } else {
+                        let deps = last_fence.clone();
+                        pending_parallel.push(id);
+                        result.push(deps);
+                    }
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -423,14 +467,15 @@ impl Action {
             }
         };
 
-        Self::compile_typed(&typed_config, services, id, dependencies)
+        let mut action = Self::compile_typed(&typed_config, services, id)?;
+        action.dependencies = dependencies;
+        Ok(action)
     }
 
     fn compile_typed(
         typed: &configuration::TypedAction,
         services: &HashMap<String, ServiceInstance>,
         id: String,
-        dependencies: Vec<String>,
     ) -> Result<Self, CompileError> {
         let predicate =
             Predicate::new(&typed.predicate).map_err(|e| CompileError::InvalidActionPredicate {
@@ -470,7 +515,10 @@ impl Action {
                     .enumerate()
                     .map(|(idx, typed_action)| {
                         let reply_id = format!("{}.{}", id, idx);
-                        Action::compile_typed(typed_action, services, reply_id, vec![])
+                        if typed_action.execution != configuration::Execution::default() {
+                            return Err(CompileError::InvalidOnReplyExecution(reply_id));
+                        }
+                        Action::compile_typed(typed_action, services, reply_id)
                     })
                     .collect::<Result<_, _>>()?;
 
@@ -521,7 +569,7 @@ impl Action {
             predicate,
             terminal: typed.terminal,
             operation,
-            dependencies,
+            dependencies: vec![],
             sources: typed.sources.clone(),
             is_guard: typed.is_guard,
         })
@@ -537,7 +585,7 @@ mod tests {
         HeadersOperation, HeadersTarget, Operation as ConfigOperation, RouteRuleConditions,
         StaticItem, StoreOperation, TypedAction as ConfigTypedAction,
     };
-    use crate::configuration::{FailOperation, FailureMode};
+    use crate::configuration::{Execution, FailOperation, FailureMode};
     use crate::filter::DescriptorManager;
     use crate::services::{DynamicService, ServiceInstance};
     use std::collections::HashMap;
@@ -750,6 +798,7 @@ mod tests {
             terminal: false,
             is_guard: true,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "rl_check".to_string(),
                 service: "my-dynamic".to_string(),
@@ -760,6 +809,7 @@ mod tests {
                         terminal: true,
                         is_guard: false,
                         sources: vec![],
+                        execution: Execution::default(),
                         operation: ConfigOperation::Deny(DenyOperation {
                             deny_with: "DenyResponse{status: 429u}".to_string(),
                         }),
@@ -769,6 +819,7 @@ mod tests {
                         terminal: true,
                         is_guard: false,
                         sources: vec![],
+                        execution: Execution::default(),
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message: "Received UNKNOWN from rate limiting service".to_string(),
                         }),
@@ -779,6 +830,7 @@ mod tests {
                         terminal: true,
                         is_guard: false,
                         sources: vec![],
+                        execution: Execution::default(),
                         operation: ConfigOperation::Fail(FailOperation {
                             log_message:
                                 "Received invalid response code from rate limiting service"
@@ -790,6 +842,7 @@ mod tests {
                         terminal: false,
                         is_guard: false,
                         sources: vec![],
+                        execution: Execution::default(),
                         operation: ConfigOperation::Headers(HeadersOperation {
                             target: HeadersTarget::Request,
                             headers: "result.headers".to_string(),
@@ -800,6 +853,7 @@ mod tests {
                         terminal: false,
                         is_guard: false,
                         sources: vec![],
+                        execution: Execution::default(),
                         operation: ConfigOperation::Store(StoreOperation {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
@@ -811,7 +865,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string(), vec![]);
+        let result = Action::compile_typed(&typed, &services, "0".to_string());
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
@@ -840,6 +894,7 @@ mod tests {
             terminal: false,
             is_guard: true,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "nonexistent".to_string(),
@@ -849,7 +904,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string(), vec![]);
+        let result = Action::compile_typed(&typed, &services, "0".to_string());
         assert!(matches!(result, Err(CompileError::UnknownService(ref s)) if s == "nonexistent"));
     }
 
@@ -869,6 +924,7 @@ mod tests {
             terminal: false,
             is_guard: true,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "check".to_string(),
                 service: "tracing-svc".to_string(),
@@ -878,7 +934,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string(), vec![]);
+        let result = Action::compile_typed(&typed, &services, "0".to_string());
         assert!(matches!(
             result,
             Err(CompileError::ServiceCreationFailed(_))
@@ -894,6 +950,7 @@ mod tests {
             terminal: false,
             is_guard: false,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Grpc(GrpcOperation {
                 var: "nested".to_string(),
                 service: "svc".to_string(),
@@ -903,7 +960,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&nested_grpc, &services, "parent.0".to_string(), vec![]);
+        let result = Action::compile_typed(&nested_grpc, &services, "parent.0".to_string());
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "parent.0");
@@ -919,11 +976,12 @@ mod tests {
             terminal: true,
             is_guard: false,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let deny_result = Action::compile_typed(&deny_config, &services, "0".to_string(), vec![]);
+        let deny_result = Action::compile_typed(&deny_config, &services, "0".to_string());
         assert!(deny_result.is_ok());
         let deny = deny_result.unwrap();
         assert!(deny.terminal);
@@ -934,13 +992,13 @@ mod tests {
             terminal: false,
             is_guard: false,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Headers(HeadersOperation {
                 target: HeadersTarget::Response,
                 headers: "result.resp_headers".to_string(),
             }),
         };
-        let headers_result =
-            Action::compile_typed(&headers_config, &services, "0".to_string(), vec![]);
+        let headers_result = Action::compile_typed(&headers_config, &services, "0".to_string());
         assert!(headers_result.is_ok());
         let headers = headers_result.unwrap();
         assert!(!headers.terminal);
@@ -957,13 +1015,14 @@ mod tests {
             terminal: false,
             is_guard: true,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Store(StoreOperation {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
                 export_to_host: false,
             }),
         };
-        let store_result = Action::compile_typed(&store_config, &services, "0".to_string(), vec![]);
+        let store_result = Action::compile_typed(&store_config, &services, "0".to_string());
         assert!(store_result.is_ok());
         let store = store_result.unwrap();
         assert!(!store.terminal);
@@ -982,11 +1041,12 @@ mod tests {
             terminal: true,
             is_guard: true,
             sources: vec![],
+            execution: Execution::default(),
             operation: ConfigOperation::Deny(DenyOperation {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let result = Action::compile_typed(&config, &services, "0".to_string(), vec![]);
+        let result = Action::compile_typed(&config, &services, "0".to_string());
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { .. })
@@ -1019,6 +1079,7 @@ mod tests {
                     terminal: false,
                     is_guard: true,
                     sources: vec![],
+                    execution: Execution::default(),
                     operation: ConfigOperation::Grpc(GrpcOperation {
                         var: "rl_check".to_string(),
                         service: "dyn-svc".to_string(),
@@ -1028,6 +1089,7 @@ mod tests {
                             terminal: true,
                             is_guard: false,
                             sources: vec![],
+                            execution: Execution::default(),
                             operation: ConfigOperation::Deny(DenyOperation {
                                 deny_with: "DenyResponse{status: 429u}".to_string(),
                             }),
@@ -1065,5 +1127,345 @@ mod tests {
         }
 
         assert!(blueprint.actions[1].dependencies.is_empty());
+    }
+
+    #[test]
+    fn typed_action_uses_positional_id() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let config = ActionSet {
+            name: "positional-id-test".to_string(),
+            route_rule_conditions: RouteRuleConditions {
+                hostnames: vec!["example.com".to_string()],
+                predicates: vec![],
+            },
+            actions: vec![ActionConfig::Typed(ConfigTypedAction {
+                predicate: "true".to_string(),
+                terminal: false,
+                is_guard: true,
+                sources: vec![],
+                execution: Execution::default(),
+                operation: ConfigOperation::Grpc(GrpcOperation {
+                    var: "rl".to_string(),
+                    service: "svc".to_string(),
+                    message_builder: "test.Request{}".to_string(),
+                    on_reply: vec![],
+                    label: String::new(),
+                }),
+            })],
+        };
+
+        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        assert_eq!(blueprint.actions[0].id, "0");
+    }
+
+    #[test]
+    fn on_reply_uses_positional_id() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let typed = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            is_guard: true,
+            sources: vec![],
+            execution: Execution::default(),
+            operation: ConfigOperation::Grpc(GrpcOperation {
+                var: "rl".to_string(),
+                service: "svc".to_string(),
+                message_builder: "test.Request{}".to_string(),
+                on_reply: vec![ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: false,
+                    sources: vec![],
+                    execution: Execution::default(),
+                    operation: ConfigOperation::Deny(DenyOperation {
+                        deny_with: "DenyResponse{status: 429u}".to_string(),
+                    }),
+                }],
+                label: String::new(),
+            }),
+        };
+
+        let result = Action::compile_typed(&typed, &services, "parent".to_string());
+        assert!(result.is_ok());
+        let action = result.unwrap();
+        if let Operation::Grpc { on_reply, .. } = &action.operation {
+            assert_eq!(on_reply[0].id, "parent.0");
+        } else {
+            unreachable!("expected grpc operation");
+        }
+    }
+
+    #[test]
+    fn sequential_action_depends_on_all_prior() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let config = ActionSet {
+            name: "seq-test".to_string(),
+            route_rule_conditions: RouteRuleConditions {
+                hostnames: vec!["example.com".to_string()],
+                predicates: vec![],
+            },
+            actions: vec![
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Sequential,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "rl".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "auth".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+            ],
+        };
+
+        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        assert!(blueprint.actions[0].dependencies.is_empty());
+        assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
+    }
+
+    #[test]
+    fn parallel_actions_share_fence_dependency() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let config = ActionSet {
+            name: "par-test".to_string(),
+            route_rule_conditions: RouteRuleConditions {
+                hostnames: vec!["example.com".to_string()],
+                predicates: vec![],
+            },
+            actions: vec![
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Sequential,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "rl".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "auth".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "custom".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+            ],
+        };
+
+        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        assert!(blueprint.actions[0].dependencies.is_empty());
+        assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
+        assert_eq!(blueprint.actions[2].dependencies, vec!["0"]);
+    }
+
+    #[test]
+    fn second_sequential_collects_all_pending() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let config = ActionSet {
+            name: "fence-test".to_string(),
+            route_rule_conditions: RouteRuleConditions {
+                hostnames: vec!["example.com".to_string()],
+                predicates: vec![],
+            },
+            actions: vec![
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Sequential,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "a".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "b".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "c".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Sequential,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "d".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+            ],
+        };
+
+        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        assert!(blueprint.actions[0].dependencies.is_empty());
+        assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
+        assert_eq!(blueprint.actions[2].dependencies, vec!["0"]);
+        let mut d_deps = blueprint.actions[3].dependencies.clone();
+        d_deps.sort();
+        assert_eq!(d_deps, vec!["0", "1", "2"]);
+    }
+
+    #[test]
+    fn all_parallel_actions_have_no_dependencies() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let config = ActionSet {
+            name: "all-par-test".to_string(),
+            route_rule_conditions: RouteRuleConditions {
+                hostnames: vec!["example.com".to_string()],
+                predicates: vec![],
+            },
+            actions: vec![
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "a".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+                ActionConfig::Typed(ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    sources: vec![],
+                    execution: Execution::Parallel,
+                    operation: ConfigOperation::Grpc(GrpcOperation {
+                        var: "b".to_string(),
+                        service: "svc".to_string(),
+                        message_builder: "test.Request{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }),
+            ],
+        };
+
+        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        assert!(blueprint.actions[0].dependencies.is_empty());
+        assert!(blueprint.actions[1].dependencies.is_empty());
+    }
+
+    #[test]
+    fn on_reply_rejects_non_default_execution() {
+        let services = HashMap::from([build_dynamic_service("svc")]);
+
+        let typed = ConfigTypedAction {
+            predicate: "true".to_string(),
+            terminal: false,
+            is_guard: true,
+            sources: vec![],
+            execution: Execution::default(),
+            operation: ConfigOperation::Grpc(GrpcOperation {
+                var: "rl".to_string(),
+                service: "svc".to_string(),
+                message_builder: "test.Request{}".to_string(),
+                on_reply: vec![ConfigTypedAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: false,
+                    sources: vec![],
+                    execution: Execution::Sequential,
+                    operation: ConfigOperation::Store(StoreOperation {
+                        path: "result".to_string(),
+                        value: "true".to_string(),
+                        export_to_host: false,
+                    }),
+                }],
+                label: String::new(),
+            }),
+        };
+
+        let result = Action::compile_typed(&typed, &services, "0".to_string());
+        assert!(matches!(
+            result,
+            Err(CompileError::InvalidOnReplyExecution(_))
+        ));
     }
 }
