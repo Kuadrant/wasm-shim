@@ -14,6 +14,11 @@ pub enum PipelineState {
     Completed { should_resume: bool },
 }
 
+enum ProcessOutcome {
+    Continue,
+    Terminated,
+}
+
 pub struct Pipeline {
     pub ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
@@ -100,10 +105,8 @@ impl Pipeline {
         }
     }
 
-    pub fn eval(mut self) -> PipelineState {
-        let tasks_to_process: Vec<_> = self.task_queue.drain(..).collect();
-
-        for task in tasks_to_process {
+    fn process_tasks(&mut self, tasks: Vec<Box<dyn Task>>) -> ProcessOutcome {
+        for task in tasks {
             if task
                 .dependencies()
                 .iter()
@@ -134,10 +137,21 @@ impl Pipeline {
                     terminal_task.apply(&mut self.ctx);
                     self.task_queue.clear();
                     self.terminated = true;
-                    self.execute_teardown();
-                    return self.into();
+                    return ProcessOutcome::Terminated;
                 }
             }
+        }
+        ProcessOutcome::Continue
+    }
+
+    pub fn eval(mut self) -> PipelineState {
+        let tasks = self.task_queue.drain(..).collect();
+        match self.process_tasks(tasks) {
+            ProcessOutcome::Terminated => {
+                self.execute_teardown();
+                return self.into();
+            }
+            ProcessOutcome::Continue => {}
         }
 
         if self.task_queue.is_empty()
