@@ -82,33 +82,7 @@ Every service also accepts `endpoint` (the Envoy cluster name), `failureMode` (`
 
 ### Actions
 
-Each `ActionSet`'s `actions` can be defined in two ways, and both can be mixed within the same list:
-
-#### Simple actions
-
-The high level form shown in the sample above. It calls a single `auth` or `ratelimit` service, optionally guarded by `predicates` and passing `conditionalData`:
-
-```yaml
-actions:
-- service: auth-service
-  scope: auth-scope-a
-  predicates:
-    - auth.identity.user_id == "alice"
-```
-
-| Field             | Description                                                                                  |
-|-------------------|------------------------------------------------------------------------------------------------|
-| `service`         | Name of a service defined under `services`, of type `auth` or `ratelimit`                      |
-| `scope`           | Scope passed to the auth/rate-limit service                                                    |
-| `predicates`      | CEL predicates. If any evaluates to `false`, the action is skipped                              |
-| `conditionalData` | List of `{ predicates?, data }`. `data` is only sent when the (optional) `predicates` all hold  |
-| `sources`         | Names of other actions this action depends on                                                  |
-
-Simple actions are translated internally into the typed pipeline described below at configuration time, so this remains the recommended, fully supported way to call `auth` and `ratelimit` services.
-
-#### Typed actions
-
-For finer control over the request/response pipeline — issuing an arbitrary gRPC call, branching on its response, modifying headers, denying a request, or storing data for later CEL expressions — actions can be declared with the lower level, typed format:
+Each `ActionSet`'s `actions` is a list of typed actions describing the request/response pipeline: issuing an arbitrary gRPC call, branching on its response, modifying headers, denying a request, or storing data for later CEL expressions:
 
 ```yaml
 actions:
@@ -182,6 +156,7 @@ when the request body is:
   }
 }
 ```
+
 and the expression is:
 
 ```yaml
@@ -196,7 +171,6 @@ it evaluates to: `"hello"` CEL value. Similarly,
 `requestBodyJSON('/my/list/1')` evaluates to `"b"` CEL value.
 
 `requestBodyJSON('/a/b/c')` evaluates to `Null` CEL value.
-
 
 It can also be used in predicates:
 
@@ -228,6 +202,7 @@ when the response body is:
   }
 }
 ```
+
 and the expression is:
 
 ```yaml
@@ -242,7 +217,6 @@ it evaluates to: `"hello"` CEL value. Similarly,
 `responseBodyJSON('/my/list/1')` evaluates to `"b"` CEL value.
 
 `responseBodyJSON('/a/b/c')` evaluates to `Null` CEL value.
-
 
 It can also be used in predicates:
 
@@ -387,11 +361,13 @@ Entry { key: "request.headers.my-custom-header-01", value: "my-custom-header-val
 * `rlp-d`: source.address is rate limited appropriately.
 
 Alice (IP: 40.0.0.1) has 2 requests per 10 seconds:
+
 ```
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null  -H "X-Forwarded-For: 40.0.0.1" -H "Host: test.d.rlp.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
 Bob (IP: 50.0.0.1) with privileged IP 50.0.0.1 does not get rate limited:
+
 ```
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null  -H "X-Forwarded-For: 50.0.0.1" -H "Host: test.d.rlp.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
@@ -404,11 +380,13 @@ curl -H "Host: test.a.multi.com" http://127.0.0.1:8000/get -i
 ```
 
 Alice has 5 requests per 10 seconds:
+
 ```sh
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMALICE" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
 Bob has 2 requests per 10 seconds:
+
 ```sh
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
