@@ -53,7 +53,76 @@ actionSets:
             value: request.headers["my-custom-header"]
 ```
 
+Top level fields:
+
+| Field               | Required | Description                                                                                                        |
+|---------------------|----------|----------------------------------------------------------------------------------------------------------------------|
+| `services`          | yes      | Map of service name to service configuration, see [Services](#services)                                             |
+| `actionSets`        | yes      | List of `ActionSet`s evaluated, in order, against every request                                                     |
+| `observability`     | no       | `httpHeaderIdentifier`, `defaultLevel` and `tracing.service` (name of a `tracing`-typed service) used for tracing    |
+| `requestData`       | no       | Map of metric label name to CEL expression, evaluated and attached as labels to the metrics emitted for the request |
+| `descriptorService` | no       | Name of a `dynamic`-typed service used to resolve rate-limit descriptor definitions. Defaults to `kuadrant-operator-grpc` |
+
+### Services
+
+Each entry under `services` configures an external service that `actions` can call:
+
+| `type`             | Description                                                                                             |
+|--------------------|-----------------------------------------------------------------------------------------------------------|
+| `auth`             | Authorino, via Envoy's `envoy.service.auth.v3.Authorization` / `Check`                                    |
+| `ratelimit`        | Limitador, via Envoy's `envoy.service.ratelimit.v3.RateLimitService` / `ShouldRateLimit`                  |
+| `ratelimit-check`  | Limitador, via the Kuadrant extension `kuadrant.service.ratelimit.v1.RateLimitService` / `CheckRateLimit` |
+| `ratelimit-report` | Limitador, via the Kuadrant extension `kuadrant.service.ratelimit.v1.RateLimitService` / `Report`         |
+| `tracing`          | An OpenTelemetry (OTLP) collector, referenced from `observability.tracing.service`                        |
+| `dynamic`          | Any gRPC service/method, set explicitly via `grpcService`/`grpcMethod`, for use with `grpc` typed actions  |
+
+Every service also accepts `endpoint` (the Envoy cluster name), `failureMode` (`deny` or `allow`, default `deny`) and `timeout` (a duration string, e.g. `10ms`, default `20ms`).
+
 ## Features
+
+### Actions
+
+Each `ActionSet`'s `actions` is a list of typed actions describing the request/response pipeline: issuing an arbitrary gRPC call, branching on its response, modifying headers, denying a request, or storing data for later CEL expressions:
+
+```yaml
+actions:
+- type: grpc
+  predicate: request.method == 'GET'
+  terminal: false
+  var: rl_check
+  service: ratelimit-service
+  messageBuilder: "envoy.service.ratelimit.v3.RateLimitRequest { domain: 'my-domain' }"
+  onReply:
+  - type: deny
+    predicate: rl_check.overall_code == 2
+    terminal: true
+    denyWith: "DenyResponse{status: 429u}"
+  - type: headers
+    predicate: "true"
+    terminal: false
+    target: response
+    headers: rl_check.response_headers_to_add
+```
+
+Fields common to every typed action:
+
+| Field       | Description                                                                                                            |
+|-------------|--------------------------------------------------------------------------------------------------------------------------|
+| `type`      | Selects the operation: `grpc`, `deny`, `headers`, `store` or `fail` (see below)                                          |
+| `predicate` | CEL predicate. The action only runs when this evaluates to `true`                                                        |
+| `terminal`  | When `true`, no further actions in the `ActionSet` are evaluated after this one                                          |
+| `isGuard`   | Defaults to `true`. When `true`, later filter phases wait for this action to complete before continuing                  |
+| `sources`   | Names (`var`) of other `grpc` actions whose response this action's expressions may reference                            |
+
+Operation-specific fields:
+
+| `type`    | Fields                                                | Description                                                                                                                    |
+|-----------|--------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `grpc`    | `var`, `service`, `messageBuilder`, `onReply`, `label`  | Calls `service` with a message built from the `messageBuilder` CEL expression, storing the response under `var`. `onReply` is a list of typed actions evaluated once the response arrives |
+| `deny`    | `denyWith`                                              | Ends request processing with the direct response built from the `denyWith` CEL expression, evaluating to a `DenyResponse{status, headers, body}` value |
+| `headers` | `target` (`request` or `response`), `headers`           | Adds/modifies `target` headers with the list produced by evaluating `headers`                                                     |
+| `store`   | `path`, `value`, `exportToHost`                         | Stores the evaluated `value` under `path` for later CEL expressions; when `exportToHost` is `true`, it is also exported as dynamic metadata to Envoy |
+| `fail`    | `logMessage`                                            | Logs `logMessage` and fails the action                                                                                             |
 
 ### CEL Predicates and Expression
 
@@ -87,6 +156,7 @@ when the request body is:
   }
 }
 ```
+
 and the expression is:
 
 ```yaml
@@ -101,7 +171,6 @@ it evaluates to: `"hello"` CEL value. Similarly,
 `requestBodyJSON('/my/list/1')` evaluates to `"b"` CEL value.
 
 `requestBodyJSON('/a/b/c')` evaluates to `Null` CEL value.
-
 
 It can also be used in predicates:
 
@@ -133,6 +202,7 @@ when the response body is:
   }
 }
 ```
+
 and the expression is:
 
 ```yaml
@@ -147,7 +217,6 @@ it evaluates to: `"hello"` CEL value. Similarly,
 `responseBodyJSON('/my/list/1')` evaluates to `"b"` CEL value.
 
 `responseBodyJSON('/a/b/c')` evaluates to `Null` CEL value.
-
 
 It can also be used in predicates:
 
@@ -292,11 +361,13 @@ Entry { key: "request.headers.my-custom-header-01", value: "my-custom-header-val
 * `rlp-d`: source.address is rate limited appropriately.
 
 Alice (IP: 40.0.0.1) has 2 requests per 10 seconds:
+
 ```
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null  -H "X-Forwarded-For: 40.0.0.1" -H "Host: test.d.rlp.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
 Bob (IP: 50.0.0.1) with privileged IP 50.0.0.1 does not get rate limited:
+
 ```
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null  -H "X-Forwarded-For: 50.0.0.1" -H "Host: test.d.rlp.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
@@ -309,11 +380,13 @@ curl -H "Host: test.a.multi.com" http://127.0.0.1:8000/get -i
 ```
 
 Alice has 5 requests per 10 seconds:
+
 ```sh
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMALICE" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
 
 Bob has 2 requests per 10 seconds:
+
 ```sh
 while :; do curl --write-out '%{http_code}\n' --silent --output /dev/null -H "Authorization: APIKEY IAMBOB" -H "Host: test.a.multi.com" http://127.0.0.1:8000/get | grep -E --color "\b(429)\b|$"; sleep 1; done
 ```
