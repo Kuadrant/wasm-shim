@@ -53,7 +53,102 @@ actionSets:
             value: request.headers["my-custom-header"]
 ```
 
+Top level fields:
+
+| Field               | Required | Description                                                                                                        |
+|---------------------|----------|----------------------------------------------------------------------------------------------------------------------|
+| `services`          | yes      | Map of service name to service configuration, see [Services](#services)                                             |
+| `actionSets`        | yes      | List of `ActionSet`s evaluated, in order, against every request                                                     |
+| `observability`     | no       | `httpHeaderIdentifier`, `defaultLevel` and `tracing.service` (name of a `tracing`-typed service) used for tracing    |
+| `requestData`       | no       | Map of metric label name to CEL expression, evaluated and attached as labels to the metrics emitted for the request |
+| `descriptorService` | no       | Name of a `dynamic`-typed service used to resolve rate-limit descriptor definitions. Defaults to `kuadrant-operator-grpc` |
+
+### Services
+
+Each entry under `services` configures an external service that `actions` can call:
+
+| `type`             | Description                                                                                             |
+|--------------------|-----------------------------------------------------------------------------------------------------------|
+| `auth`             | Authorino, via Envoy's `envoy.service.auth.v3.Authorization` / `Check`                                    |
+| `ratelimit`        | Limitador, via Envoy's `envoy.service.ratelimit.v3.RateLimitService` / `ShouldRateLimit`                  |
+| `ratelimit-check`  | Limitador, via the Kuadrant extension `kuadrant.service.ratelimit.v1.RateLimitService` / `CheckRateLimit` |
+| `ratelimit-report` | Limitador, via the Kuadrant extension `kuadrant.service.ratelimit.v1.RateLimitService` / `Report`         |
+| `tracing`          | An OpenTelemetry (OTLP) collector, referenced from `observability.tracing.service`                        |
+| `dynamic`          | Any gRPC service/method, set explicitly via `grpcService`/`grpcMethod`, for use with `grpc` typed actions  |
+
+Every service also accepts `endpoint` (the Envoy cluster name), `failureMode` (`deny` or `allow`, default `deny`) and `timeout` (a duration string, e.g. `10ms`, default `20ms`).
+
 ## Features
+
+### Actions
+
+Each `ActionSet`'s `actions` can be defined in two ways, and both can be mixed within the same list:
+
+#### Simple actions
+
+The high level form shown in the sample above. It calls a single `auth` or `ratelimit` service, optionally guarded by `predicates` and passing `conditionalData`:
+
+```yaml
+actions:
+- service: auth-service
+  scope: auth-scope-a
+  predicates:
+    - auth.identity.user_id == "alice"
+```
+
+| Field             | Description                                                                                  |
+|-------------------|------------------------------------------------------------------------------------------------|
+| `service`         | Name of a service defined under `services`, of type `auth` or `ratelimit`                      |
+| `scope`           | Scope passed to the auth/rate-limit service                                                    |
+| `predicates`      | CEL predicates. If any evaluates to `false`, the action is skipped                              |
+| `conditionalData` | List of `{ predicates?, data }`. `data` is only sent when the (optional) `predicates` all hold  |
+| `sources`         | Names of other actions this action depends on                                                  |
+
+Simple actions are translated internally into the typed pipeline described below at configuration time, so this remains the recommended, fully supported way to call `auth` and `ratelimit` services.
+
+#### Typed actions
+
+For finer control over the request/response pipeline — issuing an arbitrary gRPC call, branching on its response, modifying headers, denying a request, or storing data for later CEL expressions — actions can be declared with the lower level, typed format:
+
+```yaml
+actions:
+- type: grpc
+  predicate: request.method == 'GET'
+  terminal: false
+  var: rl_check
+  service: ratelimit-service
+  messageBuilder: "envoy.service.ratelimit.v3.RateLimitRequest { domain: 'my-domain' }"
+  onReply:
+  - type: deny
+    predicate: rl_check.overall_code == 2
+    terminal: true
+    denyWith: "DenyResponse{status: 429u}"
+  - type: headers
+    predicate: "true"
+    terminal: false
+    target: response
+    headers: rl_check.response_headers_to_add
+```
+
+Fields common to every typed action:
+
+| Field       | Description                                                                                                            |
+|-------------|--------------------------------------------------------------------------------------------------------------------------|
+| `type`      | Selects the operation: `grpc`, `deny`, `headers`, `store` or `fail` (see below)                                          |
+| `predicate` | CEL predicate. The action only runs when this evaluates to `true`                                                        |
+| `terminal`  | When `true`, no further actions in the `ActionSet` are evaluated after this one                                          |
+| `isGuard`   | Defaults to `true`. When `true`, later filter phases wait for this action to complete before continuing                  |
+| `sources`   | Names (`var`) of other `grpc` actions whose response this action's expressions may reference                            |
+
+Operation-specific fields:
+
+| `type`    | Fields                                                | Description                                                                                                                    |
+|-----------|--------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `grpc`    | `var`, `service`, `messageBuilder`, `onReply`, `label`  | Calls `service` with a message built from the `messageBuilder` CEL expression, storing the response under `var`. `onReply` is a list of typed actions evaluated once the response arrives |
+| `deny`    | `denyWith`                                              | Ends request processing with the direct response built from the `denyWith` CEL expression, evaluating to a `DenyResponse{status, headers, body}` value |
+| `headers` | `target` (`request` or `response`), `headers`           | Adds/modifies `target` headers with the list produced by evaluating `headers`                                                     |
+| `store`   | `path`, `value`, `exportToHost`                         | Stores the evaluated `value` under `path` for later CEL expressions; when `exportToHost` is `true`, it is also exported as dynamic metadata to Envoy |
+| `fail`    | `logMessage`                                            | Logs `logMessage` and fails the action                                                                                             |
 
 ### CEL Predicates and Expression
 
