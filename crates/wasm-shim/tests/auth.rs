@@ -1,4 +1,4 @@
-use crate::util::common::{wasm_module, LOG_LEVEL};
+use crate::util::common::{auth_check_request_cel, json_escape_cel, wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -8,7 +8,9 @@ use serial_test::serial;
 
 pub mod util;
 
-const CONFIG: &str = r#"{
+fn config() -> String {
+    let auth_msg = auth_check_request_cel("authconfig-A");
+    r#"{
     "services": {
         "authorino": {
             "type": "auth",
@@ -30,15 +32,57 @@ const CONFIG: &str = r#"{
         },
         "actions": [
         {
+            "type": "grpc",
+            "var": "auth_response",
             "service": "authorino",
-            "scope": "authconfig-A"
+            "predicate": "true",
+            "terminal": false,
+            "label": "auth",
+            "messageBuilder": "__AUTH_MSG__",
+            "onReply": [
+                {
+                    "type": "deny",
+                    "predicate": "has(auth_response.denied_response)",
+                    "terminal": true,
+                    "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                },
+                {
+                    "type": "fail",
+                    "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                    "terminal": true,
+                    "logMessage": "Unsupported field in OkHttpResponse"
+                },
+                {
+                    "type": "store",
+                    "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                    "terminal": false,
+                    "path": "auth",
+                    "value": "auth_response.dynamic_metadata",
+                    "exportToHost": true
+                },
+                {
+                    "type": "headers",
+                    "predicate": "has(auth_response.ok_response)",
+                    "terminal": false,
+                    "target": "request",
+                    "headers": "auth_response.ok_response.headers"
+                },
+                {
+                    "type": "fail",
+                    "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                    "terminal": true,
+                    "logMessage": "Auth response contained no http_response from auth_response"
+                }
+            ]
         }]
     }]
-}"#;
+}"#.replace("__AUTH_MSG__", &json_escape_cel(&auth_msg))
+}
 
 #[test]
 #[serial]
 fn it_auths() {
+    let cfg = config();
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -76,7 +120,7 @@ fn it_auths() {
         .returning(Some(6))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
-        .returning(Some(CONFIG.as_bytes()))
+        .returning(Some(cfg.as_bytes()))
         .expect_get_log_level()
         .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
@@ -156,11 +200,65 @@ fn it_auths() {
 #[test]
 #[serial]
 fn it_passes_request_data() {
+    let auth_msg = r#"envoy.service.auth.v3.CheckRequest {
+        attributes: envoy.service.auth.v3.AttributeContext {
+            request: envoy.service.auth.v3.AttributeContext.Request {
+                time: request.time,
+                http: envoy.service.auth.v3.AttributeContext.HttpRequest {
+                    host: request.host,
+                    method: request.method,
+                    scheme: request.scheme,
+                    path: request.path,
+                    protocol: request.protocol,
+                    headers: request.headers
+                }
+            },
+            destination: envoy.service.auth.v3.AttributeContext.Peer {
+                address: envoy.config.core.v3.Address {
+                    socket_address: envoy.config.core.v3.SocketAddress {
+                        address: destination.address,
+                        port_value: uint(destination.port)
+                    }
+                }
+            },
+            source: envoy.service.auth.v3.AttributeContext.Peer {
+                address: envoy.config.core.v3.Address {
+                    socket_address: envoy.config.core.v3.SocketAddress {
+                        address: source.address,
+                        port_value: uint(source.port)
+                    }
+                }
+            },
+            context_extensions: {"host": "authconfig-A"},
+            metadata_context: envoy.config.core.v3.Metadata{
+                filter_metadata: {
+                    "io.kuadrant": google.protobuf.Struct{
+                        fields: {
+                            "bar": google.protobuf.Value{
+                                struct_value: google.protobuf.Struct{
+                                    fields: {
+                                        "cel_expr": google.protobuf.Value{
+                                            string_value: "auth.identity.name"
+                                        }
+                                    }
+                                }
+                            },
+                            "foo": google.protobuf.Value{
+                                struct_value: google.protobuf.Struct{
+                                    fields: {
+                                        "cel_expr": google.protobuf.Value{
+                                            string_value: "string(2 + 3)"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }"#;
     let cfg = r#"{
-        "requestData": {
-            "foo": "string(2 + 3)",
-            "bar": "auth.identity.name"
-        },
         "services": {
             "authorino": {
                 "type": "auth",
@@ -182,11 +280,51 @@ fn it_passes_request_data() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "var": "auth_response",
                 "service": "authorino",
-                "scope": "authconfig-A"
+                "predicate": "true",
+                "terminal": false,
+                "label": "auth",
+                "messageBuilder": "__AUTH_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "has(auth_response.denied_response)",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                        "terminal": true,
+                        "logMessage": "Unsupported field in OkHttpResponse"
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                        "terminal": false,
+                        "path": "auth",
+                        "value": "auth_response.dynamic_metadata",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "has(auth_response.ok_response)",
+                        "terminal": false,
+                        "target": "request",
+                        "headers": "auth_response.ok_response.headers"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                        "terminal": true,
+                        "logMessage": "Auth response contained no http_response from auth_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#.replace("__AUTH_MSG__", &json_escape_cel(auth_msg));
 
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
@@ -298,6 +436,7 @@ fn it_passes_request_data() {
 #[test]
 #[serial]
 fn it_denies() {
+    let cfg = config();
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -335,7 +474,7 @@ fn it_denies() {
         .returning(Some(6))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
-        .returning(Some(CONFIG.as_bytes()))
+        .returning(Some(cfg.as_bytes()))
         .expect_get_log_level()
         .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
@@ -432,6 +571,7 @@ fn it_does_not_fold_auth_actions() {
         .unwrap();
 
     let root_context = 1;
+    let auth_msg = auth_check_request_cel("auth-scope");
     let cfg = r#"{
         "services": {
             "auth": {
@@ -449,17 +589,98 @@ fn it_does_not_fold_auth_actions() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "auth_response",
                 "service": "auth",
-                "scope": "auth-scope",
-                "conditionalData" : []
+                "predicate": "true",
+                "terminal": false,
+                "label": "auth",
+                "messageBuilder": "__AUTH_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "has(auth_response.denied_response)",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                        "terminal": true,
+                        "logMessage": "Unsupported field in OkHttpResponse"
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                        "terminal": false,
+                        "path": "auth",
+                        "value": "auth_response.dynamic_metadata",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "has(auth_response.ok_response)",
+                        "terminal": false,
+                        "target": "request",
+                        "headers": "auth_response.ok_response.headers"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                        "terminal": true,
+                        "logMessage": "Auth response contained no http_response from auth_response"
+                    }
+                ]
             },
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "auth_response",
                 "service": "auth",
-                "scope": "auth-scope",
-                "conditionalData" : []
+                "predicate": "true",
+                "terminal": false,
+                "label": "auth",
+                "messageBuilder": "__AUTH_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "has(auth_response.denied_response)",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                        "terminal": true,
+                        "logMessage": "Unsupported field in OkHttpResponse"
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                        "terminal": false,
+                        "path": "auth",
+                        "value": "auth_response.dynamic_metadata",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "has(auth_response.ok_response)",
+                        "terminal": false,
+                        "target": "request",
+                        "headers": "auth_response.ok_response.headers"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                        "terminal": true,
+                        "logMessage": "Auth response contained no http_response from auth_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#
+    .replace("__AUTH_MSG__", &json_escape_cel(&auth_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -571,6 +792,7 @@ fn it_does_not_fold_auth_actions() {
 #[test]
 #[serial]
 fn it_replaces_headers() {
+    let cfg = config();
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -608,7 +830,7 @@ fn it_replaces_headers() {
         .returning(Some(6))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
-        .returning(Some(CONFIG.as_bytes()))
+        .returning(Some(cfg.as_bytes()))
         .expect_get_log_level()
         .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))

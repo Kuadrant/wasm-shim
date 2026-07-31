@@ -1,4 +1,4 @@
-use crate::util::common::{wasm_module, LOG_LEVEL};
+use crate::util::common::{json_escape_cel, wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{Action, BufferType, LogLevel, MapType, ReturnType};
@@ -24,6 +24,22 @@ fn it_fails_on_first_action_grpc_call() {
         .unwrap();
 
     let root_context = 1;
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "a",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "limit_to_be_activated",
+                            value: string(1)
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "mistyped-service": {
@@ -41,22 +57,37 @@ fn it_fails_on_first_action_grpc_call() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "var": "ratelimit_response",
                 "service": "mistyped-service",
-                "scope": "a",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "limit_to_be_activated",
-                                "value": "1"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#.replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -152,6 +183,22 @@ fn it_fails_on_second_action_grpc_call() {
         .unwrap();
 
     let root_context = 1;
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "a",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "limit_to_be_activated",
+                            value: string(1)
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
@@ -175,37 +222,69 @@ fn it_fails_on_second_action_grpc_call() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "limitador",
-                "scope": "a",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "limit_to_be_activated",
-                                "value": "1"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             },
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "mistyped-service",
-                "scope": "a",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "limit_to_be_activated",
-                                "value": "1"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#.replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -320,6 +399,22 @@ fn it_fails_on_first_action_grpc_response() {
         .unwrap();
 
     let root_context = 1;
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "a",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "limit_to_be_activated",
+                            value: string(1)
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador-unreachable": {
@@ -337,22 +432,37 @@ fn it_fails_on_first_action_grpc_response() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "var": "ratelimit_response",
                 "service": "limitador-unreachable",
-                "scope": "a",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "limit_to_be_activated",
-                                "value": "1"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#.replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -446,6 +556,22 @@ fn it_fails_on_second_action_grpc_response() {
         .unwrap();
 
     let root_context = 1;
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "a",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "limit_to_be_activated",
+                            value: string(1)
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
@@ -469,37 +595,69 @@ fn it_fails_on_second_action_grpc_response() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "limitador",
-                "scope": "a",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "limit_to_be_activated",
-                                "value": "1"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             },
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "limitador-unreachable",
-                "scope": "a",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "limit_to_be_activated",
-                                "value": "1"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#.replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)

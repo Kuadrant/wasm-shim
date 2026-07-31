@@ -1,4 +1,4 @@
-use crate::util::common::{wasm_module, LOG_LEVEL};
+use crate::util::common::{auth_check_request_cel, json_escape_cel, wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -8,7 +8,26 @@ use serial_test::serial;
 
 pub mod util;
 
-const CONFIG: &str = r#"{
+fn config() -> String {
+    let auth_msg = auth_check_request_cel("authconfig-A");
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (auth.identity.userid == 'alice')
+                        ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "limit.alice_limit", value: "1"
+                        }]
+                        : []
+                    )
+                }
+            ]
+        }
+    "#;
+    r#"{
     "services": {
         "authorino": {
             "type": "auth",
@@ -36,32 +55,91 @@ const CONFIG: &str = r#"{
         },
         "actions": [
         {
+            "type": "grpc",
+            "execution": "sequential",
+            "var": "auth_response",
             "service": "authorino",
-            "scope": "authconfig-A"
+            "predicate": "true",
+            "terminal": false,
+            "label": "auth",
+            "messageBuilder": "__AUTH_MSG__",
+            "onReply": [
+                {
+                    "type": "deny",
+                    "predicate": "has(auth_response.denied_response)",
+                    "terminal": true,
+                    "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                },
+                {
+                    "type": "fail",
+                    "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                    "terminal": true,
+                    "logMessage": "Unsupported field in OkHttpResponse"
+                },
+                {
+                    "type": "store",
+                    "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                    "terminal": false,
+                    "path": "auth",
+                    "value": "auth_response.dynamic_metadata",
+                    "exportToHost": true
+                },
+                {
+                    "type": "headers",
+                    "predicate": "has(auth_response.ok_response)",
+                    "terminal": false,
+                    "target": "request",
+                    "headers": "auth_response.ok_response.headers"
+                },
+                {
+                    "type": "fail",
+                    "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                    "terminal": true,
+                    "logMessage": "Auth response contained no http_response from auth_response"
+                }
+            ]
         },
         {
+            "type": "grpc",
+            "execution": "sequential",
+            "var": "ratelimit_response",
             "service": "limitador",
-            "scope": "RLS-domain",
-            "conditionalData": [
-            {
-                "predicates": [
-                    "auth.identity.userid == 'alice'"
-                ],
-                "data": [
+            "predicate": "auth.identity.userid == 'alice'",
+            "terminal": false,
+            "label": "ratelimit",
+            "messageBuilder": "__RATELIMIT_MSG__",
+            "onReply": [
                 {
-                    "static": {
-                        "key": "limit.alice_limit",
-                        "value": "1"
-                    }
-                }]
-            }]
+                    "type": "deny",
+                    "predicate": "ratelimit_response.overall_code == 2",
+                    "terminal": true,
+                    "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                },
+                {
+                    "type": "headers",
+                    "predicate": "ratelimit_response.overall_code == 1",
+                    "terminal": false,
+                    "target": "response",
+                    "headers": "ratelimit_response.response_headers_to_add"
+                },
+                {
+                    "type": "fail",
+                    "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                    "terminal": true,
+                    "logMessage": "Unknown rate limit response code from ratelimit_response"
+                }
+            ]
         }]
     }]
-}"#;
+}"#
+    .replace("__AUTH_MSG__", &json_escape_cel(&auth_msg))
+    .replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg))
+}
 
 #[test]
 #[serial]
 fn it_performs_authenticated_rate_limiting() {
+    let cfg = config();
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -99,7 +177,7 @@ fn it_performs_authenticated_rate_limiting() {
         .returning(Some(6))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
-        .returning(Some(CONFIG.as_bytes()))
+        .returning(Some(cfg.as_bytes()))
         .expect_get_log_level()
         .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
@@ -193,6 +271,7 @@ fn it_performs_authenticated_rate_limiting() {
 #[test]
 #[serial]
 fn unauthenticated_does_not_ratelimit() {
+    let cfg = config();
     let args = tester::MockSettings {
         wasm_path: wasm_module(),
         quiet: false,
@@ -230,7 +309,7 @@ fn unauthenticated_does_not_ratelimit() {
         .returning(Some(6))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
-        .returning(Some(CONFIG.as_bytes()))
+        .returning(Some(cfg.as_bytes()))
         .expect_get_log_level()
         .returning(Some(LOG_LEVEL))
         .execute_and_expect(ReturnType::Bool(true))
@@ -326,6 +405,30 @@ fn authenticated_one_ratelimit_action_matches() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 
+    let auth_msg = auth_check_request_cel("authconfig-A");
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (source.address == '127.0.0.1:80')
+                        ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "me", value: "1"
+                        }]
+                        : []
+                    ) + (
+                        (source.address != '127.0.0.1:80')
+                        ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "other", value: "1"
+                        }]
+                        : []
+                    )
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "authorino": {
@@ -354,40 +457,85 @@ fn authenticated_one_ratelimit_action_matches() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "auth_response",
                 "service": "authorino",
-                "scope": "authconfig-A"
+                "predicate": "true",
+                "terminal": false,
+                "label": "auth",
+                "messageBuilder": "__AUTH_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "has(auth_response.denied_response)",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                        "terminal": true,
+                        "logMessage": "Unsupported field in OkHttpResponse"
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                        "terminal": false,
+                        "path": "auth",
+                        "value": "auth_response.dynamic_metadata",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "has(auth_response.ok_response)",
+                        "terminal": false,
+                        "target": "request",
+                        "headers": "auth_response.ok_response.headers"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                        "terminal": true,
+                        "logMessage": "Auth response contained no http_response from auth_response"
+                    }
+                ]
             },
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "limitador",
-                "scope": "RLS-domain",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "source.address == '127.0.0.1:80'"
-                    ],
-                    "data": [
+                "predicate": "source.address == '127.0.0.1:80' || source.address != '127.0.0.1:80'",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
                     {
-                        "static": {
-                            "key": "me",
-                            "value": "1"
-                        }
-                    }]
-                },
-                {
-                    "predicates": [
-                        "source.address != '127.0.0.1:80'"
-                    ],
-                    "data": [
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
                     {
-                        "static": {
-                            "key": "other",
-                            "value": "1"
-                        }
-                    }]
-                }]
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#
+    .replace("__AUTH_MSG__", &json_escape_cel(&auth_msg))
+    .replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     module
         .call_start()
@@ -512,6 +660,24 @@ fn authenticated_one_ratelimit_action_matches() {
 #[test]
 #[serial]
 fn it_handles_array_metadata_in_predicates() {
+    let auth_msg = auth_check_request_cel("authconfig-A");
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (auth.identity.groups.exists(g, g == 'basic'))
+                        ? [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "limit.basic_limit", value: "10"
+                        }]
+                        : []
+                    )
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "authorino": {
@@ -540,28 +706,85 @@ fn it_handles_array_metadata_in_predicates() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "auth_response",
                 "service": "authorino",
-                "scope": "authconfig-A"
+                "predicate": "true",
+                "terminal": false,
+                "label": "auth",
+                "messageBuilder": "__AUTH_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "has(auth_response.denied_response)",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: (auth_response.denied_response.status.code != 0) ? uint(auth_response.denied_response.status.code) : 403u, headers: auth_response.denied_response.headers, body: auth_response.denied_response.body}"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "has(auth_response.ok_response) && (auth_response.ok_response.response_headers_to_add.size() > 0 || auth_response.ok_response.headers_to_remove.size() > 0 || auth_response.ok_response.query_parameters_to_set.size() > 0 || auth_response.ok_response.query_parameters_to_remove.size() > 0)",
+                        "terminal": true,
+                        "logMessage": "Unsupported field in OkHttpResponse"
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "has(auth_response.ok_response) && has(auth_response.dynamic_metadata)",
+                        "terminal": false,
+                        "path": "auth",
+                        "value": "auth_response.dynamic_metadata",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "has(auth_response.ok_response)",
+                        "terminal": false,
+                        "target": "request",
+                        "headers": "auth_response.ok_response.headers"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "!has(auth_response.denied_response) && !has(auth_response.ok_response)",
+                        "terminal": true,
+                        "logMessage": "Auth response contained no http_response from auth_response"
+                    }
+                ]
             },
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "limitador",
-                "scope": "RLS-domain",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "auth.identity.groups.exists(g, g == 'basic')"
-                    ],
-                    "data": [
+                "predicate": "auth.identity.groups.exists(g, g == 'basic')",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
                     {
-                        "static": {
-                            "key": "limit.basic_limit",
-                            "value": "10"
-                        }
-                    }]
-                }]
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             }]
         }]
-    }"#;
+    }"#
+    .replace("__AUTH_MSG__", &json_escape_cel(&auth_msg))
+    .replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     let args = tester::MockSettings {
         wasm_path: wasm_module(),

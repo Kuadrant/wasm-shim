@@ -1,4 +1,4 @@
-use crate::util::common::{wasm_module, LOG_LEVEL};
+use crate::util::common::{json_escape_cel, wasm_module, LOG_LEVEL};
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
     Action, BufferType, LogLevel, MapType, MetricType, ReturnType, Status,
@@ -24,6 +24,24 @@ fn it_processes_usage_event_across_chunks_until_done() {
 
     let root_context = 1;
     // One action requiring response body content via responseBodyJSON
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (responseBodyJSON('/usage/total_tokens') == 11) ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
@@ -41,26 +59,28 @@ fn it_processes_usage_event_across_chunks_until_done() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "var": "report_response",
                 "service": "limitador",
-                "scope": "RLS-domain",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "responseBodyJSON('/usage/total_tokens') == 11"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "request.method",
-                                "value": "request.method"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "responseBodyJSON('/usage/total_tokens') == 11",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
             }
             ]
         }]
-    }"#;
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -175,6 +195,24 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         .unwrap();
 
     let root_context = 1;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (responseBodyJSON('/usage/total_tokens') == 42) ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
@@ -192,26 +230,28 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "var": "report_response",
                 "service": "limitador",
-                "scope": "RLS-domain",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "responseBodyJSON('/usage/total_tokens') == 42"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "request.method",
-                                "value": "request.method"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "responseBodyJSON('/usage/total_tokens') == 42",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
             }
             ]
         }]
-    }"#;
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
