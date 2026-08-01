@@ -28,36 +28,39 @@ Each action should hit the same limitador instance, decrementing the counter twi
 },
 "actionSets": [
 {
+    "name": "basic",
+    "routeRuleConditions": {
+        "hostnames": ["*.example.com"]
+    },
     "actions": [
         {
+            "type": "grpc",
+            "var": "ratelimit_response",
             "service": "limitadorA",
-            "scope": "a",
-            "conditionalData": [
-            {
-                "data": [
-                    {
-                        "expression": {
-                            "key": "a",
-                            "value": "1"
-                        }
-                    }
-                ]
-            }]
+            "predicate": "true",
+            "terminal": false,
+            "label": "ratelimit",
+            "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"basic\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] } ] }",
+            "onReply": [
+                { "type": "deny", "predicate": "ratelimit_response.overall_code == 2", "terminal": true, "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}" },
+                { "type": "headers", "predicate": "ratelimit_response.overall_code == 1", "terminal": false, "target": "response", "headers": "ratelimit_response.response_headers_to_add" },
+                { "type": "fail", "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2", "terminal": true, "logMessage": "Unknown rate limit response code from ratelimit_response" }
+            ]
         },
         {
+            "type": "grpc",
+            "execution": "sequential",
+            "var": "ratelimit_response",
             "service": "limitadorB",
-            "scope": "a",
-            "conditionalData": [
-            {
-                "data": [
-                    {
-                        "expression": {
-                            "key": "a",
-                            "value": "1"
-                        }
-                    }
-                ]
-            }]
+            "predicate": "true",
+            "terminal": false,
+            "label": "ratelimit",
+            "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"basic\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] } ] }",
+            "onReply": [
+                { "type": "deny", "predicate": "ratelimit_response.overall_code == 2", "terminal": true, "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}" },
+                { "type": "headers", "predicate": "ratelimit_response.overall_code == 1", "terminal": false, "target": "response", "headers": "ratelimit_response.response_headers_to_add" },
+                { "type": "fail", "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2", "terminal": true, "logMessage": "Unknown rate limit response code from ratelimit_response" }
+            ]
         }
     ]
 }

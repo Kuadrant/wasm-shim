@@ -59,52 +59,36 @@ static_resources:
                                 {
                                   "name": "basic",
                                   "routeRuleConditions": {
-                                    "hostnames": [
-                                      "*.example.com"
-                                    ]
+                                    "hostnames": ["*.example.com"]
                                   },
                                   "actions": [
                                     {
+                                      "type": "grpc",
+                                      "var": "ratelimit_response",
                                       "service": "ratelimit-check-service",
-                                      "scope": "domain-a",
-                                      "conditionalData": [
-                                      {
-                                        "predicates": [
-                                          "request.path == \"/v1/chat/completions\""
-                                        ],
-                                        "data": [
-                                          {
-                                            "expression": {
-                                              "key": "a",
-                                              "value": "1"
-                                            }
-                                          }
-                                        ]
-                                      }]
+                                      "predicate": "request.path == \"/v1/chat/completions\"",
+                                      "terminal": false,
+                                      "label": "ratelimit",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "onReply": [
+                                        { "type": "deny", "predicate": "ratelimit_response.overall_code == 2", "terminal": true, "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}" },
+                                        { "type": "headers", "predicate": "ratelimit_response.overall_code == 1", "terminal": false, "target": "response", "headers": "ratelimit_response.response_headers_to_add" },
+                                        { "type": "fail", "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2", "terminal": true, "logMessage": "Unknown rate limit response code from ratelimit_response" }
+                                      ]
                                     },
                                     {
+                                      "type": "grpc",
+                                      "execution": "sequential",
+                                      "var": "report_response",
                                       "service": "ratelimit-report-service",
-                                      "scope": "domain-a",
-                                      "conditionalData": [
-                                      {
-                                        "predicates": [
-                                          "request.path == \"/v1/chat/completions\""
-                                        ],
-                                        "data": [
-                                          {
-                                            "expression": {
-                                              "key": "a",
-                                              "value": "1"
-                                            }
-                                          },
-                                          {
-                                            "expression": {
-                                              "key": "ratelimit.hits_addend",
-                                              "value": "responseBodyJSON(\"/usage/total_tokens\")"
-                                            }
-                                          }
-                                        ]
-                                      }]
+                                      "predicate": "request.path == \"/v1/chat/completions\"",
+                                      "terminal": false,
+                                      "isGuard": false,
+                                      "label": "ratelimit_report",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: uint(responseBodyJSON(\"/usage/total_tokens\")), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "onReply": [
+                                        { "type": "fail", "predicate": "!has(report_response.overall_code)", "terminal": false, "isGuard": false, "logMessage": "Rate limit report failed: invalid gRPC response" }
+                                      ]
                                     }
                                   ]
                                 }

@@ -54,28 +54,25 @@ static_resources:
                             {
                               "name": "ratelimit-source",
                               "routeRuleConditions": {
-                                "hostnames": [
-                                  "*.example.com"
-                                ],
+                                "hostnames": ["*.example.com"],
                                 "predicates": [
                                   "source.remote_address != '50.0.0.1'"
                                 ]
                               },
                               "actions": [
                                 {
+                                  "type": "grpc",
+                                  "var": "ratelimit_response",
                                   "service": "limitador",
-                                  "scope": "ratelimit-source",
-                                  "conditionalData": [
-                                  {
-                                    "data": [
-                                      {
-                                        "expression": {
-                                          "key": "source.remote_address",
-                                          "value": "source.remote_address"
-                                        }
-                                      }
-                                    ]
-                                  }]
+                                  "predicate": "true",
+                                  "terminal": false,
+                                  "label": "ratelimit",
+                                  "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"ratelimit-source\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"source.remote_address\", value: string(source.remote_address) } ] } ] }",
+                                  "onReply": [
+                                    { "type": "deny", "predicate": "ratelimit_response.overall_code == 2", "terminal": true, "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}" },
+                                    { "type": "headers", "predicate": "ratelimit_response.overall_code == 1", "terminal": false, "target": "response", "headers": "ratelimit_response.response_headers_to_add" },
+                                    { "type": "fail", "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2", "terminal": true, "logMessage": "Unknown rate limit response code from ratelimit_response" }
+                                  ]
                                 }
                               ]
                             }
