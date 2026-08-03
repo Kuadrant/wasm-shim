@@ -118,14 +118,8 @@ pub enum FailureMode {
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceType {
-    Auth,
-    #[default]
-    RateLimit,
-    #[serde(rename = "ratelimit-check")]
-    RateLimitCheck,
-    #[serde(rename = "ratelimit-report")]
-    RateLimitReport,
     Tracing,
+    #[default]
     Dynamic,
 }
 

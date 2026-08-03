@@ -70,11 +70,7 @@ impl Action {
                     .collect();
 
                 match service {
-                    ServiceInstance::Dynamic(dynamic_service)
-                    | ServiceInstance::Auth(dynamic_service)
-                    | ServiceInstance::RateLimit(dynamic_service)
-                    | ServiceInstance::RateLimitCheck(dynamic_service)
-                    | ServiceInstance::RateLimitReport(dynamic_service) => {
+                    ServiceInstance::Dynamic(dynamic_service) => {
                         Some(Box::new(DynamicTask::new_with_attributes(
                             ctx,
                             self.id.clone(),
@@ -355,11 +351,7 @@ impl Blueprint {
                                 .push(Box::new(ExportTracesTask::new(ctx, Arc::clone(service))));
                         }
                     }
-                    ServiceInstance::Dynamic(_)
-                    | ServiceInstance::Auth(_)
-                    | ServiceInstance::RateLimit(_)
-                    | ServiceInstance::RateLimitCheck(_)
-                    | ServiceInstance::RateLimitReport(_) => {
+                    ServiceInstance::Dynamic(_) => {
                         let body_values = action.collect_body_values();
                         if !body_values.is_empty() {
                             tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
@@ -420,14 +412,7 @@ impl Action {
                     .get(&grpc.service)
                     .ok_or_else(|| CompileError::UnknownService(grpc.service.clone()))?;
 
-                if !matches!(
-                    service_instance,
-                    ServiceInstance::Dynamic(_)
-                        | ServiceInstance::Auth(_)
-                        | ServiceInstance::RateLimit(_)
-                        | ServiceInstance::RateLimitCheck(_)
-                        | ServiceInstance::RateLimitReport(_)
-                ) {
+                if !matches!(service_instance, ServiceInstance::Dynamic(_)) {
                     return Err(CompileError::ServiceCreationFailed(format!(
                         "Service '{}' cannot be used with gRPC action",
                         grpc.service
