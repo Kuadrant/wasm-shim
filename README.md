@@ -60,7 +60,6 @@ Top level fields:
 | `services`          | yes      | Map of service name to service configuration, see [Services](#services)                                             |
 | `actionSets`        | yes      | List of `ActionSet`s evaluated, in order, against every request                                                     |
 | `observability`     | no       | `httpHeaderIdentifier`, `defaultLevel` and `tracing.service` (name of a `tracing`-typed service) used for tracing    |
-| `requestData`       | no       | Map of metric label name to CEL expression, evaluated and attached as labels to the metrics emitted for the request |
 | `descriptorService` | no       | Name of a `dynamic`-typed service used to resolve rate-limit descriptor definitions. Defaults to `kuadrant-operator-grpc` |
 
 ### Services

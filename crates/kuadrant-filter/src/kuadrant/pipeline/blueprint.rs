@@ -1,8 +1,4 @@
-#[allow(deprecated)]
-use crate::configuration::{
-    self, translate_legacy_auth_to_typed, translate_legacy_ratelimit_to_typed,
-    translate_legacy_report_to_typed,
-};
+use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     DynamicTask, ExportTracesTask, FailureModeTask, HeadersType, ModifyHeadersTask, Task,
@@ -14,8 +10,6 @@ use cel::ParseErrors;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
-
-pub type RequestData = ((String, String), Expression);
 
 pub(crate) struct Blueprint {
     pub name: String,
@@ -169,18 +163,12 @@ impl Action {
         }
     }
 
-    pub fn collect_body_values(&self, request_data: &[RequestData]) -> Vec<String> {
+    pub fn collect_body_values(&self) -> Vec<String> {
         use std::collections::HashSet;
 
         let mut fields = HashSet::new();
 
         fields.extend(self.predicate.response_body_values().iter().cloned());
-
-        fields.extend(
-            request_data
-                .iter()
-                .flat_map(|(_, expr)| expr.response_body_values().iter().cloned()),
-        );
 
         match &self.operation {
             Operation::Grpc {
@@ -203,7 +191,7 @@ impl Action {
                             reply_fields.extend(
                                 nested_reply
                                     .iter()
-                                    .flat_map(|nested| nested.collect_body_values(&[])),
+                                    .flat_map(|nested| nested.collect_body_values()),
                             );
                         }
                         Operation::Deny { deny_with } => {
@@ -279,7 +267,6 @@ impl Blueprint {
     pub fn compile(
         config: &configuration::ActionSet,
         services: &HashMap<String, ServiceInstance>,
-        request_data: &[RequestData],
     ) -> Result<Self, CompileError> {
         let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
@@ -295,25 +282,16 @@ impl Blueprint {
         let actions: Vec<Action> = config
             .actions
             .iter()
-            .zip(Self::compute_dependencies(&config.actions))
+            .zip(compute_dependencies(&config.actions))
             .enumerate()
-            .map(|(i, (action_config, dependencies))| {
-                let id = i.to_string();
-                match action_config {
-                    configuration::ActionConfig::Legacy(action) => {
-                        let legacy_request_data: Vec<((String, String), String)> = request_data
-                            .iter()
-                            .map(|(key, expr)| (key.clone(), expr.source().to_string()))
-                            .collect();
-                        Action::compile(action, services, id, dependencies, &legacy_request_data)
-                    }
-                    configuration::ActionConfig::Typed(typed) => {
-                        let mut action = Action::compile_typed(typed, services, id)?;
-                        action.dependencies = dependencies;
-                        Ok(action)
-                    }
-                }
-            })
+            .map(
+                |(i, (action_config, dependencies))| -> Result<Action, CompileError> {
+                    let id = i.to_string();
+                    let mut action = Action::compile(action_config, services, id)?;
+                    action.dependencies = dependencies;
+                    Ok(action)
+                },
+            )
             .collect::<Result<_, _>>()?;
 
         Ok(Self {
@@ -324,57 +302,37 @@ impl Blueprint {
     }
 }
 
-impl Blueprint {
-    fn compute_dependencies(actions: &[configuration::ActionConfig]) -> Vec<Vec<String>> {
-        let mut last_fence: Vec<String> = vec![];
-        let mut pending_parallel: Vec<String> = vec![];
-        let mut result = Vec::with_capacity(actions.len());
+fn compute_dependencies(actions: &[configuration::Action]) -> Vec<Vec<String>> {
+    let mut last_fence: Vec<String> = vec![];
+    let mut pending_parallel: Vec<String> = vec![];
+    let mut result = Vec::with_capacity(actions.len());
 
-        for (i, action_config) in actions.iter().enumerate() {
-            let id = i.to_string();
-            match action_config {
-                configuration::ActionConfig::Legacy(action) => {
-                    let _ = action;
-                    let deps = if i > 0 {
-                        vec![(i - 1).to_string()]
-                    } else {
-                        vec![]
-                    };
-                    pending_parallel.push(id);
-                    result.push(deps);
-                }
-                configuration::ActionConfig::Typed(typed) => {
-                    if typed.execution == configuration::Execution::Sequential {
-                        let deps: Vec<String> = last_fence
-                            .iter()
-                            .chain(&pending_parallel)
-                            .cloned()
-                            .collect();
-                        last_fence = vec![id];
-                        pending_parallel = vec![];
-                        result.push(deps);
-                    } else {
-                        let deps = last_fence.clone();
-                        pending_parallel.push(id);
-                        result.push(deps);
-                    }
-                }
-            }
+    for (i, action) in actions.iter().enumerate() {
+        let id = i.to_string();
+        if action.execution == configuration::Execution::Sequential {
+            let deps: Vec<String> = last_fence
+                .iter()
+                .chain(&pending_parallel)
+                .cloned()
+                .collect();
+            last_fence = vec![id];
+            pending_parallel = vec![];
+            result.push(deps);
+        } else {
+            let deps = last_fence.clone();
+            pending_parallel.push(id);
+            result.push(deps);
         }
-
-        result
     }
+
+    result
 }
 
 type TaskList = Vec<Box<dyn Task>>;
 type TeardownList = Vec<Box<dyn TeardownAction>>;
 
 impl Blueprint {
-    pub fn to_tasks(
-        &self,
-        ctx: &mut ReqRespCtx,
-        request_data: &[RequestData],
-    ) -> (TaskList, TeardownList) {
+    pub fn to_tasks(&self, ctx: &mut ReqRespCtx) -> (TaskList, TeardownList) {
         let mut tasks: TaskList = Vec::new();
         let mut teardown_tasks: TeardownList = Vec::new();
 
@@ -402,7 +360,7 @@ impl Blueprint {
                     | ServiceInstance::RateLimit(_)
                     | ServiceInstance::RateLimitCheck(_)
                     | ServiceInstance::RateLimitReport(_) => {
-                        let body_values = action.collect_body_values(request_data);
+                        let body_values = action.collect_body_values();
                         if !body_values.is_empty() {
                             tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
                                 body_values,
@@ -439,41 +397,8 @@ impl Blueprint {
 }
 
 impl Action {
-    #[allow(deprecated)]
     fn compile(
-        config: &configuration::Action,
-        services: &HashMap<String, ServiceInstance>,
-        id: String,
-        dependencies: Vec<String>,
-        request_data: &[((String, String), String)],
-    ) -> Result<Self, CompileError> {
-        let service = services
-            .get(&config.service)
-            .ok_or_else(|| CompileError::UnknownService(config.service.clone()))?;
-
-        let typed_config = match service {
-            ServiceInstance::Auth(_) => translate_legacy_auth_to_typed(config, request_data),
-            ServiceInstance::RateLimit(_) | ServiceInstance::RateLimitCheck(_) => {
-                translate_legacy_ratelimit_to_typed(config, request_data)
-            }
-            ServiceInstance::RateLimitReport(_) => {
-                translate_legacy_report_to_typed(config, request_data)
-            }
-            _ => {
-                return Err(CompileError::ServiceCreationFailed(format!(
-                    "Legacy config not supported for service type: {}",
-                    config.service
-                )))
-            }
-        };
-
-        let mut action = Self::compile_typed(&typed_config, services, id)?;
-        action.dependencies = dependencies;
-        Ok(action)
-    }
-
-    fn compile_typed(
-        typed: &configuration::TypedAction,
+        typed: &configuration::Action,
         services: &HashMap<String, ServiceInstance>,
         id: String,
     ) -> Result<Self, CompileError> {
@@ -513,12 +438,12 @@ impl Action {
                     .on_reply
                     .iter()
                     .enumerate()
-                    .map(|(idx, typed_action)| {
+                    .map(|(idx, reply_action)| {
                         let reply_id = format!("{}.{}", id, idx);
-                        if typed_action.execution != configuration::Execution::default() {
+                        if reply_action.execution != configuration::Execution::default() {
                             return Err(CompileError::InvalidOnReplyExecution(reply_id));
                         }
-                        Action::compile_typed(typed_action, services, reply_id)
+                        Action::compile(reply_action, services, reply_id)
                     })
                     .collect::<Result<_, _>>()?;
 
@@ -580,12 +505,10 @@ impl Action {
 mod tests {
     use super::*;
     use crate::configuration::{
-        Action as ConfigAction, ActionConfig, ActionSet, ConditionalData as ConfigConditionalData,
-        DataItem as ConfigDataItem, DataType, DenyOperation, ExpressionItem, GrpcOperation,
-        HeadersOperation, HeadersTarget, Operation as ConfigOperation, RouteRuleConditions,
-        StaticItem, StoreOperation, TypedAction as ConfigTypedAction,
+        Action as ConfigAction, ActionSet, DenyOperation, Execution, FailOperation, FailureMode,
+        GrpcOperation, HeadersOperation, HeadersTarget, Operation as ConfigOperation,
+        RouteRuleConditions, StoreOperation,
     };
-    use crate::configuration::{Execution, FailOperation, FailureMode};
     use crate::filter::DescriptorManager;
     use crate::services::{DynamicService, ServiceInstance};
     use std::collections::HashMap;
@@ -634,7 +557,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services, &[]);
+        let result = Blueprint::compile(&config, &services);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.name, "test-action-set");
@@ -655,7 +578,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services, &[]);
+        let result = Blueprint::compile(&config, &services);
         assert!(result.is_ok());
         let blueprint = result.unwrap();
         assert_eq!(blueprint.route_predicates.len(), 2);
@@ -674,7 +597,7 @@ mod tests {
             actions: vec![],
         };
 
-        let result = Blueprint::compile(&config, &services, &[]);
+        let result = Blueprint::compile(&config, &services);
         assert!(matches!(
             result,
             Err(CompileError::InvalidRoutePredicate { ref action_set, .. }) if action_set == "test-action-set"
@@ -682,118 +605,10 @@ mod tests {
     }
 
     #[test]
-    fn action_compiles_with_valid_predicates() {
-        let services = HashMap::from([build_test_service("test-service")]);
-
-        let config = ConfigAction {
-            service: "test-service".to_string(),
-            scope: "test-scope".to_string(),
-            predicates: vec![
-                "true".to_string(),
-                "request.path.startsWith('/api')".to_string(),
-            ],
-            conditional_data: vec![],
-            sources: vec![],
-        };
-
-        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
-        assert!(result.is_ok());
-        let action = result.unwrap();
-        assert_eq!(action.id, "0");
-        assert!(action.dependencies.is_empty());
-        assert!(matches!(action.operation, Operation::Grpc { .. }));
-    }
-
-    #[test]
-    fn action_fails_on_invalid_predicate() {
-        let services = HashMap::from([build_test_service("test-service")]);
-
-        let config = ConfigAction {
-            service: "test-service".to_string(),
-            scope: "test-scope".to_string(),
-            predicates: vec!["bad syntax ***".to_string()],
-            conditional_data: vec![],
-            sources: vec![],
-        };
-
-        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
-        assert!(matches!(
-            result,
-            Err(CompileError::InvalidActionPredicate { ref service, .. }) if service == "test-service"
-        ));
-    }
-
-    #[test]
-    fn action_fails_on_unknown_service() {
-        let services = HashMap::new();
-
-        let config = ConfigAction {
-            service: "nonexistent-service".to_string(),
-            scope: "test-scope".to_string(),
-            predicates: vec![],
-            conditional_data: vec![],
-            sources: vec![],
-        };
-
-        let result = Action::compile(&config, &services, "0".to_string(), vec![], &[]);
-        assert!(matches!(
-            result,
-            Err(CompileError::UnknownService(ref service)) if service == "nonexistent-service"
-        ));
-    }
-
-    #[test]
-    fn blueprint_compiles_complete_configuration() {
-        let services = HashMap::from([build_test_service("auth-service")]);
-
-        let config = ActionSet {
-            name: "complete-test".to_string(),
-            route_rule_conditions: RouteRuleConditions {
-                hostnames: vec!["*.example.com".to_string()],
-                predicates: vec!["request.path.startsWith('/api')".to_string()],
-            },
-            actions: vec![ActionConfig::Legacy(ConfigAction {
-                service: "auth-service".to_string(),
-                scope: "api-scope".to_string(),
-                predicates: vec!["request.method == 'POST'".to_string()],
-                conditional_data: vec![ConfigConditionalData {
-                    predicates: vec!["request.headers['x-api-key'].size() > 0".to_string()],
-                    data: vec![
-                        ConfigDataItem {
-                            item: DataType::Static(StaticItem {
-                                key: "tier".to_string(),
-                                value: "premium".to_string(),
-                            }),
-                        },
-                        ConfigDataItem {
-                            item: DataType::Expression(ExpressionItem {
-                                key: "user".to_string(),
-                                value: "auth.identity.username".to_string(),
-                            }),
-                        },
-                    ],
-                }],
-                sources: vec![],
-            })],
-        };
-
-        let result = Blueprint::compile(&config, &services, &[]);
-        assert!(result.is_ok());
-        let blueprint = result.unwrap();
-        assert_eq!(blueprint.name, "complete-test");
-        assert_eq!(blueprint.route_predicates.len(), 1);
-        assert_eq!(blueprint.actions.len(), 1);
-        assert!(matches!(
-            blueprint.actions[0].operation,
-            Operation::Grpc { .. }
-        ));
-    }
-
-    #[test]
-    fn grpc_typed_action_compiles() {
+    fn grpc_action_compiles() {
         let services = HashMap::from([build_dynamic_service("my-dynamic")]);
 
-        let typed = ConfigTypedAction {
+        let config = ConfigAction {
             predicate: "request.method == 'GET'".to_string(),
             terminal: false,
             is_guard: true,
@@ -804,7 +619,7 @@ mod tests {
                 service: "my-dynamic".to_string(),
                 message_builder: "envoy.service.ratelimit.v3.RateLimitRequest{}".to_string(),
                 on_reply: vec![
-                    ConfigTypedAction {
+                    ConfigAction {
                         predicate: "rl_check.overall_code == 2".to_string(),
                         terminal: true,
                         is_guard: false,
@@ -814,7 +629,7 @@ mod tests {
                             deny_with: "DenyResponse{status: 429u}".to_string(),
                         }),
                     },
-                    ConfigTypedAction {
+                    ConfigAction {
                         predicate: "rl_check.overall_code == 0".to_string(),
                         terminal: true,
                         is_guard: false,
@@ -824,7 +639,7 @@ mod tests {
                             log_message: "Received UNKNOWN from rate limiting service".to_string(),
                         }),
                     },
-                    ConfigTypedAction {
+                    ConfigAction {
                         predicate: "rl_check.overall_code != 1 && rl_check.overall_code != 2"
                             .to_string(),
                         terminal: true,
@@ -837,7 +652,7 @@ mod tests {
                                     .to_string(),
                         }),
                     },
-                    ConfigTypedAction {
+                    ConfigAction {
                         predicate: "true".to_string(),
                         terminal: false,
                         is_guard: false,
@@ -848,7 +663,7 @@ mod tests {
                             headers: "result.headers".to_string(),
                         }),
                     },
-                    ConfigTypedAction {
+                    ConfigAction {
                         predicate: "true".to_string(),
                         terminal: false,
                         is_guard: false,
@@ -865,7 +680,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string());
+        let result = Action::compile(&config, &services, "0".to_string());
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "0");
@@ -886,10 +701,10 @@ mod tests {
     }
 
     #[test]
-    fn grpc_typed_action_fails_on_unknown_service() {
+    fn grpc_action_fails_on_unknown_service() {
         let services = HashMap::new();
 
-        let typed = ConfigTypedAction {
+        let config = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
@@ -904,12 +719,12 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string());
+        let result = Action::compile(&config, &services, "0".to_string());
         assert!(matches!(result, Err(CompileError::UnknownService(ref s)) if s == "nonexistent"));
     }
 
     #[test]
-    fn grpc_typed_action_fails_on_non_dynamic_service() {
+    fn grpc_action_fails_on_non_dynamic_service() {
         use crate::services::TracingService;
         let services = HashMap::from([(
             "tracing-svc".to_string(),
@@ -919,7 +734,7 @@ mod tests {
             )))),
         )]);
 
-        let typed = ConfigTypedAction {
+        let config = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
@@ -934,7 +749,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string());
+        let result = Action::compile(&config, &services, "0".to_string());
         assert!(matches!(
             result,
             Err(CompileError::ServiceCreationFailed(_))
@@ -945,7 +760,7 @@ mod tests {
     fn grpc_in_on_reply_block_compiles() {
         let services = HashMap::from([build_dynamic_service("svc")]);
 
-        let nested_grpc = ConfigTypedAction {
+        let nested_grpc = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: false,
@@ -960,7 +775,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&nested_grpc, &services, "parent.0".to_string());
+        let result = Action::compile(&nested_grpc, &services, "parent.0".to_string());
         assert!(result.is_ok());
         let action = result.unwrap();
         assert_eq!(action.id, "parent.0");
@@ -968,10 +783,10 @@ mod tests {
     }
 
     #[test]
-    fn typed_actions_compile() {
+    fn actions_compile() {
         let services = HashMap::new();
 
-        let deny_config = ConfigTypedAction {
+        let deny_config = ConfigAction {
             predicate: "result.code == 2".to_string(),
             terminal: true,
             is_guard: false,
@@ -981,13 +796,13 @@ mod tests {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let deny_result = Action::compile_typed(&deny_config, &services, "0".to_string());
+        let deny_result = Action::compile(&deny_config, &services, "0".to_string());
         assert!(deny_result.is_ok());
         let deny = deny_result.unwrap();
         assert!(deny.terminal);
         assert!(matches!(deny.operation, Operation::Deny { .. }));
 
-        let headers_config = ConfigTypedAction {
+        let headers_config = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: false,
@@ -998,7 +813,7 @@ mod tests {
                 headers: "result.resp_headers".to_string(),
             }),
         };
-        let headers_result = Action::compile_typed(&headers_config, &services, "0".to_string());
+        let headers_result = Action::compile(&headers_config, &services, "0".to_string());
         assert!(headers_result.is_ok());
         let headers = headers_result.unwrap();
         assert!(!headers.terminal);
@@ -1010,7 +825,7 @@ mod tests {
             } if matches!(target, HeadersType::HttpResponseHeaders)
         ));
 
-        let store_config = ConfigTypedAction {
+        let store_config = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
@@ -1022,7 +837,7 @@ mod tests {
                 export_to_host: false,
             }),
         };
-        let store_result = Action::compile_typed(&store_config, &services, "0".to_string());
+        let store_result = Action::compile(&store_config, &services, "0".to_string());
         assert!(store_result.is_ok());
         let store = store_result.unwrap();
         assert!(!store.terminal);
@@ -1033,10 +848,10 @@ mod tests {
     }
 
     #[test]
-    fn typed_action_fails_on_invalid_predicate() {
+    fn action_fails_on_invalid_predicate() {
         let services = HashMap::new();
 
-        let config = ConfigTypedAction {
+        let config = ConfigAction {
             predicate: "bad syntax !!".to_string(),
             terminal: true,
             is_guard: true,
@@ -1046,7 +861,7 @@ mod tests {
                 deny_with: "DenyResponse{status: 429u}".to_string(),
             }),
         };
-        let result = Action::compile_typed(&config, &services, "0".to_string());
+        let result = Action::compile(&config, &services, "0".to_string());
         assert!(matches!(
             result,
             Err(CompileError::InvalidActionPredicate { .. })
@@ -1054,83 +869,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_legacy_and_typed_actions_compile() {
-        let services = HashMap::from([
-            build_test_service("auth-svc"),
-            build_dynamic_service("dyn-svc"),
-        ]);
-
-        let config = ActionSet {
-            name: "mixed-set".to_string(),
-            route_rule_conditions: RouteRuleConditions {
-                hostnames: vec!["example.com".to_string()],
-                predicates: vec![],
-            },
-            actions: vec![
-                ActionConfig::Legacy(ConfigAction {
-                    service: "auth-svc".to_string(),
-                    scope: "auth-scope".to_string(),
-                    predicates: vec![],
-                    conditional_data: vec![],
-                    sources: vec![],
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
-                    predicate: "true".to_string(),
-                    terminal: false,
-                    is_guard: true,
-                    sources: vec![],
-                    execution: Execution::default(),
-                    operation: ConfigOperation::Grpc(GrpcOperation {
-                        var: "rl_check".to_string(),
-                        service: "dyn-svc".to_string(),
-                        message_builder: "test.Request{}".to_string(),
-                        on_reply: vec![ConfigTypedAction {
-                            predicate: "rl_check.code == 2".to_string(),
-                            terminal: true,
-                            is_guard: false,
-                            sources: vec![],
-                            execution: Execution::default(),
-                            operation: ConfigOperation::Deny(DenyOperation {
-                                deny_with: "DenyResponse{status: 429u}".to_string(),
-                            }),
-                        }],
-                        label: String::new(),
-                    }),
-                }),
-            ],
-        };
-
-        let result = Blueprint::compile(&config, &services, &[]);
-        assert!(result.is_ok());
-        let blueprint = result.unwrap();
-        assert_eq!(blueprint.actions.len(), 2);
-
-        assert!(matches!(
-            &blueprint.actions[0].operation,
-            Operation::Grpc { .. }
-        ));
-        if let Operation::Grpc { service, .. } = &blueprint.actions[0].operation {
-            assert!(matches!(service, ServiceInstance::Auth(_)));
-        }
-        assert!(blueprint.actions[0].dependencies.is_empty());
-
-        assert!(matches!(
-            &blueprint.actions[1].operation,
-            Operation::Grpc { .. }
-        ));
-        if let Operation::Grpc {
-            service, on_reply, ..
-        } = &blueprint.actions[1].operation
-        {
-            assert!(matches!(service, ServiceInstance::Dynamic(_)));
-            assert_eq!(on_reply.len(), 1);
-        }
-
-        assert!(blueprint.actions[1].dependencies.is_empty());
-    }
-
-    #[test]
-    fn typed_action_uses_positional_id() {
+    fn action_uses_positional_id() {
         let services = HashMap::from([build_dynamic_service("svc")]);
 
         let config = ActionSet {
@@ -1139,7 +878,7 @@ mod tests {
                 hostnames: vec!["example.com".to_string()],
                 predicates: vec![],
             },
-            actions: vec![ActionConfig::Typed(ConfigTypedAction {
+            actions: vec![ConfigAction {
                 predicate: "true".to_string(),
                 terminal: false,
                 is_guard: true,
@@ -1152,10 +891,10 @@ mod tests {
                     on_reply: vec![],
                     label: String::new(),
                 }),
-            })],
+            }],
         };
 
-        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        let blueprint = Blueprint::compile(&config, &services).unwrap();
         assert_eq!(blueprint.actions[0].id, "0");
     }
 
@@ -1163,7 +902,7 @@ mod tests {
     fn on_reply_uses_positional_id() {
         let services = HashMap::from([build_dynamic_service("svc")]);
 
-        let typed = ConfigTypedAction {
+        let config = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
@@ -1173,7 +912,7 @@ mod tests {
                 var: "rl".to_string(),
                 service: "svc".to_string(),
                 message_builder: "test.Request{}".to_string(),
-                on_reply: vec![ConfigTypedAction {
+                on_reply: vec![ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: false,
@@ -1187,7 +926,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "parent".to_string());
+        let result = Action::compile(&config, &services, "parent".to_string());
         assert!(result.is_ok());
         let action = result.unwrap();
         if let Operation::Grpc { on_reply, .. } = &action.operation {
@@ -1208,7 +947,7 @@ mod tests {
                 predicates: vec![],
             },
             actions: vec![
-                ActionConfig::Typed(ConfigTypedAction {
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1221,8 +960,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1235,11 +974,11 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
+                },
             ],
         };
 
-        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        let blueprint = Blueprint::compile(&config, &services).unwrap();
         assert!(blueprint.actions[0].dependencies.is_empty());
         assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
     }
@@ -1255,7 +994,7 @@ mod tests {
                 predicates: vec![],
             },
             actions: vec![
-                ActionConfig::Typed(ConfigTypedAction {
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1268,8 +1007,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1282,8 +1021,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1296,11 +1035,11 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
+                },
             ],
         };
 
-        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        let blueprint = Blueprint::compile(&config, &services).unwrap();
         assert!(blueprint.actions[0].dependencies.is_empty());
         assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
         assert_eq!(blueprint.actions[2].dependencies, vec!["0"]);
@@ -1317,7 +1056,7 @@ mod tests {
                 predicates: vec![],
             },
             actions: vec![
-                ActionConfig::Typed(ConfigTypedAction {
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1330,8 +1069,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1344,8 +1083,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1358,8 +1097,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1372,11 +1111,11 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
+                },
             ],
         };
 
-        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        let blueprint = Blueprint::compile(&config, &services).unwrap();
         assert!(blueprint.actions[0].dependencies.is_empty());
         assert_eq!(blueprint.actions[1].dependencies, vec!["0"]);
         assert_eq!(blueprint.actions[2].dependencies, vec!["0"]);
@@ -1396,7 +1135,7 @@ mod tests {
                 predicates: vec![],
             },
             actions: vec![
-                ActionConfig::Typed(ConfigTypedAction {
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1409,8 +1148,8 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
-                ActionConfig::Typed(ConfigTypedAction {
+                },
+                ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: true,
@@ -1423,11 +1162,11 @@ mod tests {
                         on_reply: vec![],
                         label: String::new(),
                     }),
-                }),
+                },
             ],
         };
 
-        let blueprint = Blueprint::compile(&config, &services, &[]).unwrap();
+        let blueprint = Blueprint::compile(&config, &services).unwrap();
         assert!(blueprint.actions[0].dependencies.is_empty());
         assert!(blueprint.actions[1].dependencies.is_empty());
     }
@@ -1436,7 +1175,7 @@ mod tests {
     fn on_reply_rejects_non_default_execution() {
         let services = HashMap::from([build_dynamic_service("svc")]);
 
-        let typed = ConfigTypedAction {
+        let action = ConfigAction {
             predicate: "true".to_string(),
             terminal: false,
             is_guard: true,
@@ -1446,7 +1185,7 @@ mod tests {
                 var: "rl".to_string(),
                 service: "svc".to_string(),
                 message_builder: "test.Request{}".to_string(),
-                on_reply: vec![ConfigTypedAction {
+                on_reply: vec![ConfigAction {
                     predicate: "true".to_string(),
                     terminal: false,
                     is_guard: false,
@@ -1462,7 +1201,7 @@ mod tests {
             }),
         };
 
-        let result = Action::compile_typed(&typed, &services, "0".to_string());
+        let result = Action::compile(&action, &services, "0".to_string());
         assert!(matches!(
             result,
             Err(CompileError::InvalidOnReplyExecution(_))

@@ -8,35 +8,6 @@ use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
-mod legacy_translation;
-#[allow(deprecated)]
-pub(crate) use legacy_translation::auth::translate_legacy_auth_to_typed;
-#[allow(deprecated)]
-pub(crate) use legacy_translation::ratelimit::translate_legacy_ratelimit_to_typed;
-#[allow(deprecated)]
-pub(crate) use legacy_translation::ratelimit::translate_legacy_report_to_typed;
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct ConditionalData {
-    #[serde(default)]
-    pub predicates: Vec<String>,
-    #[serde(default)]
-    pub data: Vec<DataItem>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Action {
-    pub service: String,
-    pub scope: String,
-    #[serde(default)]
-    pub predicates: Vec<String>,
-    #[serde(default)]
-    pub conditional_data: Vec<ConditionalData>,
-    #[serde(default)]
-    pub sources: Vec<String>,
-}
-
 fn default_is_guard() -> bool {
     true
 }
@@ -51,7 +22,7 @@ pub enum Execution {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct TypedAction {
+pub struct Action {
     pub predicate: String,
     pub terminal: bool,
     #[serde(default = "default_is_guard")]
@@ -81,7 +52,7 @@ pub struct GrpcOperation {
     pub service: String,
     pub message_builder: String,
     #[serde(default)]
-    pub on_reply: Vec<TypedAction>,
+    pub on_reply: Vec<Action>,
     #[serde(default)]
     pub label: String,
 }
@@ -121,13 +92,6 @@ pub struct FailOperation {
     pub log_message: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum ActionConfig {
-    Typed(TypedAction),
-    Legacy(Action),
-}
-
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct RouteRuleConditions {
     pub hostnames: Vec<String>,
@@ -140,34 +104,7 @@ pub struct RouteRuleConditions {
 pub struct ActionSet {
     pub name: String,
     pub route_rule_conditions: RouteRuleConditions,
-    pub actions: Vec<ActionConfig>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct ExpressionItem {
-    pub key: String,
-    pub value: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct StaticItem {
-    pub value: String,
-    pub key: String,
-}
-
-// Mutually exclusive struct fields
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum DataType {
-    Static(StaticItem),
-    Expression(ExpressionItem),
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct DataItem {
-    #[serde(flatten)]
-    pub item: DataType,
+    pub actions: Vec<Action>,
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, Default, PartialEq)]
@@ -208,8 +145,6 @@ pub struct Tracing {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
-    #[serde(default)]
-    pub request_data: HashMap<String, String>,
     pub services: HashMap<String, Service>,
     pub action_sets: Vec<ActionSet>,
     #[serde(default)]
@@ -226,7 +161,6 @@ impl PluginConfiguration {
     #[cfg(test)]
     pub fn new(services: HashMap<String, Service>, action_sets: Vec<ActionSet>) -> Self {
         Self {
-            request_data: HashMap::new(),
             services,
             action_sets,
             observability: Default::default(),
@@ -300,140 +234,6 @@ impl Visitor<'_> for TimeoutVisitor {
 mod test {
     use super::*;
 
-    const CONFIG: &str = r#"{
-        "services": {
-            "authorino": {
-                "type": "auth",
-                "endpoint": "authorino-cluster",
-                "failureMode": "deny",
-                "timeout": "24ms"
-            },
-            "limitador": {
-                "type": "ratelimit",
-                "endpoint": "limitador-cluster",
-                "failureMode": "allow",
-                "timeout": "42ms"
-            }
-        },
-        "actionSets": [
-        {
-            "name": "rlp-ns-A/rlp-name-A",
-            "routeRuleConditions": {
-                "hostnames": ["*.toystore.com", "example.com"],
-                "predicates": [
-                    "request.path == '/admin/toy'",
-                    "request.method == 'POST'",
-                    "request.host == 'cars.toystore.com'"
-                ]
-            },
-            "actions": [
-            {
-                "service": "authorino",
-                "scope": "authconfig-A"
-            },
-            {
-                "service": "limitador",
-                "scope": "rlp-ns-A/rlp-name-A",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "auth.metadata.username == 'alice'"
-                    ],
-                    "data": [
-                    {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    },
-                    {
-                        "expression": {
-                            "key": "username",
-                            "value": "auth.metadata.username"
-                        }
-                    }]
-                }]
-            }]
-        }]
-    }"#;
-
-    #[test]
-    fn parse_config_happy_path() {
-        let res = serde_json::from_str::<PluginConfiguration>(CONFIG);
-        if let Err(ref e) = res {
-            eprintln!("{e}");
-        }
-        assert!(res.is_ok());
-
-        let plugin_config = res.expect("result is ok");
-        assert_eq!(plugin_config.action_sets.len(), 1);
-
-        let services = &plugin_config.services;
-        assert_eq!(services.len(), 2);
-
-        if let Some(auth_service) = services.get("authorino") {
-            assert_eq!(auth_service.service_type, ServiceType::Auth);
-            assert_eq!(auth_service.endpoint, "authorino-cluster");
-            assert_eq!(auth_service.failure_mode, FailureMode::Deny);
-            assert_eq!(auth_service.timeout, Timeout(Duration::from_millis(24)))
-        } else {
-            unreachable!()
-        }
-
-        if let Some(rl_service) = services.get("limitador") {
-            assert_eq!(rl_service.service_type, ServiceType::RateLimit);
-            assert_eq!(rl_service.endpoint, "limitador-cluster");
-            assert_eq!(rl_service.failure_mode, FailureMode::Allow);
-            assert_eq!(rl_service.timeout, Timeout(Duration::from_millis(42)))
-        } else {
-            unreachable!()
-        }
-
-        let predicates = &plugin_config.action_sets[0]
-            .route_rule_conditions
-            .predicates;
-        assert_eq!(predicates.len(), 3);
-
-        let actions = &plugin_config.action_sets[0].actions;
-        assert_eq!(actions.len(), 2);
-
-        let ActionConfig::Legacy(auth_action) = &actions[0] else {
-            unreachable!("expected legacy action");
-        };
-        assert_eq!(auth_action.service, "authorino");
-        assert_eq!(auth_action.scope, "authconfig-A");
-
-        let ActionConfig::Legacy(rl_action) = &actions[1] else {
-            unreachable!("expected legacy action");
-        };
-        assert_eq!(rl_action.service, "limitador");
-        assert_eq!(rl_action.scope, "rlp-ns-A/rlp-name-A");
-
-        let rl_conditional_data = &rl_action.conditional_data;
-        assert_eq!(rl_conditional_data.len(), 1);
-
-        let rl_conditional = &rl_conditional_data[0];
-        assert_eq!(rl_conditional.predicates.len(), 1);
-        assert_eq!(rl_conditional.data.len(), 2);
-
-        let rl_predicates = &rl_action.predicates;
-        assert_eq!(rl_predicates.len(), 0);
-
-        if let DataType::Static(static_item) = &rl_conditional.data[0].item {
-            assert_eq!(static_item.key, "rlp-ns-A/rlp-name-A");
-            assert_eq!(static_item.value, "1");
-        } else {
-            unreachable!();
-        }
-
-        if let DataType::Expression(exp) = &rl_conditional.data[1].item {
-            assert_eq!(exp.key, "username");
-            assert_eq!(exp.value, "auth.metadata.username");
-        } else {
-            unreachable!();
-        }
-    }
-
     #[test]
     fn parse_config_min() {
         let config = r#"{
@@ -448,211 +248,6 @@ mod test {
 
         let plugin_config = res.expect("result is ok");
         assert_eq!(plugin_config.action_sets.len(), 0);
-    }
-
-    #[test]
-    fn config_containing_data() {
-        let config = r#"{
-            "requestData": {
-                "metrics.label1": "auth.metadata.username",
-                "metrics.label2": "'id#' + request.id"
-            },
-            "services": {
-                "limitador": {
-                    "type": "ratelimit",
-                    "endpoint": "limitador-cluster",
-                    "failureMode": "deny"
-                }
-            },
-            "actionSets": [
-            {
-                "name": "rlp-ns-A/rlp-name-A",
-                "routeRuleConditions": {
-                    "hostnames": ["*.toystore.com", "example.com"]
-                },
-                "actions": [
-                {
-                    "service": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "conditionalData": [
-                    {
-                        "data": [
-                        {
-                            "static": {
-                                "key": "rlp-ns-A/rlp-name-A",
-                                "value": "1"
-                            }
-                        },
-                        {
-                            "expression": {
-                                "key": "username",
-                                "value": "auth.metadata.username"
-                            }
-                        }]
-                    }]
-                }]
-            }]
-        }"#;
-
-        let res = serde_json::from_str::<PluginConfiguration>(config).expect("valid config");
-        assert_eq!(
-            res.request_data,
-            HashMap::from([
-                (
-                    "metrics.label1".to_owned(),
-                    "auth.metadata.username".to_owned()
-                ),
-                ("metrics.label2".to_owned(), "'id#' + request.id".to_owned()),
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_config_predicates_optional() {
-        let config = r#"{
-            "services": {
-                "limitador": {
-                    "type": "ratelimit",
-                    "endpoint": "limitador-cluster",
-                    "failureMode": "deny"
-                }
-            },
-            "actionSets": [
-            {
-                "name": "rlp-ns-A/rlp-name-A",
-                "routeRuleConditions": {
-                    "hostnames": ["*.toystore.com", "example.com"]
-                },
-                "actions": [
-                {
-                    "service": "limitador",
-                    "scope": "rlp-ns-A/rlp-name-A",
-                    "conditionalData": [
-                    {
-                        "data": [
-                        {
-                            "static": {
-                                "key": "rlp-ns-A/rlp-name-A",
-                                "value": "1"
-                            }
-                        },
-                        {
-                            "expression": {
-                                "key": "username",
-                                "value": "auth.metadata.username"
-                            }
-                        }]
-                    }]
-                }]
-            }]
-        }"#;
-        let res = serde_json::from_str::<PluginConfiguration>(config);
-        if let Err(ref e) = res {
-            eprintln!("{e}");
-        }
-        assert!(res.is_ok());
-
-        let plugin_config = res.expect("result is ok");
-        assert_eq!(plugin_config.action_sets.len(), 1);
-
-        let services = &plugin_config.services;
-        assert_eq!(
-            services
-                .get("limitador")
-                .expect("limitador service to be set")
-                .timeout,
-            Timeout(Duration::from_millis(20))
-        );
-
-        let predicates = &plugin_config.action_sets[0]
-            .route_rule_conditions
-            .predicates;
-        assert_eq!(predicates.len(), 0);
-
-        let actions = &plugin_config.action_sets[0].actions;
-        assert_eq!(actions.len(), 1);
-
-        let ActionConfig::Legacy(action) = &actions[0] else {
-            unreachable!("expected legacy action");
-        };
-        assert_eq!(action.predicates.len(), 0);
-    }
-
-    #[test]
-    fn parse_config_invalid_data() {
-        // data item fields are mutually exclusive
-        let bad_config = r#"{
-        "services": {
-            "limitador": {
-                "type": "ratelimit",
-                "endpoint": "limitador-cluster",
-                "failureMode": "deny"
-            }
-        },
-        "actionSets": [
-        {
-            "name": "rlp-ns-A/rlp-name-A",
-            "routeRuleConditions": {
-                "hostnames": ["*.toystore.com", "example.com"]
-            },
-            "actions": [
-            {
-                "service": "limitador",
-                "scope": "rlp-ns-A/rlp-name-A",
-                "conditionalData": [
-                {
-                    "data": [
-                    {
-                        "static": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        },
-                        "expression": {
-                            "key": "username",
-                            "value": "auth.metadata.username"
-                        }
-                    }]
-                }]
-            }]
-        }]
-        }"#;
-        let res = serde_json::from_str::<PluginConfiguration>(bad_config);
-        assert!(res.is_err());
-
-        // data item unknown fields are forbidden
-        let bad_config = r#"{
-        "services": {
-            "limitador": {
-                "type": "ratelimit",
-                "endpoint": "limitador-cluster",
-                "failureMode": "deny"
-            }
-        },
-        "actionSets": [
-        {
-            "name": "rlp-ns-A/rlp-name-A",
-            "routeRuleConditions": {
-                "hostnames": ["*.toystore.com", "example.com"]
-            },
-            "actions": [
-            {
-                "service": "limitador",
-                "scope": "rlp-ns-A/rlp-name-A",
-                "conditionalData": [
-                {
-                    "data": [
-                    {
-                        "unknown": {
-                            "key": "rlp-ns-A/rlp-name-A",
-                            "value": "1"
-                        }
-                    }]
-                }]
-            }]
-        }]
-        }"#;
-        let res = serde_json::from_str::<PluginConfiguration>(bad_config);
-        assert!(res.is_err());
     }
 
     #[test]
@@ -750,13 +345,11 @@ mod test {
         let actions = &plugin_config.action_sets[0].actions;
         assert_eq!(actions.len(), 1);
 
-        let ActionConfig::Typed(typed) = &actions[0] else {
-            unreachable!("expected typed action");
-        };
-        assert_eq!(typed.predicate, "request.method == 'GET'");
-        assert!(!typed.terminal);
+        let action = &actions[0];
+        assert_eq!(action.predicate, "request.method == 'GET'");
+        assert!(!action.terminal);
 
-        let Operation::Grpc(grpc) = &typed.operation else {
+        let Operation::Grpc(grpc) = &action.operation else {
             unreachable!("expected grpc operation");
         };
         assert_eq!(grpc.var, "rl_check");
@@ -806,12 +399,10 @@ mod test {
         assert!(res.is_ok());
 
         let plugin_config = res.expect("result is ok");
-        let ActionConfig::Typed(typed) = &plugin_config.action_sets[0].actions[0] else {
-            unreachable!("expected typed action");
-        };
-        assert_eq!(typed.predicate, "request.path.startsWith('/admin')");
-        assert!(typed.terminal);
-        let Operation::Deny(deny) = &typed.operation else {
+        let action = &plugin_config.action_sets[0].actions[0];
+        assert_eq!(action.predicate, "request.path.startsWith('/admin')");
+        assert!(action.terminal);
+        let Operation::Deny(deny) = &action.operation else {
             unreachable!("expected deny operation");
         };
         assert_eq!(deny.deny_with, "DenyResponse{status: 403u}");
@@ -849,19 +440,15 @@ mod test {
         assert!(res.is_ok());
 
         let plugin_config = res.expect("result is ok");
-        let ActionConfig::Typed(typed_req) = &plugin_config.action_sets[0].actions[0] else {
-            unreachable!("expected typed action");
-        };
-        let Operation::Headers(req_headers) = &typed_req.operation else {
+        let req_action = &plugin_config.action_sets[0].actions[0];
+        let Operation::Headers(req_headers) = &req_action.operation else {
             unreachable!("expected headers operation");
         };
         assert!(matches!(req_headers.target, HeadersTarget::Request));
         assert_eq!(req_headers.headers, "auth_check.ok_response.headers");
 
-        let ActionConfig::Typed(typed_resp) = &plugin_config.action_sets[0].actions[1] else {
-            unreachable!("expected typed action");
-        };
-        let Operation::Headers(resp_headers) = &typed_resp.operation else {
+        let resp_action = &plugin_config.action_sets[0].actions[1];
+        let Operation::Headers(resp_headers) = &resp_action.operation else {
             unreachable!("expected headers operation");
         };
         assert!(matches!(resp_headers.target, HeadersTarget::Response));
@@ -891,10 +478,8 @@ mod test {
         assert!(res.is_ok());
 
         let plugin_config = res.expect("result is ok");
-        let ActionConfig::Typed(typed) = &plugin_config.action_sets[0].actions[0] else {
-            unreachable!("expected typed action");
-        };
-        let Operation::Store(store) = &typed.operation else {
+        let action = &plugin_config.action_sets[0].actions[0];
+        let Operation::Store(store) = &action.operation else {
             unreachable!("expected store operation");
         };
         assert_eq!(store.path, "auth.metadata");
@@ -923,80 +508,11 @@ mod test {
         assert!(res.is_ok());
 
         let plugin_config = res.expect("result is ok");
-        let ActionConfig::Typed(typed) = &plugin_config.action_sets[0].actions[0] else {
-            unreachable!("expected typed action");
-        };
-        let Operation::Fail(fail) = &typed.operation else {
+        let action = &plugin_config.action_sets[0].actions[0];
+        let Operation::Fail(fail) = &action.operation else {
             unreachable!("expected fail operation");
         };
         assert_eq!(fail.log_message, "error has occurred");
-    }
-
-    #[test]
-    fn parse_mixed_legacy_and_typed_actions() {
-        let config = r#"{
-            "services": {
-                "authorino": {
-                    "type": "auth",
-                    "endpoint": "authorino-cluster",
-                    "failureMode": "deny",
-                    "timeout": "24ms"
-                },
-                "limitador": {
-                    "type": "dynamic",
-                    "endpoint": "limitador-cluster",
-                    "failureMode": "deny",
-                    "timeout": "100ms",
-                    "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
-                    "grpcMethod": "ShouldRateLimit"
-                }
-            },
-            "actionSets": [{
-                "name": "mixed",
-                "routeRuleConditions": {
-                    "hostnames": ["example.com"]
-                },
-                "actions": [
-                    {
-                        "service": "authorino",
-                        "scope": "authconfig-A"
-                    },
-                    {
-                        "type": "grpc",
-                        "predicate": "true",
-                        "terminal": false,
-                        "var": "rl_check",
-                        "service": "limitador",
-                        "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: 'test' }",
-                        "onReply": [{
-                            "type": "deny",
-                            "predicate": "rl_check.overall_code == 2",
-                            "terminal": true,
-                            "denyWith": "DenyResponse{status: 429u}"
-                        }]
-                    }
-                ]
-            }]
-        }"#;
-
-        let res = serde_json::from_str::<PluginConfiguration>(config);
-        if let Err(ref e) = res {
-            eprintln!("{e}");
-        }
-        assert!(res.is_ok());
-
-        let plugin_config = res.expect("result is ok");
-        let actions = &plugin_config.action_sets[0].actions;
-        assert_eq!(actions.len(), 2);
-
-        assert!(matches!(&actions[0], ActionConfig::Legacy(_)));
-        assert!(matches!(
-            &actions[1],
-            ActionConfig::Typed(TypedAction {
-                operation: Operation::Grpc(_),
-                ..
-            })
-        ));
     }
 
     #[test]
@@ -1011,8 +527,8 @@ mod test {
             "onReply": []
         }"#;
 
-        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
-        assert!(typed_action.is_guard);
+        let action: Action = serde_json::from_str(config).expect("valid config");
+        assert!(action.is_guard);
     }
 
     #[test]
@@ -1028,12 +544,12 @@ mod test {
             "onReply": []
         }"#;
 
-        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
-        assert!(!typed_action.is_guard);
+        let action: Action = serde_json::from_str(config).expect("valid config");
+        assert!(!action.is_guard);
     }
 
     #[test]
-    fn parse_typed_action_execution_defaults_to_parallel() {
+    fn parse_action_execution_defaults_to_parallel() {
         let config = r#"{
             "type": "deny",
             "predicate": "true",
@@ -1041,12 +557,12 @@ mod test {
             "denyWith": "DenyResponse{status: 403u}"
         }"#;
 
-        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
-        assert_eq!(typed_action.execution, Execution::Parallel);
+        let action: Action = serde_json::from_str(config).expect("valid config");
+        assert_eq!(action.execution, Execution::Parallel);
     }
 
     #[test]
-    fn parse_typed_action_with_sequential_execution() {
+    fn parse_action_with_sequential_execution() {
         let config = r#"{
             "type": "grpc",
             "predicate": "true",
@@ -1058,7 +574,7 @@ mod test {
             "onReply": []
         }"#;
 
-        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
-        assert_eq!(typed_action.execution, Execution::Sequential);
+        let action: Action = serde_json::from_str(config).expect("valid config");
+        assert_eq!(action.execution, Execution::Sequential);
     }
 }
