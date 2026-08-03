@@ -12,14 +12,18 @@ Following is a sample configuration used by the shim.
 ```yaml
 services:
   auth-service:
-    type: auth
+    type: dynamic
     endpoint: auth-cluster
     failureMode: deny
     timeout: 10ms
+    grpcService: envoy.service.auth.v3.Authorization
+    grpcMethod: Check
   ratelimit-service:
-    type: ratelimit
+    type: dynamic
     endpoint: ratelimit-cluster
     failureMode: allow
+    grpcService: envoy.service.ratelimit.v3.RateLimitService
+    grpcMethod: ShouldRateLimit
   tracing-service:
     type: tracing
     endpoint: tracing-cluster
@@ -38,19 +42,28 @@ actionSets:
       - request.host == "test.toystore.com"
       - request.method == "GET"
     actions:
-    - service: auth-service
-      scope: auth-scope-a
-      predicates:
-        - auth.identity.user_id == "alice"
-    - service: ratelimit-service
-      scope: ratelimit-scope-a
-      conditionalData:
-      - predicates:
-        - auth.identity.anonymous == true
-        data:
-        - expression:
-            key: my_header
-            value: request.headers["my-custom-header"]
+    - type: grpc
+      var: auth_check
+      service: auth-service
+      predicate: "true"
+      terminal: false
+      messageBuilder: "envoy.service.auth.v3.CheckRequest { ... }"
+      onReply:
+      - type: deny
+        predicate: auth_check.status.code != 0
+        terminal: true
+        denyWith: "DenyResponse{status: 403u}"
+    - type: grpc
+      var: rl_check
+      service: ratelimit-service
+      predicate: "true"
+      terminal: false
+      messageBuilder: "envoy.service.ratelimit.v3.RateLimitRequest { domain: 'my-domain', hits_addend: 1u, descriptors: [] }"
+      onReply:
+      - type: deny
+        predicate: rl_check.overall_code == 2
+        terminal: true
+        denyWith: "DenyResponse{status: 429u}"
 ```
 
 Top level fields:
@@ -66,16 +79,12 @@ Top level fields:
 
 Each entry under `services` configures an external service that `actions` can call:
 
-| `type`             | Description                                                                                             |
-|--------------------|-----------------------------------------------------------------------------------------------------------|
-| `auth`             | Authorino, via Envoy's `envoy.service.auth.v3.Authorization` / `Check`                                    |
-| `ratelimit`        | Limitador, via Envoy's `envoy.service.ratelimit.v3.RateLimitService` / `ShouldRateLimit`                  |
-| `ratelimit-check`  | Limitador, via the Kuadrant extension `kuadrant.service.ratelimit.v1.RateLimitService` / `CheckRateLimit` |
-| `ratelimit-report` | Limitador, via the Kuadrant extension `kuadrant.service.ratelimit.v1.RateLimitService` / `Report`         |
-| `tracing`          | An OpenTelemetry (OTLP) collector, referenced from `observability.tracing.service`                        |
-| `dynamic`          | Any gRPC service/method, set explicitly via `grpcService`/`grpcMethod`, for use with `grpc` typed actions  |
+| `type`    | Description                                                                                            |
+|-----------|----------------------------------------------------------------------------------------------------------|
+| `dynamic` | Any gRPC service/method, set explicitly via `grpcService`/`grpcMethod`, for use with `grpc` typed actions |
+| `tracing` | An OpenTelemetry (OTLP) collector, referenced from `observability.tracing.service`                       |
 
-Every service also accepts `endpoint` (the Envoy cluster name), `failureMode` (`deny` or `allow`, default `deny`) and `timeout` (a duration string, e.g. `10ms`, default `20ms`).
+Every service also accepts `endpoint` (the Envoy cluster name), `failureMode` (`deny` or `allow`, default `deny`) and `timeout` (a duration string, e.g. `10ms`, default `20ms`). `dynamic` services additionally require `grpcService` and `grpcMethod` fields specifying the gRPC service name and method.
 
 ## Features
 
