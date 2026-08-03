@@ -2,7 +2,7 @@ use crate::configuration;
 use crate::data::{cel::Predicate, Expression};
 use crate::kuadrant::pipeline::tasks::{
     DynamicTask, ExportTracesTask, FailureModeTask, HeadersType, ModifyHeadersTask, Task,
-    TeardownAction, TokenUsageTask, TracingDecoratorTask,
+    TeardownAction, TracingDecoratorTask,
 };
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
@@ -158,66 +158,6 @@ impl Action {
             }
         }
     }
-
-    pub fn collect_body_values(&self) -> Vec<String> {
-        use std::collections::HashSet;
-
-        let mut fields = HashSet::new();
-
-        fields.extend(self.predicate.response_body_values().iter().cloned());
-
-        match &self.operation {
-            Operation::Grpc {
-                message_builder,
-                on_reply,
-                ..
-            } => {
-                fields.extend(message_builder.response_body_values().iter().cloned());
-                fields.extend(on_reply.iter().flat_map(|action| {
-                    let mut reply_fields = Vec::new();
-                    reply_fields.extend(action.predicate.response_body_values().iter().cloned());
-                    match &action.operation {
-                        Operation::Grpc {
-                            message_builder,
-                            on_reply: nested_reply,
-                            ..
-                        } => {
-                            reply_fields
-                                .extend(message_builder.response_body_values().iter().cloned());
-                            reply_fields.extend(
-                                nested_reply
-                                    .iter()
-                                    .flat_map(|nested| nested.collect_body_values()),
-                            );
-                        }
-                        Operation::Deny { deny_with } => {
-                            reply_fields.extend(deny_with.response_body_values().iter().cloned());
-                        }
-                        Operation::Headers { headers, .. } => {
-                            reply_fields.extend(headers.response_body_values().iter().cloned());
-                        }
-                        Operation::Store { expression, .. } => {
-                            reply_fields.extend(expression.response_body_values().iter().cloned());
-                        }
-                        Operation::Fail { .. } => {}
-                    }
-                    reply_fields
-                }));
-            }
-            Operation::Deny { deny_with } => {
-                fields.extend(deny_with.response_body_values().iter().cloned());
-            }
-            Operation::Headers { headers, .. } => {
-                fields.extend(headers.response_body_values().iter().cloned());
-            }
-            Operation::Store { expression, .. } => {
-                fields.extend(expression.response_body_values().iter().cloned());
-            }
-            Operation::Fail { .. } => {}
-        }
-
-        fields.into_iter().collect()
-    }
 }
 
 #[derive(Debug)]
@@ -352,13 +292,6 @@ impl Blueprint {
                         }
                     }
                     ServiceInstance::Dynamic(_) => {
-                        let body_values = action.collect_body_values();
-                        if !body_values.is_empty() {
-                            tasks.push(Box::new(TokenUsageTask::with_expected_response_fields(
-                                body_values,
-                            )));
-                        }
-
                         if let Some(mut task) = action.to_core_task(ctx) {
                             let abort_on_failure =
                                 service.failure_mode() == configuration::FailureMode::Deny;

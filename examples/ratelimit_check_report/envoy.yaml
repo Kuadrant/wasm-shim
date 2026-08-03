@@ -81,6 +81,13 @@ static_resources:
                                       ]
                                     },
                                     {
+                                      "type": "store",
+                                      "predicate": "true",
+                                      "terminal": false,
+                                      "path": "kuadrant.internal.response.body",
+                                      "value": "{\"total_tokens\": responseBodyJSON(\"/usage/total_tokens\")}"
+                                    },
+                                    {
                                       "type": "grpc",
                                       "execution": "sequential",
                                       "var": "report_response",
@@ -89,7 +96,7 @@ static_resources:
                                       "terminal": false,
                                       "isGuard": false,
                                       "label": "ratelimit_report",
-                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: uint(responseBodyJSON(\"/usage/total_tokens\")), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: uint(kuadrant.internal.response.body.total_tokens), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
                                       "onReply": [
                                         { "type": "fail", "predicate": "!has(report_response.overall_code)", "terminal": false, "isGuard": false, "logMessage": "Rate limit report failed: invalid gRPC response" }
                                       ]

@@ -31,7 +31,7 @@ fn it_processes_usage_event_across_chunks_until_done() {
             descriptors: [
                 envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
                     entries: (
-                        (responseBodyJSON('/usage/total_tokens') == 11) ?
+                        (kuadrant.internal.response.body.total_tokens == 11) ?
                         [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
                             key: "request.method",
                             value: string(request.method)
@@ -61,10 +61,17 @@ fn it_processes_usage_event_across_chunks_until_done() {
             },
             "actions": [
             {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
                 "type": "grpc",
                 "var": "report_response",
                 "service": "limitador",
-                "predicate": "responseBodyJSON('/usage/total_tokens') == 11",
+                "predicate": "kuadrant.internal.response.body.total_tokens == 11",
                 "terminal": false,
                 "isGuard": false,
                 "label": "ratelimit_report",
@@ -204,7 +211,7 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             descriptors: [
                 envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
                     entries: (
-                        (responseBodyJSON('/usage/total_tokens') == 42) ?
+                        (kuadrant.internal.response.body.total_tokens == 42) ?
                         [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
                             key: "request.method",
                             value: string(request.method)
@@ -234,10 +241,17 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
             },
             "actions": [
             {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
                 "type": "grpc",
                 "var": "report_response",
                 "service": "limitador",
-                "predicate": "responseBodyJSON('/usage/total_tokens') == 42",
+                "predicate": "kuadrant.internal.response.body.total_tokens == 42",
                 "terminal": false,
                 "isGuard": false,
                 "label": "ratelimit_report",

@@ -55,7 +55,7 @@ fn it_checks_and_reports() {
                         (request.method == 'POST') ?
                         [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
                             key: "model",
-                            value: string(responseBodyJSON('/usage/total_tokens'))
+                            value: string(kuadrant.internal.response.body.total_tokens)
                         }] :
                         []
                     )
@@ -122,6 +122,13 @@ fn it_checks_and_reports() {
                         "logMessage": "Unknown rate limit response code from ratelimit_response"
                     }
                 ]
+            },
+            {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
             },
             {
                 "type": "grpc",
@@ -299,7 +306,7 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             descriptors: [
                 envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
                     entries: (
-                        (responseBodyJSON('/usage/total_tokens') == 11
+                        (kuadrant.internal.response.body.total_tokens == 11
                             && request.url_path.startsWith('/admin/toy')) ?
                         [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
                             key: "request.method",
@@ -330,10 +337,17 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             },
             "actions": [
             {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
                 "type": "grpc",
                 "var": "report_response",
                 "service": "limitador",
-                "predicate": "responseBodyJSON('/usage/total_tokens') == 11 && request.url_path.startsWith('/admin/toy')",
+                "predicate": "kuadrant.internal.response.body.total_tokens == 11 && request.url_path.startsWith('/admin/toy')",
                 "terminal": false,
                 "isGuard": false,
                 "label": "ratelimit_report",
@@ -478,7 +492,7 @@ fn it_handles_errors_on_response_body() {
     let report_msg = r#"
         envoy.service.ratelimit.v3.RateLimitRequest {
             domain: "RLS-domain",
-            hits_addend: responseBodyJSON('/usage/total_tokens'),
+            hits_addend: kuadrant.internal.response.body.total_tokens,
             descriptors: [
                 envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
                     entries: [
@@ -509,6 +523,13 @@ fn it_handles_errors_on_response_body() {
                 "hostnames": ["*.toystore.com", "example.com"]
             },
             "actions": [
+            {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
             {
                 "type": "grpc",
                 "var": "report_response",
@@ -603,11 +624,19 @@ fn it_handles_errors_on_response_body() {
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
         .expect_log(
-            Some(LogLevel::Warn),
-            Some("Missing json property: /usage/total_tokens"),
+            Some(LogLevel::Error),
+            Some("JSON parse error: UnexpectedByte(115)"),
+        )
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("Failed to parse body for 'kuadrant.internal.response.body': AttributeError::Parse { \"JSON parse error: UnexpectedByte(115)\" }"),
         )
         .expect_log(Some(LogLevel::Error), Some("Task failed: \"0\""))
-        // on response headers/body, expected action is Continue
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("Failed to evaluate message builder: CelError::Resolve { UndeclaredReference(\"kuadrant\") }"),
+        )
+        .expect_log(Some(LogLevel::Error), Some("Task failed: \"1\""))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
