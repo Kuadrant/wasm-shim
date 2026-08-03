@@ -43,10 +43,12 @@ fn it_limits_based_on_source_address() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [

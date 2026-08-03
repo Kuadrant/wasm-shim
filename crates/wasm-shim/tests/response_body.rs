@@ -66,16 +66,20 @@ fn it_checks_and_reports() {
     let cfg = r#"{
         "services": {
             "limitador-check": {
-                "type": "ratelimit-check",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "CheckRateLimit"
             },
             "limitador-report": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [
@@ -310,10 +314,12 @@ fn it_reads_request_attr_in_advance_when_response_body() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [
@@ -488,10 +494,12 @@ fn it_handles_errors_on_response_body() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [

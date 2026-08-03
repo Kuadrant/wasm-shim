@@ -16,14 +16,18 @@ Each action should hit the same limitador instance, decrementing the counter twi
 ```yaml
 "services": {
   "limitadorA": {
-    "type": "ratelimit",
+    "type": "dynamic",
     "endpoint": "limitador",
-    "failureMode": "deny"
+    "failureMode": "deny",
+    "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+    "grpcMethod": "ShouldRateLimit"
   },
   "limitadorB": {
-    "type": "ratelimit",
+    "type": "dynamic",
     "endpoint": "limitador",
-    "failureMode": "deny"
+    "failureMode": "deny",
+    "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+    "grpcMethod": "ShouldRateLimit"
   }
 },
 "actionSets": [

@@ -45,10 +45,12 @@ static_resources:
                             {
                               "services": {
                                 "ratelimit-service": {
-                                  "type": "ratelimit",
+                                  "type": "dynamic",
                                   "endpoint": "limitador",
                                   "failureMode": "deny",
-                                  "timeout": "5s"
+                                  "timeout": "5s",
+                                  "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                                  "grpcMethod": "ShouldRateLimit"
                                 }
                               },
                               "actionSets": [

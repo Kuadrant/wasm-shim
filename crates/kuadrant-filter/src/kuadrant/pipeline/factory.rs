@@ -229,12 +229,12 @@ mod tests {
         services.insert(
             service_name.to_string(),
             Service {
-                service_type: ServiceType::Auth,
+                service_type: ServiceType::Dynamic,
                 endpoint: "test-cluster".to_string(),
                 failure_mode: FailureMode::Deny,
                 timeout: Timeout::default(),
-                grpc_service: None,
-                grpc_method: None,
+                grpc_service: Some("envoy.service.auth.v3.Authorization".to_string()),
+                grpc_method: Some("Check".to_string()),
             },
         );
 
@@ -288,12 +288,12 @@ mod tests {
         services.insert(
             "test-service".to_string(),
             Service {
-                service_type: ServiceType::Auth,
+                service_type: ServiceType::Dynamic,
                 endpoint: "test-cluster".to_string(),
                 failure_mode: FailureMode::Deny,
                 timeout: Timeout::default(),
-                grpc_service: None,
-                grpc_method: None,
+                grpc_service: Some("envoy.service.auth.v3.Authorization".to_string()),
+                grpc_method: Some("Check".to_string()),
             },
         );
 

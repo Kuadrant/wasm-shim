@@ -45,10 +45,12 @@ fn it_processes_usage_event_across_chunks_until_done() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [
@@ -216,10 +218,12 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [

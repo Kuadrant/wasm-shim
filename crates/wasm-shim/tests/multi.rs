@@ -30,16 +30,20 @@ fn config() -> String {
     r#"{
     "services": {
         "authorino": {
-            "type": "auth",
+            "type": "dynamic",
             "endpoint": "authorino-cluster",
             "failureMode": "deny",
-            "timeout": "5s"
+            "timeout": "5s",
+            "grpcService": "envoy.service.auth.v3.Authorization",
+            "grpcMethod": "Check"
         },
         "limitador": {
-            "type": "ratelimit",
+            "type": "dynamic",
             "endpoint": "limitador-cluster",
             "failureMode": "deny",
-            "timeout": "5s"
+            "timeout": "5s",
+            "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+            "grpcMethod": "ShouldRateLimit"
         }
     },
     "actionSets": [
@@ -432,16 +436,20 @@ fn authenticated_one_ratelimit_action_matches() {
     let cfg = r#"{
         "services": {
             "authorino": {
-                "type": "auth",
+                "type": "dynamic",
                 "endpoint": "authorino-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.auth.v3.Authorization",
+                "grpcMethod": "Check"
             },
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -681,16 +689,20 @@ fn it_handles_array_metadata_in_predicates() {
     let cfg = r#"{
         "services": {
             "authorino": {
-                "type": "auth",
+                "type": "dynamic",
                 "endpoint": "authorino-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.auth.v3.Authorization",
+                "grpcMethod": "Check"
             },
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [

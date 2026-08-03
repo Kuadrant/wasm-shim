@@ -115,10 +115,12 @@ fn it_limits() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -291,10 +293,12 @@ fn it_resolved_and_passes_request_data() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -461,10 +465,12 @@ fn it_passes_additional_headers() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -636,10 +642,12 @@ fn it_rate_limits_with_empty_predicates() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -782,10 +790,12 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [

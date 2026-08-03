@@ -45,14 +45,18 @@ static_resources:
                             {
                               "services": {
                                 "ratelimit-check-service": {
-                                  "type": "ratelimit-check",
+                                  "type": "dynamic",
                                   "endpoint": "limitador",
-                                  "failureMode": "deny"
+                                  "failureMode": "deny",
+                                  "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                                  "grpcMethod": "CheckRateLimit"
                                 },
                                 "ratelimit-report-service": {
-                                  "type": "ratelimit-report",
+                                  "type": "dynamic",
                                   "endpoint": "limitador",
-                                  "failureMode": "deny"
+                                  "failureMode": "deny",
+                                  "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                                  "grpcMethod": "Report"
                                 }
                               },
                               "actionSets": [

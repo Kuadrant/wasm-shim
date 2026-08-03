@@ -13,10 +13,12 @@ fn config() -> String {
     r#"{
     "services": {
         "authorino": {
-            "type": "auth",
+            "type": "dynamic",
             "endpoint": "authorino-cluster",
             "failureMode": "deny",
-            "timeout": "5s"
+            "timeout": "5s",
+            "grpcService": "envoy.service.auth.v3.Authorization",
+            "grpcMethod": "Check"
         }
     },
     "actionSets": [
@@ -261,10 +263,12 @@ fn it_passes_request_data() {
     let cfg = r#"{
         "services": {
             "authorino": {
-                "type": "auth",
+                "type": "dynamic",
                 "endpoint": "authorino-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.auth.v3.Authorization",
+                "grpcMethod": "Check"
             }
         },
         "actionSets": [
@@ -574,11 +578,13 @@ fn it_does_not_fold_auth_actions() {
     let auth_msg = auth_check_request_cel("auth-scope");
     let cfg = r#"{
         "services": {
-            "auth": {
-                "type": "auth",
+            "authorino": {
+                "type": "dynamic",
                 "endpoint": "authorino-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.auth.v3.Authorization",
+                "grpcMethod": "Check"
             }
         },
         "actionSets": [
@@ -592,7 +598,7 @@ fn it_does_not_fold_auth_actions() {
                 "type": "grpc",
                 "execution": "sequential",
                 "var": "auth_response",
-                "service": "auth",
+                "service": "authorino",
                 "predicate": "true",
                 "terminal": false,
                 "label": "auth",
@@ -637,7 +643,7 @@ fn it_does_not_fold_auth_actions() {
                 "type": "grpc",
                 "execution": "sequential",
                 "var": "auth_response",
-                "service": "auth",
+                "service": "authorino",
                 "predicate": "true",
                 "terminal": false,
                 "label": "auth",

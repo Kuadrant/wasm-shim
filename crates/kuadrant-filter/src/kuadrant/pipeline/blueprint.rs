@@ -518,7 +518,7 @@ mod tests {
         let descriptor_manager = Arc::new(DescriptorManager::default());
         (
             name.to_string(),
-            ServiceInstance::Auth(Arc::new(DynamicService::new(
+            ServiceInstance::Dynamic(Arc::new(DynamicService::new(
                 "test-cluster".to_string(),
                 "envoy.service.auth.v3.Authorization".to_string(),
                 "Check".to_string(),

@@ -43,10 +43,12 @@ fn it_fails_on_first_action_grpc_call() {
     let cfg = r#"{
         "services": {
             "mistyped-service": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "does-not-exist",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -202,16 +204,20 @@ fn it_fails_on_second_action_grpc_call() {
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             },
             "mistyped-service": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "does-not-exist",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -418,10 +424,12 @@ fn it_fails_on_first_action_grpc_response() {
     let cfg = r#"{
         "services": {
             "limitador-unreachable": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "unreachable-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -575,16 +583,20 @@ fn it_fails_on_second_action_grpc_response() {
     let cfg = r#"{
         "services": {
             "limitador": {
-               "type": "ratelimit",
+               "type": "dynamic",
                "endpoint": "limitador-cluster",
                "failureMode": "deny",
-               "timeout": "5s"
+               "timeout": "5s",
+               "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+               "grpcMethod": "ShouldRateLimit"
             },
             "limitador-unreachable": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "unreachable-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [

@@ -45,9 +45,11 @@ static_resources:
                         {
                           "services": {
                             "limitador": {
-                              "type": "ratelimit",
+                              "type": "dynamic",
                               "endpoint": "limitador",
-                              "failureMode": "deny"
+                              "failureMode": "deny",
+                              "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                              "grpcMethod": "ShouldRateLimit"
                             }
                           },
                           "actionSets": [
