@@ -41,6 +41,14 @@ fn default_is_guard() -> bool {
     true
 }
 
+#[derive(Deserialize, Debug, Clone, Copy, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Execution {
+    #[default]
+    Parallel,
+    Sequential,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TypedAction {
@@ -48,6 +56,8 @@ pub struct TypedAction {
     pub terminal: bool,
     #[serde(default = "default_is_guard")]
     pub is_guard: bool,
+    #[serde(default)]
+    pub execution: Execution,
     #[serde(default)]
     pub sources: Vec<String>,
     #[serde(flatten)]
@@ -1020,5 +1030,35 @@ mod test {
 
         let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
         assert!(!typed_action.is_guard);
+    }
+
+    #[test]
+    fn parse_typed_action_execution_defaults_to_parallel() {
+        let config = r#"{
+            "type": "deny",
+            "predicate": "true",
+            "terminal": true,
+            "denyWith": "DenyResponse{status: 403u}"
+        }"#;
+
+        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
+        assert_eq!(typed_action.execution, Execution::Parallel);
+    }
+
+    #[test]
+    fn parse_typed_action_with_sequential_execution() {
+        let config = r#"{
+            "type": "grpc",
+            "predicate": "true",
+            "terminal": false,
+            "execution": "sequential",
+            "var": "rl",
+            "service": "limitador",
+            "messageBuilder": "test",
+            "onReply": []
+        }"#;
+
+        let typed_action: TypedAction = serde_json::from_str(config).expect("valid config");
+        assert_eq!(typed_action.execution, Execution::Sequential);
     }
 }

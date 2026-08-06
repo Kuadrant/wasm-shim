@@ -112,6 +112,7 @@ Fields common to every typed action:
 | `predicate` | CEL predicate. The action only runs when this evaluates to `true`                                                        |
 | `terminal`  | When `true`, no further actions in the `ActionSet` are evaluated after this one                                          |
 | `isGuard`   | Defaults to `true`. When `true`, later filter phases wait for this action to complete before continuing                  |
+| `execution` | `parallel` (default) or `sequential`. A `sequential` action waits for all prior actions to complete and blocks subsequent actions until it finishes |
 | `sources`   | Names (`var`) of other `grpc` actions whose response this action's expressions may reference                            |
 
 Operation-specific fields:
