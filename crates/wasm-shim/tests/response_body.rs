@@ -1,4 +1,4 @@
-use crate::util::common::{wasm_module, LOG_LEVEL};
+use crate::util::common::{json_escape_cel, wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -27,19 +27,59 @@ fn it_checks_and_reports() {
     // Two actions configured:
     // 1. check which runs in the request phase
     // 2. report which requires the request headers and the response body
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain-A",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (request.method == 'POST') ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain-B",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (request.method == 'POST') ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "model",
+                            value: string(kuadrant.internal.response.body.total_tokens)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador-check": {
-                "type": "ratelimit-check",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "CheckRateLimit"
             },
             "limitador-report": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [
@@ -53,44 +93,68 @@ fn it_checks_and_reports() {
             },
             "actions": [
             {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "ratelimit_response",
                 "service": "limitador-check",
-                "scope": "RLS-domain-A",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "request.method == 'POST'"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "request.method",
-                                "value": "request.method"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "request.method == 'POST'",
+                "terminal": false,
+                "label": "ratelimit",
+                "messageBuilder": "__RATELIMIT_MSG__",
+                "onReply": [
+                    {
+                        "type": "deny",
+                        "predicate": "ratelimit_response.overall_code == 2",
+                        "terminal": true,
+                        "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                    },
+                    {
+                        "type": "headers",
+                        "predicate": "ratelimit_response.overall_code == 1",
+                        "terminal": false,
+                        "target": "response",
+                        "headers": "ratelimit_response.response_headers_to_add"
+                    },
+                    {
+                        "type": "fail",
+                        "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                        "terminal": true,
+                        "logMessage": "Unknown rate limit response code from ratelimit_response"
+                    }
+                ]
             },
             {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "report_response",
                 "service": "limitador-report",
-                "scope": "RLS-domain-B",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "request.method == 'POST'"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "model",
-                                "value": "responseBodyJSON('/usage/total_tokens')"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "request.method == 'POST'",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
             }
             ]
         }]
-    }"#;
+    }"#
+    .replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg))
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -235,13 +299,34 @@ fn it_reads_request_attr_in_advance_when_response_body() {
     // There is only one action that requires response body on predicates
     // That action also has predicates and data expressions that require request attributes
     // tracing headers also need to be read in advance
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (kuadrant.internal.response.body.total_tokens == 11
+                            && request.url_path.startsWith('/admin/toy')) ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [
@@ -252,27 +337,35 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             },
             "actions": [
             {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
+                "type": "grpc",
+                "var": "report_response",
                 "service": "limitador",
-                "scope": "RLS-domain",
-                "conditionalData": [
-                {
-                    "predicates": [
-                        "responseBodyJSON('/usage/total_tokens') == 11",
-                        "request.url_path.startsWith('/admin/toy')"
-                    ],
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "request.method",
-                                "value": "request.method"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "kuadrant.internal.response.body.total_tokens == 11 && request.url_path.startsWith('/admin/toy')",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
             }
             ]
         }]
-    }"#;
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -396,13 +489,31 @@ fn it_handles_errors_on_response_body() {
         .unwrap();
 
     let root_context = 1;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: kuadrant.internal.response.body.total_tokens,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "a",
+                            value: string('1')
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit-report",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
             }
         },
         "actionSets": [
@@ -413,29 +524,35 @@ fn it_handles_errors_on_response_body() {
             },
             "actions": [
             {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
+                "type": "grpc",
+                "var": "report_response",
                 "service": "limitador",
-                "scope": "RLS-domain",
-                "conditionalData": [
-                {
-                    "data": [
-                        {
-                            "expression": {
-                                "key": "a",
-                                "value": "'1'"
-                            }
-                        },
-                        {
-                            "expression": {
-                                "key": "ratelimit.hits_addend",
-                                "value": "responseBodyJSON('/usage/total_tokens')"
-                            }
-                        }
-                    ]
-                }]
+                "predicate": "true",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
             }
             ]
         }]
-    }"#;
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)
@@ -507,11 +624,19 @@ fn it_handles_errors_on_response_body() {
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(response_body))
         .expect_log(
-            Some(LogLevel::Warn),
-            Some("Missing json property: /usage/total_tokens"),
+            Some(LogLevel::Error),
+            Some("JSON parse error: UnexpectedByte(115)"),
+        )
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("Failed to parse body for 'kuadrant.internal.response.body': AttributeError::Parse { \"JSON parse error: UnexpectedByte(115)\" }"),
         )
         .expect_log(Some(LogLevel::Error), Some("Task failed: \"0\""))
-        // on response headers/body, expected action is Continue
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("Failed to evaluate message builder: CelError::Resolve { UndeclaredReference(\"kuadrant\") }"),
+        )
+        .expect_log(Some(LogLevel::Error), Some("Task failed: \"1\""))
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }

@@ -5,7 +5,6 @@ mod failure_mode;
 mod headers;
 mod send_reply;
 mod store;
-mod token_usage;
 mod tracing_decorator;
 
 pub use dynamic::DynamicTask;
@@ -15,7 +14,6 @@ pub use failure_mode::FailureModeTask;
 pub use headers::{HeadersType, ModifyHeadersTask};
 pub use send_reply::SendReplyTask;
 pub use store::StoreTask;
-pub use token_usage::TokenUsageTask;
 use tracing::debug;
 pub use tracing_decorator::TracingDecoratorTask;
 

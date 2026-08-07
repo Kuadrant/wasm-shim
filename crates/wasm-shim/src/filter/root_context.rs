@@ -205,10 +205,12 @@ mod tests {
         let config_str = serde_json::json!({
             "services": {
                 "test-service": {
-                    "type": "auth",
+                    "type": "dynamic",
                     "endpoint": "test-cluster",
                     "failureMode": "deny",
-                    "timeout": "5s"
+                    "timeout": "5s",
+                    "grpcService": "envoy.service.auth.v3.Authorization",
+                    "grpcMethod": "Check"
                 }
             },
             "actionSets": [{

@@ -109,8 +109,6 @@ pub struct Expression {
     expression: CelExpression,
     extended: bool,
     needs_grpc: bool,
-    // todo(@adam-cattermole): Temporary field for legacy config translation, remove when legacy support is dropped
-    source: String,
 }
 
 pub type EvalResult = Result<AttributeState<Value>, CelError>;
@@ -153,7 +151,6 @@ fn is_host_property_root(root: &str) -> bool {
 
 impl Expression {
     pub fn new_expression(expression: &str, extended: bool) -> Result<Self, ParseErrors> {
-        let source = expression.to_string();
         let expression = Parser::new()
             .enable_optional_syntax(true)
             .parse(expression)?;
@@ -194,7 +191,6 @@ impl Expression {
             expression,
             extended,
             needs_grpc,
-            source,
         })
     }
 
@@ -332,11 +328,6 @@ impl Expression {
 
     pub fn has_response_body_deps(&self) -> bool {
         !self.response_body_values.is_empty()
-    }
-
-    // todo(@adam-cattermole): Temporary method for legacy config translation, remove when legacy support is dropped
-    pub fn source(&self) -> &str {
-        &self.source
     }
 
     fn resolve_grpc(&self, req_ctx: &ReqRespCtx) -> Option<Value> {
