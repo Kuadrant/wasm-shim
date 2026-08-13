@@ -18,6 +18,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: pre-release
+  cancel-in-progress: false
+
 jobs:
   setup:
     name: Setup
@@ -64,26 +68,32 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source branch
+      - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source-branch }}
+          ref: ${{ needs.setup.outputs.release-branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create working branch
         run: |
-          git checkout -b "pre-release-v${{ needs.setup.outputs.version }}"
+          PRE_RELEASE_BRANCH="pre-release-v${{ needs.setup.outputs.version }}"
+          if git ls-remote --exit-code origin "refs/heads/${PRE_RELEASE_BRANCH}" >/dev/null 2>&1; then
+            echo "::error::Pre-release branch '${PRE_RELEASE_BRANCH}' already exists. Delete it first or use a different version."
+            exit 1
+          fi
+          git checkout -b "${PRE_RELEASE_BRANCH}"
 
       - name: Prepare release
         uses: ./.github/actions/prepare-release
         with:
           version: ${{ needs.setup.outputs.version }}
-          push-branch: "false"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit and push changes
         run: |
-          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-          git config user.name "${{ github.actor }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -s -m "chore: prepare release v${{ needs.setup.outputs.version }}"
           git push --set-upstream origin "pre-release-v${{ needs.setup.outputs.version }}"
@@ -114,6 +124,7 @@ jobs:
 
   bump-dev:
     name: Bump Dev Version
+    if: inputs.source-branch == 'main'
     needs: [setup, prepare-release]
     runs-on: ubuntu-latest
     steps:
@@ -140,19 +151,23 @@ jobs:
 
       - name: Create working branch
         run: |
-          git checkout -b "post-release-v${{ needs.setup.outputs.version }}"
-
-      - name: Update Cargo.toml to next dev version
-        run: |
-          sed -i '0,/^version = ".*"/s//version = "${{ steps.next.outputs.next-dev }}"/' Cargo.toml
+          POST_RELEASE_BRANCH="post-release-v${{ needs.setup.outputs.version }}"
+          if git ls-remote --exit-code origin "refs/heads/${POST_RELEASE_BRANCH}" >/dev/null 2>&1; then
+            echo "::error::Post-release branch '${POST_RELEASE_BRANCH}' already exists. Delete it first or use a different version."
+            exit 1
+          fi
+          git checkout -b "${POST_RELEASE_BRANCH}"
 
       - name: Set up Rust and WASM environment
         uses: ./.github/actions/setup-rust-wasm
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update Cargo.lock
-        run: cargo check --target wasm32-wasip1
+      - run: cargo install cargo-edit --version 0.13.13
+
+      - name: Update Cargo.toml to next dev version
+        run: |
+          cargo set-version --offline -p wasm-shim "${{ steps.next.outputs.next-dev }}"
 
       - uses: ./.github/actions/install-yq
 
@@ -161,10 +176,13 @@ jobs:
           chmod +x .github/scripts/sync-release-yaml.sh
           .github/scripts/sync-release-yaml.sh
 
+      - name: Update Cargo.lock
+        run: cargo check --target wasm32-wasip1
+
       - name: Commit and push changes
         run: |
-          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-          git config user.name "${{ github.actor }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock release.yaml
           git commit -s -m "chore: bump version to ${{ steps.next.outputs.next-dev }}"
           git push --set-upstream origin "post-release-v${{ needs.setup.outputs.version }}"

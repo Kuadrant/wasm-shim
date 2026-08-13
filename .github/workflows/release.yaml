@@ -10,7 +10,11 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.release-branch }}
+  cancel-in-progress: false
 
 jobs:
   read-version:
@@ -55,6 +59,19 @@ jobs:
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Releasing version $VERSION (tag: $TAG, prerelease: $PRERELEASE)"
 
+      - name: Validate branch matches version
+        env:
+          RELEASE_BRANCH: ${{ inputs.release-branch }}
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          MAJOR=$(echo "$VERSION" | cut --delimiter=. --fields=1)
+          MINOR=$(echo "$VERSION" | cut --delimiter=. --fields=2)
+          EXPECTED_BRANCH="release-${MAJOR}.${MINOR}"
+          if [[ "$RELEASE_BRANCH" != "$EXPECTED_BRANCH" ]]; then
+            echo "::error::Branch '${RELEASE_BRANCH}' does not match version ${VERSION} (expected branch: $EXPECTED_BRANCH)"
+            exit 1
+          fi
+
       - name: Check for existing release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,32 +99,43 @@ jobs:
           rust-components: rustfmt, clippy
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: cargo build (wasm)
-        run: cargo build --release --target wasm32-wasip1
-
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: cargo check (wasm)
+        run: cargo check --locked --release --target wasm32-wasip1
 
       - name: cargo test
-        run: cargo test
+        run: cargo test --locked
 
   tag:
     name: Tag
     needs: [read-version, smoke-tests]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout release branch
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.release-branch }}
+          fetch-depth: 0
 
       - name: Create and push tag
+        env:
+          TAG: ${{ needs.read-version.outputs.tag }}
         run: |
-          git tag "${{ needs.read-version.outputs.tag }}"
-          git push origin "${{ needs.read-version.outputs.tag }}"
+          if git tag --list "$TAG" | grep --quiet .; then
+            echo "::error::Tag $TAG already exists"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "$TAG" --message "Release $TAG"
+          git push origin "$TAG"
 
   build-wasm:
     name: Build WASM Binary
@@ -154,6 +182,8 @@ jobs:
     name: Create GitHub Release
     needs: [read-version, build-wasm, build-image]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout tag
         uses: actions/checkout@v6

@@ -11,6 +11,8 @@ if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
   exit 1
 fi
 
+# On main, Cargo.toml has -dev versions but release.yaml uses 0.0.0 sentinel.
+# Strip -dev suffix: if present, write 0.0.0 instead.
 if [[ "$VERSION" == *-dev* ]]; then
   VERSION="0.0.0"
 fi
