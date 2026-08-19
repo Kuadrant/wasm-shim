@@ -2,35 +2,72 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  pull_request:
+    types:
+    - closed
+    branches:
+      - 'release-[0-9]+.[0-9]+'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
 jobs:
-  upload-assets:
-    name: Release Wasm Binary
+  release-wasm-shim:
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    name: Publish Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - name: Checkout code
+        uses: actions/checkout@v6
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: wasm32-wasip1
-      - uses: arduino/setup-protoc@v3
+          token: ${{ secrets.KUADRANT_DEV_PAT }}
+
+      - name: Extract version from Cargo.toml
+        id: extract_version
+        run: |
+          VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "TAG=v$VERSION" >> $GITHUB_ENV
+          if [[ "$VERSION" =~ - ]]; then
+            echo "PRERELEASE=true" >> $GITHUB_ENV
+          else
+            echo "PRERELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Check tag presence
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/${{ env.TAG }}$"; then
+            echo "Tag ${{ env.TAG }} already exists - skipping release"
+            exit 1
+          else
+            echo "Tag ${{ env.TAG }} does not exist - proceeding with release"
+          fi
+
+      - name: Set up Rust and WASM environment
+        uses: ./.github/actions/setup-rust-wasm
         with:
-          version: "3.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions-rs/cargo@v1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build WASM binary
+        run: cargo build --release --target wasm32-wasip1
+
+      - name: Rename WASM binary
+        run: |
+          cp target/wasm32-wasip1/release/wasm_shim.wasm kuadrant-wasm-shim-${{ env.TAG }}
+
+      - name: Create and push tag
+        run: |
+          git tag ${{ env.TAG }}
+          git push origin ${{ env.TAG }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          command: build
-          args: --release --target wasm32-wasip1
-      - uses: shogo82148/actions-upload-release-asset@v1
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: target/wasm32-wasip1/release/wasm_shim.wasm
-          asset_content_type: application/wasm
-          asset_name: kuadrant-wasm-shim-${{ github.ref_name }}
+          name: ${{ env.TAG }}
+          tag_name: ${{ env.TAG }}
+          prerelease: ${{ env.PRERELEASE }}
+          generate_release_notes: true
+          files: kuadrant-wasm-shim-${{ env.TAG }}
+          token: ${{ secrets.KUADRANT_DEV_PAT }}
