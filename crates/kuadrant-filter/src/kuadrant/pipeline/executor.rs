@@ -145,7 +145,7 @@ impl Pipeline {
     }
 
     pub fn eval(mut self) -> PipelineState {
-        let tasks = self.task_queue.drain(..).collect();
+        let tasks = std::mem::take(&mut self.task_queue);
         match self.process_tasks(tasks) {
             ProcessOutcome::Terminated => {
                 self.execute_teardown();
