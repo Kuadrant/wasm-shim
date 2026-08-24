@@ -101,7 +101,7 @@ impl Pipeline {
     }
 
     pub fn eval(mut self) -> PipelineState {
-        let tasks_to_process: Vec<_> = self.task_queue.drain(..).collect();
+        let tasks_to_process: Vec<_> = std::mem::take(&mut self.task_queue);
 
         for task in tasks_to_process {
             if task
