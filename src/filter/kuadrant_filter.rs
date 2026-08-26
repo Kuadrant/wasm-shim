@@ -1,5 +1,6 @@
 use crate::kuadrant::{Pipeline, PipelineFactory, PipelineState, ReqRespCtx};
 use crate::metrics::METRICS;
+use proxy_wasm::hostcalls;
 use proxy_wasm::traits::{Context, HttpContext};
 use proxy_wasm::types::Action;
 use std::ops::Not;
@@ -122,7 +123,15 @@ impl HttpContext for KuadrantFilter {
             Err(e) => {
                 error!("#{} failed to build pipeline: {:?}", self.context_id, e);
                 METRICS.errors().increment();
-                // todo(adam-cattermole): we should deny the request
+                #[allow(clippy::panic)]
+                hostcalls::send_http_response(500, Default::default(), Some(b"Internal Server Error.\n"))
+                    .unwrap_or_else(|err| {
+                               error!(
+                                   "#{} CRITICAL: Failed to send error response: {:?}. WASM runtime is in an invalid state",
+                                   self.context_id, err
+                               );
+                               panic!("CRITICAL: Failed to send HTTP reply after pipeline build failure");
+                           });
                 Action::Continue
             }
         }
