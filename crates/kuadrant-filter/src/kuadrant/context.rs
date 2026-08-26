@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, error, warn};
 
 use crate::data::attribute::{wasm_prop, AttributeError, AttributeState, AttributeValue, Path};
-use crate::data::{Expression, Headers};
+use crate::data::Headers;
 use crate::kuadrant::cache::{AttributeCache, CachedValue};
 use crate::kuadrant::pipeline::tasks::Task;
 use crate::kuadrant::resolver::{AttributeResolver, MapType};
@@ -16,12 +16,9 @@ use uuid::Uuid;
 
 const X_REQUEST_ID_HEADER: &str = "x-request-id";
 
-type RequestData = ((String, String), Expression);
-
 pub struct ReqRespCtx {
     backend: Arc<dyn AttributeResolver>,
     cache: Arc<AttributeCache>,
-    request_data: Option<Vec<RequestData>>,
     pub request_body: BodyContext,
     pub response_body: BodyContext,
     // todo(refactor): we should handle token here
@@ -38,7 +35,6 @@ impl ReqRespCtx {
         Self {
             backend,
             cache: Arc::new(AttributeCache::new()),
-            request_data: None,
             request_body: BodyContext::default(),
             response_body: BodyContext::default(),
             grpc_response_data: None,
@@ -48,11 +44,6 @@ impl ReqRespCtx {
             barrier: Barrier::default(),
             cel: CelScope::default(),
         }
-    }
-
-    pub fn with_request_data(mut self, request_data: Vec<RequestData>) -> Self {
-        self.request_data = Some(request_data);
-        self
     }
 
     pub fn extract_trace_context(&mut self) {

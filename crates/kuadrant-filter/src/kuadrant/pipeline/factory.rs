@@ -16,11 +16,8 @@ use std::fmt::Display;
 use std::sync::Arc;
 use tracing::debug;
 
-type RequestData = ((String, String), Expression);
-
 pub struct PipelineFactory {
     index: Trie<String, Vec<Arc<Blueprint>>>,
-    request_data: Arc<Vec<RequestData>>,
     fallback_blueprint: Option<Arc<Blueprint>>,
 }
 
@@ -43,7 +40,6 @@ impl Default for PipelineFactory {
     fn default() -> Self {
         Self {
             index: Trie::new(),
-            request_data: Arc::new(Vec::new()),
             fallback_blueprint: None,
         }
     }
@@ -72,23 +68,6 @@ impl PipelineFactory {
             .cloned()
             .unwrap_or(ServiceInstance::Tracing(None));
 
-        let request_data_raw: Vec<((String, String), String)> = config
-            .request_data
-            .iter()
-            .map(|(k, v)| {
-                let (domain, field) = domain_and_field_name(k);
-                ((domain.to_owned(), field.to_owned()), v.clone())
-            })
-            .collect();
-
-        let mut request_data: Vec<((String, String), Expression)> = request_data_raw
-            .into_iter()
-            .filter_map(|((domain, field), v)| {
-                Expression::new(&v).ok().map(|expr| ((domain, field), expr))
-            })
-            .collect();
-        request_data.sort_by(|a, b| a.0.cmp(&b.0));
-
         //todo(@adam-cattermole): lets clean this up
         #[allow(clippy::expect_used)]
         let dev_mode_action = config
@@ -111,7 +90,7 @@ impl PipelineFactory {
             });
         let mut index = Trie::new();
         for config_action_set in &config.action_sets {
-            let mut blueprint = Blueprint::compile(config_action_set, &services, &request_data)?;
+            let mut blueprint = Blueprint::compile(config_action_set, &services)?;
             if let Some(dev_mode) = &dev_mode_action {
                 blueprint.actions.push(dev_mode.clone());
             }
@@ -129,7 +108,6 @@ impl PipelineFactory {
 
         Ok(Self {
             index,
-            request_data: Arc::new(request_data),
             fallback_blueprint: dev_mode_action.map(|action| {
                 Blueprint {
                     name: "kuadrant.devMode".to_string(),
@@ -147,19 +125,9 @@ impl PipelineFactory {
             None => return Ok(None),
         };
         ctx.set_action_set_name(blueprint.name.clone());
-
-        // Clone request_data with fresh expressions for this request
-        // This ensures each concurrent request has its own response_props state
-        let request_data: Vec<RequestData> = self
-            .request_data
-            .iter()
-            .map(|((domain, field), expr)| ((domain.clone(), field.clone()), expr.clone()))
-            .collect();
-
-        let mut ctx = ctx.with_request_data(request_data.clone());
         ctx.extract_trace_context();
 
-        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx, &request_data);
+        let (tasks, teardown_tasks) = blueprint.to_tasks(&mut ctx);
         if tasks.is_empty() {
             return Ok(None);
         }
@@ -242,30 +210,12 @@ fn reverse_subdomain(subdomain: &str) -> String {
     s.chars().rev().collect()
 }
 
-fn domain_and_field_name(name: &str) -> (&str, &str) {
-    let haystack = &name[..name
-        .char_indices()
-        .rfind(|(_, c)| c.is_alphabetic())
-        .map(|(i, _)| i)
-        .unwrap_or_default()];
-    haystack
-        .rfind('.')
-        .map(|i| {
-            if i == 0 || i == name.len() - 1 {
-                ("", name)
-            } else {
-                (&name[..i], &name[i + 1..])
-            }
-        })
-        .unwrap_or(("", name))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::configuration::{
-        Action, ActionConfig, ActionSet, FailureMode, RouteRuleConditions, Service, ServiceType,
-        Timeout,
+        Action as ConfigAction, ActionSet, FailureMode, GrpcOperation, Operation,
+        RouteRuleConditions, Service, ServiceType, Timeout,
     };
     use crate::filter::DescriptorManager;
     use crate::kuadrant::MockWasmHost;
@@ -279,12 +229,12 @@ mod tests {
         services.insert(
             service_name.to_string(),
             Service {
-                service_type: ServiceType::Auth,
+                service_type: ServiceType::Dynamic,
                 endpoint: "test-cluster".to_string(),
                 failure_mode: FailureMode::Deny,
                 timeout: Timeout::default(),
-                grpc_service: None,
-                grpc_method: None,
+                grpc_service: Some("envoy.service.auth.v3.Authorization".to_string()),
+                grpc_method: Some("Check".to_string()),
             },
         );
 
@@ -296,13 +246,20 @@ mod tests {
                     hostnames,
                     predicates,
                 },
-                actions: vec![ActionConfig::Legacy(Action {
-                    service: service_name.to_string(),
-                    scope: "test-scope".to_string(),
-                    predicates: vec![],
-                    conditional_data: vec![],
+                actions: vec![ConfigAction {
+                    predicate: "true".to_string(),
+                    terminal: false,
+                    is_guard: true,
+                    execution: Default::default(),
                     sources: vec![],
-                })],
+                    operation: Operation::Grpc(GrpcOperation {
+                        var: "auth_response".to_string(),
+                        service: service_name.to_string(),
+                        message_builder: "envoy.service.auth.v3.CheckRequest{}".to_string(),
+                        on_reply: vec![],
+                        label: String::new(),
+                    }),
+                }],
             }],
         )
     }
@@ -315,23 +272,6 @@ mod tests {
     #[test]
     fn reverse_subdomain_wildcard() {
         assert_eq!(reverse_subdomain("*.example.com"), ".moc.elpmaxe.");
-    }
-
-    #[test]
-    fn domain_and_field_name_splits_correctly() {
-        assert_eq!(
-            domain_and_field_name("auth.identity.user"),
-            ("auth.identity", "user")
-        );
-        assert_eq!(domain_and_field_name("request.path"), ("request", "path"));
-        assert_eq!(domain_and_field_name("simple"), ("", "simple"));
-    }
-
-    #[test]
-    fn domain_and_field_name_handles_edge_cases() {
-        assert_eq!(domain_and_field_name(".field"), ("", ".field"));
-        assert_eq!(domain_and_field_name("field."), ("", "field."));
-        assert_eq!(domain_and_field_name("a.b.c.d"), ("a.b.c", "d"));
     }
 
     #[test]
@@ -348,12 +288,12 @@ mod tests {
         services.insert(
             "test-service".to_string(),
             Service {
-                service_type: ServiceType::Auth,
+                service_type: ServiceType::Dynamic,
                 endpoint: "test-cluster".to_string(),
                 failure_mode: FailureMode::Deny,
                 timeout: Timeout::default(),
-                grpc_service: None,
-                grpc_method: None,
+                grpc_service: Some("envoy.service.auth.v3.Authorization".to_string()),
+                grpc_method: Some("Check".to_string()),
             },
         );
 
@@ -578,37 +518,6 @@ mod tests {
         let result = factory.build(ctx);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn factory_stores_request_data() {
-        let mut services = HashMap::new();
-        services.insert(
-            "test-service".to_string(),
-            Service {
-                service_type: ServiceType::Auth,
-                endpoint: "test-cluster".to_string(),
-                failure_mode: FailureMode::Deny,
-                timeout: Timeout::default(),
-                grpc_service: None,
-                grpc_method: None,
-            },
-        );
-
-        let mut request_data = HashMap::new();
-        request_data.insert(
-            "metrics.labels.user".to_string(),
-            "auth.identity.username".to_string(),
-        );
-
-        let config = PluginConfiguration {
-            request_data,
-            ..PluginConfiguration::new(services, vec![])
-        };
-
-        let factory =
-            PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default())).unwrap();
-        assert_eq!(factory.request_data.len(), 1);
     }
 
     #[test]

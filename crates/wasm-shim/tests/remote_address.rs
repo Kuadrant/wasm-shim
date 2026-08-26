@@ -1,4 +1,4 @@
-use crate::util::common::{wasm_module, LOG_LEVEL};
+use crate::util::common::{json_escape_cel, wasm_module, LOG_LEVEL};
 use crate::util::data;
 use proxy_wasm_test_framework::tester;
 use proxy_wasm_test_framework::types::{
@@ -24,13 +24,31 @@ fn it_limits_based_on_source_address() {
         .unwrap();
 
     let root_context = 1;
+    let ratelimit_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "source.remote_address",
+                            value: string(source.remote_address)
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
     let cfg = r#"{
         "services": {
             "limitador": {
-                "type": "ratelimit",
+                "type": "dynamic",
                 "endpoint": "limitador-cluster",
                 "failureMode": "deny",
-                "timeout": "5s"
+                "timeout": "5s",
+                "grpcService": "envoy.service.ratelimit.v3.RateLimitService",
+                "grpcMethod": "ShouldRateLimit"
             }
         },
         "actionSets": [
@@ -44,24 +62,40 @@ fn it_limits_based_on_source_address() {
                 },
                 "actions": [
                     {
+                        "type": "grpc",
+                        "var": "ratelimit_response",
                         "service": "limitador",
-                        "scope": "RLS-domain",
-                        "conditionalData": [
-                        {
-                            "data": [
-                                {
-                                    "expression": {
-                                        "key": "source.remote_address",
-                                        "value": "source.remote_address"
-                                    }
-                                }
-                            ]
-                        }]
+                        "predicate": "true",
+                        "terminal": false,
+                        "label": "ratelimit",
+                        "messageBuilder": "__RATELIMIT_MSG__",
+                        "onReply": [
+                            {
+                                "type": "deny",
+                                "predicate": "ratelimit_response.overall_code == 2",
+                                "terminal": true,
+                                "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}"
+                            },
+                            {
+                                "type": "headers",
+                                "predicate": "ratelimit_response.overall_code == 1",
+                                "terminal": false,
+                                "target": "response",
+                                "headers": "ratelimit_response.response_headers_to_add"
+                            },
+                            {
+                                "type": "fail",
+                                "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2",
+                                "terminal": true,
+                                "logMessage": "Unknown rate limit response code from ratelimit_response"
+                            }
+                        ]
                     }
                 ]
             }
         ]
-    }"#;
+    }"#
+    .replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
     module
         .call_proxy_on_context_create(root_context, 0)

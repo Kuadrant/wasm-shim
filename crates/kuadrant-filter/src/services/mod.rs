@@ -14,10 +14,6 @@ pub use tracing::TracingService;
 
 #[derive(Clone)]
 pub enum ServiceInstance {
-    Auth(Arc<DynamicService>),
-    RateLimit(Arc<DynamicService>),
-    RateLimitCheck(Arc<DynamicService>),
-    RateLimitReport(Arc<DynamicService>),
     Tracing(Option<Arc<TracingService>>),
     Dynamic(Arc<DynamicService>),
 }
@@ -25,12 +21,8 @@ pub enum ServiceInstance {
 impl ServiceInstance {
     pub fn failure_mode(&self) -> FailureMode {
         match self {
-            ServiceInstance::Auth(service) => service.failure_mode(),
-            ServiceInstance::RateLimit(service) => service.failure_mode(),
-            ServiceInstance::RateLimitCheck(service) => service.failure_mode(),
-            ServiceInstance::RateLimitReport(service) => service.failure_mode(),
-            ServiceInstance::Tracing(_) => FailureMode::Allow,
             ServiceInstance::Dynamic(service) => service.failure_mode(),
+            ServiceInstance::Tracing(_) => FailureMode::Allow,
         }
     }
 
@@ -39,44 +31,6 @@ impl ServiceInstance {
         descriptor_manager: &Arc<DescriptorManager>,
     ) -> Result<Self, ServiceError> {
         match service.service_type {
-            ServiceType::Auth => Ok(ServiceInstance::Auth(Arc::new(DynamicService::new(
-                service.endpoint,
-                "envoy.service.auth.v3.Authorization".to_string(),
-                "Check".to_string(),
-                service.timeout.0,
-                service.failure_mode,
-                Arc::clone(descriptor_manager),
-            )))),
-            ServiceType::RateLimit => {
-                Ok(ServiceInstance::RateLimit(Arc::new(DynamicService::new(
-                    service.endpoint,
-                    "envoy.service.ratelimit.v3.RateLimitService".to_string(),
-                    "ShouldRateLimit".to_string(),
-                    service.timeout.0,
-                    service.failure_mode,
-                    Arc::clone(descriptor_manager),
-                ))))
-            }
-            ServiceType::RateLimitCheck => Ok(ServiceInstance::RateLimitCheck(Arc::new(
-                DynamicService::new(
-                    service.endpoint,
-                    "kuadrant.service.ratelimit.v1.RateLimitService".to_string(),
-                    "CheckRateLimit".to_string(),
-                    service.timeout.0,
-                    service.failure_mode,
-                    Arc::clone(descriptor_manager),
-                ),
-            ))),
-            ServiceType::RateLimitReport => Ok(ServiceInstance::RateLimitReport(Arc::new(
-                DynamicService::new(
-                    service.endpoint,
-                    "kuadrant.service.ratelimit.v1.RateLimitService".to_string(),
-                    "Report".to_string(),
-                    service.timeout.0,
-                    service.failure_mode,
-                    Arc::clone(descriptor_manager),
-                ),
-            ))),
             ServiceType::Tracing => Ok(ServiceInstance::Tracing(Some(Arc::new(
                 TracingService::new(service.endpoint, service.timeout.0),
             )))),
