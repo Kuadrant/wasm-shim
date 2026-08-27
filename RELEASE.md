@@ -1,47 +1,106 @@
 # How to release wasm-shim
 
-The wasm-shim uses an automated release process with protected release branches.
+The wasm-shim uses a two-phase release process as defined by [RFC 0020](https://github.com/Kuadrant/architecture/blob/main/rfcs/0020-two-phase-release-workflow.md).
+
+## Overview
+
+Every release is split into two workflows with a PR-based review gate between them:
+
+1. **Pre-release** — makes code changes and opens a PR to the release branch
+2. **Release** — tests, tags, builds artifacts, and creates the GitHub Release
+
+### Source of Truth
+
+**`Cargo.toml` is the authoritative source for the wasm-shim version.** The `release.yaml` file at the repository root is a derived mirror maintained by `sync-release-yaml.sh` for cross-repo tooling compatibility.
+
+Version flows one way: `Cargo.toml` → `sync-release-yaml.sh` → `release.yaml`. Nothing writes to `release.yaml` directly except the sync script.
+
+| State | Branch | `Cargo.toml` | `release.yaml` |
+|-------|--------|-------------|---------------|
+| Development | `main` | `X.Y.0-dev` | `0.0.0` (sentinel) |
+| Release | `release-X.Y` | `X.Y.Z` | `X.Y.Z` (exact match) |
 
 ## Quick Start
 
-1. **Run the workflow**: Actions → “Automated Release WASM Shim” → “Run workflow”
-   - **wasmShimVersion**: Version to release (e.g., `0.12.1`)
-   - **gitRef**: `main` for new minor, `release-0.12` for patches
-2. **Review and merge the PR** that gets created
-3. **Done** - tag and release happen automatically on merge
+1. **Run the pre-release workflow**: Actions → "Pre-release" → "Run workflow"
+   - **version**: Target version (e.g., `0.13.0`)
+   - **source-branch**: `main` for new minor releases (default)
+2. **Review and merge the PR** that gets created against the release branch
+   - The version gate checks that `Cargo.toml` and `release.yaml` agree
+3. **Run the release workflow**: Actions → "Release" → "Run workflow"
+   - **release-branch**: The release branch (e.g., `release-0.13`)
+4. **Done** — smoke tests run, tag is created, artifacts are built, and the GitHub Release is published
 
-## Standard Release
+## Standard Minor Release
 
-1. Actions → “Automated Release WASM Shim” → “Run workflow”
-   - **gitRef**: `main` (for new minor like `0.13.0`) or `release-0.12` (for patch like `0.12.1`)
-   - **wasmShimVersion**: `0.12.1` (or whatever version)
-2. Review and merge the PR
-3. Tag and release created automatically
+1. Actions → "Pre-release" → "Run workflow"
+   - **version**: `0.13.0`
+   - **source-branch**: `main`
+2. The workflow creates branch `release-0.13` (if it doesn't exist), updates `Cargo.toml` (then syncs `release.yaml`), and opens a PR
+3. Review and merge the PR (version gate and CI checks must pass)
+4. Actions → "Release" → "Run workflow"
+   - **release-branch**: `release-0.13`
+5. The workflow verifies `Cargo.toml` and `release.yaml` agree, reads the version, runs smoke tests, creates tag `v0.13.0`, builds the WASM binary and container image, and creates the GitHub Release
 
-## Release with Cherry-picked Fixes
+## Patch Release
 
-1. **First, cherry-pick and merge your fixes:**
-
+1. Prepare a branch with the backported fixes:
    ```bash
-   git checkout -b backport-my-fix origin/release-0.12
+   git checkout -b backport-my-fix origin/release-0.13
    git cherry-pick <commit-sha>
-   git push -u origin HEAD
-   # Create PR from backport-my-fix to release-0.12, get it merged
+   git push -u origin backport-my-fix
    ```
 
-2. **Then run the release workflow:**
-   - Actions → “Automated Release WASM Shim” → “Run workflow”
-   - **gitRef**: `release-0.12` (picks up the cherry-picks)
-   - **wasmShimVersion**: `0.12.1`
+2. Actions → "Pre-release" → "Run workflow"
+   - **version**: `0.13.1`
+   - **source-branch**: `backport-my-fix`
+3. Review and merge the PR (contains both the backported fixes and the version bump)
+4. Actions → "Release" → "Run workflow"
+   - **release-branch**: `release-0.13`
 
-3. Review and merge the version bump PR
-4. Tag and release created automatically
+## File Inventory
+
+| File | Purpose |
+|------|---------|
+| `Cargo.toml` | **Source of truth** for version |
+| `release.yaml` | Derived mirror for cross-repo tooling |
+| `.github/scripts/sync-release-yaml.sh` | Syncs `release.yaml` from `Cargo.toml` |
+| `.github/scripts/check-versions.sh` | Validates `Cargo.toml` and `release.yaml` agree |
+| `.github/scripts/parse-version.sh` | Reads and decomposes version from `release.yaml` |
+| `.github/scripts/validate-release-yaml.sh` | Validates `release.yaml` on release branches |
+| `.github/actions/prepare-release/action.yaml` | Sets version in `Cargo.toml`, syncs `release.yaml` |
+| `.github/workflows/pre-release.yaml` | Phase 1: prepare release PR |
+| `.github/workflows/release.yaml` | Phase 2: test, tag, build, publish |
+| `.github/workflows/version-gate.yaml` | CI gate: version consistency and release validation |
+
+## Repository Configuration
+
+### Required Secrets
+
+Configure these in Settings → Secrets and variables → Actions → Repository secrets:
+
+| Secret | Description |
+|--------|-------------|
+| `IMG_REGISTRY_USERNAME` | Container registry username or robot account |
+| `IMG_REGISTRY_TOKEN` | Container registry password or token |
+
+### Optional Variables
+
+Configure these in Settings → Secrets and variables → Actions → Repository variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IMG_REGISTRY_ORG` | `kuadrant` | Container registry organization/namespace (e.g., your Quay.io org for forks) |
+
+### Required Repository Settings
+
+- **Actions → General → Workflow permissions**: "Allow GitHub Actions to create and approve pull requests" must be enabled (required by the pre-release workflow to open PRs)
 
 ## Details
 
-- Version format: semver without `v` prefix (e.g., `0.12.1`, not `v0.12.1`)
-- Release branches: `release-0.12`, `release-0.13`, etc.
-- One branch per minor version, shared by all patches
-- Workflow creates the release branch if it doesn't exist
-  - For new minor versions, creates from specified `gitRef`
-  - For existing branches, keeps existing branch (use `gitRef` to catch up via PR)
+- **Version format**: semver without `v` prefix in `Cargo.toml` and `release.yaml` (e.g., `0.13.0`, not `v0.13.0`)
+- **Release branches**: `release-0.13`, `release-0.14`, etc. — one branch per minor version, shared by all patches
+- **Version gate**: A CI check on PRs that touch `Cargo.toml` or `release.yaml` validates consistency. On release branch PRs, it additionally rejects sentinel and dev versions.
+- **On `main`**: `Cargo.toml` has `-dev` suffix, `release.yaml` has `0.0.0` (sentinel)
+- **Artifacts built during release**: WASM binary (attached to GitHub Release) and container image (pushed to `quay.io/<IMG_REGISTRY_ORG>/wasm-shim`)
+- **GitHub Release is always the last step** — if any preceding step fails, no release is created

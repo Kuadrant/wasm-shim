@@ -1,0 +1,42 @@
+---
+name: Version Gate
+
+on:
+  pull_request:
+    paths:
+      - "release.yaml"
+      - "Cargo.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  check-version-consistency:
+    name: Check Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust-wasm
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/install-yq
+      - name: Check Cargo.toml and release.yaml agree
+        run: |
+          chmod +x .github/scripts/check-versions.sh
+          .github/scripts/check-versions.sh
+
+  validate-release-yaml:
+    name: Validate Release Version
+    if: startsWith(github.base_ref, 'release-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-yq
+      - name: Validate release.yaml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_REF: ${{ github.base_ref }}
+          ORG: ${{ github.repository_owner }}
+        run: |
+          chmod +x .github/scripts/validate-release-yaml.sh
+          .github/scripts/validate-release-yaml.sh "$BASE_REF" "$ORG"
