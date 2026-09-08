@@ -790,4 +790,31 @@ mod tests {
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0], key);
     }
+
+    #[test]
+    fn test_embedded_ratelimit_pool_has_reserve_and_commit() {
+        let (pool, _) = embedded_descriptors::get_ratelimit_pool().expect("pool");
+        let svc = pool
+            .get_service_by_name(embedded_descriptors::KUADRANT_RATELIMIT_SERVICE)
+            .expect("service found");
+
+        let methods: Vec<_> = svc.methods().map(|m| m.name().to_string()).collect();
+        assert!(methods.contains(&"Reserve".to_string()), "{:?}", methods);
+        assert!(methods.contains(&"Commit".to_string()), "{:?}", methods);
+
+        let reserve_input = svc
+            .methods()
+            .find(|m| m.name() == "Reserve")
+            .expect("Reserve method found")
+            .input();
+        let field_names: Vec<_> = reserve_input
+            .fields()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert!(
+            field_names.contains(&"ttl".to_string()),
+            "{:?}",
+            field_names
+        );
+    }
 }
