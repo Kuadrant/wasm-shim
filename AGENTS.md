@@ -76,70 +76,70 @@ make local-cleanup
 
 ## Architecture
 
+### Workspace layout
+
+This is a Cargo workspace with two crates:
+- **crates/wasm-shim**: the actual Proxy-Wasm entrypoint compiled to `wasm32-wasip1`. Thin glue code: `FilterRoot` (root context / VM lifecycle) and `KuadrantFilter` (per-request HTTP filter) that drive a `Pipeline` built by `kuadrant-filter`.
+- **crates/kuadrant-filter**: all filter logic as a plain (non-wasm) library — configuration parsing, CEL, the pipeline engine, generic gRPC service dispatch, tracing/metrics. Kept separate from `wasm-shim` so it can be unit-tested without the wasm target.
+
 ### Request Processing Flow
 
-1. **FilterRoot** (src/filter/root_context.rs): The root context manages VM lifecycle and configuration
-   - Parses plugin configuration on startup
-   - Builds the ActionSetIndex from configured action sets
-   - Creates KuadrantFilter instances for each HTTP request
+1. **FilterRoot** (crates/wasm-shim/src/filter/root_context.rs): the root context manages VM lifecycle and configuration
+   - Parses plugin configuration on startup (`on_configure`) into a `PluginConfiguration`
+   - Builds a `PipelineFactory` (`kuadrant_filter::kuadrant::PipelineFactory::try_from`) from the configured action sets
+   - Owns a `DescriptorManager` that fetches gRPC service descriptors (via reflection, over a configurable "descriptor service") needed for generic dynamic gRPC dispatch, refetching missing ones on `on_tick`
+   - Creates `KuadrantFilter` instances for each HTTP request
 
-2. **ActionSetIndex** (src/action_set_index.rs): Routes requests to applicable policies
-   - Uses a radix trie to match request hostnames to action sets
+2. **PipelineFactory** (crates/kuadrant-filter/src/kuadrant/pipeline/factory.rs): routes requests to applicable action sets and builds their runtime pipelines
+   - Uses a radix trie (`radix_trie::Trie`) to match request hostnames to compiled action sets
    - Reverses hostname for efficient longest-match lookup (e.g., "test.example.com" → ".moc.elpmaxe.tset$")
    - Supports wildcard matching (e.g., "*.example.com")
+   - Compiles each `ActionSet` into a `Blueprint` at configuration time, then instantiates a `Pipeline` of runnable `Task`s per request
 
-3. **KuadrantFilter** (src/filter/kuadrant_filter.rs): Main HTTP filter context
-   - Processes each HTTP request through multiple phases (request headers, request body, response headers, response body)
-   - Executes applicable RuntimeActionSets for the request
-   - Manages asynchronous gRPC calls to auth/rate-limit services
-   - Handles direct responses (e.g., 401, 429) and header modifications
+3. **KuadrantFilter** (crates/wasm-shim/src/filter/kuadrant_filter.rs): main HTTP filter context
+   - Drives the `Pipeline` through request/response header and body phases (`on_http_request_headers`, `on_http_request_body`, `on_http_response_headers`, `on_http_response_body`)
+   - Feeds asynchronous gRPC call responses back into the pipeline via `on_grpc_call_response`
+   - Pauses/resumes the Envoy filter chain (`Action::Pause`/`Action::Continue`) based on pipeline state; handles direct responses (e.g., 401, 429) via the `SendReplyTask`
 
-4. **RuntimeActionSet** (src/runtime_action_set.rs): Compiled representation of an ActionSet
-   - Evaluates route rule predicates to determine if actions should run
-   - Contains RuntimeActions that make gRPC calls to external services
-   - Request data expressions are pre-compiled at configuration time
-
-5. **RuntimeAction** (src/runtime_action.rs): Individual auth or rate-limit action
-   - Builds gRPC requests to external services
-   - Evaluates CEL predicates and conditional data expressions
-   - Processes responses and determines next steps (continue, deny, modify headers)
+4. **Blueprint / Pipeline** (crates/kuadrant-filter/src/kuadrant/pipeline/): compiled and runtime representation of an `ActionSet`
+   - `blueprint.rs`: compiles configured actions (predicate + `Operation`) into a `Blueprint`; CEL predicates and data expressions are pre-compiled at configuration time; computes dependency ordering between actions (`execution: sequential` fences off prior `parallel` actions)
+   - `executor.rs`: `Pipeline` walks a queue of `Task`s, tracking deferred (in-flight gRPC) tasks, completed tasks, and teardown tasks, and reports whether the filter should pause or resume
+   - `tasks/`: the concrete task kinds — `DynamicTask` (gRPC call to a `DynamicService`, with `onReply` sub-actions evaluated against the response), `ModifyHeadersTask`, `SendReplyTask` (deny responses), `StoreTask` (write a CEL value into the request-scoped store, optionally exported to the host), `FailTask`, `FailureModeTask` (wraps a task to honor `failureMode: allow|deny` on service errors), `ExportTracesTask`, `TracingDecoratorTask`
 
 ### Service Integration
 
-- **AuthService** (src/service/auth.rs): Communicates with Authorino using Envoy's External Authorization API
-  - Service: `envoy.service.auth.v3.Authorization`
-  - Method: `Check`
+There is no hardcoded auth-specific or rate-limit-specific service type. All external gRPC calls go through one generic, reflection-based service:
 
-- **RateLimitService** (src/service/rate_limit.rs): Communicates with Limitador using Envoy's Rate Limit Service API
-  - Standard service: `envoy.service.ratelimit.v3.RateLimitService` / `ShouldRateLimit`
-  - Kuadrant extensions: `kuadrant.service.ratelimit.v1.RateLimitService` / `CheckRateLimit` and `Report`
+- **DynamicService** (crates/kuadrant-filter/src/services/dynamic.rs): dispatches to any gRPC service/method named in configuration (`grpcService` / `grpcMethod`), using `prost-reflect` descriptors resolved at runtime by `DescriptorManager` (crates/kuadrant-filter/src/filter/descriptor_manager.rs). Authorino's `envoy.service.auth.v3.Authorization/Check`, Limitador's `envoy.service.ratelimit.v3.RateLimitService/ShouldRateLimit` (and Kuadrant's own `kuadrant.service.ratelimit.v1.RateLimitService/CheckRateLimit` and `Report`), or any other reflectable gRPC service are all just configuration — not distinct Rust types.
+- **TracingService** (crates/kuadrant-filter/src/services/tracing.rs): a non-gRPC pseudo-service (`type: tracing`) used to mark actions whose call should be wrapped in a span and exported via `ExportTracesTask`.
 
 ### CEL Expression System
 
 The module uses Common Expression Language (CEL) for predicates and data expressions:
 
-- **Predicates** (src/data/cel.rs): Boolean expressions that determine when actions should execute
-- **Expressions**: Generate values from request/response attributes to pass to services
+- **Predicates & Expressions** (crates/kuadrant-filter/src/data/cel.rs): boolean predicates that gate actions, and expressions that generate values (e.g. gRPC request messages, header sets, stored values) from request/response attributes
 - **Custom Functions**: `requestBodyJSON()` and `responseBodyJSON()` for parsing JSON bodies
-- **Attribute System** (src/data/attribute.rs, src/data/property.rs): Provides access to Envoy attributes and auth service data
+- **Attribute System**: `ReqRespCtx` (crates/kuadrant-filter/src/kuadrant/context.rs) is the per-request context — request/response body buffers, an attribute cache, a CEL value store, and tracing state — backed by an `AttributeResolver` trait (crates/kuadrant-filter/src/kuadrant/resolver/mod.rs) that abstracts the actual Envoy/wasm hostcalls (implemented by `ProxyWasmHost` in crates/wasm-shim, and by `MockWasmHost` in tests). `AttributeCache` (crates/kuadrant-filter/src/kuadrant/cache.rs, radix-trie-backed) memoizes resolved attributes for the lifetime of a request. Low-level attribute types live in crates/kuadrant-filter/src/data/attribute.rs.
 
 ### Configuration Structure
 
-Plugin configuration (src/configuration.rs) defines:
-- **Services**: External auth/rate-limit service endpoints and failure modes
-- **ActionSets**: Collections of actions with route matching rules
-  - `routeRuleConditions`: Hostnames and CEL predicates for matching requests
-  - `actions`: Auth or rate-limit actions with scopes and conditional data
+Plugin configuration (crates/kuadrant-filter/src/configuration.rs) defines:
+- **services**: a map of named service instances. `type: dynamic` (default) is the generic gRPC service — `endpoint`, `grpcService`, `grpcMethod`, `failureMode` (`allow`|`deny`), `timeout`; `type: tracing` marks a tracing export target.
+- **actionSets**: collections of actions with route matching rules
+  - `routeRuleConditions`: `hostnames` and CEL `predicates` for matching requests
+  - `actions`: each has a `predicate`, `terminal` flag, `isGuard`, `execution` (`parallel` (default) | `sequential`, controlling dependency/ordering between actions), optional `sources`, and one operation type: `grpc` (call a `dynamic` service; `onReply` sub-actions run against the decoded response), `deny`, `headers`, `store`, or `fail`
+- **observability**: log level and optional tracing exporter configuration
+- **descriptorService**: name of the service used to fetch gRPC descriptors for reflection-based dynamic dispatch
 
 ## Important Constraints
 
 ### Clippy Lints
-The project enforces strict error handling (Cargo.toml):
+The project enforces strict error handling (Cargo.toml, both crates):
 - `panic = "deny"` - No panic! calls allowed
 - `unwrap_used = "deny"` - No .unwrap() calls allowed
 - `expect_used = "deny"` - No .expect() calls allowed
 
-Always use proper error handling with Result types and the ? operator.
+Always use proper error handling with Result types and the ? operator. A handful of narrowly-scoped `#[allow(clippy::panic)]` / `#[allow(clippy::expect_used)]` overrides exist for cases that are provably unreachable or genuinely unrecoverable (e.g. crates/wasm-shim/src/filter/kuadrant_filter.rs, crates/kuadrant-filter/src/kuadrant/pipeline/{factory,blueprint}.rs, .../tasks/send_reply.rs, crates/kuadrant-filter/src/data/cel.rs, build.rs). Treat these as rare, deliberate exceptions, not a pattern to extend — new code should not add more without good reason.
 
 ### Protocol Buffers
 Protobuf definitions are in `vendor-protobufs/` and compiled via build.rs. To update protobufs:
@@ -147,7 +147,7 @@ Protobuf definitions are in `vendor-protobufs/` and compiled via build.rs. To up
 make update-protobufs
 ```
 
-Generated protobuf code is in src/envoy/ - do not edit these files directly.
+Generated protobuf code is in `crates/kuadrant-filter/src/proto/` - do not edit these files directly.
 
 ### WASM Target Limitations
 - No std::thread support
@@ -157,9 +157,6 @@ Generated protobuf code is in src/envoy/ - do not edit these files directly.
 
 ## Testing Patterns
 
-Tests use the proxy-wasm-test-framework for mocking Envoy hostcalls. Key testing utilities:
-- Mock service responses for auth and rate-limit calls
-- Verify header modifications and status codes
-- Test CEL expression evaluation with PathCache for attribute resolution
-
-Many tests use `#[serial_test]` annotation to prevent concurrent execution that could interfere with shared state.
+- `crates/wasm-shim/tests/` holds integration-style tests using the proxy-wasm-test-framework for mocking Envoy hostcalls end-to-end (config parsing, header modifications, status codes, streaming/body handling).
+- `crates/kuadrant-filter` unit-tests its `AttributeResolver` consumers directly against `MockWasmHost` (crates/kuadrant-filter/src/kuadrant/resolver/mock.rs, `#[cfg(test)]`) without needing the wasm target.
+- Many tests use `#[serial_test]` annotation to prevent concurrent execution that could interfere with shared state.
