@@ -205,6 +205,45 @@ pub fn cel_value_to_header_pairs(value: &Value) -> Vec<(String, String)> {
 /// google.protobuf.Duration is documented to support a range of approximately
 /// +/-10,000 years, i.e. +/-315,576,000,000 seconds.
 const PROTO_DURATION_MAX_SECONDS: u64 = 315_576_000_000;
+/// google.protobuf.Duration requires nanos to be in this range, with the same
+/// sign as seconds (or zero) for durations of one second or more.
+const PROTO_DURATION_MAX_NANOS: i32 = 999_999_999;
+
+/// Validates the wire-format invariants of a decoded google.protobuf.Duration:
+/// nanos and seconds must each be within their documented range, and must share
+/// the same sign whenever both are non-zero.
+fn validate_proto_duration_components(seconds: i64, nanos: i32) -> Result<(), ConversionError> {
+    if nanos.unsigned_abs() > PROTO_DURATION_MAX_NANOS as u32 {
+        return Err(ConversionError::TypeMismatch {
+            field: "nanos".to_string(),
+            expected: format!(
+                "nanos within +/-{PROTO_DURATION_MAX_NANOS} (google.protobuf.Duration range)"
+            ),
+            got: format!("{nanos}"),
+        });
+    }
+
+    if seconds.unsigned_abs() > PROTO_DURATION_MAX_SECONDS {
+        return Err(ConversionError::TypeMismatch {
+            field: "seconds".to_string(),
+            expected: format!(
+                "seconds within +/-{PROTO_DURATION_MAX_SECONDS} (google.protobuf.Duration range)"
+            ),
+            got: format!("{seconds}"),
+        });
+    }
+
+    if seconds != 0 && nanos != 0 && seconds.signum() != nanos.signum() as i64 {
+        return Err(ConversionError::TypeMismatch {
+            field: "nanos".to_string(),
+            expected: "nanos with the same sign as seconds (google.protobuf.Duration convention)"
+                .to_string(),
+            got: format!("seconds={seconds}, nanos={nanos}"),
+        });
+    }
+
+    Ok(())
+}
 
 pub struct MessageConverter;
 
@@ -883,6 +922,8 @@ impl MessageConverter {
                 })
             }
         };
+
+        validate_proto_duration_components(seconds_value, nanos_value)?;
 
         let whole_seconds = chrono::Duration::try_seconds(seconds_value).ok_or_else(|| {
             ConversionError::TypeMismatch {
@@ -2475,6 +2516,48 @@ mod tests {
         assert!(
             matches!(result, Err(ConversionError::TypeMismatch { .. })),
             "Expected a graceful error instead of a panic, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn proto_duration_to_cel_duration_rejects_nanos_out_of_range() {
+        let pool = duration_and_ttl_request_pool();
+        let duration_desc = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .expect("Failed to get Duration descriptor");
+
+        let mut dur_msg = DynamicMessage::new(duration_desc);
+        dur_msg.set_field_by_name("seconds", ProtoValue::I64(0));
+        // Out of the documented [-999_999_999, 999_999_999] range.
+        dur_msg.set_field_by_name("nanos", ProtoValue::I32(1_000_000_000));
+
+        let result = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(dur_msg));
+
+        assert!(
+            matches!(result, Err(ConversionError::TypeMismatch { .. })),
+            "Expected out-of-range nanos to be rejected, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn proto_duration_to_cel_duration_rejects_mismatched_signs() {
+        let pool = duration_and_ttl_request_pool();
+        let duration_desc = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .expect("Failed to get Duration descriptor");
+
+        let mut dur_msg = DynamicMessage::new(duration_desc);
+        // seconds positive, nanos negative: violates the same-sign convention.
+        dur_msg.set_field_by_name("seconds", ProtoValue::I64(1));
+        dur_msg.set_field_by_name("nanos", ProtoValue::I32(-1));
+
+        let result = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(dur_msg));
+
+        assert!(
+            matches!(result, Err(ConversionError::TypeMismatch { .. })),
+            "Expected mismatched seconds/nanos signs to be rejected, got {:?}",
             result
         );
     }
