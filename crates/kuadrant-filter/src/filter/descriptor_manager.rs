@@ -807,14 +807,34 @@ mod tests {
             .find(|m| m.name() == "Reserve")
             .expect("Reserve method found")
             .input();
-        let field_names: Vec<_> = reserve_input
+        let request_field_names: Vec<_> = reserve_input
             .fields()
             .map(|f| f.name().to_string())
             .collect();
         assert!(
-            field_names.contains(&"ttl".to_string()),
+            request_field_names.contains(&"ttl".to_string()),
             "{:?}",
-            field_names
+            request_field_names
+        );
+
+        let reserve_output = svc
+            .methods()
+            .find(|m| m.name() == "Reserve")
+            .expect("Reserve method found")
+            .output();
+        let response_field_names: Vec<_> = reserve_output
+            .fields()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert!(
+            response_field_names.contains(&"reservation_id".to_string()),
+            "{:?}",
+            response_field_names
+        );
+        assert!(
+            response_field_names.contains(&"reserved_amount".to_string()),
+            "{:?}",
+            response_field_names
         );
     }
 }

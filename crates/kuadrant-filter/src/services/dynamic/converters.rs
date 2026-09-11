@@ -202,6 +202,10 @@ pub fn cel_value_to_header_pairs(value: &Value) -> Vec<(String, String)> {
     pairs
 }
 
+/// google.protobuf.Duration is documented to support a range of approximately
+/// +/-10,000 years, i.e. +/-315,576,000,000 seconds.
+const PROTO_DURATION_MAX_SECONDS: u64 = 315_576_000_000;
+
 pub struct MessageConverter;
 
 impl MessageConverter {
@@ -743,9 +747,31 @@ impl MessageConverter {
                 })?;
 
         let seconds = dur.num_seconds();
-        let nanos = (*dur - chrono::Duration::seconds(seconds))
-            .num_nanoseconds()
-            .unwrap_or(0) as i32;
+        if seconds.unsigned_abs() > PROTO_DURATION_MAX_SECONDS {
+            return Err(ConversionError::TypeMismatch {
+                field: field_name.to_string(),
+                expected: format!(
+                    "duration within +/-{PROTO_DURATION_MAX_SECONDS} seconds (google.protobuf.Duration range)"
+                ),
+                got: format!("{seconds} seconds"),
+            });
+        }
+
+        let whole_seconds = chrono::Duration::try_seconds(seconds).ok_or_else(|| {
+            ConversionError::TypeMismatch {
+                field: field_name.to_string(),
+                expected: "duration representable in whole seconds".to_string(),
+                got: format!("{seconds} seconds"),
+            }
+        })?;
+        let remainder =
+            dur.checked_sub(&whole_seconds)
+                .ok_or_else(|| ConversionError::TypeMismatch {
+                    field: field_name.to_string(),
+                    expected: "duration remainder computable without overflow".to_string(),
+                    got: format!("{dur:?}"),
+                })?;
+        let nanos = remainder.num_nanoseconds().unwrap_or(0) as i32;
 
         message.set_field(&seconds_field, ProtoValue::I64(seconds));
         message.set_field(&nanos_field, ProtoValue::I32(nanos));
@@ -858,8 +884,20 @@ impl MessageConverter {
             }
         };
 
-        let dur = chrono::Duration::seconds(seconds_value)
-            + chrono::Duration::nanoseconds(nanos_value as i64);
+        let whole_seconds = chrono::Duration::try_seconds(seconds_value).ok_or_else(|| {
+            ConversionError::TypeMismatch {
+                field: "seconds".to_string(),
+                expected: "seconds representable as a chrono::Duration".to_string(),
+                got: format!("{seconds_value}"),
+            }
+        })?;
+        let dur = whole_seconds
+            .checked_add(&chrono::Duration::nanoseconds(nanos_value as i64))
+            .ok_or_else(|| ConversionError::TypeMismatch {
+                field: "nanos".to_string(),
+                expected: "duration computable without overflow".to_string(),
+                got: format!("seconds={seconds_value}, nanos={nanos_value}"),
+            })?;
 
         Ok(Box::new(CelDuration::from(dur)))
     }
@@ -2370,6 +2408,149 @@ mod tests {
             "Expected Message with correct duration values, got {:?}",
             proto_value
         );
+    }
+
+    fn duration_and_ttl_request_pool() -> prost_reflect::DescriptorPool {
+        let duration_proto = FileDescriptorProto {
+            name: Some("google/protobuf/duration.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Duration".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(1),
+                        r#type: Some(field_descriptor_proto::Type::Int64.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(2),
+                        r#type: Some(field_descriptor_proto::Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let request_proto = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("Request".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ttl".to_string()),
+                    number: Some(1),
+                    r#type: Some(field_descriptor_proto::Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let fds = FileDescriptorSet {
+            file: vec![duration_proto, request_proto],
+        };
+        prost_reflect::DescriptorPool::from_file_descriptor_set(fds).expect("Failed to create pool")
+    }
+
+    #[test]
+    fn proto_duration_to_cel_duration_rejects_seconds_overflow() {
+        let pool = duration_and_ttl_request_pool();
+        let duration_desc = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .expect("Failed to get Duration descriptor");
+
+        let mut dur_msg = DynamicMessage::new(duration_desc);
+        dur_msg.set_field_by_name("seconds", ProtoValue::I64(i64::MAX));
+        dur_msg.set_field_by_name("nanos", ProtoValue::I32(0));
+
+        let result = MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(dur_msg));
+
+        assert!(
+            matches!(result, Err(ConversionError::TypeMismatch { .. })),
+            "Expected a graceful error instead of a panic, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn cel_duration_to_proto_duration_rejects_out_of_range() {
+        let pool = duration_and_ttl_request_pool();
+        let request_desc = pool
+            .get_message_by_name("test.Request")
+            .expect("Failed to get Request descriptor");
+        let field = request_desc
+            .get_field_by_name("ttl")
+            .expect("ttl field not found");
+
+        // Beyond google.protobuf.Duration's documented +/-10,000 year range.
+        let huge_duration = chrono::Duration::try_seconds(400_000_000_000)
+            .expect("representable as chrono::Duration");
+        let cel_val: Box<dyn cel::common::value::Val> = Box::new(CelDuration::from(huge_duration));
+
+        let result = MessageConverter::cel_val_to_proto_value(&*cel_val, &field);
+
+        assert!(
+            matches!(result, Err(ConversionError::TypeMismatch { .. })),
+            "Expected out-of-range duration to be rejected, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn cel_duration_to_proto_duration_roundtrips_negative_duration() {
+        let pool = duration_and_ttl_request_pool();
+        let duration_desc = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .expect("Failed to get Duration descriptor");
+        let request_desc = pool
+            .get_message_by_name("test.Request")
+            .expect("Failed to get Request descriptor");
+        let field = request_desc
+            .get_field_by_name("ttl")
+            .expect("ttl field not found");
+
+        // -1.5 seconds: google.protobuf.Duration requires nanos to carry the same
+        // sign as seconds, i.e. seconds=-1, nanos=-500_000_000.
+        let neg_duration = chrono::Duration::try_seconds(-1)
+            .and_then(|d| d.checked_sub(&chrono::Duration::milliseconds(500)))
+            .expect("representable as chrono::Duration");
+        let cel_val: Box<dyn cel::common::value::Val> = Box::new(CelDuration::from(neg_duration));
+
+        let proto_value = MessageConverter::cel_val_to_proto_value(&*cel_val, &field)
+            .expect("Failed to convert to protobuf");
+
+        let seconds_field = duration_desc
+            .get_field_by_name("seconds")
+            .expect("seconds field not found");
+        let nanos_field = duration_desc
+            .get_field_by_name("nanos")
+            .expect("nanos field not found");
+
+        assert!(
+            matches!(&proto_value, ProtoValue::Message(d) if
+                matches!(d.get_field(&seconds_field).as_ref(), ProtoValue::I64(-1)) &&
+                matches!(d.get_field(&nanos_field).as_ref(), ProtoValue::I32(-500_000_000))
+            ),
+            "Expected Message with correct negative duration values, got {:?}",
+            proto_value
+        );
+
+        if let ProtoValue::Message(msg) = &proto_value {
+            let cel_val_roundtrip =
+                MessageConverter::proto_value_to_cel_val(&ProtoValue::Message(msg.clone()))
+                    .expect("Failed to convert back to CEL");
+            let cel_duration_roundtrip = cel_val_roundtrip
+                .downcast_ref::<CelDuration>()
+                .expect("Expected CelDuration");
+            assert_eq!(*cel_duration_roundtrip.inner(), neg_duration);
+        }
     }
 
     fn create_well_known_types_pool() -> prost_reflect::DescriptorPool {
