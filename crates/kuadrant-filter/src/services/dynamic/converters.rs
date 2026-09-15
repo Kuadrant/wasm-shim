@@ -786,31 +786,8 @@ impl MessageConverter {
                 })?;
 
         let seconds = dur.num_seconds();
-        if seconds.unsigned_abs() > PROTO_DURATION_MAX_SECONDS {
-            return Err(ConversionError::TypeMismatch {
-                field: field_name.to_string(),
-                expected: format!(
-                    "duration within +/-{PROTO_DURATION_MAX_SECONDS} seconds (google.protobuf.Duration range)"
-                ),
-                got: format!("{seconds} seconds"),
-            });
-        }
-
-        let whole_seconds = chrono::Duration::try_seconds(seconds).ok_or_else(|| {
-            ConversionError::TypeMismatch {
-                field: field_name.to_string(),
-                expected: "duration representable in whole seconds".to_string(),
-                got: format!("{seconds} seconds"),
-            }
-        })?;
-        let remainder =
-            dur.checked_sub(&whole_seconds)
-                .ok_or_else(|| ConversionError::TypeMismatch {
-                    field: field_name.to_string(),
-                    expected: "duration remainder computable without overflow".to_string(),
-                    got: format!("{dur:?}"),
-                })?;
-        let nanos = remainder.num_nanoseconds().unwrap_or(0) as i32;
+        let nanos = dur.subsec_nanos();
+        validate_proto_duration_components(seconds, nanos)?;
 
         message.set_field(&seconds_field, ProtoValue::I64(seconds));
         message.set_field(&nanos_field, ProtoValue::I32(nanos));
