@@ -702,22 +702,14 @@ impl MessageConverter {
                 // Special handling for Value::Timestamp -> google.protobuf.Timestamp
                 if nested_desc.full_name() == "google.protobuf.Timestamp" {
                     if let Some(cel_ts) = cel_val.downcast_ref::<CelTimestamp>() {
-                        return Self::cel_timestamp_to_proto_message(
-                            cel_ts,
-                            &nested_desc,
-                            field_name,
-                        );
+                        return Self::cel_timestamp_to_proto_message(cel_ts, &nested_desc);
                     }
                 }
 
                 // Special handling for Value::Duration -> google.protobuf.Duration
                 if nested_desc.full_name() == "google.protobuf.Duration" {
                     if let Some(cel_dur) = cel_val.downcast_ref::<CelDuration>() {
-                        return Self::cel_duration_to_proto_message(
-                            cel_dur,
-                            &nested_desc,
-                            field_name,
-                        );
+                        return Self::cel_duration_to_proto_message(cel_dur, &nested_desc);
                     }
                 }
 
@@ -728,84 +720,16 @@ impl MessageConverter {
         }
     }
 
-    fn cel_timestamp_to_proto_message(
-        cel_ts: &CelTimestamp,
+    /// google.protobuf.Timestamp and google.protobuf.Duration share the same
+    /// wire format: an i64 `seconds` field and an i32 `nanos` field.
+    fn seconds_nanos_fields(
         descriptor: &MessageDescriptor,
-        field_name: &str,
-    ) -> Result<ProtoValue, ConversionError> {
-        let dt = cel_ts.inner();
-        let mut message = DynamicMessage::new(descriptor.clone());
-
-        let seconds_field = descriptor.get_field_by_name("seconds").ok_or_else(|| {
-            ConversionError::TypeMismatch {
-                field: field_name.to_string(),
-                expected: "Timestamp with seconds field".to_string(),
-                got: "missing seconds field".to_string(),
-            }
-        })?;
-        let nanos_field =
-            descriptor
-                .get_field_by_name("nanos")
-                .ok_or_else(|| ConversionError::TypeMismatch {
-                    field: field_name.to_string(),
-                    expected: "Timestamp with nanos field".to_string(),
-                    got: "missing nanos field".to_string(),
-                })?;
-
-        message.set_field(&seconds_field, ProtoValue::I64(dt.timestamp()));
-        message.set_field(
-            &nanos_field,
-            ProtoValue::I32(dt.timestamp_subsec_nanos() as i32),
-        );
-
-        Ok(ProtoValue::Message(message))
-    }
-
-    fn cel_duration_to_proto_message(
-        cel_dur: &CelDuration,
-        descriptor: &MessageDescriptor,
-        field_name: &str,
-    ) -> Result<ProtoValue, ConversionError> {
-        let dur = cel_dur.inner();
-        let mut message = DynamicMessage::new(descriptor.clone());
-
-        let seconds_field = descriptor.get_field_by_name("seconds").ok_or_else(|| {
-            ConversionError::TypeMismatch {
-                field: field_name.to_string(),
-                expected: "Duration with seconds field".to_string(),
-                got: "missing seconds field".to_string(),
-            }
-        })?;
-        let nanos_field =
-            descriptor
-                .get_field_by_name("nanos")
-                .ok_or_else(|| ConversionError::TypeMismatch {
-                    field: field_name.to_string(),
-                    expected: "Duration with nanos field".to_string(),
-                    got: "missing nanos field".to_string(),
-                })?;
-
-        let seconds = dur.num_seconds();
-        let nanos = dur.subsec_nanos();
-        validate_proto_duration_components(seconds, nanos)?;
-
-        message.set_field(&seconds_field, ProtoValue::I64(seconds));
-        message.set_field(&nanos_field, ProtoValue::I32(nanos));
-
-        Ok(ProtoValue::Message(message))
-    }
-
-    fn proto_timestamp_to_cel_timestamp(
-        message: &DynamicMessage,
-    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
-        use chrono::{DateTime, FixedOffset};
-
-        let descriptor = message.descriptor();
-
+        type_name: &str,
+    ) -> Result<(FieldDescriptor, FieldDescriptor), ConversionError> {
         let seconds_field = descriptor.get_field_by_name("seconds").ok_or_else(|| {
             ConversionError::TypeMismatch {
                 field: "seconds".to_string(),
-                expected: "google.protobuf.Timestamp must have seconds field".to_string(),
+                expected: format!("google.protobuf.{type_name} must have seconds field"),
                 got: "field not found".to_string(),
             }
         })?;
@@ -814,69 +738,20 @@ impl MessageConverter {
                 .get_field_by_name("nanos")
                 .ok_or_else(|| ConversionError::TypeMismatch {
                     field: "nanos".to_string(),
-                    expected: "google.protobuf.Timestamp must have nanos field".to_string(),
+                    expected: format!("google.protobuf.{type_name} must have nanos field"),
                     got: "field not found".to_string(),
                 })?;
 
-        let seconds = message.get_field(&seconds_field);
-        let nanos = message.get_field(&nanos_field);
-
-        let seconds_value = match seconds.as_ref() {
-            ProtoValue::I64(s) => *s,
-            _ => {
-                return Err(ConversionError::TypeMismatch {
-                    field: "seconds".to_string(),
-                    expected: "i64".to_string(),
-                    got: format!("{:?}", seconds),
-                })
-            }
-        };
-
-        let nanos_value = match nanos.as_ref() {
-            ProtoValue::I32(n) => *n as u32,
-            _ => {
-                return Err(ConversionError::TypeMismatch {
-                    field: "nanos".to_string(),
-                    expected: "i32".to_string(),
-                    got: format!("{:?}", nanos),
-                })
-            }
-        };
-
-        let dt: DateTime<FixedOffset> = DateTime::from_timestamp(seconds_value, nanos_value)
-            .ok_or_else(|| ConversionError::TypeMismatch {
-                field: "timestamp".to_string(),
-                expected: "valid timestamp".to_string(),
-                got: format!("seconds={}, nanos={}", seconds_value, nanos_value),
-            })?
-            .into();
-
-        Ok(Box::new(CelTimestamp::from(dt)))
+        Ok((seconds_field, nanos_field))
     }
 
-    fn proto_duration_to_cel_duration(
+    fn extract_seconds_nanos(
         message: &DynamicMessage,
-    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
-        let descriptor = message.descriptor();
-
-        let seconds_field = descriptor.get_field_by_name("seconds").ok_or_else(|| {
-            ConversionError::TypeMismatch {
-                field: "seconds".to_string(),
-                expected: "google.protobuf.Duration must have seconds field".to_string(),
-                got: "field not found".to_string(),
-            }
-        })?;
-        let nanos_field =
-            descriptor
-                .get_field_by_name("nanos")
-                .ok_or_else(|| ConversionError::TypeMismatch {
-                    field: "nanos".to_string(),
-                    expected: "google.protobuf.Duration must have nanos field".to_string(),
-                    got: "field not found".to_string(),
-                })?;
-
-        let seconds = message.get_field(&seconds_field);
-        let nanos = message.get_field(&nanos_field);
+        seconds_field: &FieldDescriptor,
+        nanos_field: &FieldDescriptor,
+    ) -> Result<(i64, i32), ConversionError> {
+        let seconds = message.get_field(seconds_field);
+        let nanos = message.get_field(nanos_field);
 
         let seconds_value = match seconds.as_ref() {
             ProtoValue::I64(s) => *s,
@@ -899,6 +774,73 @@ impl MessageConverter {
                 })
             }
         };
+
+        Ok((seconds_value, nanos_value))
+    }
+
+    fn cel_timestamp_to_proto_message(
+        cel_ts: &CelTimestamp,
+        descriptor: &MessageDescriptor,
+    ) -> Result<ProtoValue, ConversionError> {
+        let dt = cel_ts.inner();
+        let mut message = DynamicMessage::new(descriptor.clone());
+        let (seconds_field, nanos_field) = Self::seconds_nanos_fields(descriptor, "Timestamp")?;
+
+        message.set_field(&seconds_field, ProtoValue::I64(dt.timestamp()));
+        message.set_field(
+            &nanos_field,
+            ProtoValue::I32(dt.timestamp_subsec_nanos() as i32),
+        );
+
+        Ok(ProtoValue::Message(message))
+    }
+
+    fn cel_duration_to_proto_message(
+        cel_dur: &CelDuration,
+        descriptor: &MessageDescriptor,
+    ) -> Result<ProtoValue, ConversionError> {
+        let dur = cel_dur.inner();
+        let mut message = DynamicMessage::new(descriptor.clone());
+        let (seconds_field, nanos_field) = Self::seconds_nanos_fields(descriptor, "Duration")?;
+
+        let seconds = dur.num_seconds();
+        let nanos = dur.subsec_nanos();
+        validate_proto_duration_components(seconds, nanos)?;
+
+        message.set_field(&seconds_field, ProtoValue::I64(seconds));
+        message.set_field(&nanos_field, ProtoValue::I32(nanos));
+
+        Ok(ProtoValue::Message(message))
+    }
+
+    fn proto_timestamp_to_cel_timestamp(
+        message: &DynamicMessage,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
+        use chrono::{DateTime, FixedOffset};
+
+        let descriptor = message.descriptor();
+        let (seconds_field, nanos_field) = Self::seconds_nanos_fields(&descriptor, "Timestamp")?;
+        let (seconds_value, nanos_value) =
+            Self::extract_seconds_nanos(message, &seconds_field, &nanos_field)?;
+
+        let dt: DateTime<FixedOffset> = DateTime::from_timestamp(seconds_value, nanos_value as u32)
+            .ok_or_else(|| ConversionError::TypeMismatch {
+                field: "timestamp".to_string(),
+                expected: "valid timestamp".to_string(),
+                got: format!("seconds={}, nanos={}", seconds_value, nanos_value),
+            })?
+            .into();
+
+        Ok(Box::new(CelTimestamp::from(dt)))
+    }
+
+    fn proto_duration_to_cel_duration(
+        message: &DynamicMessage,
+    ) -> Result<Box<dyn cel::common::value::Val>, ConversionError> {
+        let descriptor = message.descriptor();
+        let (seconds_field, nanos_field) = Self::seconds_nanos_fields(&descriptor, "Duration")?;
+        let (seconds_value, nanos_value) =
+            Self::extract_seconds_nanos(message, &seconds_field, &nanos_field)?;
 
         validate_proto_duration_components(seconds_value, nanos_value)?;
 
