@@ -2211,53 +2211,7 @@ mod tests {
 
     #[test]
     fn cel_duration_to_protobuf_duration_via_cel_expression() {
-        let duration_proto = FileDescriptorProto {
-            name: Some("google/protobuf/duration.proto".to_string()),
-            package: Some("google.protobuf".to_string()),
-            message_type: vec![DescriptorProto {
-                name: Some("Duration".to_string()),
-                field: vec![
-                    FieldDescriptorProto {
-                        name: Some("seconds".to_string()),
-                        number: Some(1),
-                        r#type: Some(field_descriptor_proto::Type::Int64.into()),
-                        ..Default::default()
-                    },
-                    FieldDescriptorProto {
-                        name: Some("nanos".to_string()),
-                        number: Some(2),
-                        r#type: Some(field_descriptor_proto::Type::Int32.into()),
-                        ..Default::default()
-                    },
-                ],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        let request_proto = FileDescriptorProto {
-            name: Some("test.proto".to_string()),
-            package: Some("test".to_string()),
-            dependency: vec!["google/protobuf/duration.proto".to_string()],
-            message_type: vec![DescriptorProto {
-                name: Some("Request".to_string()),
-                field: vec![FieldDescriptorProto {
-                    name: Some("ttl".to_string()),
-                    number: Some(1),
-                    r#type: Some(field_descriptor_proto::Type::Message.into()),
-                    type_name: Some(".google.protobuf.Duration".to_string()),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        let fds = FileDescriptorSet {
-            file: vec![duration_proto, request_proto],
-        };
-        let pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds)
-            .expect("Failed to create pool");
+        let pool = duration_and_ttl_request_pool();
 
         let duration_desc = pool
             .get_message_by_name("google.protobuf.Duration")
@@ -2322,35 +2276,7 @@ mod tests {
 
     #[test]
     fn protobuf_duration_to_cel_duration_roundtrip() {
-        let file_descriptor = FileDescriptorProto {
-            name: Some("google/protobuf/duration.proto".to_string()),
-            package: Some("google.protobuf".to_string()),
-            message_type: vec![DescriptorProto {
-                name: Some("Duration".to_string()),
-                field: vec![
-                    FieldDescriptorProto {
-                        name: Some("seconds".to_string()),
-                        number: Some(1),
-                        r#type: Some(field_descriptor_proto::Type::Int64.into()),
-                        ..Default::default()
-                    },
-                    FieldDescriptorProto {
-                        name: Some("nanos".to_string()),
-                        number: Some(2),
-                        r#type: Some(field_descriptor_proto::Type::Int32.into()),
-                        ..Default::default()
-                    },
-                ],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        let fds = FileDescriptorSet {
-            file: vec![file_descriptor.clone()],
-        };
-        let pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds)
-            .expect("Failed to create pool");
+        let pool = duration_and_ttl_request_pool();
         let duration_desc = pool
             .get_message_by_name("google.protobuf.Duration")
             .expect("Failed to get Duration descriptor");
@@ -2375,36 +2301,10 @@ mod tests {
             500
         );
 
-        let ttl_field = FieldDescriptorProto {
-            name: Some("ttl".to_string()),
-            number: Some(1),
-            r#type: Some(field_descriptor_proto::Type::Message.into()),
-            type_name: Some(".google.protobuf.Duration".to_string()),
-            ..Default::default()
-        };
-
-        let parent_desc = FileDescriptorProto {
-            name: Some("test.proto".to_string()),
-            package: Some("test".to_string()),
-            dependency: vec!["google/protobuf/duration.proto".to_string()],
-            message_type: vec![DescriptorProto {
-                name: Some("TestMessage".to_string()),
-                field: vec![ttl_field],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        let fds_with_test = FileDescriptorSet {
-            file: vec![file_descriptor, parent_desc],
-        };
-        let test_pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds_with_test)
-            .expect("Failed to create pool");
-
-        let test_desc = test_pool
-            .get_message_by_name("test.TestMessage")
-            .expect("Failed to get test descriptor");
-        let field = test_desc
+        let request_desc = pool
+            .get_message_by_name("test.Request")
+            .expect("Failed to get Request descriptor");
+        let field = request_desc
             .get_field_by_name("ttl")
             .expect("ttl field not found");
 
