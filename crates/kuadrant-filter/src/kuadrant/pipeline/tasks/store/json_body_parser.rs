@@ -7,10 +7,14 @@ use tracing::error;
 
 use super::body_parser::{parse_json_scalar, BodyParser};
 use crate::data::attribute::AttributeError;
+use crate::data::cel::BodyFieldGroup;
 use crate::kuadrant::context::BodyContext;
 
 pub(crate) struct JsonBodyParser {
-    fields: Vec<String>,
+    groups: Vec<BodyFieldGroup>,
+    /// Canonical group keys, kept alongside `groups` purely so `remaining_fields()`
+    /// can hand back stable `&String` references without allocating.
+    group_keys: Vec<String>,
     parser: Option<acutejson::Parser>,
     buffers: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     matched: Arc<Mutex<HashSet<String>>>,
@@ -20,14 +24,24 @@ pub(crate) struct JsonBodyParser {
 }
 
 impl JsonBodyParser {
-    pub fn new(fields: Vec<String>) -> Result<Self, AttributeError> {
+    pub fn new(groups: Vec<BodyFieldGroup>) -> Result<Self, AttributeError> {
         let buffers: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
         let matched: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
         let results: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::clone(&buffers);
 
+        // Every candidate pointer, across every group, is registered independently;
+        // a candidate shared by more than one group is only registered (and parsed)
+        // once.
+        let mut candidates: HashSet<&str> = HashSet::new();
+        for group in &groups {
+            for candidate in &group.candidates {
+                candidates.insert(candidate.as_str());
+            }
+        }
+
         let mut builder = acutejson::Builder::new();
-        for field in &fields {
-            let field_name = field.clone();
+        for field in candidates {
+            let field_name = field.to_string();
             let field_buffers = Arc::clone(&results);
             let field_matched = Arc::clone(&matched);
             field_buffers
@@ -57,8 +71,10 @@ impl JsonBodyParser {
             };
         }
 
+        let group_keys = groups.iter().map(|g| g.key.clone()).collect();
         Ok(Self {
-            fields,
+            groups,
+            group_keys,
             parser: Some(builder.build()),
             buffers,
             matched,
@@ -71,13 +87,21 @@ impl JsonBodyParser {
     fn finalize_extracted(&mut self) -> Result<(), AttributeError> {
         let buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
         let matched = self.matched.lock().unwrap_or_else(|e| e.into_inner());
+        let mut candidate_values: HashMap<&str, Value> = HashMap::new();
         for (field, raw_bytes) in buffers.iter() {
             if matched.contains(field) {
                 let raw_value = std::str::from_utf8(raw_bytes).map_err(|e| {
                     AttributeError::Parse(format!("Body field '{field}' is not valid UTF-8: {e}"))
                 })?;
-                let value = parse_json_scalar(raw_value);
-                self.extracted.insert(field.clone(), value);
+                candidate_values.insert(field.as_str(), parse_json_scalar(raw_value));
+            }
+        }
+        for group in &self.groups {
+            if self.extracted.contains_key(&group.key) {
+                continue;
+            }
+            if let Some(value) = group.resolve(|candidate| candidate_values.get(candidate)) {
+                self.extracted.insert(group.key.clone(), value.clone());
             }
         }
         Ok(())
@@ -100,9 +124,9 @@ impl BodyParser for JsonBodyParser {
     }
 
     fn remaining_fields(&self) -> Vec<&String> {
-        self.fields
+        self.group_keys
             .iter()
-            .filter(|f| !self.extracted.contains_key(f.as_str()))
+            .filter(|key| !self.extracted.contains_key(key.as_str()))
             .collect()
     }
 
@@ -143,11 +167,20 @@ impl BodyParser for JsonBodyParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::cel::ExpectedType;
     use std::sync::Arc;
+
+    fn group(pointer: &str) -> BodyFieldGroup {
+        BodyFieldGroup::new(vec![pointer.to_string()], None)
+    }
+
+    fn groups(pointers: &[&str]) -> Vec<BodyFieldGroup> {
+        pointers.iter().map(|p| group(p)).collect()
+    }
 
     #[test]
     fn single_chunk_extracts_field() {
-        let mut parser = JsonBodyParser::new(vec!["/model".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/model")]).unwrap();
 
         parser.feed(br#"{"model":"gpt-4"}"#).unwrap();
 
@@ -163,7 +196,7 @@ mod tests {
 
     #[test]
     fn chunked_feed_extracts_field() {
-        let mut parser = JsonBodyParser::new(vec!["/stream".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/stream")]).unwrap();
 
         parser.feed(br#"{"model":"gpt"#).unwrap();
         assert_eq!(parser.remaining_fields(), vec![&"/stream".to_string()]);
@@ -178,7 +211,7 @@ mod tests {
 
     #[test]
     fn missing_field_remains_in_remaining() {
-        let mut parser = JsonBodyParser::new(vec!["/missing".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/missing")]).unwrap();
 
         parser.feed(br#"{"other":1}"#).unwrap();
         parser.finalize().unwrap();
@@ -188,7 +221,7 @@ mod tests {
 
     #[test]
     fn multiple_fields_extracted() {
-        let mut parser = JsonBodyParser::new(vec!["/a".to_string(), "/b".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(groups(&["/a", "/b"])).unwrap();
 
         parser.feed(br#"{"a":10,"b":"hello"}"#).unwrap();
 
@@ -203,14 +236,14 @@ mod tests {
 
     #[test]
     fn malformed_json_returns_error() {
-        let mut parser = JsonBodyParser::new(vec!["/field".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/field")]).unwrap();
 
         assert!(parser.feed(b"{not valid json}").is_err());
     }
 
     #[test]
     fn finalize_catches_truncated_json() {
-        let mut parser = JsonBodyParser::new(vec!["/field".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/field")]).unwrap();
 
         parser.feed(br#"{"field": "#).unwrap();
         assert!(parser.finalize().is_err());
@@ -218,12 +251,12 @@ mod tests {
 
     #[test]
     fn invalid_json_pointer_returns_error() {
-        assert!(JsonBodyParser::new(vec!["no-leading-slash".to_string()]).is_err());
+        assert!(JsonBodyParser::new(vec![group("no-leading-slash")]).is_err());
     }
 
     #[test]
     fn nested_field_extracted() {
-        let mut parser = JsonBodyParser::new(vec!["/usage/total_tokens".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/usage/total_tokens")]).unwrap();
 
         parser.feed(br#"{"usage":{"total_tokens":42}}"#).unwrap();
 
@@ -237,7 +270,7 @@ mod tests {
 
     #[test]
     fn bytes_consumed_tracks_fed_bytes() {
-        let mut parser = JsonBodyParser::new(vec!["/a".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/a")]).unwrap();
         assert_eq!(parser.bytes_consumed(), 0);
 
         parser.feed(br#"{"a""#).unwrap();
@@ -249,7 +282,7 @@ mod tests {
 
     #[test]
     fn empty_string_value_is_extracted() {
-        let mut parser = JsonBodyParser::new(vec!["/name".to_string()]).unwrap();
+        let mut parser = JsonBodyParser::new(vec![group("/name")]).unwrap();
 
         parser.feed(br#"{"name":""}"#).unwrap();
 
@@ -261,5 +294,75 @@ mod tests {
             body_ctx.get_value("/name"),
             Some(&Value::String(Arc::new(String::new())))
         );
+    }
+
+    #[test]
+    fn ordered_candidates_first_present_wins() {
+        let field = BodyFieldGroup::new(
+            vec![
+                "/usage/total_tokens".to_string(),
+                "/usage/totalTokens".to_string(),
+            ],
+            None,
+        );
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"usage":{"totalTokens":7}}"#).unwrap();
+        // Only the second candidate is present, so `feed` alone never sees every
+        // registered pointer match; `finalize` is what harvests a partial group.
+        parser.finalize().unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(7)));
+    }
+
+    #[test]
+    fn ordered_candidates_earlier_priority_wins_over_later_one() {
+        let field = BodyFieldGroup::new(
+            vec![
+                "/usage/total_tokens".to_string(),
+                "/usage/totalTokens".to_string(),
+            ],
+            None,
+        );
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser
+            .feed(br#"{"usage":{"total_tokens":42,"totalTokens":7}}"#)
+            .unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn type_hint_skips_non_matching_candidate() {
+        let field = BodyFieldGroup::new(
+            vec!["/model".to_string(), "/usage/total_tokens".to_string()],
+            Some(ExpectedType::Number),
+        );
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        // "/model" resolves first but isn't a number, so the numeric candidate wins.
+        parser
+            .feed(br#"{"model":"gpt-4","usage":{"total_tokens":42}}"#)
+            .unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn type_hint_with_no_matching_candidate_remains_unresolved() {
+        let field = BodyFieldGroup::new(vec!["/model".to_string()], Some(ExpectedType::Number));
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"model":"gpt-4"}"#).unwrap();
+        parser.finalize().unwrap();
+
+        assert_eq!(parser.remaining_fields(), vec![&field.key]);
     }
 }

@@ -31,6 +31,11 @@ fn configure_dynamic_service(module: &mut tester::Tester, root_context: i32, cfg
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))

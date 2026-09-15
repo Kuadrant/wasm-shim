@@ -49,6 +49,11 @@ fn it_loads() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -192,6 +197,11 @@ fn it_limits() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -370,6 +380,11 @@ fn it_resolved_and_passes_request_data() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -542,6 +557,11 @@ fn it_passes_additional_headers() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -714,6 +734,11 @@ fn it_rate_limits_with_empty_predicates() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -863,6 +888,11 @@ fn it_does_not_rate_limits_when_predicates_does_not_match() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
