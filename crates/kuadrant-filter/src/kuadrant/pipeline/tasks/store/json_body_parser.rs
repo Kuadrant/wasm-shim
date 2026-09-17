@@ -12,9 +12,6 @@ use crate::kuadrant::context::BodyContext;
 
 pub(crate) struct JsonBodyParser {
     groups: Vec<BodyFieldGroup>,
-    /// Canonical group keys, kept alongside `groups` purely so `remaining_fields()`
-    /// can hand back stable `&String` references without allocating.
-    group_keys: Vec<String>,
     parser: Option<acutejson::Parser>,
     buffers: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     matched: Arc<Mutex<HashSet<String>>>,
@@ -71,10 +68,8 @@ impl JsonBodyParser {
             };
         }
 
-        let group_keys = groups.iter().map(|g| g.key.clone()).collect();
         Ok(Self {
             groups,
-            group_keys,
             parser: Some(builder.build()),
             buffers,
             matched,
@@ -123,10 +118,10 @@ impl BodyParser for JsonBodyParser {
         Ok(())
     }
 
-    fn remaining_fields(&self) -> Vec<&String> {
-        self.group_keys
+    fn remaining_fields(&self) -> Vec<&BodyFieldGroup> {
+        self.groups
             .iter()
-            .filter(|key| !self.extracted.contains_key(key.as_str()))
+            .filter(|g| !self.extracted.contains_key(&g.key))
             .collect()
     }
 
@@ -199,7 +194,8 @@ mod tests {
         let mut parser = JsonBodyParser::new(vec![group("/stream")]).unwrap();
 
         parser.feed(br#"{"model":"gpt"#).unwrap();
-        assert_eq!(parser.remaining_fields(), vec![&"/stream".to_string()]);
+        let expected = group("/stream");
+        assert_eq!(parser.remaining_fields(), vec![&expected]);
 
         parser.feed(br#"-4","stream":true}"#).unwrap();
         assert!(parser.remaining_fields().is_empty());
@@ -216,7 +212,8 @@ mod tests {
         parser.feed(br#"{"other":1}"#).unwrap();
         parser.finalize().unwrap();
 
-        assert_eq!(parser.remaining_fields(), vec![&"/missing".to_string()]);
+        let expected = group("/missing");
+        assert_eq!(parser.remaining_fields(), vec![&expected]);
     }
 
     #[test]
@@ -363,6 +360,6 @@ mod tests {
         parser.feed(br#"{"model":"gpt-4"}"#).unwrap();
         parser.finalize().unwrap();
 
-        assert_eq!(parser.remaining_fields(), vec![&field.key]);
+        assert_eq!(parser.remaining_fields(), vec![&field]);
     }
 }

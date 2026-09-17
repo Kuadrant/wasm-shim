@@ -1,12 +1,17 @@
 use cel::Value;
 
 use crate::data::attribute::AttributeError;
+use crate::data::cel::BodyFieldGroup;
 use crate::kuadrant::context::BodyContext;
 
 pub(super) trait BodyParser {
     fn feed(&mut self, chunk: &[u8]) -> Result<(), AttributeError>;
     fn finalize(&mut self) -> Result<(), AttributeError>;
-    fn remaining_fields(&self) -> Vec<&String>;
+    /// Groups with no resolved value yet. Returned as the original
+    /// [`BodyFieldGroup`] (not just its canonical key) so callers can report
+    /// the actual candidate pointers a user configured, rather than the
+    /// internal, non-human-readable canonical key.
+    fn remaining_fields(&self) -> Vec<&BodyFieldGroup>;
     fn populate(&self, body_ctx: &mut BodyContext);
     fn bytes_consumed(&self) -> usize;
 }

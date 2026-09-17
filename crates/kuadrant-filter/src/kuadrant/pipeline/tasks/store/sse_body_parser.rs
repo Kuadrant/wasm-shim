@@ -128,9 +128,6 @@ impl EventBuilder {
 
 pub(crate) struct SseBodyParser {
     groups: Vec<BodyFieldGroup>,
-    /// Canonical group keys, kept alongside `groups` purely so `remaining_fields()`
-    /// can hand back stable `&String` references without allocating.
-    group_keys: Vec<String>,
     event_parser: EventParser,
     last_two_events: [Option<Event>; 2],
     extracted: HashMap<String, Value>,
@@ -139,10 +136,8 @@ pub(crate) struct SseBodyParser {
 
 impl SseBodyParser {
     pub fn new(groups: Vec<BodyFieldGroup>) -> Self {
-        let group_keys = groups.iter().map(|g| g.key.clone()).collect();
         Self {
             groups,
-            group_keys,
             event_parser: EventParser::default(),
             last_two_events: [None, None],
             extracted: HashMap::new(),
@@ -205,10 +200,10 @@ impl BodyParser for SseBodyParser {
         Ok(())
     }
 
-    fn remaining_fields(&self) -> Vec<&String> {
-        self.group_keys
+    fn remaining_fields(&self) -> Vec<&BodyFieldGroup> {
+        self.groups
             .iter()
-            .filter(|key| !self.extracted.contains_key(key.as_str()))
+            .filter(|g| !self.extracted.contains_key(&g.key))
             .collect()
     }
 
@@ -589,7 +584,8 @@ mod tests {
         parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
-        assert_eq!(parser.remaining_fields(), vec![&"/nonexistent".to_string()]);
+        let expected = group("/nonexistent");
+        assert_eq!(parser.remaining_fields(), vec![&expected]);
 
         let mut body_ctx = BodyContext::default();
         parser.populate(&mut body_ctx);
@@ -605,7 +601,8 @@ mod tests {
         parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
-        assert_eq!(parser.remaining_fields(), vec![&"/usage".to_string()]);
+        let expected = group("/usage");
+        assert_eq!(parser.remaining_fields(), vec![&expected]);
     }
 
     #[test]

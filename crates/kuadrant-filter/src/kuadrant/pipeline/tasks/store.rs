@@ -196,12 +196,14 @@ impl Task for StoreTask {
                     error!("Failed to finalize body parser for '{}': {e}", self.path);
                     return TaskOutcome::Failed;
                 }
-                if !parser.remaining_fields().is_empty() {
-                    let remaining: Vec<&String> = parser.remaining_fields();
+                let remaining = parser.remaining_fields();
+                if !remaining.is_empty() {
+                    let candidates: Vec<&[String]> =
+                        remaining.iter().map(|g| g.candidates.as_slice()).collect();
                     warn!(
                         "No candidate resolved for field(s) {:?} in '{}': body stream ended \
                         without a match; the request proceeds and this value is skipped",
-                        remaining, self.path
+                        candidates, self.path
                     );
                     METRICS.body_extraction_misses().increment();
                     return TaskOutcome::Failed;
