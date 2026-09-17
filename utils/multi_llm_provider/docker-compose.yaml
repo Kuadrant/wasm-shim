@@ -1,0 +1,74 @@
+---
+services:
+  envoy:
+    image: envoyproxy/envoy:v1.35-latest
+    container_name: envoy
+    user: root
+    environment:
+      - ENVOY_UID=0
+    depends_on:
+      - limitador
+      - mock-llm
+    command:
+      - /usr/local/bin/envoy
+      - --config-path
+      - /etc/envoy.yaml
+      - --log-level
+      - info
+      - --component-log-level
+      - wasm:debug,http:debug,router:debug
+      - --service-cluster
+      - proxy
+    expose:
+      - "80"
+      - "8001"
+    ports:
+      - "18000:80"
+      - "18001:8001"
+    volumes:
+      - ./envoy.yaml:/etc/envoy.yaml
+      - ../../target/wasm32-wasip1/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
+  limitador:
+    image: ${LIMITADOR_IMAGE:-quay.io/kuadrant/limitador:latest}
+    container_name: limitador
+    command:
+      - --rls-ip
+      - 0.0.0.0
+      - --rls-port
+      - "8081"
+      - --http-ip
+      - 0.0.0.0
+      - --http-port
+      - "8080"
+      - -vvv
+      - --grpc-reflection-service
+      - --rate-limit-headers
+      - DRAFT_VERSION_03
+      - /opt/kuadrant/limits/limits.yaml
+      - memory
+    expose:
+      - "8080"
+      - "8081"
+    ports:
+      - "18080:8080"
+      - "18081:8081"
+    volumes:
+      - ./limits.yaml:/opt/kuadrant/limits/limits.yaml
+  mock-llm:
+    build: ./mock
+    container_name: mock-llm
+    expose:
+      - "8090"
+  start_services:
+    image: alpine
+    depends_on:
+      - envoy
+    command: >
+      /bin/sh -c "
+      while ! nc -z envoy 80;
+      do
+      echo sleeping;
+      sleep 1;
+      done;
+      echo Connected!
+      "
