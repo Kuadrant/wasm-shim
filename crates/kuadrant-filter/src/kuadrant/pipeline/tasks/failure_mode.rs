@@ -35,6 +35,17 @@ impl Task for FailureModeTask {
                     abort: self.abort,
                 }),
             },
+            TaskOutcome::Requeued(tasks) => TaskOutcome::Requeued(
+                tasks
+                    .into_iter()
+                    .map(|task| {
+                        Box::new(FailureModeTask {
+                            task,
+                            abort: self.abort,
+                        }) as Box<dyn Task>
+                    })
+                    .collect(),
+            ),
             outcome => outcome,
         }
     }
