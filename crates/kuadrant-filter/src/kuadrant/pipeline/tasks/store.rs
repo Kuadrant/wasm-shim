@@ -305,6 +305,41 @@ mod tests {
     }
 
     #[test]
+    fn multi_field_via_separate_calls() {
+        let response_body = br#"{"usage":{"total_tokens":18,"input_tokens":10,"output_tokens":8}}"#;
+        let mock_host = MockWasmHost::new().with_response_body(response_body);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(response_body.len(), true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            r#"{
+                "total_tokens": responseBodyJSON(["/usage/total_tokens"], "number"),
+                "input_tokens": responseBodyJSON(["/usage/input_tokens"], "number"),
+                "output_tokens": responseBodyJSON(["/usage/output_tokens"], "number")
+            }"#,
+            "kuadrant.internal.response.body",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx
+            .values
+            .get("kuadrant.internal.response.body")
+            .expect("value should be stored");
+        match stored {
+            cel::Value::Map(m) => {
+                let key = |s: &str| cel::objects::Key::String(Arc::new(s.to_string()));
+                assert_eq!(m.get(&key("total_tokens")), Some(&cel::Value::Int(18)));
+                assert_eq!(m.get(&key("input_tokens")), Some(&cel::Value::Int(10)));
+                assert_eq!(m.get(&key("output_tokens")), Some(&cel::Value::Int(8)));
+            }
+            other => unreachable!("expected a map, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn body_field_extracted_and_stored() {
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
