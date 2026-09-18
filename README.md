@@ -188,6 +188,8 @@ predicates:
 - requestBodyJSON('/my/value') == 'hello'
 ```
 
+`requestBodyJSON` also accepts an **ordered list** of JSON Pointers instead of a single one, plus an optional type hint, exactly like [`responseBodyJSON`](#responsebodyjsonjson_pointer--json_pointer-type) below (same semantics, applied to the request body).
+
 #### `responseBodyJSON(json_pointer)`
 
 Parses response body as json and looks up a value by a JSON Pointer.
@@ -234,6 +236,25 @@ predicates:
 - responseBodyJSON('/my/value') == 'hello'
 ```
 
+#### `responseBodyJSON([json_pointer, ...], type?)`
+
+Both `requestBodyJSON` and `responseBodyJSON` also accept an **ordered list** of JSON Pointers instead of a single one, to look up a value that may live at different paths depending on which upstream produced the body (e.g. different LLM providers shaping token usage differently). The pointers are evaluated in list order against the same parsed body; the first one that resolves wins, and the rest are never evaluated:
+
+```yaml
+data:
+- expression:
+    key: total_tokens
+    value: responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')
+```
+
+An optional second argument restricts which type of value counts as "resolved": `'number'`, `'string'`, `'bool'`, `'list'` or `'map'`. A candidate whose value doesn't match the hint is treated exactly like a missing candidate, and evaluation moves on to the next one in the list. `'number'` also accepts a JSON string that parses in full as a number (e.g. `"150"` resolves as `150`). If the second argument is omitted, any present, non-null value resolves, matching the single-pointer function's existing behaviour.
+
+The list is capped at 8 candidates; a longer list, an empty list, a non-literal element, or an unrecognized type hint are all treated the same way a malformed single-pointer argument is treated today: the call is never registered against the body, so it evaluates to `Null`/pending rather than a compile error.
+
+If none of the candidates resolve by the time the body finishes, the field behaves exactly as today's single-pointer "no such value" case (evaluation error / absent), and a `kuadrant.body_extraction_misses` metric is incremented (see [Metrics](#metrics)).
+
+The same list and type hint are also honored for `text/event-stream` (SSE) responses, subject to today's existing streaming limitation: only the second-to-last SSE event is inspected (a future release will lift this to a provider-agnostic, per-event strategy).
+
 ### Well Known Attributes
 
 | Attribute                                                                                               | Description                                                                                                                                                                                                                    |
@@ -254,6 +275,7 @@ The WASM module exposes the following Prometheus-compatible metrics via Envoy:
 | `kuadrant.allowed`    | Counter | Number of requests allowed after evaluation                      |
 | `kuadrant.denied`     | Counter | Number of requests denied as a result of actions                 |
 | `kuadrant.errors`     | Counter | Number of errors encountered during request processing           |
+| `kuadrant.body_extraction_misses` | Counter | Number of `requestBodyJSON`/`responseBodyJSON` candidate lists that reached end-of-stream with no candidate resolved |
 
 These metrics are automatically exposed through Envoy's stats endpoint and can be scraped by Prometheus or other monitoring systems. To view metrics, access Envoy's admin interface (typically at `:8001/stats/prometheus`).
 

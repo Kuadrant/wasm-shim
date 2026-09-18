@@ -7,6 +7,7 @@ const MISSES: &str = "kuadrant.misses";
 const ALLOW: &str = "kuadrant.allowed";
 const DENIED: &str = "kuadrant.denied";
 const ERRORS: &str = "kuadrant.errors";
+const BODY_EXTRACTION_MISSES: &str = "kuadrant.body_extraction_misses";
 
 const NOOP: Counter = Counter(None);
 
@@ -55,12 +56,29 @@ impl Metrics {
     pub fn errors(&self) -> &Counter {
         self.get_counter(ERRORS)
     }
+
+    /// Incremented when a `store` action's `requestBodyJSON`/`responseBodyJSON`
+    /// candidate list reaches end-of-stream with none of its candidates resolved.
+    /// The request still proceeds (extraction misses are fail-open, matching
+    /// today's single-pointer behaviour), so this is the only signal that the
+    /// miss happened at all.
+    pub fn body_extraction_misses(&self) -> &Counter {
+        self.get_counter(BODY_EXTRACTION_MISSES)
+    }
 }
 
 impl Default for Metrics {
     fn default() -> Self {
         let mut counters = BTreeMap::new();
-        for metric in [CONFIGS, HITS, MISSES, ALLOW, DENIED, ERRORS] {
+        for metric in [
+            CONFIGS,
+            HITS,
+            MISSES,
+            ALLOW,
+            DENIED,
+            ERRORS,
+            BODY_EXTRACTION_MISSES,
+        ] {
             let id = METRICS_BACKEND.get().and_then(|b| b.define_counter(metric));
             counters.insert(metric.to_string(), Counter(id));
         }

@@ -5,14 +5,15 @@ pub(super) mod sse_body_parser;
 use body_parser::BodyParser;
 use json_body_parser::JsonBodyParser;
 use sse_body_parser::SseBodyParser;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::data::attribute::{AttributeError, AttributeState};
-use crate::data::cel::Predicate;
+use crate::data::cel::{BodyFieldGroup, Predicate};
 use crate::data::Expression;
 use crate::data::Headers;
 use crate::kuadrant::pipeline::tasks::{SendReplyTask, Task, TaskOutcome};
 use crate::kuadrant::{PathReservation, ReqRespCtx};
+use crate::metrics::METRICS;
 use crate::services::MessageConverter;
 
 #[derive(Clone, Copy)]
@@ -23,8 +24,13 @@ enum BodySource {
 
 enum BodyParseState {
     NotNeeded,
-    Pending(BodySource, Vec<String>),
+    Pending(BodySource, Vec<BodyFieldGroup>),
     Active(BodySource, Box<dyn BodyParser>),
+}
+
+fn dedup_groups(groups: &mut Vec<BodyFieldGroup>) {
+    groups.sort_by(|a, b| a.key.cmp(&b.key));
+    groups.dedup_by(|a, b| a.key == b.key);
 }
 
 pub struct StoreTask {
@@ -63,23 +69,21 @@ impl StoreTask {
     }
 
     fn initial_body_state(predicate: &Predicate, expression: &Expression) -> BodyParseState {
-        let mut request_fields: Vec<String> = Vec::new();
-        let mut response_fields: Vec<String> = Vec::new();
+        let mut request_groups: Vec<BodyFieldGroup> = Vec::new();
+        let mut response_groups: Vec<BodyFieldGroup> = Vec::new();
 
-        request_fields.extend_from_slice(predicate.request_body_values());
-        request_fields.extend_from_slice(expression.request_body_values());
+        request_groups.extend_from_slice(predicate.request_body_groups());
+        request_groups.extend_from_slice(expression.request_body_groups());
 
-        response_fields.extend_from_slice(predicate.response_body_values());
-        response_fields.extend_from_slice(expression.response_body_values());
+        response_groups.extend_from_slice(predicate.response_body_groups());
+        response_groups.extend_from_slice(expression.response_body_groups());
 
-        if !request_fields.is_empty() {
-            request_fields.sort();
-            request_fields.dedup();
-            BodyParseState::Pending(BodySource::Request, request_fields)
-        } else if !response_fields.is_empty() {
-            response_fields.sort();
-            response_fields.dedup();
-            BodyParseState::Pending(BodySource::Response, response_fields)
+        if !request_groups.is_empty() {
+            dedup_groups(&mut request_groups);
+            BodyParseState::Pending(BodySource::Request, request_groups)
+        } else if !response_groups.is_empty() {
+            dedup_groups(&mut response_groups);
+            BodyParseState::Pending(BodySource::Response, response_groups)
         } else {
             BodyParseState::NotNeeded
         }
@@ -88,11 +92,11 @@ impl StoreTask {
     fn create_parser(
         ctx: &ReqRespCtx,
         source: BodySource,
-        fields: &[String],
+        groups: &[BodyFieldGroup],
     ) -> Result<Option<Box<dyn BodyParser>>, AttributeError> {
         match source {
             BodySource::Request => {
-                let parser = JsonBodyParser::new(fields.to_vec()).map_err(|e| {
+                let parser = JsonBodyParser::new(groups.to_vec()).map_err(|e| {
                     AttributeError::Parse(format!("Failed to create request body parser: {e}"))
                 })?;
                 Ok(Some(Box::new(parser)))
@@ -111,9 +115,9 @@ impl StoreTask {
                 };
 
                 if is_sse {
-                    Ok(Some(Box::new(SseBodyParser::new(fields.to_vec()))))
+                    Ok(Some(Box::new(SseBodyParser::new(groups.to_vec()))))
                 } else {
-                    let parser = JsonBodyParser::new(fields.to_vec()).map_err(|e| {
+                    let parser = JsonBodyParser::new(groups.to_vec()).map_err(|e| {
                         AttributeError::Parse(format!("Failed to create response body parser: {e}"))
                     })?;
                     Ok(Some(Box::new(parser)))
@@ -192,12 +196,16 @@ impl Task for StoreTask {
                     error!("Failed to finalize body parser for '{}': {e}", self.path);
                     return TaskOutcome::Failed;
                 }
-                if !parser.remaining_fields().is_empty() {
-                    let remaining: Vec<&String> = parser.remaining_fields();
-                    error!(
-                        "Body stream ended without finding fields {:?} for '{}'",
-                        remaining, self.path
+                let remaining = parser.remaining_fields();
+                if !remaining.is_empty() {
+                    let candidates: Vec<&[String]> =
+                        remaining.iter().map(|g| g.candidates.as_slice()).collect();
+                    warn!(
+                        "No candidate resolved for field(s) {:?} in '{}': body stream ended \
+                        without a match; the request proceeds and this value is skipped",
+                        candidates, self.path
                     );
+                    METRICS.body_extraction_misses().increment();
                     return TaskOutcome::Failed;
                 }
             }
@@ -297,6 +305,41 @@ mod tests {
     }
 
     #[test]
+    fn multi_field_via_separate_calls() {
+        let response_body = br#"{"usage":{"total_tokens":18,"input_tokens":10,"output_tokens":8}}"#;
+        let mock_host = MockWasmHost::new().with_response_body(response_body);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(response_body.len(), true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            r#"{
+                "total_tokens": responseBodyJSON(["/usage/total_tokens"], "number"),
+                "input_tokens": responseBodyJSON(["/usage/input_tokens"], "number"),
+                "output_tokens": responseBodyJSON(["/usage/output_tokens"], "number")
+            }"#,
+            "kuadrant.internal.response.body",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let stored = ctx
+            .values
+            .get("kuadrant.internal.response.body")
+            .expect("value should be stored");
+        match stored {
+            cel::Value::Map(m) => {
+                let key = |s: &str| cel::objects::Key::String(Arc::new(s.to_string()));
+                assert_eq!(m.get(&key("total_tokens")), Some(&cel::Value::Int(18)));
+                assert_eq!(m.get(&key("input_tokens")), Some(&cel::Value::Int(10)));
+                assert_eq!(m.get(&key("output_tokens")), Some(&cel::Value::Int(8)));
+            }
+            other => unreachable!("expected a map, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn body_field_extracted_and_stored() {
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
@@ -382,6 +425,68 @@ mod tests {
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
         assert_eq!(ctx.values.get("response.usage"), Some(&cel::Value::Int(42)));
+    }
+
+    #[test]
+    fn ordered_candidate_list_falls_back_to_second_pointer() {
+        // Simulates the RFC 0024 use case: a Gemini-shaped body has no
+        // `/usage/total_tokens`, but the list's second candidate matches.
+        let mock_host =
+            MockWasmHost::new().with_response_body(br#"{"usageMetadata":{"totalTokenCount":7}}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(40, true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')",
+            "response.usage.total_tokens",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(
+            ctx.values.get("response.usage.total_tokens"),
+            Some(&cel::Value::Int(7))
+        );
+    }
+
+    #[test]
+    fn ordered_candidate_list_skips_non_numeric_candidate() {
+        // The first candidate is present but not a number; the type hint makes it
+        // fall through to the second, numeric candidate instead of stopping there.
+        let mock_host = MockWasmHost::new()
+            .with_response_body(br#"{"model":"gpt-4","usage":{"total_tokens":42}}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(46, true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON(['/model', '/usage/total_tokens'], 'number')",
+            "response.usage.total_tokens",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(
+            ctx.values.get("response.usage.total_tokens"),
+            Some(&cel::Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn ordered_candidate_list_fails_at_eos_when_no_candidate_resolves() {
+        let mock_host = MockWasmHost::new().with_response_body(br#"{"other":1}"#);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(11, true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')",
+            "response.usage.total_tokens",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Failed));
     }
 
     #[test]

@@ -176,6 +176,11 @@ fn it_checks_and_reports() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -387,6 +392,11 @@ fn it_reads_request_attr_in_advance_when_response_body() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -445,6 +455,203 @@ fn it_reads_request_attr_in_advance_when_response_body() {
             "total_tokens": 11
           },
           "choices": []
+        }"#
+    .as_bytes();
+    module
+        .call_proxy_on_response_body(http_context, response_body.len() as i32, true)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(response_body))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("kuadrant.service.ratelimit.v1.RateLimitService"),
+            Some("Report"),
+            None,
+            None,
+            Some(5000),
+        )
+        .returning(Ok(42))
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let grpc_response: [u8; 2] = [8, 1];
+    module
+        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+}
+
+#[test]
+#[serial]
+fn it_extracts_via_ordered_candidate_list_for_non_openai_shaped_response() {
+    // Same shape as `it_reads_request_attr_in_advance_when_response_body`, but the
+    // upstream is Gemini-shaped (no `/usage/total_tokens`), which is exactly the
+    // RFC 0024 case: an ordered candidate list with a `number` type hint finds the
+    // value at the second candidate instead.
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (kuadrant.internal.response.body.total_tokens == 11
+                            && request.url_path.startsWith('/admin/toy')) ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "dynamic",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
+            {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')}"
+            },
+            {
+                "type": "grpc",
+                "var": "report_response",
+                "service": "limitador",
+                "predicate": "kuadrant.internal.response.body.total_tokens == 11 && request.url_path.startsWith('/admin/toy')",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
+            }
+            ]
+        }]
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
+        .expect_increment_metric(Some(1), Some(1))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some(data::request::HOST))
+        // retrieving tracing headers
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_increment_metric(Some(2), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
+        .expect_get_property(Some(vec!["request", "url_path"]))
+        .returning(Some(data::request::path::ADMIN_TOY))
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some(data::request::method::POST))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_request_body(http_context, 25i32, false)
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(proxy_wasm_test_framework::types::Status::BadArgument)
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_increment_metric(Some(4), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(None)
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Gemini-shaped response: no `/usage/total_tokens`, only `usageMetadata.totalTokenCount`.
+    let response_body = r#"
+        {
+          "candidates": [],
+          "usageMetadata": {
+            "promptTokenCount": 0,
+            "candidatesTokenCount": 11,
+            "totalTokenCount": 11
+          }
         }"#
     .as_bytes();
     module
@@ -574,6 +781,11 @@ fn it_handles_errors_on_response_body() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))

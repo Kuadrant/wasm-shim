@@ -1,0 +1,147 @@
+---
+static_resources:
+  listeners:
+    - name: main
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 80
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                use_remote_address: true
+                xff_num_trusted_hops: 1
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: local_service
+                      domains:
+                        - "*"
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: upstream
+                http_filters:
+                  - name: envoy.filters.http.wasm
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+                      config:
+                        name: kuadrant_wasm
+                        root_id: kuadrant_wasm
+                        vm_config:
+                          vm_id: vm.sentinel.kuadrant_wasm
+                          runtime: envoy.wasm.runtime.v8
+                          code:
+                            local:
+                              filename: /opt/kuadrant/wasm/wasm_shim.wasm
+                          allow_precompiled: true
+                        configuration:
+                          "@type": "type.googleapis.com/google.protobuf.StringValue"
+                          value: >
+                            {
+                              "services": {
+                                "ratelimit-check-service": {
+                                  "type": "dynamic",
+                                  "endpoint": "limitador",
+                                  "failureMode": "deny",
+                                  "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                                  "grpcMethod": "CheckRateLimit"
+                                },
+                                "ratelimit-report-service": {
+                                  "type": "dynamic",
+                                  "endpoint": "limitador",
+                                  "failureMode": "deny",
+                                  "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                                  "grpcMethod": "Report"
+                                }
+                              },
+                              "actionSets": [
+                                {
+                                  "name": "basic",
+                                  "routeRuleConditions": {
+                                    "hostnames": ["*.example.com"]
+                                  },
+                                  "actions": [
+                                    {
+                                      "type": "grpc",
+                                      "var": "ratelimit_response",
+                                      "service": "ratelimit-check-service",
+                                      "predicate": "request.path == \"/v1/chat/completions\"",
+                                      "terminal": false,
+                                      "label": "ratelimit",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "onReply": [
+                                        { "type": "deny", "predicate": "ratelimit_response.overall_code == 2", "terminal": true, "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}" },
+                                        { "type": "headers", "predicate": "ratelimit_response.overall_code == 1", "terminal": false, "target": "response", "headers": "ratelimit_response.response_headers_to_add" },
+                                        { "type": "fail", "predicate": "ratelimit_response.overall_code != 1 && ratelimit_response.overall_code != 2", "terminal": true, "logMessage": "Unknown rate limit response code from ratelimit_response" }
+                                      ]
+                                    },
+                                    {
+                                      "type": "store",
+                                      "predicate": "true",
+                                      "terminal": false,
+                                      "path": "kuadrant.internal.response.body",
+                                      "value": "{\"total_tokens\": responseBodyJSON([\"/usage/total_tokens\", \"/usageMetadata/totalTokenCount\", \"/usage/output_tokens\"], \"number\")}"
+                                    },
+                                    {
+                                      "type": "grpc",
+                                      "execution": "sequential",
+                                      "var": "report_response",
+                                      "service": "ratelimit-report-service",
+                                      "predicate": "request.path == \"/v1/chat/completions\"",
+                                      "terminal": false,
+                                      "isGuard": false,
+                                      "label": "ratelimit_report",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: uint(kuadrant.internal.response.body.total_tokens), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "onReply": [
+                                        { "type": "fail", "predicate": "!has(report_response.overall_code)", "terminal": false, "isGuard": false, "logMessage": "Rate limit report failed: invalid gRPC response" }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: upstream
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      lb_policy: round_robin
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: mock-llm
+                      port_value: 8090
+    - name: limitador
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      lb_policy: round_robin
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: limitador
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: limitador
+                      port_value: 8081
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8001
