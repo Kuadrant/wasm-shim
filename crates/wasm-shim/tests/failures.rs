@@ -771,3 +771,177 @@ fn it_fails_on_second_action_grpc_response() {
         .execute_and_expect(ReturnType::None)
         .unwrap();
 }
+
+#[test]
+#[serial]
+fn it_does_not_strand_a_sequential_successor_when_a_task_fails() {
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: [
+                        envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "a",
+                            value: string('1')
+                        }
+                    ]
+                }
+            ]
+        }
+    "#;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "dynamic",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
+            {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
+                "type": "grpc",
+                "execution": "sequential",
+                "var": "report_response",
+                "service": "limitador",
+                "predicate": "true",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
+            }
+            ]
+        }]
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_increment_metric(Some(1), Some(1))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some(data::request::HOST))
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_increment_metric(Some(2), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(TestStatus::BadArgument)
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_increment_metric(Some(4), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(None)
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // an upstream error body: no token usage to extract, so the store action fails
+    let response_body = "some crap that cannot be JSON parsed".as_bytes();
+    module
+        .call_proxy_on_response_body(http_context, response_body.len() as i32, true)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(response_body))
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("JSON parse error: UnexpectedByte(115)"),
+        )
+        .expect_log(
+            Some(LogLevel::Error),
+            Some("Failed to parse body for 'kuadrant.internal.response.body': AttributeError::Parse { \"JSON parse error: UnexpectedByte(115)\" }"),
+        )
+        .expect_log(Some(LogLevel::Error), Some("Task failed: \"0\""))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("kuadrant.service.ratelimit.v1.RateLimitService"),
+            Some("Report"),
+            None,
+            None,
+            Some(5000),
+        )
+        .returning(Ok(42))
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let grpc_response: [u8; 2] = [8, 1];
+    module
+        .call_proxy_on_grpc_receive(http_context, 42, grpc_response.len() as i32)
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+}
