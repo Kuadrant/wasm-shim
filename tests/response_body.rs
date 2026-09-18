@@ -510,8 +510,9 @@ fn it_handles_errors_on_response_body() {
             Some(LogLevel::Warn),
             Some("Missing json property: /usage/total_tokens"),
         )
-        .expect_log(Some(LogLevel::Error), Some("Task failed: Some(\"0\")"))
-        // on response headers/body, expected action is Continue
+        .expect_increment_metric(Some(6), Some(1))
+        .expect_increment_metric(Some(5), Some(1))
+        .expect_send_local_response(Some(500), None, None, None)
         .execute_and_expect(ReturnType::Action(Action::Continue))
         .unwrap();
 }
