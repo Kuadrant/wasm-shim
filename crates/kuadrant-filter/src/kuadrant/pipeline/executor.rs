@@ -23,7 +23,7 @@ pub struct Pipeline {
     pub ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
     deferred_tasks: BTreeMap<u32, Box<dyn Task>>,
-    completed_tasks: HashSet<String>,
+    settled_tasks: HashSet<String>,
     teardown_tasks: Vec<Box<dyn TeardownAction>>,
     terminated: bool,
 }
@@ -46,7 +46,7 @@ impl Pipeline {
             ctx,
             task_queue: Vec::new(),
             deferred_tasks: BTreeMap::new(),
-            completed_tasks: HashSet::new(),
+            settled_tasks: HashSet::new(),
             teardown_tasks: Vec::new(),
             terminated: false,
         }
@@ -110,7 +110,7 @@ impl Pipeline {
             if task
                 .dependencies()
                 .iter()
-                .any(|dep| !self.completed_tasks.contains(dep))
+                .any(|dep| !self.settled_tasks.contains(dep))
             {
                 self.task_queue.push(task);
                 continue;
@@ -119,7 +119,7 @@ impl Pipeline {
             let task_id = task.id().to_string();
             match task.apply(&mut self.ctx) {
                 TaskOutcome::Done => {
-                    self.completed_tasks.insert(task_id);
+                    self.settled_tasks.insert(task_id);
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
                     if self.deferred_tasks.insert(token_id, pending).is_some() {
@@ -132,6 +132,7 @@ impl Pipeline {
                 TaskOutcome::Failed => {
                     // todo(refactor): error handling
                     error!("Task failed: {:?}", task_id);
+                    self.settled_tasks.insert(task_id);
                 }
                 TaskOutcome::Terminate(terminal_task) => {
                     terminal_task.apply(&mut self.ctx);
@@ -177,10 +178,10 @@ impl Pipeline {
             let task_id = pending.id().to_string();
             match pending.apply(&mut self.ctx) {
                 TaskOutcome::Done => {
-                    self.completed_tasks.insert(task_id);
+                    self.settled_tasks.insert(task_id);
                 }
                 TaskOutcome::Requeued(tasks) => {
-                    self.completed_tasks.insert(task_id);
+                    self.settled_tasks.insert(task_id);
                     for task in tasks.into_iter().rev() {
                         self.task_queue.insert(0, task);
                     }
@@ -193,6 +194,7 @@ impl Pipeline {
                 TaskOutcome::Failed => {
                     // todo(refactor): error handling
                     error!("Failed to process response for token_id: {}", token_id);
+                    self.settled_tasks.insert(task_id);
                 }
                 TaskOutcome::Terminate(terminal_task) => {
                     terminal_task.apply(&mut self.ctx);
