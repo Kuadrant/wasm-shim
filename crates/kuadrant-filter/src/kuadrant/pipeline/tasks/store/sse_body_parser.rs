@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::body_parser::{parse_json_scalar, BodyParser};
 use crate::data::attribute::AttributeError;
-use crate::data::cel::BodyFieldGroup;
+use crate::data::cel::{BodyFieldGroup, ExpectedType};
 use crate::kuadrant::context::BodyContext;
 use cel::Value;
 use core::time::Duration;
@@ -174,8 +174,12 @@ impl BodyParser for SseBodyParser {
             ))
         })?;
 
-        let mut candidate_values: HashMap<&str, Value> = HashMap::new();
+        // Computed per group, not once globally: whether a numeric-looking JSON
+        // string counts as a number depends on that group's type hint, so the
+        // same raw JSON value can legitimately convert differently for two
+        // groups that happen to share a candidate.
         for group in &self.groups {
+            let mut candidate_values: HashMap<&str, Value> = HashMap::new();
             for candidate in &group.candidates {
                 if candidate_values.contains_key(candidate.as_str()) {
                     continue;
@@ -183,16 +187,20 @@ impl BodyParser for SseBodyParser {
                 if let Some(value) = json.pointer(candidate) {
                     let cel_value = match value {
                         serde_json::Value::String(s) => {
-                            Value::String(std::sync::Arc::new(s.clone()))
+                            if group.expected == Some(ExpectedType::Number) {
+                                // Matches the `number` hint's documented
+                                // leniency: a numeric string resolves as a
+                                // number, same as the non-streaming path.
+                                parse_json_scalar(s)
+                            } else {
+                                Value::String(std::sync::Arc::new(s.clone()))
+                            }
                         }
                         other => parse_json_scalar(&other.to_string()),
                     };
                     candidate_values.insert(candidate.as_str(), cel_value);
                 }
             }
-        }
-
-        for group in &self.groups {
             if let Some(value) = group.resolve(|candidate| candidate_values.get(candidate)) {
                 self.extracted.insert(group.key.clone(), value.clone());
             }
@@ -532,6 +540,46 @@ mod tests {
         assert_eq!(
             body_ctx.get_value("/usage/total_tokens"),
             Some(&Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn sse_number_hint_resolves_a_numeric_string() {
+        // A `number`-hinted group must accept "150" the same way the
+        // non-streaming path does, not just a literal JSON number.
+        let field = BodyFieldGroup::new(
+            vec!["/usage/total_tokens".to_string()],
+            Some(ExpectedType::Number),
+        );
+        let mut parser = SseBodyParser::new(vec![field.clone()]);
+
+        let chunk = b"data: {\"usage\":{\"total_tokens\":\"150\"}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(150)));
+    }
+
+    #[test]
+    fn sse_untyped_group_still_preserves_string_type() {
+        // An untyped (or `string`-hinted) group must keep preserving the
+        // actual JSON string, unaffected by the `number` hint's leniency.
+        let field = BodyFieldGroup::new(vec!["/model".to_string()], None);
+        let mut parser = SseBodyParser::new(vec![field.clone()]);
+
+        let chunk = b"data: {\"model\":\"150\"}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value(&field.key),
+            Some(&Value::String(std::sync::Arc::new("150".to_string())))
         );
     }
 
