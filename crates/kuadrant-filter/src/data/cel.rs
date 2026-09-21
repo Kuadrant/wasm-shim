@@ -501,10 +501,12 @@ impl BodyFieldGroup {
 /// Parses the arguments to a `requestBodyJSON`/`responseBodyJSON` call, whether typed as
 /// literal CEL AST nodes (at config/compile time) or as resolved [`Value`]s (at eval
 /// time). Returns `None` for any shape this feature doesn't recognize (wrong arity, a
-/// non-literal/non-string candidate, an unrecognized type name, too many candidates);
-/// callers treat that identically to today's "not a literal single string" case: the
-/// call is simply never registered/resolved, degrading to `Null` rather than a hard
-/// compile error.
+/// non-literal/non-string candidate, an unrecognized type name, too many candidates, a
+/// candidate containing [`BODY_JSON_GROUP_SEP`]/[`BODY_JSON_TYPE_SEP`] and thus unable to
+/// round-trip through [`BodyFieldGroup::new`]'s canonical key unambiguously); callers
+/// treat that identically to today's "not a literal single string" case: the call is
+/// simply never registered/resolved, degrading to `Null` rather than a hard compile
+/// error.
 fn parse_body_json_args<T>(
     args: &[T],
     as_string: impl Fn(&T) -> Option<&str>,
@@ -522,6 +524,12 @@ fn parse_body_json_args<T>(
             .collect()
     };
     if candidates.is_empty() || candidates.len() > MAX_BODY_JSON_CANDIDATES {
+        return None;
+    }
+    if candidates
+        .iter()
+        .any(|c| c.contains(BODY_JSON_GROUP_SEP) || c.contains(BODY_JSON_TYPE_SEP))
+    {
         return None;
     }
     let expected = match args.get(1) {
@@ -1523,6 +1531,19 @@ mod tests {
         let expr = format!("responseBodyJSON([{}])", pointers.join(", "));
         let value = Expression::new(&expr).expect("valid CEL");
         assert!(value.response_body_groups.is_empty());
+    }
+
+    #[test]
+    fn candidate_containing_reserved_separator_is_not_registered() {
+        // A candidate embedding BODY_JSON_GROUP_SEP/BODY_JSON_TYPE_SEP could otherwise
+        // produce the same canonical key as an unrelated, differently-shaped call (e.g.
+        // an untyped `["/x\u{2}number"]` colliding with a typed `("/x", "number")`), so
+        // such candidates must never be registered rather than silently aliasing.
+        let group_sep = Expression::new("responseBodyJSON(['/x\u{1}y'])").expect("valid CEL");
+        assert!(group_sep.response_body_groups.is_empty());
+
+        let type_sep = Expression::new("responseBodyJSON(['/x\u{2}number'])").expect("valid CEL");
+        assert!(type_sep.response_body_groups.is_empty());
     }
 
     #[test]
