@@ -335,6 +335,28 @@ mod tests {
     }
 
     #[test]
+    fn untyped_group_skips_a_null_candidate_and_falls_through() {
+        // No type hint: a present-but-null first candidate must not stop the
+        // fallback chain, since it isn't a "resolved" value either.
+        let field = BodyFieldGroup::new(
+            vec![
+                "/usage/total_tokens".to_string(),
+                "/usageMetadata/totalTokenCount".to_string(),
+            ],
+            None,
+        );
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser
+            .feed(br#"{"usage":{"total_tokens":null},"usageMetadata":{"totalTokenCount":18}}"#)
+            .unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(18)));
+    }
+
+    #[test]
     fn type_hint_skips_non_matching_candidate() {
         let field = BodyFieldGroup::new(
             vec!["/model".to_string(), "/usage/total_tokens".to_string()],

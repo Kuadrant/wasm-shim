@@ -477,8 +477,8 @@ impl BodyFieldGroup {
     }
 
     /// The first candidate (in priority order) whose value satisfies `expected` (or,
-    /// with no type hint, the first present at all). `lookup` maps a raw JSON Pointer
-    /// candidate to its extracted value, if any.
+    /// with no type hint, the first present *and non-null* value). `lookup` maps a
+    /// raw JSON Pointer candidate to its extracted value, if any.
     pub(crate) fn resolve<'v>(
         &self,
         mut lookup: impl FnMut(&str) -> Option<&'v Value>,
@@ -487,6 +487,11 @@ impl BodyFieldGroup {
             let value = lookup(candidate)?;
             match self.expected {
                 Some(expected) if !expected.matches(value) => None,
+                // With no type hint, a present-but-null candidate is still
+                // "no such value" (matching the single-pointer function's
+                // documented non-null contract), so fall through to the
+                // next candidate instead of stopping here.
+                None if matches!(value, Value::Null) => None,
                 _ => Some(value),
             }
         })
