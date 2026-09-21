@@ -188,7 +188,7 @@ predicates:
 - requestBodyJSON('/my/value') == 'hello'
 ```
 
-`requestBodyJSON` also accepts an **ordered list** of JSON Pointers instead of a single one, plus an optional type hint, exactly like [`responseBodyJSON`](#responsebodyjsonjson_pointer--json_pointer-type) below (same semantics, applied to the request body).
+`requestBodyJSON` also accepts an **ordered list** of JSON Pointers instead of a single one, plus an optional type hint, exactly like [`responseBodyJSON`](#responsebodyjsonjson_pointer--type) below (same semantics, applied to the request body).
 
 #### `responseBodyJSON(json_pointer)`
 
@@ -247,9 +247,9 @@ data:
     value: responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')
 ```
 
-An optional second argument restricts which type of value counts as "resolved": `'number'`, `'string'`, `'bool'`, `'list'` or `'map'`. A candidate whose value doesn't match the hint is treated exactly like a missing candidate, and evaluation moves on to the next one in the list. `'number'` also accepts a JSON string that parses in full as a number (e.g. `"150"` resolves as `150`). If the second argument is omitted, any present, non-null value resolves, matching the single-pointer function's existing behaviour.
+An optional second argument restricts which type of value counts as "resolved": `'number'`, `'string'` or `'bool'`. A candidate whose value doesn't match the hint is treated exactly like a missing candidate, and evaluation moves on to the next one in the list. `'number'` also accepts a JSON string that parses in full as a number (e.g. `"150"` resolves as `150`). If the second argument is omitted, any present, non-null value resolves, matching the single-pointer function's existing behaviour.
 
-The list is capped at 8 candidates; a longer list, an empty list, a non-literal element, or an unrecognized type hint are all treated the same way a malformed single-pointer argument is treated today: the call is never registered against the body, so it evaluates to `Null`/pending rather than a compile error.
+The list is capped at 8 candidates. Arguments that don't match a recognized shape when the call actually runs — more than 8 candidates, an empty list, a non-string list element, or an unrecognized type hint name — raise a CEL evaluation error, the same as passing a wrongly-typed argument to any other CEL function. This is different from "pointer not found": a syntactically valid single pointer or list that just never resolves (for example, because it was built from a variable, so it couldn't be seen ahead of time and watched for in the body) evaluates to `Null`, or stays pending until the body arrives, exactly like today's single-pointer behaviour.
 
 If none of the candidates resolve by the time the body finishes, the field behaves exactly as today's single-pointer "no such value" case (evaluation error / absent), and a `kuadrant.body_extraction_misses` metric is incremented (see [Metrics](#metrics)).
 
