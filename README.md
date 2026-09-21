@@ -253,7 +253,7 @@ The list is capped at 8 candidates. Arguments that don't match a recognized shap
 
 If none of the candidates resolve by the time the body finishes, the field behaves exactly as today's single-pointer "no such value" case (evaluation error / absent), and a `kuadrant.body_extraction_misses` metric is incremented (see [Metrics](#metrics)).
 
-The same list and type hint are also honored for `text/event-stream` (SSE) responses, subject to today's existing streaming limitation: only the second-to-last SSE event is inspected (a future release will lift this to a provider-agnostic, per-event strategy).
+The same list and type hint are also honored for `text/event-stream` (SSE) responses: each event is scanned as it arrives, and a candidate resolves as soon as a matching event is seen, without waiting for the stream to finish. This makes the same candidate list work across providers whose streaming shapes differ from their non-streaming ones (e.g. Anthropic's incremental `message_start`/`message_delta` usage fields, or Gemini's usage metadata only appearing on the final chunk).
 
 ### Well Known Attributes
 
@@ -309,7 +309,16 @@ make build FEATURES=debug-host-behaviour
 
 ## Testing
 
+Unit tests, in each crate, with no build prerequisites:
+
 ```
+cargo test --lib
+```
+
+The integration tests under `crates/wasm-shim/tests/` drive the actual compiled Wasm module through the proxy-wasm test framework, so they need a release build first:
+
+```
+make build BUILD=release
 cargo test
 ```
 
