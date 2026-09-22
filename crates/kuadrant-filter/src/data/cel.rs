@@ -582,9 +582,8 @@ fn body_json_lookup(
     ftx: &FunctionContext,
     data_var: &str,
     fn_name: &str,
-    key: &str,
+    key: Key,
 ) -> ResolveResult {
-    let key: Key = Key::String(Arc::new(key.to_string()));
     match ftx.ptx.get_variable(data_var) {
         Some(var) => match Value::try_from(var.as_ref()) {
             Ok(Value::Map(map)) => match map.get(&key) {
@@ -607,14 +606,25 @@ fn body_json_lookup(
     }
 }
 
+/// Resolves a `requestBodyJSON`/`responseBodyJSON` call's arguments into the [`Key`]
+/// under which its value was stored. The common case -- a single literal pointer, no
+/// type hint -- is handled without building a [`BodyFieldGroup`] at all: its canonical
+/// key is just the candidate itself (see [`BodyFieldGroup::new`]), so the argument's
+/// existing `Arc<String>` is reused as-is instead of being copied into a new one on
+/// every evaluation.
+fn body_json_key(args: &[Value]) -> Option<Key> {
+    if let [Value::String(s)] = args {
+        if !s.contains(BODY_JSON_GROUP_SEP) && !s.contains(BODY_JSON_TYPE_SEP) {
+            return Some(Key::String(Arc::clone(s)));
+        }
+    }
+    let group = body_json_group_from_values(args)?;
+    Some(Key::String(Arc::new(group.key)))
+}
+
 pub fn response_body_json(ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
-    match body_json_group_from_values(&args) {
-        Some(group) => body_json_lookup(
-            ftx,
-            RESPONSE_BODY_JSON_DATA,
-            RESPONSE_BODY_JSON_FN,
-            &group.key,
-        ),
+    match body_json_key(&args) {
+        Some(key) => body_json_lookup(ftx, RESPONSE_BODY_JSON_DATA, RESPONSE_BODY_JSON_FN, key),
         None => Err(ExecutionError::FunctionError {
             function: RESPONSE_BODY_JSON_FN.to_string(),
             message: "Invalid arguments: expected a JSON Pointer string or list of strings, \
@@ -625,13 +635,8 @@ pub fn response_body_json(ftx: &FunctionContext, Arguments(args): Arguments) -> 
 }
 
 pub fn request_body_json(ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
-    match body_json_group_from_values(&args) {
-        Some(group) => body_json_lookup(
-            ftx,
-            REQUEST_BODY_JSON_DATA,
-            REQUEST_BODY_JSON_FN,
-            &group.key,
-        ),
+    match body_json_key(&args) {
+        Some(key) => body_json_lookup(ftx, REQUEST_BODY_JSON_DATA, REQUEST_BODY_JSON_FN, key),
         None => Err(ExecutionError::FunctionError {
             function: REQUEST_BODY_JSON_FN.to_string(),
             message: "Invalid arguments: expected a JSON Pointer string or list of strings, \

@@ -457,8 +457,7 @@ mod tests {
         // first-to-arrive, not list order, so the task completes as soon as
         // it's seen -- without waiting for the rest of the body, or even for
         // end-of-stream -- taking advantage of the streaming parse.
-        let full_body =
-            br#"{"usageMetadata":{"totalTokenCount":7},"usage":{"total_tokens":999}}"#;
+        let full_body = br#"{"usageMetadata":{"totalTokenCount":7},"usage":{"total_tokens":999}}"#;
         let prefix_len = full_body.len() - br#","usage":{"total_tokens":999}}"#.len();
 
         let mock_host = MockWasmHost::new().with_response_body(full_body);
