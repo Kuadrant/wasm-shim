@@ -394,8 +394,8 @@ const BODY_JSON_GROUP_SEP: char = '\u{1}';
 const BODY_JSON_TYPE_SEP: char = '\u{2}';
 
 /// Optional second argument to `requestBodyJSON`/`responseBodyJSON`: restricts which
-/// candidate's value counts as "resolved" when multiple JSON Pointers are given, so the
-/// ordered list can skip a present-but-wrong-shaped candidate in favour of a later one.
+/// candidate's value counts as "resolved" when multiple JSON Pointers are given, so a
+/// present-but-wrong-shaped candidate is skipped in favour of another one that matches.
 ///
 /// Limited to scalar types: neither streaming body parser can produce a CEL `List`/`Map`
 /// for a candidate (acutejson delivers no callback at all for a pointer landing on a
@@ -441,7 +441,7 @@ impl ExpectedType {
     }
 }
 
-/// A single `requestBodyJSON`/`responseBodyJSON` call site: one or more ordered JSON
+/// A single `requestBodyJSON`/`responseBodyJSON` call site: one or more alternative JSON
 /// Pointer candidates plus an optional type hint. `key` is a canonical identifier
 /// derived from `candidates` and `expected`, used both to tell the body parser what to
 /// watch for and to look the extracted value back up at CEL-eval time. For a lone
@@ -473,9 +473,13 @@ impl BodyFieldGroup {
         }
     }
 
-    /// The first candidate (in priority order) whose value satisfies `expected` (or,
-    /// with no type hint, the first present *and non-null* value). `lookup` maps a
-    /// raw JSON Pointer candidate to its extracted value, if any.
+    /// The first candidate, in list order, whose value satisfies `expected` (or, with
+    /// no type hint, is present and non-null) *among those `lookup` already knows
+    /// about*. Callers re-run this after every new chunk of body arrives, so in
+    /// practice the winner is whichever candidate is discovered first in the stream;
+    /// list order only breaks a tie between candidates that both became known in the
+    /// same call. `lookup` maps a raw JSON Pointer candidate to its extracted value,
+    /// if any.
     pub(crate) fn resolve<'v>(
         &self,
         mut lookup: impl FnMut(&str) -> Option<&'v Value>,
@@ -1564,9 +1568,9 @@ mod tests {
 
     #[test]
     fn type_hint_skips_present_but_wrong_typed_value_and_stays_pending() {
-        // The parser is what actually walks candidates in priority order and applies
-        // the type filter (see json_body_parser tests); at the CEL layer, resolution
-        // is keyed purely off whether the group's canonical key is populated yet.
+        // The parser is what actually walks candidates and applies the type filter
+        // (see json_body_parser tests); at the CEL layer, resolution is keyed purely
+        // off whether the group's canonical key is populated yet.
         let expr = Expression::new("responseBodyJSON(['/a'], 'number') == 42").expect("valid CEL");
         let req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
         let mut cel_ctx = cel::Context::default();

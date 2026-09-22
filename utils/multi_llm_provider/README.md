@@ -19,7 +19,7 @@ both are closed, hosted-only APIs with no downloadable weights — and
 `llm-d-inference-sim` (used in
 [`../../examples/ratelimit_check_report`](../../examples/ratelimit_check_report))
 only ever produces OpenAI-shaped output. This exists specifically to exercise
-the [ordered JSON Pointer candidate list](../../README.md#responsebodyjsonjson_pointer--json_pointer-type)
+the [JSON Pointer candidate list](../../README.md#responsebodyjsonjson_pointer--json_pointer-type)
 form of `responseBodyJSON` against the various shapes it was built for,
 without needing real inference.
 

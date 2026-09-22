@@ -188,7 +188,7 @@ predicates:
 - requestBodyJSON('/my/value') == 'hello'
 ```
 
-`requestBodyJSON` also accepts an **ordered list** of JSON Pointers instead of a single one, plus an optional type hint, exactly like [`responseBodyJSON`](#responsebodyjsonjson_pointer--type) below (same semantics, applied to the request body).
+`requestBodyJSON` also accepts a **list** of JSON Pointers instead of a single one, plus an optional type hint, exactly like [`responseBodyJSON`](#responsebodyjsonjson_pointer--type) below (same semantics, applied to the request body).
 
 #### `responseBodyJSON(json_pointer)`
 
@@ -238,7 +238,7 @@ predicates:
 
 #### `responseBodyJSON([json_pointer, ...], type?)`
 
-Both `requestBodyJSON` and `responseBodyJSON` also accept an **ordered list** of JSON Pointers instead of a single one, to look up a value that may live at different paths depending on which upstream produced the body (e.g. different LLM providers shaping token usage differently). The pointers are evaluated in list order against the same parsed body; the first one that resolves wins, and the rest are never evaluated:
+Both `requestBodyJSON` and `responseBodyJSON` also accept a **list** of JSON Pointers instead of a single one, to look up a value that may live at different paths depending on which upstream produced the body (e.g. different LLM providers shaping token usage differently). Every candidate is watched against the body as it streams in, and whichever one is fully resolved first (present, and satisfying the type hint if given) wins — resolution is first-to-arrive, not list order; list position is only a tie-break if more than one candidate resolves from the same delivered chunk. Once a call's candidates have all resolved (or, commonly, as soon as the single group a store action depends on resolves), the rest of the body no longer needs to be read for that call:
 
 ```yaml
 data:
@@ -247,7 +247,7 @@ data:
     value: responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')
 ```
 
-An optional second argument restricts which type of value counts as "resolved": `'number'`, `'string'` or `'bool'`. A candidate whose value doesn't match the hint is treated exactly like a missing candidate, and evaluation moves on to the next one in the list. `'number'` also accepts a JSON string that parses in full as a number (e.g. `"150"` resolves as `150`). If the second argument is omitted, any present, non-null value resolves, matching the single-pointer function's existing behaviour.
+An optional second argument restricts which type of value counts as "resolved": `'number'`, `'string'` or `'bool'`. A candidate whose value doesn't match the hint is treated exactly like a missing candidate, and another candidate can still resolve the call. `'number'` also accepts a JSON string that parses in full as a number (e.g. `"150"` resolves as `150`). If the second argument is omitted, any present, non-null value resolves, matching the single-pointer function's existing behaviour.
 
 The list is capped at 8 candidates. Arguments that don't match a recognized shape when the call actually runs — more than 8 candidates, an empty list, a non-string list element, or an unrecognized type hint name — raise a CEL evaluation error, the same as passing a wrongly-typed argument to any other CEL function. This is different from "pointer not found": a syntactically valid single pointer or list that just never resolves (for example, because it was built from a variable, so it couldn't be seen ahead of time and watched for in the body) evaluates to `Null`, or stays pending until the body arrives, exactly like today's single-pointer behaviour.
 
