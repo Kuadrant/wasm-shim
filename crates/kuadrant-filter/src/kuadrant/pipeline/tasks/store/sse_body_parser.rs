@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use super::body_parser::{parse_json_scalar, BodyParser};
+use super::body_parser::{resolved_value, BodyParser};
 use crate::data::attribute::AttributeError;
-use crate::data::cel::{BodyFieldGroup, ExpectedType};
+use crate::data::cel::BodyFieldGroup;
 use crate::kuadrant::context::BodyContext;
 use cel::Value;
 use core::time::Duration;
@@ -174,10 +174,10 @@ impl BodyParser for SseBodyParser {
             ))
         })?;
 
-        // Computed per group, not once globally: whether a numeric-looking JSON
-        // string counts as a number depends on that group's type hint, so the
-        // same raw JSON value can legitimately convert differently for two
-        // groups that happen to share a candidate.
+        // Computed per group, not once globally: whether a candidate's value
+        // satisfies `expected` (and what CEL value it becomes) depends on the
+        // group's own type hint, so the same raw JSON value can legitimately
+        // resolve differently for two groups that happen to share a candidate.
         for group in &self.groups {
             let mut candidate_values: HashMap<&str, Value> = HashMap::new();
             for candidate in &group.candidates {
@@ -185,20 +185,13 @@ impl BodyParser for SseBodyParser {
                     continue;
                 }
                 if let Some(value) = json.pointer(candidate) {
-                    let cel_value = match value {
-                        serde_json::Value::String(s) => {
-                            if group.expected == Some(ExpectedType::Number) {
-                                // Matches the `number` hint's documented
-                                // leniency: a numeric string resolves as a
-                                // number, same as the non-streaming path.
-                                parse_json_scalar(s)
-                            } else {
-                                Value::String(std::sync::Arc::new(s.clone()))
-                            }
-                        }
-                        other => parse_json_scalar(&other.to_string()),
+                    let (raw, is_string) = match value {
+                        serde_json::Value::String(s) => (s.clone(), true),
+                        other => (other.to_string(), false),
                     };
-                    candidate_values.insert(candidate.as_str(), cel_value);
+                    if let Some(cel_value) = resolved_value(&raw, is_string, group.expected) {
+                        candidate_values.insert(candidate.as_str(), cel_value);
+                    }
                 }
             }
             if let Some(value) = group.resolve(|candidate| candidate_values.get(candidate)) {
@@ -242,6 +235,7 @@ impl BodyParser for SseBodyParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::cel::ExpectedType;
 
     fn group(pointer: &str) -> BodyFieldGroup {
         BodyFieldGroup::new(vec![pointer.to_string()], None)

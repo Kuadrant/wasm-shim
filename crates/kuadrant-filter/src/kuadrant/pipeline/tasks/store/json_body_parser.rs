@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use cel::Value;
 use tracing::error;
 
-use super::body_parser::{parse_json_scalar, BodyParser};
+use super::body_parser::{resolved_value, BodyParser};
 use crate::data::attribute::AttributeError;
 use crate::data::cel::BodyFieldGroup;
 use crate::kuadrant::context::BodyContext;
@@ -15,6 +15,14 @@ pub(crate) struct JsonBodyParser {
     parser: Option<acutejson::Parser>,
     buffers: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     matched: Arc<Mutex<HashSet<String>>>,
+    /// Candidates confirmed to have come from a JSON string literal (quotes already
+    /// stripped by acutejson before the callback fires), as opposed to a bare number/
+    /// bool/null token. A JSON string "12345" and a bare number 12345 deliver
+    /// byte-identical content to the callback, so this is the only way to tell them
+    /// apart -- see the callback in `new` for how it's derived from acutejson's own
+    /// callback contract (a string always fires an `is_complete: false` call first,
+    /// except when empty, where total content stays empty).
+    string_fields: Arc<Mutex<HashSet<String>>>,
     extracted: HashMap<String, Value>,
     bytes_consumed: usize,
     complete: bool,
@@ -24,6 +32,7 @@ impl JsonBodyParser {
     pub fn new(groups: Vec<BodyFieldGroup>) -> Result<Self, AttributeError> {
         let buffers: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
         let matched: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let string_fields: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
         let results: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::clone(&buffers);
 
         // Every candidate pointer, across every group, is registered independently;
@@ -41,17 +50,30 @@ impl JsonBodyParser {
             let field_name = field.to_string();
             let field_buffers = Arc::clone(&results);
             let field_matched = Arc::clone(&matched);
+            let field_is_string = Arc::clone(&string_fields);
             field_buffers
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(field_name.clone(), Vec::new());
 
-            builder = match builder.register(field, move |bytes, _is_complete| {
+            builder = match builder.register(field, move |bytes, is_complete| {
                 field_matched
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(field_name.clone());
                 let mut bufs = field_buffers.lock().unwrap_or_else(|e| e.into_inner());
+                let buf_was_empty = bufs.get(&field_name).is_none_or(|b| b.is_empty());
+                if !is_complete || (buf_was_empty && bytes.is_empty()) {
+                    // A JSON string always fires at least one `is_complete: false`
+                    // call for non-empty content; an empty string is the only case
+                    // that completes in a single call with no content at all. A bare
+                    // number/bool/null token, by contrast, always delivers its full
+                    // (non-empty) content in exactly one `is_complete: true` call.
+                    field_is_string
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(field_name.clone());
+                }
                 if let Some(buf) = bufs.get_mut(&field_name) {
                     buf.extend_from_slice(bytes);
                 } else {
@@ -73,6 +95,7 @@ impl JsonBodyParser {
             parser: Some(builder.build()),
             buffers,
             matched,
+            string_fields,
             extracted: HashMap::new(),
             bytes_consumed: 0,
             complete: false,
@@ -82,18 +105,33 @@ impl JsonBodyParser {
     fn finalize_extracted(&mut self) -> Result<(), AttributeError> {
         let buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
         let matched = self.matched.lock().unwrap_or_else(|e| e.into_inner());
-        let mut candidate_values: HashMap<&str, Value> = HashMap::new();
+        let string_fields = self.string_fields.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut raw_candidates: HashMap<&str, (&str, bool)> = HashMap::new();
         for (field, raw_bytes) in buffers.iter() {
             if matched.contains(field) {
                 let raw_value = std::str::from_utf8(raw_bytes).map_err(|e| {
                     AttributeError::Parse(format!("Body field '{field}' is not valid UTF-8: {e}"))
                 })?;
-                candidate_values.insert(field.as_str(), parse_json_scalar(raw_value));
+                raw_candidates.insert(field.as_str(), (raw_value, string_fields.contains(field)));
             }
         }
+
         for group in &self.groups {
             if self.extracted.contains_key(&group.key) {
                 continue;
+            }
+            // Computed per group, not once globally: whether a candidate's value
+            // satisfies `expected` (and what CEL value it becomes) depends on the
+            // group's own type hint, so the same raw candidate can legitimately
+            // resolve differently for two groups that happen to share it.
+            let mut candidate_values: HashMap<&str, Value> = HashMap::new();
+            for candidate in &group.candidates {
+                if let Some(&(raw, is_string)) = raw_candidates.get(candidate.as_str()) {
+                    if let Some(value) = resolved_value(raw, is_string, group.expected) {
+                        candidate_values.insert(candidate.as_str(), value);
+                    }
+                }
             }
             if let Some(value) = group.resolve(|candidate| candidate_values.get(candidate)) {
                 self.extracted.insert(group.key.clone(), value.clone());
@@ -457,5 +495,76 @@ mod tests {
         parser.finalize().unwrap();
 
         assert_eq!(parser.remaining_fields(), vec![&field]);
+    }
+
+    #[test]
+    fn string_hint_resolves_a_numeric_looking_json_string() {
+        // Regression test: a JSON string "12345" and a bare number 12345 look
+        // byte-identical once acutejson strips the quotes, so a naive parse would
+        // fold this into an Int and a 'string' hint would never match it.
+        let field = BodyFieldGroup::new(vec!["/x".to_string()], Some(ExpectedType::String));
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"x":"12345"}"#).unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value(&field.key),
+            Some(&Value::String(Arc::new("12345".to_string())))
+        );
+    }
+
+    #[test]
+    fn string_hint_rejects_a_bare_number() {
+        let field = BodyFieldGroup::new(vec!["/x".to_string()], Some(ExpectedType::String));
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"x":12345}"#).unwrap();
+        parser.finalize().unwrap();
+
+        assert_eq!(parser.remaining_fields(), vec![&field]);
+    }
+
+    #[test]
+    fn untyped_call_preserves_a_numeric_looking_json_string() {
+        // Consistency with SseBodyParser: with no type hint at all, a confirmed
+        // JSON string is never coerced, even when its content looks numeric.
+        let field = BodyFieldGroup::new(vec!["/x".to_string()], None);
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"x":"12345"}"#).unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value(&field.key),
+            Some(&Value::String(Arc::new("12345".to_string())))
+        );
+    }
+
+    #[test]
+    fn same_candidate_resolves_differently_for_groups_with_different_hints() {
+        // The same raw value can't be "both" a number and a string, but the two
+        // hints are asking two different, both-legitimate questions about it:
+        // "coerce this to a number if reasonable" vs. "give me it as a string".
+        // Both groups share the underlying candidate, extracted only once.
+        let number_group = BodyFieldGroup::new(vec!["/x".to_string()], Some(ExpectedType::Number));
+        let string_group = BodyFieldGroup::new(vec!["/x".to_string()], Some(ExpectedType::String));
+        let mut parser =
+            JsonBodyParser::new(vec![number_group.clone(), string_group.clone()]).unwrap();
+
+        parser.feed(br#"{"x":"12345"}"#).unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value(&number_group.key),
+            Some(&Value::Int(12345))
+        );
+        assert_eq!(
+            body_ctx.get_value(&string_group.key),
+            Some(&Value::String(Arc::new("12345".to_string())))
+        );
     }
 }

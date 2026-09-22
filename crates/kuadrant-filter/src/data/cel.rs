@@ -425,20 +425,6 @@ impl ExpectedType {
             Self::Bool => "bool",
         }
     }
-
-    /// Whether `value` (already parsed out of a matched JSON body fragment) counts as
-    /// "resolved" for this expected type. Note that, for non-streaming bodies,
-    /// [`crate::kuadrant::pipeline::tasks::store::body_parser::parse_json_scalar`]
-    /// already folds a numeric-looking JSON string into a CEL number before this is
-    /// ever called, which is exactly the "a numeric string resolves as a number"
-    /// behaviour this type hint needs for `Number`.
-    pub(crate) fn matches(self, value: &Value) -> bool {
-        match self {
-            Self::Number => matches!(value, Value::Int(_) | Value::UInt(_) | Value::Float(_)),
-            Self::String => matches!(value, Value::String(_)),
-            Self::Bool => matches!(value, Value::Bool(_)),
-        }
-    }
 }
 
 /// A single `requestBodyJSON`/`responseBodyJSON` call site: one or more alternative JSON
@@ -473,29 +459,21 @@ impl BodyFieldGroup {
         }
     }
 
-    /// The first candidate, in list order, whose value satisfies `expected` (or, with
-    /// no type hint, is present and non-null) *among those `lookup` already knows
-    /// about*. Callers re-run this after every new chunk of body arrives, so in
-    /// practice the winner is whichever candidate is discovered first in the stream;
-    /// list order only breaks a tie between candidates that both became known in the
-    /// same call. `lookup` maps a raw JSON Pointer candidate to its extracted value,
-    /// if any.
+    /// The first candidate, in list order, whose value `lookup` already knows about.
+    /// Callers are expected to only hand back values that already satisfy `expected`
+    /// (see [`crate::kuadrant::pipeline::tasks::store::body_parser::resolved_value`]),
+    /// so this is purely a "pick whichever candidate is known" selection, re-run after
+    /// every new chunk of body arrives -- in practice the winner is whichever candidate
+    /// is discovered first in the stream; list order only breaks a tie between
+    /// candidates that both became known in the same call. `lookup` maps a raw JSON
+    /// Pointer candidate to its extracted value, if any.
     pub(crate) fn resolve<'v>(
         &self,
         mut lookup: impl FnMut(&str) -> Option<&'v Value>,
     ) -> Option<&'v Value> {
-        self.candidates.iter().find_map(|candidate| {
-            let value = lookup(candidate)?;
-            match self.expected {
-                Some(expected) if !expected.matches(value) => None,
-                // With no type hint, a present-but-null candidate is still
-                // "no such value" (matching the single-pointer function's
-                // documented non-null contract), so fall through to the
-                // next candidate instead of stopping here.
-                None if matches!(value, Value::Null) => None,
-                _ => Some(value),
-            }
-        })
+        self.candidates
+            .iter()
+            .find_map(|candidate| lookup(candidate))
     }
 }
 
