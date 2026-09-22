@@ -396,13 +396,16 @@ const BODY_JSON_TYPE_SEP: char = '\u{2}';
 /// Optional second argument to `requestBodyJSON`/`responseBodyJSON`: restricts which
 /// candidate's value counts as "resolved" when multiple JSON Pointers are given, so the
 /// ordered list can skip a present-but-wrong-shaped candidate in favour of a later one.
+///
+/// Limited to scalar types: neither streaming body parser can produce a CEL `List`/`Map`
+/// for a candidate (acutejson delivers no callback at all for a pointer landing on a
+/// container; the SSE path stringifies it instead), so a `list`/`map` hint could never
+/// match anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExpectedType {
     Number,
     String,
     Bool,
-    List,
-    Map,
 }
 
 impl ExpectedType {
@@ -411,8 +414,6 @@ impl ExpectedType {
             "number" => Some(Self::Number),
             "string" => Some(Self::String),
             "bool" => Some(Self::Bool),
-            "list" => Some(Self::List),
-            "map" => Some(Self::Map),
             _ => None,
         }
     }
@@ -422,8 +423,6 @@ impl ExpectedType {
             Self::Number => "number",
             Self::String => "string",
             Self::Bool => "bool",
-            Self::List => "list",
-            Self::Map => "map",
         }
     }
 
@@ -438,8 +437,6 @@ impl ExpectedType {
             Self::Number => matches!(value, Value::Int(_) | Value::UInt(_) | Value::Float(_)),
             Self::String => matches!(value, Value::String(_)),
             Self::Bool => matches!(value, Value::Bool(_)),
-            Self::List => matches!(value, Value::List(_)),
-            Self::Map => matches!(value, Value::Map(_)),
         }
     }
 }
