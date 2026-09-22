@@ -191,7 +191,7 @@ impl Task for StoreTask {
                 }
             }
 
-            if body_ctx.is_end_of_stream() {
+            if body_ctx.is_end_of_stream() && !parser.remaining_fields().is_empty() {
                 if let Err(e) = parser.finalize() {
                     error!("Failed to finalize body parser for '{}': {e}", self.path);
                     return TaskOutcome::Failed;
@@ -435,6 +435,35 @@ mod tests {
             MockWasmHost::new().with_response_body(br#"{"usageMetadata":{"totalTokenCount":7}}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
         ctx.response_body.set_buffer_size(40, true);
+
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON(['/usage/total_tokens', '/usageMetadata/totalTokenCount'], 'number')",
+            "response.usage.total_tokens",
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(
+            ctx.values.get("response.usage.total_tokens"),
+            Some(&cel::Value::Int(7))
+        );
+    }
+
+    #[test]
+    fn ordered_candidate_list_resolves_before_end_of_stream() {
+        // The second-listed candidate happens to appear (and fully resolve)
+        // before the first-listed one arrives at all. Resolution is
+        // first-to-arrive, not list order, so the task completes as soon as
+        // it's seen -- without waiting for the rest of the body, or even for
+        // end-of-stream -- taking advantage of the streaming parse.
+        let full_body =
+            br#"{"usageMetadata":{"totalTokenCount":7},"usage":{"total_tokens":999}}"#;
+        let prefix_len = full_body.len() - br#","usage":{"total_tokens":999}}"#.len();
+
+        let mock_host = MockWasmHost::new().with_response_body(full_body);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+        ctx.response_body.set_buffer_size(prefix_len, false);
 
         let task = make_store_task(
             &ctx,

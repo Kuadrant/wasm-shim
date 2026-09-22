@@ -137,19 +137,36 @@ impl BodyParser for JsonBodyParser {
             None => return Err(AttributeError::Parse("Parser not initialized".to_string())),
         };
 
-        match parser.feed(chunk) {
+        // A registered candidate that a group never ends up using (because
+        // some other candidate resolved the group first) still has to stay
+        // registered, since we can't know in advance which one will match;
+        // `acutejson::Status::Done` therefore won't fire until every
+        // registered candidate is seen, not just the ones we still care
+        // about. So resolution is attempted after every chunk rather than
+        // only on `Done`: a group is done as soon as any of its own
+        // candidates resolves, regardless of the other registered paths.
+        let feed_result = parser.feed(chunk);
+        self.finalize_extracted()?;
+
+        match feed_result {
             Ok(acutejson::Status::Done) => {
                 self.complete = true;
-                self.finalize_extracted()?;
+                Ok(())
             }
-            Ok(acutejson::Status::NeedMore) => {}
+            Ok(acutejson::Status::NeedMore) => Ok(()),
             Err(e) => {
-                error!("JSON parse error: {e:?}");
-                return Err(AttributeError::Parse(format!("JSON parse error: {e:?}")));
+                if self.remaining_fields().is_empty() {
+                    // Everything this parser was asked for already resolved
+                    // from bytes seen before the error; a malformed or
+                    // truncated remainder no longer matters.
+                    self.complete = true;
+                    Ok(())
+                } else {
+                    error!("JSON parse error: {e:?}");
+                    Err(AttributeError::Parse(format!("JSON parse error: {e:?}")))
+                }
             }
         }
-
-        Ok(())
     }
 
     fn populate(&self, body_ctx: &mut BodyContext) {
@@ -305,9 +322,10 @@ mod tests {
         let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
 
         parser.feed(br#"{"usage":{"totalTokens":7}}"#).unwrap();
-        // Only the second candidate is present, so `feed` alone never sees every
-        // registered pointer match; `finalize` is what harvests a partial group.
-        parser.finalize().unwrap();
+        // Resolution is incremental: the second candidate is the only one
+        // present, and its callback fires within this single `feed` call, so
+        // the group is already resolved without needing `finalize`.
+        assert!(parser.remaining_fields().is_empty());
 
         let mut body_ctx = BodyContext::default();
         parser.populate(&mut body_ctx);
@@ -315,7 +333,10 @@ mod tests {
     }
 
     #[test]
-    fn ordered_candidates_earlier_priority_wins_over_later_one() {
+    fn first_candidate_wins_when_multiple_resolve_in_the_same_chunk() {
+        // Both candidates are present and fully parsed within the same
+        // `feed` call. When more than one candidate genuinely resolves at
+        // once like this, list order is the deterministic tie-breaker.
         let field = BodyFieldGroup::new(
             vec![
                 "/usage/total_tokens".to_string(),
@@ -328,6 +349,59 @@ mod tests {
         parser
             .feed(br#"{"usage":{"total_tokens":42,"totalTokens":7}}"#)
             .unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn candidate_seen_first_in_the_stream_wins_over_higher_list_priority() {
+        // The group lists "/usage/total_tokens" first, but
+        // "/usage/totalTokens" is the one that actually appears (and fully
+        // resolves) earlier in the byte stream. Resolution is "whoever
+        // arrives first, wins" -- not list order -- so the group locks onto
+        // 7 as soon as it's seen, before "/usage/total_tokens" ever shows up.
+        let field = BodyFieldGroup::new(
+            vec![
+                "/usage/total_tokens".to_string(),
+                "/usage/totalTokens".to_string(),
+            ],
+            None,
+        );
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"usage":{"totalTokens":7,"#).unwrap();
+        assert!(parser.remaining_fields().is_empty());
+
+        // The higher list-priority candidate arrives afterwards; it must not
+        // override the value already resolved from the first one seen.
+        parser.feed(br#""total_tokens":42}}"#).unwrap();
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(7)));
+    }
+
+    #[test]
+    fn resolved_group_survives_malformed_bytes_from_a_never_used_candidate() {
+        // A second candidate is registered but never appears; since
+        // `acutejson::Status::Done` only fires once every registered
+        // candidate is seen, the parser keeps parsing (and can hit the
+        // trailing garbage below) even though the group we actually care
+        // about already resolved via the first candidate.
+        let field = BodyFieldGroup::new(
+            vec![
+                "/usage/total_tokens".to_string(),
+                "/never/present".to_string(),
+            ],
+            None,
+        );
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        let result = parser.feed(br#"{"usage":{"total_tokens":42}}TRAILING_GARBAGE"#);
+        assert!(result.is_ok());
+        assert!(parser.remaining_fields().is_empty());
 
         let mut body_ctx = BodyContext::default();
         parser.populate(&mut body_ctx);
