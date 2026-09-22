@@ -57,10 +57,6 @@ impl JsonBodyParser {
                 .insert(field_name.clone(), Vec::new());
 
             builder = match builder.register(field, move |bytes, is_complete| {
-                field_matched
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(field_name.clone());
                 let mut bufs = field_buffers.lock().unwrap_or_else(|e| e.into_inner());
                 let buf_was_empty = bufs.get(&field_name).is_none_or(|b| b.is_empty());
                 if !is_complete || (buf_was_empty && bytes.is_empty()) {
@@ -78,6 +74,18 @@ impl JsonBodyParser {
                     buf.extend_from_slice(bytes);
                 } else {
                     error!("Buffer not found for field {}", field_name);
+                }
+                // Only mark the candidate matched once its value is fully
+                // assembled. `finalize_extracted` now runs after every chunk (not
+                // just at `Status::Done`/EOS), so marking it on a partial,
+                // `is_complete: false` call -- as this used to, unconditionally --
+                // would let a value split across chunks resolve (and get locked
+                // in) from a truncated prefix, e.g. `"g"` instead of `"gpt-4"`.
+                if is_complete {
+                    field_matched
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(field_name.clone());
                 }
             }) {
                 Ok(b) => b,
@@ -258,6 +266,30 @@ mod tests {
         let mut body_ctx = BodyContext::default();
         parser.populate(&mut body_ctx);
         assert_eq!(body_ctx.get_value("/stream"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn watched_string_value_split_mid_value_across_chunks_resolves_in_full() {
+        // Regression test: finalize_extracted now runs after every feed(), so a
+        // candidate must not be marked "matched" (and its group resolved) until
+        // its value is fully assembled -- not on the first partial,
+        // is_complete: false callback -- or a value split across chunks would
+        // get locked in from a truncated prefix (e.g. "gp" instead of "gpt-4").
+        let field = BodyFieldGroup::new(vec!["/model".to_string()], None);
+        let mut parser = JsonBodyParser::new(vec![field.clone()]).unwrap();
+
+        parser.feed(br#"{"model":"gp"#).unwrap();
+        assert_eq!(parser.remaining_fields(), vec![&field]);
+
+        parser.feed(br#"t-4"}"#).unwrap();
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value(&field.key),
+            Some(&Value::String(Arc::new("gpt-4".to_string())))
+        );
     }
 
     #[test]
