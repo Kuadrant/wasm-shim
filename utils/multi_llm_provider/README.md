@@ -19,7 +19,7 @@ both are closed, hosted-only APIs with no downloadable weights — and
 `llm-d-inference-sim` (used in
 [`../../examples/ratelimit_check_report`](../../examples/ratelimit_check_report))
 only ever produces OpenAI-shaped output. This exists specifically to exercise
-the [JSON Pointer candidate list](../../README.md#responsebodyjsonjson_pointer--json_pointer-type)
+the [JSON Pointer candidate list](../../README.md#responsebodyjsonjson_pointer--type)
 form of `responseBodyJSON` against the various shapes it was built for,
 without needing real inference.
 
@@ -98,23 +98,19 @@ curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v
   -H "Content-Type: application/json" -H "X-Mock-Provider: gemini" -d '{"stream": true}'
 ```
 
-`SseBodyParser` currently still uses a "look at the second-to-last SSE event"
-heuristic (replacing it with a provider-agnostic, per-event strategy is
-tracked follow-up work — see RFC 0024). Expected outcomes on this branch:
+`SseBodyParser` scans every SSE event as it arrives for the candidates'
+leaf keys, so a candidate resolves as soon as a matching event is seen —
+regardless of where in the stream (or how many events) that turns out to be.
+Expected outcomes:
 
-- **openai**: resolves correctly (`hits_addend: 18`) — the usage chunk is
-  exactly the event this heuristic was designed to find.
-- **anthropic**: resolves (`hits_addend: 8`) for this mock's specific 4-event
-  stream, but only because `message_delta` (which carries `output_tokens`)
-  happens to be the penultimate event here — that's a coincidence of this
-  exact event count, not a real fix. A stream with a different number of
-  trailing events could easily miss it.
-- **gemini**: **fails** — the penultimate event is a content chunk with no
-  `usageMetadata` at all (Gemini only includes it in the true last chunk).
-  Expect no `Report` call, the `warn` log, and the
-  `kuadrant.body_extraction_misses` counter incrementing. This is the exact
-  gap RFC 0024 describes and the SSE-rewrite follow-up is meant to close —
-  seeing it fail here now is the expected, correct result.
+- **openai**: resolves correctly (`hits_addend: 18`) — the single usage event
+  is picked up as soon as it streams by.
+- **anthropic**: resolves correctly (`hits_addend: 8`, the documented
+  under-count via `output_tokens`) — `message_delta` is matched wherever it
+  appears in the stream, not by relying on event position.
+- **gemini**: resolves correctly (`hits_addend: 18`) — `usageMetadata` is
+  picked up from the true final chunk as soon as it's fed to the parser, no
+  longer requiring it to coincide with a fixed offset from the end.
 
 ### Inspecting traffic
 
