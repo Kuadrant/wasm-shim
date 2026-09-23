@@ -179,6 +179,11 @@ fn it_performs_authenticated_rate_limiting() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -311,6 +316,11 @@ fn unauthenticated_does_not_ratelimit() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -573,6 +583,11 @@ fn authenticated_one_ratelimit_action_matches() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -833,6 +848,11 @@ fn it_handles_array_metadata_in_predicates() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))

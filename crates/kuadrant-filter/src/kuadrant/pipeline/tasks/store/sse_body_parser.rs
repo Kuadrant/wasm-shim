@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
-use super::body_parser::{parse_json_scalar, BodyParser};
+use super::body_parser::{resolved_value, BodyParser};
 use crate::data::attribute::AttributeError;
+use crate::data::cel::BodyFieldGroup;
 use crate::kuadrant::context::BodyContext;
 use cel::Value;
 use core::time::Duration;
@@ -126,7 +127,7 @@ impl EventBuilder {
 }
 
 pub(crate) struct SseBodyParser {
-    fields: Vec<String>,
+    groups: Vec<BodyFieldGroup>,
     event_parser: EventParser,
     last_two_events: [Option<Event>; 2],
     extracted: HashMap<String, Value>,
@@ -134,9 +135,9 @@ pub(crate) struct SseBodyParser {
 }
 
 impl SseBodyParser {
-    pub fn new(fields: Vec<String>) -> Self {
+    pub fn new(groups: Vec<BodyFieldGroup>) -> Self {
         Self {
-            fields,
+            groups,
             event_parser: EventParser::default(),
             last_two_events: [None, None],
             extracted: HashMap::new(),
@@ -173,22 +174,37 @@ impl BodyParser for SseBodyParser {
             ))
         })?;
 
-        for field in &self.fields {
-            if let Some(value) = json.pointer(field) {
-                let cel_value = match value {
-                    serde_json::Value::String(s) => Value::String(std::sync::Arc::new(s.clone())),
-                    other => parse_json_scalar(&other.to_string()),
-                };
-                self.extracted.insert(field.clone(), cel_value);
+        // Computed per group, not once globally: whether a candidate's value
+        // satisfies `expected` (and what CEL value it becomes) depends on the
+        // group's own type hint, so the same raw JSON value can legitimately
+        // resolve differently for two groups that happen to share a candidate.
+        for group in &self.groups {
+            let mut candidate_values: HashMap<&str, Value> = HashMap::new();
+            for candidate in &group.candidates {
+                if candidate_values.contains_key(candidate.as_str()) {
+                    continue;
+                }
+                if let Some(value) = json.pointer(candidate) {
+                    let (raw, is_string) = match value {
+                        serde_json::Value::String(s) => (s.clone(), true),
+                        other => (other.to_string(), false),
+                    };
+                    if let Some(cel_value) = resolved_value(&raw, is_string, group.expected) {
+                        candidate_values.insert(candidate.as_str(), cel_value);
+                    }
+                }
+            }
+            if let Some(value) = group.resolve(|candidate| candidate_values.get(candidate)) {
+                self.extracted.insert(group.key.clone(), value.clone());
             }
         }
         Ok(())
     }
 
-    fn remaining_fields(&self) -> Vec<&String> {
-        self.fields
+    fn remaining_fields(&self) -> Vec<&BodyFieldGroup> {
+        self.groups
             .iter()
-            .filter(|f| !self.extracted.contains_key(f.as_str()))
+            .filter(|g| !self.extracted.contains_key(&g.key))
             .collect()
     }
 
@@ -219,6 +235,15 @@ impl BodyParser for SseBodyParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::cel::ExpectedType;
+
+    fn group(pointer: &str) -> BodyFieldGroup {
+        BodyFieldGroup::new(vec![pointer.to_string()], None)
+    }
+
+    fn groups(pointers: &[&str]) -> Vec<BodyFieldGroup> {
+        pointers.iter().map(|p| group(p)).collect()
+    }
 
     #[test]
     fn test_one_complete_event() {
@@ -495,7 +520,7 @@ mod tests {
 
     #[test]
     fn sse_body_parser_extracts_from_penultimate_event() {
-        let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/usage/total_tokens")]);
 
         let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
@@ -513,8 +538,48 @@ mod tests {
     }
 
     #[test]
+    fn sse_number_hint_resolves_a_numeric_string() {
+        // A `number`-hinted group must accept "150" the same way the
+        // non-streaming path does, not just a literal JSON number.
+        let field = BodyFieldGroup::new(
+            vec!["/usage/total_tokens".to_string()],
+            Some(ExpectedType::Number),
+        );
+        let mut parser = SseBodyParser::new(vec![field.clone()]);
+
+        let chunk = b"data: {\"usage\":{\"total_tokens\":\"150\"}}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        assert!(parser.remaining_fields().is_empty());
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(body_ctx.get_value(&field.key), Some(&Value::Int(150)));
+    }
+
+    #[test]
+    fn sse_untyped_group_still_preserves_string_type() {
+        // An untyped (or `string`-hinted) group must keep preserving the
+        // actual JSON string, unaffected by the `number` hint's leniency.
+        let field = BodyFieldGroup::new(vec!["/model".to_string()], None);
+        let mut parser = SseBodyParser::new(vec![field.clone()]);
+
+        let chunk = b"data: {\"model\":\"150\"}\n\ndata: [DONE]\n\n";
+        parser.feed(chunk).expect("feed should succeed");
+        parser.finalize().expect("finalize should succeed");
+
+        let mut body_ctx = BodyContext::default();
+        parser.populate(&mut body_ctx);
+        assert_eq!(
+            body_ctx.get_value(&field.key),
+            Some(&Value::String(std::sync::Arc::new("150".to_string())))
+        );
+    }
+
+    #[test]
     fn sse_body_parser_multiline_json_data() {
-        let mut parser = SseBodyParser::new(vec!["/usage/total_tokens".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/usage/total_tokens")]);
 
         let chunk = b"data: {\"usage\":\ndata: {\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
@@ -532,7 +597,7 @@ mod tests {
 
     #[test]
     fn sse_body_parser_multi_chunk() {
-        let mut parser = SseBodyParser::new(vec!["/usage/prompt_tokens".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/usage/prompt_tokens")]);
 
         parser
             .feed(b"data: {\"id\":\"chunk1\"}\n\n")
@@ -554,14 +619,15 @@ mod tests {
 
     #[test]
     fn sse_body_parser_missing_field() {
-        let mut parser = SseBodyParser::new(vec!["/nonexistent".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/nonexistent")]);
 
         let chunk = b"data: {\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
         parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
-        assert_eq!(parser.remaining_fields(), vec![&"/nonexistent".to_string()]);
+        let expected = group("/nonexistent");
+        assert_eq!(parser.remaining_fields(), vec![&expected]);
 
         let mut body_ctx = BodyContext::default();
         parser.populate(&mut body_ctx);
@@ -570,19 +636,20 @@ mod tests {
 
     #[test]
     fn sse_body_parser_only_done_event() {
-        let mut parser = SseBodyParser::new(vec!["/usage".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/usage")]);
 
         let chunk = b"data: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
         parser.finalize().expect("finalize should succeed");
 
         assert!(parser.is_complete());
-        assert_eq!(parser.remaining_fields(), vec![&"/usage".to_string()]);
+        let expected = group("/usage");
+        assert_eq!(parser.remaining_fields(), vec![&expected]);
     }
 
     #[test]
     fn sse_body_parser_finalize_returns_error_on_invalid_json() {
-        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/field")]);
 
         let chunk = b"data: not valid json\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");
@@ -592,7 +659,7 @@ mod tests {
 
     #[test]
     fn sse_body_parser_bytes_consumed_always_zero() {
-        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/field")]);
         assert_eq!(parser.bytes_consumed(), 0);
 
         parser
@@ -603,10 +670,8 @@ mod tests {
 
     #[test]
     fn sse_body_parser_multiple_fields() {
-        let mut parser = SseBodyParser::new(vec![
-            "/usage/prompt_tokens".to_string(),
-            "/usage/total_tokens".to_string(),
-        ]);
+        let mut parser =
+            SseBodyParser::new(groups(&["/usage/prompt_tokens", "/usage/total_tokens"]));
 
         let chunk =
             b"data: {\"usage\":{\"prompt_tokens\":10,\"total_tokens\":42}}\n\ndata: [DONE]\n\n";
@@ -630,7 +695,7 @@ mod tests {
 
     #[test]
     fn sse_body_parser_not_complete_before_finalize() {
-        let mut parser = SseBodyParser::new(vec!["/field".to_string()]);
+        let mut parser = SseBodyParser::new(vec![group("/field")]);
 
         parser
             .feed(b"data: {\"field\":1}\n\ndata: [DONE]\n\n")
@@ -644,7 +709,7 @@ mod tests {
 
     #[test]
     fn sse_body_parser_preserves_string_type() {
-        let mut parser = SseBodyParser::new(vec!["/model".to_string(), "/count".to_string()]);
+        let mut parser = SseBodyParser::new(groups(&["/model", "/count"]));
 
         let chunk = b"data: {\"model\":\"42\",\"count\":42}\n\ndata: [DONE]\n\n";
         parser.feed(chunk).expect("feed should succeed");

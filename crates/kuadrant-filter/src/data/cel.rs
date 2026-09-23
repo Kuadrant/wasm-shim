@@ -106,6 +106,8 @@ pub struct Expression {
     attributes: Vec<Attribute>,
     request_body_values: Vec<String>,
     response_body_values: Vec<String>,
+    request_body_groups: Vec<BodyFieldGroup>,
+    response_body_groups: Vec<BodyFieldGroup>,
     expression: CelExpression,
     extended: bool,
     needs_grpc: bool,
@@ -158,11 +160,15 @@ impl Expression {
         let mut props = Vec::with_capacity(5);
         let mut request_props = Vec::with_capacity(1);
         let mut response_props = Vec::with_capacity(1);
+        let mut request_groups = Vec::new();
+        let mut response_groups = Vec::new();
         properties(
             &expression,
             &mut props,
             &mut request_props,
             &mut response_props,
+            &mut request_groups,
+            &mut response_groups,
             &mut Vec::default(),
         );
 
@@ -188,6 +194,8 @@ impl Expression {
             attributes,
             request_body_values: request_props,
             response_body_values: response_props,
+            request_body_groups: request_groups,
+            response_body_groups: response_groups,
             expression,
             extended,
             needs_grpc,
@@ -322,6 +330,14 @@ impl Expression {
         &self.response_body_values
     }
 
+    pub(crate) fn request_body_groups(&self) -> &[BodyFieldGroup] {
+        &self.request_body_groups
+    }
+
+    pub(crate) fn response_body_groups(&self) -> &[BodyFieldGroup] {
+        &self.response_body_groups
+    }
+
     pub fn has_request_body_deps(&self) -> bool {
         !self.request_body_values.is_empty()
     }
@@ -368,62 +384,246 @@ const RESPONSE_BODY_JSON_FN: &str = "responseBodyJSON";
 const REQUEST_BODY_JSON_DATA: &str = "@requestBodyJSON";
 const REQUEST_BODY_JSON_FN: &str = "requestBodyJSON";
 
-pub fn response_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
-    let key: Result<Key, Value> = arg.try_into();
-    match key {
-        Ok(key) => match ftx.ptx.get_variable(RESPONSE_BODY_JSON_DATA) {
-            Some(var) => match Value::try_from(var.as_ref()) {
-                Ok(Value::Map(map)) => match map.get(&key) {
-                    None => Ok(Value::Null),
-                    Some(value) => Ok(value.clone()),
-                },
-                Ok(_) => Err(ExecutionError::FunctionError {
-                    function: RESPONSE_BODY_JSON_FN.to_string(),
-                    message: "Bad internal state!".to_string(),
-                }),
-                Err(_) => Err(ExecutionError::FunctionError {
-                    function: RESPONSE_BODY_JSON_FN.to_string(),
-                    message: "Failed to convert variable to Value".to_string(),
-                }),
+/// Caps how many candidate JSON Pointers a single `requestBodyJSON`/`responseBodyJSON`
+/// call may list, bounding worst-case per-response extraction work regardless of who
+/// authored the wasm-shim config (defense in depth; a CRD-level tool such as
+/// kuadrant-operator is expected to enforce its own, possibly tighter, bound too).
+const MAX_BODY_JSON_CANDIDATES: usize = 8;
+
+const BODY_JSON_GROUP_SEP: char = '\u{1}';
+const BODY_JSON_TYPE_SEP: char = '\u{2}';
+
+/// Optional second argument to `requestBodyJSON`/`responseBodyJSON`: restricts which
+/// candidate's value counts as "resolved" when multiple JSON Pointers are given, so a
+/// present-but-wrong-shaped candidate is skipped in favour of another one that matches.
+///
+/// Limited to scalar types: neither streaming body parser can produce a CEL `List`/`Map`
+/// for a candidate (acutejson delivers no callback at all for a pointer landing on a
+/// container; the SSE path stringifies it instead), so a `list`/`map` hint could never
+/// match anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExpectedType {
+    Number,
+    String,
+    Bool,
+}
+
+impl ExpectedType {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "number" => Some(Self::Number),
+            "string" => Some(Self::String),
+            "bool" => Some(Self::Bool),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Number => "number",
+            Self::String => "string",
+            Self::Bool => "bool",
+        }
+    }
+}
+
+/// A single `requestBodyJSON`/`responseBodyJSON` call site: one or more alternative JSON
+/// Pointer candidates plus an optional type hint. `key` is a canonical identifier
+/// derived from `candidates` and `expected`, used both to tell the body parser what to
+/// watch for and to look the extracted value back up at CEL-eval time. For a lone
+/// candidate with no type hint, `key` is identical to the candidate itself, which is
+/// what keeps a plain `responseBodyJSON('/x')` call byte-for-byte compatible with
+/// today's single-pointer behaviour.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BodyFieldGroup {
+    pub(crate) key: String,
+    pub(crate) candidates: Vec<String>,
+    pub(crate) expected: Option<ExpectedType>,
+}
+
+impl BodyFieldGroup {
+    /// Builds a group from an explicit list of candidates and an optional type hint.
+    /// Exposed as `pub(crate)` (rather than just used internally by the CEL-call
+    /// parsing helpers below) so [`crate::kuadrant::pipeline::tasks::store`] and its
+    /// body parsers can construct/test groups directly, without going through CEL.
+    pub(crate) fn new(candidates: Vec<String>, expected: Option<ExpectedType>) -> Self {
+        let mut key = candidates.join(&BODY_JSON_GROUP_SEP.to_string());
+        if let Some(t) = expected {
+            key.push(BODY_JSON_TYPE_SEP);
+            key.push_str(t.name());
+        }
+        Self {
+            key,
+            candidates,
+            expected,
+        }
+    }
+
+    /// The first candidate, in list order, whose value `lookup` already knows about.
+    /// Callers are expected to only hand back values that already satisfy `expected`
+    /// (see [`crate::kuadrant::pipeline::tasks::store::body_parser::resolved_value`]),
+    /// so this is purely a "pick whichever candidate is known" selection, re-run after
+    /// every new chunk of body arrives -- in practice the winner is whichever candidate
+    /// is discovered first in the stream; list order only breaks a tie between
+    /// candidates that both became known in the same call. `lookup` maps a raw JSON
+    /// Pointer candidate to its extracted value, if any.
+    pub(crate) fn resolve<'v>(
+        &self,
+        mut lookup: impl FnMut(&str) -> Option<&'v Value>,
+    ) -> Option<&'v Value> {
+        self.candidates
+            .iter()
+            .find_map(|candidate| lookup(candidate))
+    }
+}
+
+/// Parses the arguments to a `requestBodyJSON`/`responseBodyJSON` call, whether typed as
+/// literal CEL AST nodes (at config/compile time) or as resolved [`Value`]s (at eval
+/// time). Returns `None` for any shape this feature doesn't recognize (wrong arity, a
+/// non-literal/non-string candidate, an unrecognized type name, too many candidates, a
+/// candidate containing [`BODY_JSON_GROUP_SEP`]/[`BODY_JSON_TYPE_SEP`] and thus unable to
+/// round-trip through [`BodyFieldGroup::new`]'s canonical key unambiguously); callers
+/// treat that identically to today's "not a literal single string" case: the call is
+/// simply never registered/resolved, degrading to `Null` rather than a hard compile
+/// error.
+fn parse_body_json_args<T>(
+    args: &[T],
+    as_string: impl Fn(&T) -> Option<&str>,
+    as_string_list: impl Fn(&T) -> Option<Vec<&str>>,
+) -> Option<(Vec<String>, Option<ExpectedType>)> {
+    if args.is_empty() || args.len() > 2 {
+        return None;
+    }
+    let candidates: Vec<String> = if let Some(s) = as_string(&args[0]) {
+        vec![s.to_string()]
+    } else {
+        as_string_list(&args[0])?
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    };
+    if candidates.is_empty() || candidates.len() > MAX_BODY_JSON_CANDIDATES {
+        return None;
+    }
+    if candidates
+        .iter()
+        .any(|c| c.contains(BODY_JSON_GROUP_SEP) || c.contains(BODY_JSON_TYPE_SEP))
+    {
+        return None;
+    }
+    let expected = match args.get(1) {
+        None => None,
+        Some(arg) => Some(ExpectedType::from_name(as_string(arg)?)?),
+    };
+    Some((candidates, expected))
+}
+
+fn expr_as_string(e: &IdedExpr) -> Option<&str> {
+    match &e.expr {
+        Expr::Literal(LiteralValue::String(s)) => Some(s),
+        _ => None,
+    }
+}
+
+fn expr_as_string_list(e: &IdedExpr) -> Option<Vec<&str>> {
+    match &e.expr {
+        Expr::List(list) => list
+            .elements
+            .iter()
+            .map(expr_as_string)
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    }
+}
+
+fn body_json_group_from_exprs(args: &[IdedExpr]) -> Option<BodyFieldGroup> {
+    let (candidates, expected) = parse_body_json_args(args, expr_as_string, expr_as_string_list)?;
+    Some(BodyFieldGroup::new(candidates, expected))
+}
+
+fn value_as_string(v: &Value) -> Option<&str> {
+    match v {
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn value_as_string_list(v: &Value) -> Option<Vec<&str>> {
+    match v {
+        Value::List(list) => list.iter().map(value_as_string).collect::<Option<Vec<_>>>(),
+        _ => None,
+    }
+}
+
+fn body_json_group_from_values(args: &[Value]) -> Option<BodyFieldGroup> {
+    let (candidates, expected) = parse_body_json_args(args, value_as_string, value_as_string_list)?;
+    Some(BodyFieldGroup::new(candidates, expected))
+}
+
+fn body_json_lookup(
+    ftx: &FunctionContext,
+    data_var: &str,
+    fn_name: &str,
+    key: Key,
+) -> ResolveResult {
+    match ftx.ptx.get_variable(data_var) {
+        Some(var) => match Value::try_from(var.as_ref()) {
+            Ok(Value::Map(map)) => match map.get(&key) {
+                None => Ok(Value::Null),
+                Some(value) => Ok(value.clone()),
             },
-            None => Err(ExecutionError::FunctionError {
-                function: RESPONSE_BODY_JSON_FN.to_string(),
-                message: format!("Variable {} not found", RESPONSE_BODY_JSON_DATA),
+            Ok(_) => Err(ExecutionError::FunctionError {
+                function: fn_name.to_string(),
+                message: "Bad internal state!".to_string(),
+            }),
+            Err(_) => Err(ExecutionError::FunctionError {
+                function: fn_name.to_string(),
+                message: "Failed to convert variable to Value".to_string(),
             }),
         },
-        Err(e) => Err(ExecutionError::UnexpectedType {
-            got: format!("{e:?}"),
-            want: "Key".to_string(),
+        None => Err(ExecutionError::FunctionError {
+            function: fn_name.to_string(),
+            message: format!("Variable {} not found", data_var),
         }),
     }
 }
 
-pub fn request_body_json(ftx: &FunctionContext, arg: Value) -> ResolveResult {
-    let key: Result<Key, Value> = arg.try_into();
-    match key {
-        Ok(key) => match ftx.ptx.get_variable(REQUEST_BODY_JSON_DATA) {
-            Some(var) => match Value::try_from(var.as_ref()) {
-                Ok(Value::Map(map)) => match map.get(&key) {
-                    None => Ok(Value::Null),
-                    Some(value) => Ok(value.clone()),
-                },
-                Ok(_) => Err(ExecutionError::FunctionError {
-                    function: REQUEST_BODY_JSON_FN.to_string(),
-                    message: "Bad internal state!".to_string(),
-                }),
-                Err(_) => Err(ExecutionError::FunctionError {
-                    function: REQUEST_BODY_JSON_FN.to_string(),
-                    message: "Failed to convert variable to Value".to_string(),
-                }),
-            },
-            None => Err(ExecutionError::FunctionError {
-                function: REQUEST_BODY_JSON_FN.to_string(),
-                message: format!("Variable {} not found", REQUEST_BODY_JSON_DATA),
-            }),
-        },
-        Err(e) => Err(ExecutionError::UnexpectedType {
-            got: format!("{e:?}"),
-            want: "Key".to_string(),
+/// Resolves a `requestBodyJSON`/`responseBodyJSON` call's arguments into the [`Key`]
+/// under which its value was stored. The common case -- a single literal pointer, no
+/// type hint -- is handled without building a [`BodyFieldGroup`] at all: its canonical
+/// key is just the candidate itself (see [`BodyFieldGroup::new`]), so the argument's
+/// existing `Arc<String>` is reused as-is instead of being copied into a new one on
+/// every evaluation.
+fn body_json_key(args: &[Value]) -> Option<Key> {
+    if let [Value::String(s)] = args {
+        if !s.contains(BODY_JSON_GROUP_SEP) && !s.contains(BODY_JSON_TYPE_SEP) {
+            return Some(Key::String(Arc::clone(s)));
+        }
+    }
+    let group = body_json_group_from_values(args)?;
+    Some(Key::String(Arc::new(group.key)))
+}
+
+pub fn response_body_json(ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
+    match body_json_key(&args) {
+        Some(key) => body_json_lookup(ftx, RESPONSE_BODY_JSON_DATA, RESPONSE_BODY_JSON_FN, key),
+        None => Err(ExecutionError::FunctionError {
+            function: RESPONSE_BODY_JSON_FN.to_string(),
+            message: "Invalid arguments: expected a JSON Pointer string or list of strings, \
+                and an optional type hint string"
+                .to_string(),
+        }),
+    }
+}
+
+pub fn request_body_json(ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
+    match body_json_key(&args) {
+        Some(key) => body_json_lookup(ftx, REQUEST_BODY_JSON_DATA, REQUEST_BODY_JSON_FN, key),
+        None => Err(ExecutionError::FunctionError {
+            function: REQUEST_BODY_JSON_FN.to_string(),
+            message: "Invalid arguments: expected a JSON Pointer string or list of strings, \
+                and an optional type hint string"
+                .to_string(),
         }),
     }
 }
@@ -558,6 +758,14 @@ impl Predicate {
 
     pub fn response_body_values(&self) -> &[String] {
         self.expression.response_body_values()
+    }
+
+    pub(crate) fn request_body_groups(&self) -> &[BodyFieldGroup] {
+        self.expression.request_body_groups()
+    }
+
+    pub(crate) fn response_body_groups(&self) -> &[BodyFieldGroup] {
+        self.expression.response_body_groups()
     }
 
     pub fn has_request_body_deps(&self) -> bool {
@@ -822,42 +1030,65 @@ fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     ])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn properties<'e>(
     ided_exp: &'e IdedExpr,
     all: &mut Vec<Vec<&'e str>>,
     request_props: &mut Vec<String>,
     response_props: &mut Vec<String>,
+    request_groups: &mut Vec<BodyFieldGroup>,
+    response_groups: &mut Vec<BodyFieldGroup>,
     path: &mut Vec<&'e str>,
 ) {
     match &ided_exp.expr {
         Expr::Call(call) => {
-            if call.target.is_none()
-                && call.func_name == RESPONSE_BODY_JSON_FN
-                && call.args.len() == 1
-            {
-                if let Expr::Literal(LiteralValue::String(prop)) = &call.args[0].expr {
-                    response_props.push(prop.to_string());
+            if call.target.is_none() && call.func_name == RESPONSE_BODY_JSON_FN {
+                if let Some(group) = body_json_group_from_exprs(&call.args) {
+                    response_props.push(group.key.clone());
+                    response_groups.push(group);
                 }
-            } else if call.target.is_none()
-                && call.func_name == REQUEST_BODY_JSON_FN
-                && call.args.len() == 1
-            {
-                if let Expr::Literal(LiteralValue::String(prop)) = &call.args[0].expr {
-                    request_props.push(prop.to_string());
+            } else if call.target.is_none() && call.func_name == REQUEST_BODY_JSON_FN {
+                if let Some(group) = body_json_group_from_exprs(&call.args) {
+                    request_props.push(group.key.clone());
+                    request_groups.push(group);
                 }
             }
             if let Some(target) = &call.target {
-                properties(target, all, request_props, response_props, path);
+                properties(
+                    target,
+                    all,
+                    request_props,
+                    response_props,
+                    request_groups,
+                    response_groups,
+                    path,
+                );
             } else {
                 path.clear();
             }
             for arg in &call.args {
-                properties(arg, all, request_props, response_props, path);
+                properties(
+                    arg,
+                    all,
+                    request_props,
+                    response_props,
+                    request_groups,
+                    response_groups,
+                    path,
+                );
             }
         }
         Expr::Select(select) => {
             path.insert(0, select.field.as_str());
-            properties(&select.operand, all, request_props, response_props, path);
+            properties(
+                &select.operand,
+                all,
+                request_props,
+                response_props,
+                request_groups,
+                response_groups,
+                path,
+            );
         }
         Expr::Ident(name) => {
             if !path.is_empty() {
@@ -868,18 +1099,50 @@ fn properties<'e>(
         }
         Expr::List(list) => {
             for elem in &list.elements {
-                properties(elem, all, request_props, response_props, path);
+                properties(
+                    elem,
+                    all,
+                    request_props,
+                    response_props,
+                    request_groups,
+                    response_groups,
+                    path,
+                );
             }
         }
         Expr::Map(map) => {
             for entry in &map.entries {
                 match &entry.expr {
                     EntryExpr::MapEntry(map_entry) => {
-                        properties(&map_entry.key, all, request_props, response_props, path);
-                        properties(&map_entry.value, all, request_props, response_props, path);
+                        properties(
+                            &map_entry.key,
+                            all,
+                            request_props,
+                            response_props,
+                            request_groups,
+                            response_groups,
+                            path,
+                        );
+                        properties(
+                            &map_entry.value,
+                            all,
+                            request_props,
+                            response_props,
+                            request_groups,
+                            response_groups,
+                            path,
+                        );
                     }
                     EntryExpr::StructField(field) => {
-                        properties(&field.value, all, request_props, response_props, path);
+                        properties(
+                            &field.value,
+                            all,
+                            request_props,
+                            response_props,
+                            request_groups,
+                            response_groups,
+                            path,
+                        );
                     }
                 }
             }
@@ -887,16 +1150,64 @@ fn properties<'e>(
         Expr::Struct(struct_expr) => {
             for entry in &struct_expr.entries {
                 if let EntryExpr::StructField(field) = &entry.expr {
-                    properties(&field.value, all, request_props, response_props, path);
+                    properties(
+                        &field.value,
+                        all,
+                        request_props,
+                        response_props,
+                        request_groups,
+                        response_groups,
+                        path,
+                    );
                 }
             }
         }
         Expr::Comprehension(comp) => {
-            properties(&comp.iter_range, all, request_props, response_props, path);
-            properties(&comp.accu_init, all, request_props, response_props, path);
-            properties(&comp.loop_cond, all, request_props, response_props, path);
-            properties(&comp.loop_step, all, request_props, response_props, path);
-            properties(&comp.result, all, request_props, response_props, path);
+            properties(
+                &comp.iter_range,
+                all,
+                request_props,
+                response_props,
+                request_groups,
+                response_groups,
+                path,
+            );
+            properties(
+                &comp.accu_init,
+                all,
+                request_props,
+                response_props,
+                request_groups,
+                response_groups,
+                path,
+            );
+            properties(
+                &comp.loop_cond,
+                all,
+                request_props,
+                response_props,
+                request_groups,
+                response_groups,
+                path,
+            );
+            properties(
+                &comp.loop_step,
+                all,
+                request_props,
+                response_props,
+                request_groups,
+                response_groups,
+                path,
+            );
+            properties(
+                &comp.result,
+                all,
+                request_props,
+                response_props,
+                request_groups,
+                response_groups,
+                path,
+            );
         }
         Expr::Literal(_) | Expr::Unspecified => {}
     }
@@ -1091,7 +1402,7 @@ pub mod data {
 #[cfg(test)]
 mod tests {
     use crate::data::attribute::AttributeState;
-    use crate::data::cel::{known_attribute_for, Expression, Predicate};
+    use crate::data::cel::{known_attribute_for, ExpectedType, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
     use cel::objects::ValueType;
@@ -1153,6 +1464,98 @@ mod tests {
         )
         .expect("This is valid CEL!");
         assert_eq!(value.request_body_values, vec!["foo.bar".to_string()]);
+    }
+
+    #[test]
+    fn list_argument_registers_a_single_group_keyed_by_all_candidates() {
+        let value = Expression::new("responseBodyJSON(['/a', '/b']) > 3").expect("valid CEL");
+        assert_eq!(value.response_body_groups.len(), 1);
+        let group = &value.response_body_groups[0];
+        assert_eq!(group.candidates, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(group.expected, None);
+        // The eval-time Pending/lookup machinery keys off this same canonical key.
+        assert_eq!(value.response_body_values, vec![group.key.clone()]);
+    }
+
+    #[test]
+    fn single_string_argument_keeps_the_pointer_as_its_own_key() {
+        // Backward compatibility: a plain single-pointer call's canonical key must be
+        // the pointer text itself, since that's what already lives in `BodyContext`.
+        let value = Expression::new("responseBodyJSON('/x')").expect("valid CEL");
+        assert_eq!(value.response_body_groups[0].key, "/x");
+    }
+
+    #[test]
+    fn type_hint_argument_is_captured() {
+        let value =
+            Expression::new("responseBodyJSON(['/a', '/b'], 'number') > 3").expect("valid CEL");
+        assert_eq!(
+            value.response_body_groups[0].expected,
+            Some(ExpectedType::Number)
+        );
+    }
+
+    #[test]
+    fn unrecognized_type_hint_is_not_registered() {
+        // Consistent with today's "non-literal argument" behaviour: a malformed
+        // shape is simply never registered, rather than a hard compile error.
+        let value = Expression::new("responseBodyJSON(['/a'], 'not-a-type')").expect("valid CEL");
+        assert!(value.response_body_groups.is_empty());
+    }
+
+    #[test]
+    fn non_literal_list_element_is_not_registered() {
+        let value = Expression::new("responseBodyJSON(['/a', foo])").expect("valid CEL");
+        assert!(value.response_body_groups.is_empty());
+    }
+
+    #[test]
+    fn oversized_candidate_list_is_not_registered() {
+        let pointers: Vec<String> = (0..9).map(|i| format!("'/p{i}'")).collect();
+        let expr = format!("responseBodyJSON([{}])", pointers.join(", "));
+        let value = Expression::new(&expr).expect("valid CEL");
+        assert!(value.response_body_groups.is_empty());
+    }
+
+    #[test]
+    fn candidate_containing_reserved_separator_is_not_registered() {
+        // A candidate embedding BODY_JSON_GROUP_SEP/BODY_JSON_TYPE_SEP could otherwise
+        // produce the same canonical key as an unrelated, differently-shaped call (e.g.
+        // an untyped `["/x\u{2}number"]` colliding with a typed `("/x", "number")`), so
+        // such candidates must never be registered rather than silently aliasing.
+        let group_sep = Expression::new("responseBodyJSON(['/x\u{1}y'])").expect("valid CEL");
+        assert!(group_sep.response_body_groups.is_empty());
+
+        let type_sep = Expression::new("responseBodyJSON(['/x\u{2}number'])").expect("valid CEL");
+        assert!(type_sep.response_body_groups.is_empty());
+    }
+
+    #[test]
+    fn list_argument_resolves_to_first_present_candidate() {
+        let expr = Expression::new("responseBodyJSON(['/a', '/b'])").expect("valid CEL");
+        let mock_host = MockWasmHost::new();
+        let mut req_ctx = ReqRespCtx::new(Arc::new(mock_host));
+        let mut cel_ctx = cel::Context::default();
+        let key = expr.response_body_groups[0].key.clone();
+        req_ctx.response_body.set_value(key, 99);
+        assert_eq!(
+            AttributeState::Available(Value::Int(99)),
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
+        );
+    }
+
+    #[test]
+    fn type_hint_skips_present_but_wrong_typed_value_and_stays_pending() {
+        // The parser is what actually walks candidates and applies the type filter
+        // (see json_body_parser tests); at the CEL layer, resolution is keyed purely
+        // off whether the group's canonical key is populated yet.
+        let expr = Expression::new("responseBodyJSON(['/a'], 'number') == 42").expect("valid CEL");
+        let req_ctx = ReqRespCtx::new(Arc::new(MockWasmHost::new()));
+        let mut cel_ctx = cel::Context::default();
+        assert_eq!(
+            AttributeState::Pending,
+            expr.eval(&req_ctx, &mut cel_ctx).unwrap()
+        );
     }
 
     fn store_auth_leaf(ctx: &mut ReqRespCtx, field: &str, value: Value) {

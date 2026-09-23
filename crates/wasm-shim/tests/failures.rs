@@ -111,6 +111,11 @@ fn it_fails_on_first_action_grpc_call() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -312,6 +317,11 @@ fn it_fails_on_second_action_grpc_call() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -492,6 +502,11 @@ fn it_fails_on_first_action_grpc_response() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -691,6 +706,11 @@ fn it_fails_on_second_action_grpc_response() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
@@ -874,6 +894,11 @@ fn it_does_not_strand_a_sequential_successor_when_a_task_fails() {
         .returning(Some(5))
         .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
         .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
         .expect_increment_metric(Some(1), Some(1))
         .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
         .returning(Some(cfg.as_bytes()))
