@@ -763,12 +763,6 @@ fn it_does_not_strand_a_sequential_successor_when_sse_extraction_fails() {
         .call_proxy_on_response_body(http_context, chunk.len() as i32, true)
         .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
         .returning(Some(chunk))
-        .expect_log(
-            Some(LogLevel::Warn),
-            Some(
-                "No candidate resolved for field(s) [[\"/usage/total_tokens\", \"/usageMetadata/totalTokenCount\"]] in 'kuadrant.internal.response.body': body stream ended without a match; the request proceeds and this value is skipped",
-            ),
-        )
         .expect_increment_metric(Some(7), Some(1))
         .expect_log(Some(LogLevel::Error), Some("Task failed: \"0\""))
         .expect_grpc_call(

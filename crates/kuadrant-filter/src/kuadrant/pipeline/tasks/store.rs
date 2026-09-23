@@ -5,7 +5,7 @@ pub(super) mod sse_body_parser;
 use body_parser::BodyParser;
 use json_body_parser::JsonBodyParser;
 use sse_body_parser::SseBodyParser;
-use tracing::{error, warn};
+use tracing::{debug, error};
 
 use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::{BodyFieldGroup, Predicate};
@@ -200,7 +200,7 @@ impl Task for StoreTask {
                 if !remaining.is_empty() {
                     let candidates: Vec<&[String]> =
                         remaining.iter().map(|g| g.candidates.as_slice()).collect();
-                    warn!(
+                    debug!(
                         "No candidate resolved for field(s) {:?} in '{}': body stream ended \
                         without a match; the request proceeds and this value is skipped",
                         candidates, self.path
