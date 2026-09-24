@@ -14,14 +14,14 @@ jobs:
     name: Find license compliance and security issues
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: fossas/fossa-action@v2.0.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # ratchet:actions/checkout@v6
+      - uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # ratchet:fossas/fossa-action@v2.0.0
         name: License Scan
         with:
           api-key: ${{secrets.FOSSA_API_TOKEN}}
           branch: ${{ github.head_ref || github.ref_name }}
           project: git+github.com/Kuadrant/wasm-shim
-      - uses: fossas/fossa-action@v1.8.0
+      - uses: fossas/fossa-action@c414b9ad82eaad041e47a7cf62a4f02411f427a0 # ratchet:fossas/fossa-action@v1.8.0
         name: License test for issues
         with:
           api-key: ${{secrets.FOSSA_API_TOKEN}}
