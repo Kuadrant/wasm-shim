@@ -5,10 +5,6 @@ inputs:
   version:
     description: 'WASM Shim version (semver, e.g., 0.12.1)'
     required: true
-  push-branch:
-    description: 'Whether to push the base branch immediately if it does not exist'
-    required: false
-    default: 'false'
   github-token:
     description: 'GitHub token for protoc setup'
     required: true
@@ -17,9 +13,6 @@ outputs:
   wasm-shim-version:
     description: 'The validated WASM Shim version'
     value: ${{ steps.validate.outputs.version }}
-  base-branch:
-    description: 'The base release branch name'
-    value: ${{ steps.create-branch.outputs.base-branch }}
 
 runs:
   using: 'composite'
@@ -36,35 +29,27 @@ runs:
         echo "WASM_SHIM_VERSION=$VERSION" >> $GITHUB_ENV
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Create release branch
-      id: create-branch
-      shell: bash
-      run: |
-        base_branch=release-$(echo "$WASM_SHIM_VERSION" | sed 's/[+-].*//; s/\.[0-9]*$//')
-        echo "BASE_BRANCH=$base_branch" >> $GITHUB_ENV
-        echo "base-branch=$base_branch" >> $GITHUB_OUTPUT
-
-        if git ls-remote --exit-code --heads origin "$base_branch" ; then
-          echo "Base branch $base_branch already exists"
-        else
-          echo "Creating branch $base_branch"
-          git checkout -b "$base_branch"
-          if [ "${{ inputs.push-branch }}" = "true" ]; then
-            echo "Pushing branch $base_branch to origin"
-            git push --set-upstream origin "$base_branch"
-          fi
-        fi
-
-    - name: Update Cargo.toml version
-      shell: bash
-      run: |
-        sed -i '0,/^version = ".*"/s//version = "'"$WASM_SHIM_VERSION"'"/' Cargo.toml
-
     - name: Set up Rust and WASM environment
       uses: ./.github/actions/setup-rust-wasm
       with:
         github-token: ${{ inputs.github-token }}
 
+    - shell: bash
+      run: cargo install cargo-edit --version 0.13.13
+
+    - name: Update Cargo.toml version
+      shell: bash
+      run: |
+        cargo set-version --offline -p wasm-shim "$WASM_SHIM_VERSION"
+
     - name: Update Cargo.lock
       shell: bash
       run: cargo check --target wasm32-wasip1
+
+    - uses: ./.github/actions/install-yq
+
+    - name: Sync release.yaml from Cargo.toml
+      shell: bash
+      run: |
+        chmod +x .github/scripts/sync-release-yaml.sh
+        .github/scripts/sync-release-yaml.sh
