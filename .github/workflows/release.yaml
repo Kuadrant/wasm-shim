@@ -26,7 +26,7 @@ jobs:
       - name: Extract version from Cargo.toml
         id: extract_version
         run: |
-          VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          VERSION=$(grep -m1 '^version = ' ./crates/wasm-shim/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "TAG=v$VERSION" >> $GITHUB_ENV
           if [[ "$VERSION" =~ - ]]; then

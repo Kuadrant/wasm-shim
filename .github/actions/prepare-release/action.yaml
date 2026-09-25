@@ -58,7 +58,8 @@ runs:
     - name: Update Cargo.toml version
       shell: bash
       run: |
-        sed -i '0,/^version = ".*"/s//version = "'"$WASM_SHIM_VERSION"'"/' Cargo.toml
+        sed -i '0,/^version = ".*"/s//version = "'"$WASM_SHIM_VERSION"'"/' ./crates/wasm-shim/Cargo.toml
+        sed -i '0,/^version = ".*"/s//version = "'"$WASM_SHIM_VERSION"'"/' ./crates/kuadrant-filter/Cargo.toml
 
     - name: Set up Rust and WASM environment
       uses: ./.github/actions/setup-rust-wasm
