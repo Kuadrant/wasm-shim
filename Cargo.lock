@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "kuadrant-filter"
-version = "0.13.0-dev"
+version = "0.15.0"
 dependencies = [
  "acutejson",
  "cel",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-shim"
-version = "0.13.0-dev"
+version = "0.15.0"
 dependencies = [
  "const_format",
  "kuadrant-filter",
