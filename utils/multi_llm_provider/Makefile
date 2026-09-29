@@ -8,7 +8,6 @@ DOCKER ?= $(shell which docker 2> /dev/null || echo "docker")
 .PHONY: run clean
 
 run:
-	$(DOCKER) compose -f $(WORKDIR)/docker-compose.yaml build mock-llm
 	$(DOCKER) compose -f $(WORKDIR)/docker-compose.yaml run start_services
 
 clean:

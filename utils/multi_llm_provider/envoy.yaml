@@ -17,6 +17,15 @@ static_resources:
                 route_config:
                   name: local_route
                   virtual_hosts:
+                    - name: openai
+                      domains:
+                        - "openai.127.0.0.1.nip.io"
+                        - "openai.127.0.0.1.nip.io:18000"
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: llm-d-inference-sim
                     - name: local_service
                       domains:
                         - "*"
@@ -63,17 +72,17 @@ static_resources:
                                 {
                                   "name": "basic",
                                   "routeRuleConditions": {
-                                    "hostnames": ["*.example.com"]
+                                    "hostnames": ["*.127.0.0.1.nip.io"]
                                   },
                                   "actions": [
                                     {
                                       "type": "grpc",
                                       "var": "ratelimit_response",
                                       "service": "ratelimit-check-service",
-                                      "predicate": "request.path == \"/v1/chat/completions\"",
+                                      "predicate": "request.path == \"/v1/chat/completions\" || request.path == \"/v1/messages\" || request.path.startsWith(\"/v1beta/models/\")",
                                       "terminal": false,
                                       "label": "ratelimit",
-                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: 1u, descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\" || request.path == \"/v1/messages\" || request.path.startsWith(\"/v1beta/models/\")) ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
                                       "onReply": [
                                         { "type": "deny", "predicate": "ratelimit_response.overall_code == 2", "terminal": true, "denyWith": "DenyResponse{status: 429u, headers: ratelimit_response.response_headers_to_add, body: \"Too Many Requests\\n\"}" },
                                         { "type": "headers", "predicate": "ratelimit_response.overall_code == 1", "terminal": false, "target": "response", "headers": "ratelimit_response.response_headers_to_add" },
@@ -92,11 +101,11 @@ static_resources:
                                       "execution": "sequential",
                                       "var": "report_response",
                                       "service": "ratelimit-report-service",
-                                      "predicate": "request.path == \"/v1/chat/completions\"",
+                                      "predicate": "request.path == \"/v1/chat/completions\" || request.path == \"/v1/messages\" || request.path.startsWith(\"/v1beta/models/\")",
                                       "terminal": false,
                                       "isGuard": false,
                                       "label": "ratelimit_report",
-                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: uint(kuadrant.internal.response.body.total_tokens), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\") ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: \"domain-a\", hits_addend: uint(kuadrant.internal.response.body.total_tokens), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: ((request.path == \"/v1/chat/completions\" || request.path == \"/v1/messages\" || request.path.startsWith(\"/v1beta/models/\")) ? [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"a\", value: string(1) } ] : []) } ] }",
                                       "onReply": [
                                         { "type": "fail", "predicate": "!has(report_response.overall_code)", "terminal": false, "isGuard": false, "logMessage": "Rate limit report failed: invalid gRPC response" }
                                       ]
@@ -121,7 +130,20 @@ static_resources:
                   address:
                     socket_address:
                       address: mock-llm
-                      port_value: 8090
+                      port_value: 1080
+    - name: llm-d-inference-sim
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      lb_policy: round_robin
+      load_assignment:
+        cluster_name: llm-d-inference-sim
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: llm-d-inference-sim
+                      port_value: 8000
     - name: limitador
       connect_timeout: 0.25s
       type: STRICT_DNS

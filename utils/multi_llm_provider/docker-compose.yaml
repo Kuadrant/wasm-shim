@@ -9,6 +9,7 @@ services:
     depends_on:
       - limitador
       - mock-llm
+      - llm-d-inference-sim
     command:
       - /usr/local/bin/envoy
       - --config-path
@@ -55,10 +56,26 @@ services:
     volumes:
       - ./limits.yaml:/opt/kuadrant/limits/limits.yaml
   mock-llm:
-    build: ./mock
+    image: mockserver/mockserver:8.0.0
     container_name: mock-llm
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/expectations.json
+    volumes:
+      - ./mock/expectations.json:/config/expectations.json
     expose:
-      - "8090"
+      - "1080"
+  llm-d-inference-sim:
+    image: ghcr.io/llm-d/llm-d-inference-sim:v0.1.1
+    container_name: llm-d-inference-sim
+    command:
+      - --model
+      - mock
+      - --port
+      - "8000"
+      - --mode
+      - echo
+    expose:
+      - "8000"
   start_services:
     image: alpine
     depends_on:
