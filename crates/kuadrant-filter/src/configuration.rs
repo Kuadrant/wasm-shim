@@ -145,6 +145,18 @@ pub struct PluginConfiguration {
     pub observability: Observability,
     #[serde(default = "default_descriptor_service")]
     pub descriptor_service: String,
+    /// When set, this is a bootstrap-only config: `services`/`action_sets`
+    /// are empty and the real configuration must be fetched from the
+    /// operator's PluginConfigService, on the cluster named by
+    /// `descriptor_service` (reusing the same cluster already used to fetch
+    /// gRPC service descriptors - no separate cluster needed).
+    #[serde(default)]
+    pub remote_config: Option<RemoteConfigRef>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RemoteConfigRef {
+    pub gateway: String,
 }
 
 fn default_descriptor_service() -> String {
@@ -159,6 +171,7 @@ impl PluginConfiguration {
             action_sets,
             observability: Default::default(),
             descriptor_service: default_descriptor_service(),
+            remote_config: None,
         }
     }
 }

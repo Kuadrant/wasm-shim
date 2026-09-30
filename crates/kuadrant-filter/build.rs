@@ -64,7 +64,10 @@ fn generate_protobuf() -> Result<(), Box<dyn Error>> {
 
     println!("Compiling protos...");
     let result = prost_build.compile_protos(
-        &["../../vendor-protobufs/kuadrant/v1/descriptor_service.proto"],
+        &[
+            "../../vendor-protobufs/kuadrant/v1/descriptor_service.proto",
+            "../../vendor-protobufs/kuadrant/v1/plugin_config_service.proto",
+        ],
         &["../../vendor-protobufs/kuadrant/"],
     );
 

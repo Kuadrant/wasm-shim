@@ -2,7 +2,7 @@ use super::kuadrant_filter::KuadrantFilter;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use kuadrant_filter::configuration::PluginConfiguration;
-use kuadrant_filter::filter::DescriptorManager;
+use kuadrant_filter::filter::{DescriptorManager, RemoteConfigFetcher};
 use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
@@ -17,6 +17,7 @@ pub struct FilterRoot {
     pub context_id: u32,
     pub pipeline_factory: Arc<PipelineFactory>,
     pub descriptor_manager: Arc<DescriptorManager>,
+    remote_config_fetcher: RemoteConfigFetcher,
     tick_enabled: bool,
 }
 
@@ -26,6 +27,7 @@ impl FilterRoot {
             context_id,
             pipeline_factory: Arc::new(PipelineFactory::default()),
             descriptor_manager: Arc::new(DescriptorManager::default()),
+            remote_config_fetcher: RemoteConfigFetcher::default(),
             tick_enabled: false,
         }
     }
@@ -49,6 +51,15 @@ impl FilterRoot {
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
 
+        // A bootstrap-only config (empty services/action_sets, remote_config
+        // set) still gets installed below like any other config - that's
+        // what produces the fail-open "no ActionSet matches" window while
+        // the real config is fetched. See poc/extensions-endpoint README.
+        if let Some(remote) = &config.remote_config {
+            self.remote_config_fetcher
+                .set_pending(remote.gateway.clone(), descriptor_service.clone());
+        }
+
         let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
             Ok(f) => f,
             Err(err) => {
@@ -71,7 +82,12 @@ impl FilterRoot {
             }
         }
 
-        self.set_tick_enabled(has_dynamic_services);
+        if self.remote_config_fetcher.is_active() {
+            self.remote_config_fetcher
+                .fetch(&crate::wasm_host::ProxyWasmHost);
+        }
+
+        self.set_tick_enabled(has_dynamic_services || self.remote_config_fetcher.is_active());
 
         true
     }
@@ -93,6 +109,39 @@ impl FilterRoot {
 
         self.descriptor_manager
             .handle_response(token_id, response_bytes)
+    }
+
+    fn handle_remote_config_response(
+        &mut self,
+        status_code: u32,
+        response_size: usize,
+    ) -> Result<(), String> {
+        if status_code != 0 {
+            return Err(format!(
+                "plugin config fetch returned status {}",
+                status_code
+            ));
+        }
+
+        let response_bytes = self
+            .get_grpc_call_response_body(0, response_size)
+            .map_err(|status| format!("could not get plugin config response: {:?}", status))?
+            .ok_or_else(|| "plugin config response body is empty".to_string())?;
+
+        let response = RemoteConfigFetcher::decode_response(&response_bytes)?;
+
+        let config: PluginConfiguration = serde_json::from_slice(&response.config_json)
+            .map_err(|e| format!("failed to parse fetched plugin config: {}", e))?;
+
+        info!(
+            "#{} fetched remote plugin config (sha256: {}), applying",
+            self.context_id, response.sha256
+        );
+
+        self.remote_config_fetcher.clear();
+        self.process_config(config);
+
+        Ok(())
     }
 }
 
@@ -170,15 +219,41 @@ impl RootContext for FilterRoot {
         {
             error!("Failed to fetch missing descriptors on tick: {}", e);
         }
+        if self.remote_config_fetcher.is_active() {
+            self.remote_config_fetcher
+                .fetch(&crate::wasm_host::ProxyWasmHost);
+        }
     }
 }
 
 impl Context for FilterRoot {
     fn on_grpc_call_response(&mut self, token_id: u32, status_code: u32, response_size: usize) {
-        if let Err(e) = self.handle_descriptor_response(token_id, status_code, response_size) {
-            error!("Failed to handle descriptor response: {}", e);
+        if self.remote_config_fetcher.is_pending_token(token_id) {
+            if let Err(e) = self.handle_remote_config_response(status_code, response_size) {
+                error!("Failed to handle plugin config response: {}", e);
+                self.remote_config_fetcher.reset_pending(token_id);
+            }
+        } else {
+            if let Err(e) = self.handle_descriptor_response(token_id, status_code, response_size) {
+                error!("Failed to handle descriptor response: {}", e);
+            }
+            self.descriptor_manager.reset_pending(token_id);
         }
-        self.descriptor_manager.reset_pending(token_id);
+
+        // Envoy silently disarms the tick timer once a dispatched gRPC
+        // call's response is delivered, regardless of what our own
+        // `tick_enabled` flag believes - confirmed empirically: without an
+        // explicit re-arm here, `on_tick` fires exactly once after the
+        // first gRPC response of any kind (descriptor or remote-config) and
+        // never again, silently breaking all tick-based retry. Re-arm
+        // unconditionally on every response rather than relying on
+        // `set_tick_enabled`'s edge-triggered guard, which assumes the host
+        // still has the timer armed whenever we think it does.
+        if self.tick_enabled {
+            if let Err(e) = self.set_tick_period(self.descriptor_manager.tick_period()) {
+                error!("Failed to re-arm tick after grpc response: {:?}", e);
+            }
+        }
     }
 }
 
