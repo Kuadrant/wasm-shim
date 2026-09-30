@@ -9,19 +9,17 @@ response shapes no real local backend can produce.
 
 ### Description
 
-The upstream here is a small mock server (`mock/server.py`) instead of a real
-LLM, capable of returning OpenAI-, Anthropic-, or Gemini-*shaped* responses
-(chosen per request via an `X-Mock-Provider` header), in both plain JSON and
-real chunked-transfer SSE streaming.
+This environment runs inference-shaped traffic for multiple LLM providers
+past wasm-shim. Provider is selected per request via the `Host` header, which
+routes to one of two mock backends:
 
-There's no way to run the actual Anthropic or Google Gemini models locally —
-both are closed, hosted-only APIs with no downloadable weights — and
-`llm-d-inference-sim` (used in
-[`../../examples/ratelimit_check_report`](../../examples/ratelimit_check_report))
-only ever produces OpenAI-shaped output. This exists specifically to exercise
-the [JSON Pointer candidate list](../../README.md#responsebodyjsonjson_pointer--type)
-form of `responseBodyJSON` against the various shapes it was built for,
-without needing real inference.
+| Provider | Host | Backend | Streaming |
+|---|---|---|---|
+| OpenAI | `openai.127.0.0.1.nip.io` | [`llm-d-inference-sim`](https://github.com/llm-d/llm-d-inference-sim) | yes |
+| Anthropic | `anthropic.127.0.0.1.nip.io` | [MockServer](https://www.mock-server.com/) | yes |
+| Gemini | `gemini.127.0.0.1.nip.io` | MockServer | yes |
+| `ambiguous` (synthetic) | `ambiguous.127.0.0.1.nip.io` | MockServer | no (JSON only) |
+| `unknown` (synthetic) | `unknown.127.0.0.1.nip.io` | MockServer | no (JSON only) |
 
 The `store` action here is:
 
@@ -45,25 +43,30 @@ make run
 ### Non-streaming
 
 ```sh
-# OpenAI shape — resolves via the 1st candidate
-curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v1/chat/completions" \
-  -H "Content-Type: application/json" -H "X-Mock-Provider: openai" -d '{}'
+# OpenAI shape — real tokenization via llm-d-inference-sim, resolves via the 1st candidate
+curl "http://openai.127.0.0.1.nip.io:18000/v1/chat/completions" \
+  -H "Content-Type: application/json" -d '{
+    "model": "mock",
+    "messages": [
+      { "role": "user", "content": "Tell me a three sentence bedtime story about a unicorn." }
+    ]
+  }'
 
 # Gemini shape — 1st candidate absent, resolves via the 2nd
-curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v1/chat/completions" \
-  -H "Content-Type: application/json" -H "X-Mock-Provider: gemini" -d '{}'
+curl "http://gemini.127.0.0.1.nip.io:18000/v1beta/models/mock:generateContent" \
+  -H "Content-Type: application/json" -d '{}'
 
 # Anthropic shape — 1st and 2nd absent, resolves via the 3rd (output_tokens only)
-curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v1/chat/completions" \
-  -H "Content-Type: application/json" -H "X-Mock-Provider: anthropic" -d '{}'
+curl "http://anthropic.127.0.0.1.nip.io:18000/v1/messages" \
+  -H "Content-Type: application/json" -d '{}'
 
 # First candidate present but not a number — the `number` type hint skips it
-curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v1/chat/completions" \
-  -H "Content-Type: application/json" -H "X-Mock-Provider: ambiguous" -d '{}'
+curl "http://ambiguous.127.0.0.1.nip.io:18000/v1/chat/completions" \
+  -H "Content-Type: application/json" -d '{}'
 
 # None of the candidates present — fail-open, request still succeeds, nothing counted
-curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v1/chat/completions" \
-  -H "Content-Type: application/json" -H "X-Mock-Provider: unknown" -d '{}'
+curl "http://unknown.127.0.0.1.nip.io:18000/v1/chat/completions" \
+  -H "Content-Type: application/json" -d '{}'
 ```
 
 Each should return `200 OK`. Check the resolved `hits_addend`:
@@ -72,11 +75,13 @@ Each should return `200 OK`. Check the resolved `hits_addend`:
 docker compose logs limitador | grep hits_addend
 ```
 
-Expected values: `openai` → 18, `gemini` → 18, `anthropic` → 8 (the
-documented under-count), `ambiguous` → 33 (falls through the non-numeric
-first candidate to the numeric second one). `unknown` produces **no**
-`Report` call at all — the store action fails to resolve anything, so the
-downstream `grpc` report action, which depends on that value, never runs.
+Expected values: `gemini` → 18, `anthropic` → 8 (the documented under-count),
+`ambiguous` → 33 (falls through the non-numeric first candidate to the
+numeric second one). `openai` varies — `llm-d-inference-sim` genuinely
+tokenizes the request/response text rather than returning a fixed count.
+`unknown` produces **no** `Report` call at all — the store action fails to
+resolve anything, so the downstream `grpc` report action, which depends on
+that value, never runs.
 
 For the `unknown` case, also check:
 
@@ -90,12 +95,37 @@ miss.
 
 ### Streaming
 
-Add `-d '{"stream": true}'` to any of the `openai`/`anthropic`/`gemini`
-curls above (the `ambiguous`/`unknown` fixtures are JSON-only). For example:
+Each provider signals streaming its own way, matching the real APIs:
+
+- **anthropic**: same path (`/v1/messages`), add `-d '{"stream": true}'`.
+- **gemini**: a different path/method entirely — `:streamGenerateContent`
+  instead of `:generateContent` — no body flag involved.
+- **openai**: same path, `-d '{"stream": true}'` plus
+  `stream_options.include_usage` (see below).
+
+The `ambiguous`/`unknown` fixtures are JSON-only. For example:
 
 ```sh
-curl --resolve trlp.example.com:18000:127.0.0.1 "http://trlp.example.com:18000/v1/chat/completions" \
-  -H "Content-Type: application/json" -H "X-Mock-Provider: gemini" -d '{"stream": true}'
+curl -N "http://anthropic.127.0.0.1.nip.io:18000/v1/messages" \
+  -H "Content-Type: application/json" -d '{"stream": true}'
+
+curl -N "http://gemini.127.0.0.1.nip.io:18000/v1beta/models/mock:streamGenerateContent" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+For `openai`, `stream_options.include_usage` must also be set, matching the
+real Chat Completions API's opt-in for a usage chunk on streaming responses:
+
+```sh
+curl -N "http://openai.127.0.0.1.nip.io:18000/v1/chat/completions" \
+  -H "Content-Type: application/json" -d '{
+    "model": "mock",
+    "stream": true,
+    "stream_options": { "include_usage": true },
+    "messages": [
+      { "role": "user", "content": "Tell me a three sentence bedtime story about a unicorn." }
+    ]
+  }'
 ```
 
 `SseBodyParser` scans every SSE event as it arrives for the candidates'
@@ -103,8 +133,8 @@ leaf keys, so a candidate resolves as soon as a matching event is seen —
 regardless of where in the stream (or how many events) that turns out to be.
 Expected outcomes:
 
-- **openai**: resolves correctly (`hits_addend: 18`) — the single usage event
-  is picked up as soon as it streams by.
+- **openai**: resolves correctly, `hits_addend` varies with input —
+  `llm-d-inference-sim` emits a genuine final usage chunk.
 - **anthropic**: resolves correctly (`hits_addend: 8`, the documented
   under-count via `output_tokens`) — `message_delta` is matched wherever it
   appears in the stream, not by relying on event position.
@@ -116,6 +146,7 @@ Expected outcomes:
 
 ```sh
 docker compose logs -f mock-llm
+docker compose logs -f llm-d-inference-sim
 docker compose logs -f envoy
 docker compose logs -f limitador
 ```

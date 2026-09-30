@@ -1,0 +1,139 @@
+[
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/v1/models",
+      "headers": { "host": ["anthropic\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": { "Content-Type": ["application/json"] },
+      "body": {
+        "type": "JSON",
+        "json": { "data": [{ "id": "mock", "type": "model", "display_name": "mock" }] }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/v1beta/models",
+      "headers": { "host": ["gemini\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": { "Content-Type": ["application/json"] },
+      "body": {
+        "type": "JSON",
+        "json": { "models": [{ "name": "models/mock" }] }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1/messages",
+      "headers": { "host": ["anthropic\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] },
+      "body": { "type": "JSON", "json": { "stream": true }, "matchType": "ONLY_MATCHING_FIELDS" }
+    },
+    "priority": 10,
+    "httpLlmResponse": {
+      "provider": "ANTHROPIC",
+      "model": "mock",
+      "completion": {
+        "text": "hi",
+        "stopReason": "end_turn",
+        "usage": { "inputTokens": 10, "outputTokens": 8 },
+        "streaming": true,
+        "streamingPhysics": {
+          "timeToFirstToken": { "timeUnit": "MILLISECONDS", "value": 50 },
+          "tokensPerSecond": 20
+        }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1/messages",
+      "headers": { "host": ["anthropic\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpLlmResponse": {
+      "provider": "ANTHROPIC",
+      "model": "mock",
+      "completion": {
+        "text": "hi",
+        "stopReason": "end_turn",
+        "usage": { "inputTokens": 10, "outputTokens": 8 }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1beta/models/mock:streamGenerateContent",
+      "headers": { "host": ["gemini\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpLlmResponse": {
+      "provider": "GEMINI",
+      "model": "mock",
+      "completion": {
+        "text": "hi",
+        "usage": { "inputTokens": 10, "outputTokens": 8 },
+        "streaming": true,
+        "streamingPhysics": {
+          "timeToFirstToken": { "timeUnit": "MILLISECONDS", "value": 50 },
+          "tokensPerSecond": 20
+        }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1beta/models/mock:generateContent",
+      "headers": { "host": ["gemini\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpLlmResponse": {
+      "provider": "GEMINI",
+      "model": "mock",
+      "completion": {
+        "text": "hi",
+        "usage": { "inputTokens": 10, "outputTokens": 8 }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": { "host": ["ambiguous\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": { "Content-Type": ["application/json"] },
+      "body": {
+        "type": "JSON",
+        "json": {
+          "usage": { "total_tokens": "not-a-number" },
+          "usageMetadata": { "totalTokenCount": 33 }
+        }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": { "host": ["unknown\\.127\\.0\\.0\\.1\\.nip\\.io(:\\d+)?"] }
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": { "Content-Type": ["application/json"] },
+      "body": {
+        "type": "JSON",
+        "json": { "model": "mystery-provider", "result": "ok" }
+      }
+    }
+  }
+]
