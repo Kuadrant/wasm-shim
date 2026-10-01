@@ -8,6 +8,11 @@ ifneq ($(FEATURES),)
 	FEATURE_CMD=--features $(FEATURES)
 endif
 
+# QUAY_IMAGE_EXPIRY defines when to expire the built quay images.
+# The time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively,
+# from the time the image is built.
+QUAY_IMAGE_EXPIRY ?= 3w
+
 WASM_RELEASE_BIN = $(PROJECT_PATH)/target/wasm32-wasip1/$(BUILD)/wasm_shim.wasm
 WASM_RELEASE_PATH = $(dir $(WASM_RELEASE_BIN))
 
@@ -97,5 +102,9 @@ GOBIN=$(PROJECT_DIR)/bin go install $(2) ;\
 rm -rf $$TMP_DIR ;\
 }
 endef
+
+.PHONY: read-quay-image-expiry
+read-quay-image-expiry: ## Reads quay image expiry
+	@echo "$(QUAY_IMAGE_EXPIRY)"
 
 include ./make/*.mk

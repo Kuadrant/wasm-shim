@@ -43,4 +43,8 @@ RUN source $HOME/.cargo/env \
 
 FROM scratch
 
+# Quay image expiry
+ARG QUAY_IMAGE_EXPIRY
+LABEL quay.expires-after=${QUAY_IMAGE_EXPIRY:-never}
+
 COPY --from=wasm-shim-build /usr/src/wasm-shim/target/wasm32-wasip1/release/wasm_shim.wasm /plugin.wasm

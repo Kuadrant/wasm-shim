@@ -33,6 +33,17 @@ jobs:
         id: add-git-sha-tag
         run: |
           echo "IMG_TAGS=${{ github.sha }} ${{ env.IMG_TAGS }}" >> $GITHUB_ENV
+      - name: Read quay image expiry
+        id: quay-expiry
+        run: |
+          if [[ "${{ github.ref_name }}" == "${{ env.MAIN_BRANCH_NAME }}" || "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "expiry=never" >> $GITHUB_OUTPUT
+            echo "Setting expiry to 'never' for ref ${{ github.ref_name }}"
+          else
+            expiry=`make read-quay-image-expiry`
+            echo "expiry=$expiry" >> $GITHUB_OUTPUT
+            echo "Reading expiry from Makefile, set to $expiry for ref ${{ github.ref_name }}"
+          fi
       - name: Build Image
         id: build-image
         uses: redhat-actions/buildah-build@v2
@@ -41,6 +52,7 @@ jobs:
           tags: ${{ env.IMG_TAGS }}
           build-args: |
             GITHUB_SHA=${{ github.sha }}
+            QUAY_IMAGE_EXPIRY=${{ steps.quay-expiry.outputs.expiry }}
           dockerfiles: |
             ./Dockerfile
       - name: Push Image
