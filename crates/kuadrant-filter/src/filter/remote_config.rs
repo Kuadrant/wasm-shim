@@ -93,8 +93,9 @@ impl RemoteConfigFetcher {
         // returns ParseFailure at dispatch time. DescriptorManager's
         // fetch_missing (descriptor_manager.rs) does the same bare-string
         // dispatch and would very likely hit the same failure on a real
-        // cluster - this was never exercised end-to-end there (see
-        // poc/extensions-endpoint README in kuadrant-operator).
+        // cluster - never exercised end-to-end there, since the OOP
+        // extension framework that would trigger it isn't yet in active
+        // production use.
         let grpc_service_bytes = encode_grpc_service(&cluster);
         let cluster_arg = String::from_utf8(grpc_service_bytes).unwrap_or(cluster.clone());
 
