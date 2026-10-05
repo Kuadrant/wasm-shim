@@ -157,6 +157,14 @@ pub struct PluginConfiguration {
 #[derive(Deserialize, Debug, Clone)]
 pub struct RemoteConfigRef {
     pub gateway: String,
+    /// SHA256 of the real (uncached) config, set by the operator so this
+    /// bootstrap stand-in's own JSON changes whenever the real config does -
+    /// see `internal/wasm/types.go`'s `RemoteConfigRef.Digest` in
+    /// kuadrant-operator for why. Not used for comparison on this side today
+    /// (`on_configure` already only re-fires when Envoy sees the config
+    /// change) - kept for parity/debuggability.
+    #[serde(default)]
+    pub digest: String,
 }
 
 fn default_descriptor_service() -> String {

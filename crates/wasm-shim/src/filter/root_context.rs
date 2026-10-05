@@ -19,6 +19,12 @@ pub struct FilterRoot {
     pub descriptor_manager: Arc<DescriptorManager>,
     remote_config_fetcher: RemoteConfigFetcher,
     tick_enabled: bool,
+    // True once a real (non-bootstrap) config has been successfully applied.
+    // Guards against a later digest-driven re-configure (see
+    // RemoteConfigRef::digest) resetting pipeline_factory back to the
+    // bootstrap stand-in's empty one while the new fetch is in flight - see
+    // process_config.
+    has_real_config: bool,
 }
 
 impl FilterRoot {
@@ -29,6 +35,7 @@ impl FilterRoot {
             descriptor_manager: Arc::new(DescriptorManager::default()),
             remote_config_fetcher: RemoteConfigFetcher::default(),
             tick_enabled: false,
+            has_real_config: false,
         }
     }
 
@@ -50,27 +57,45 @@ impl FilterRoot {
 
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
+        let is_bootstrap_stand_in = config.remote_config.is_some();
 
-        // A bootstrap-only config (empty services/action_sets, remote_config
-        // set) still gets installed below like any other config - that's
-        // what produces the fail-open "no ActionSet matches" window while
-        // the real config is fetched. See poc/extensions-endpoint README.
+        // On first-ever configure (has_real_config still false, no prior
+        // real pipeline exists), a bootstrap-only config (empty
+        // services/action_sets, remote_config set) still gets installed
+        // below like any other config - that's what produces the fail-open
+        // "no ActionSet matches" window while the real config is fetched.
+        // Unavoidable on cold start. See poc/extensions-endpoint README,
+        // "fail-open bootstrap gap".
         if let Some(remote) = &config.remote_config {
             self.remote_config_fetcher
                 .set_pending(remote.gateway.clone(), descriptor_service.clone());
         }
 
-        let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
-            Ok(f) => f,
-            Err(err) => {
-                error!("failed to compile plugin config: {:?}", err);
-                return false;
-            }
-        };
+        // But once a real config HAS been applied, a later bootstrap
+        // stand-in (a digest-driven re-configure, see
+        // RemoteConfigRef::digest) must NOT reset pipeline_factory back to
+        // empty while the new fetch is in flight - that would reopen the
+        // fail-open window on every policy change, not just once at
+        // startup. Keep serving the current real pipeline;
+        // handle_remote_config_response swaps in the new one once it
+        // arrives.
+        if is_bootstrap_stand_in && self.has_real_config {
+            self.descriptor_manager
+                .set_descriptor_service(&descriptor_service);
+        } else {
+            let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
+                Ok(f) => f,
+                Err(err) => {
+                    error!("failed to compile plugin config: {:?}", err);
+                    return false;
+                }
+            };
 
-        self.pipeline_factory = Arc::new(factory);
-        self.descriptor_manager
-            .set_descriptor_service(&descriptor_service);
+            self.pipeline_factory = Arc::new(factory);
+            self.has_real_config = self.has_real_config || !is_bootstrap_stand_in;
+            self.descriptor_manager
+                .set_descriptor_service(&descriptor_service);
+        }
 
         let has_dynamic_services = self.descriptor_manager.has_expected();
         if has_dynamic_services {
@@ -245,10 +270,20 @@ impl Context for FilterRoot {
         // `tick_enabled` flag believes - confirmed empirically: without an
         // explicit re-arm here, `on_tick` fires exactly once after the
         // first gRPC response of any kind (descriptor or remote-config) and
-        // never again, silently breaking all tick-based retry. Re-arm
-        // unconditionally on every response rather than relying on
-        // `set_tick_enabled`'s edge-triggered guard, which assumes the host
-        // still has the timer armed whenever we think it does.
+        // never again, silently breaking all tick-based retry.
+        //
+        // Root cause (traced into Envoy's own source,
+        // source/extensions/common/wasm/wasm.cc): Envoy's "periodic" tick is
+        // not a real repeating timer - Wasm::setTimerPeriod arms a one-shot
+        // timer, and Wasm::tickHandler re-arms it again each time it fires,
+        // after calling our on_tick. It's a self-perpetuating chain with no
+        // independent recovery: whatever breaks that chain once (here, some
+        // interaction with gRPC response delivery we haven't fully traced)
+        // stops ticking forever unless the module re-arms it itself - which
+        // is exactly what this does. Re-arm unconditionally on every
+        // response rather than relying on `set_tick_enabled`'s
+        // edge-triggered guard, which assumes the host still has the timer
+        // armed whenever we think it does.
         if self.tick_enabled {
             if let Err(e) = self.set_tick_period(self.descriptor_manager.tick_period()) {
                 error!("Failed to re-arm tick after grpc response: {:?}", e);
