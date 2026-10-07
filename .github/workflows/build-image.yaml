@@ -4,15 +4,28 @@ name: Build WASM Image
 on:
   push:
     branches: ["*"]
-    tags: ["*"]
   pull_request:
     branches: ["*"]
   workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      image-tags:
+        description: Space-separated list of image tags
+        required: true
+        type: string
+      ref:
+        description: Git ref to checkout (tag, branch, or SHA)
+        required: true
+        type: string
+    secrets:
+      IMG_REGISTRY_USERNAME:
+        required: true
+      IMG_REGISTRY_TOKEN:
+        required: true
 
 env:
-  IMG_TAGS: ${{ github.ref_name }}
   IMG_REGISTRY_HOST: quay.io
-  IMG_REGISTRY_ORG: kuadrant
+  IMG_REGISTRY_ORG: ${{ vars.IMG_REGISTRY_ORG || 'kuadrant' }}
   MAIN_BRANCH_NAME: main
 
 jobs:
@@ -23,22 +36,37 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Determine image tags
+        run: |
+          if [ -n "${{ inputs.image-tags }}" ]; then
+            echo "IMG_TAGS=${{ inputs.image-tags }}" >> $GITHUB_ENV
+          else
+            echo "IMG_TAGS=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
       - name: Add latest tag for the main branch
-        if: ${{ github.ref_name == env.MAIN_BRANCH_NAME }}
-        id: add-latest-tag
+        if: ${{ !inputs.image-tags && github.ref_name == env.MAIN_BRANCH_NAME }}
         run: |
           echo "IMG_TAGS=latest ${{ env.IMG_TAGS }}" >> $GITHUB_ENV
+
       - name: Add git sha tag for the main branch
-        if: ${{ github.ref_name == env.MAIN_BRANCH_NAME }}
-        id: add-git-sha-tag
+        if: ${{ !inputs.image-tags && github.ref_name == env.MAIN_BRANCH_NAME }}
         run: |
           echo "IMG_TAGS=${{ github.sha }} ${{ env.IMG_TAGS }}" >> $GITHUB_ENV
+
+      - name: Resolve git SHA from checkout
+        run: |
+          echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
       - name: Read quay image expiry
         id: quay-expiry
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$REF_NAME" == "${{ env.MAIN_BRANCH_NAME }}" || "${{ github.ref_type }}" == "tag" && "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+          if [[ ${{!inputs.image-tags}} && ${{github.ref_name}} == ${{env.MAIN_BRANCH_NAME}} ]]; then
             echo "expiry=never" >> $GITHUB_OUTPUT
             echo "Setting expiry to 'never' for ref $REF_NAME"
           else
@@ -46,6 +74,7 @@ jobs:
             echo "expiry=$expiry" >> $GITHUB_OUTPUT
             echo "Reading expiry from Makefile, set to $expiry for ref $REF_NAME"
           fi
+
       - name: Build Image
         id: build-image
         uses: redhat-actions/buildah-build@v2
@@ -53,10 +82,11 @@ jobs:
           image: wasm-shim
           tags: ${{ env.IMG_TAGS }}
           build-args: |
-            GITHUB_SHA=${{ github.sha }}
+            GITHUB_SHA=${{ env.GIT_SHA }}
             QUAY_IMAGE_EXPIRY=${{ steps.quay-expiry.outputs.expiry }}
           dockerfiles: |
             ./Dockerfile
+
       - name: Push Image
         if: ${{ !env.ACT && github.event_name != 'pull_request' }}
         id: push-to-quay
@@ -67,5 +97,6 @@ jobs:
           registry: ${{ env.IMG_REGISTRY_HOST }}/${{ env.IMG_REGISTRY_ORG }}
           username: ${{ secrets.IMG_REGISTRY_USERNAME }}
           password: ${{ secrets.IMG_REGISTRY_TOKEN }}
+
       - name: Print Image URL
         run: echo "Image pushed to ${{ steps.push-to-quay.outputs.registry-paths }}"

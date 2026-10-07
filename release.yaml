@@ -1,0 +1,5 @@
+wasm-shim:
+  version: "0.0.0"
+kuadrant-filter:
+  version: "0.0.0"
+dependencies: {}
