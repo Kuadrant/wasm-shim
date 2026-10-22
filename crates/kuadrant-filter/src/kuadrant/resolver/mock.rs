@@ -136,6 +136,23 @@ impl AttributeResolver for MockWasmHost {
         Ok(())
     }
 
+    fn clear_attribute(&self, path: &Path) -> Result<(), AttributeError> {
+        assert_eq!(
+            path.tokens().len(),
+            1,
+            "clear_attribute should only be called with a single escaped token"
+        );
+
+        let token = &path.tokens()[0];
+        let storage_path = Path::new(vec!["filter_state", &format!("wasm.{}", token)]);
+
+        self.properties
+            .lock()
+            .expect("properties mutex poisoned")
+            .remove(&storage_path);
+        Ok(())
+    }
+
     fn set_attribute_map(
         &self,
         map_type: MapType,

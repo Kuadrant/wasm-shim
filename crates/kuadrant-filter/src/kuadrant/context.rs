@@ -255,6 +255,19 @@ impl ReqRespCtx {
         }
     }
 
+    /// Removes a Kuadrant host property and caches its absence for this request.
+    pub fn clear_attribute(&self, attribute_path: &str) -> Result<(), AttributeError> {
+        // Remove the host property and record its absence in the request cache.
+        const KUADRANT_NAMESPACE: &str = "kuadrant";
+
+        let path: Path = attribute_path.into();
+        let escaped_path = path.tokens().join("\\.");
+        let host_path = format!("{}\\.{}", KUADRANT_NAMESPACE, escaped_path);
+
+        self.backend.clear_attribute(&host_path.as_str().into())?;
+        self.cache.insert(path, CachedValue::Bytes(None))
+    }
+
     /// Sets header maps for request or response headers
     pub fn set_attribute_map(
         &self,
@@ -579,6 +592,8 @@ impl Drop for PathReservation {
 pub struct ValueStore {
     values: BTreeMap<String, Value>,
     reserved: Arc<Mutex<HashMap<String, usize>>>,
+    // Store paths derived from request headers so OCSF exports can avoid leaking them.
+    sensitive_paths: Vec<Path>,
 }
 
 impl ValueStore {
@@ -610,6 +625,17 @@ impl ValueStore {
 
     pub fn store(&mut self, path: String, value: Value) {
         self.values.insert(path, value);
+    }
+
+    pub fn mark_sensitive(&mut self, path: String) {
+        let path = Path::from(path.as_str());
+        if !self.sensitive_paths.contains(&path) {
+            self.sensitive_paths.push(path);
+        }
+    }
+
+    pub fn sensitive_paths(&self) -> &[Path] {
+        &self.sensitive_paths
     }
 
     pub fn reserve(&self, path: String) -> PathReservation {

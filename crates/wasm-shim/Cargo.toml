@@ -22,6 +22,7 @@ debug-host-behaviour = ["kuadrant-filter/debug-host-behaviour"]
 [dependencies]
 kuadrant-filter = { path = "../kuadrant-filter" }
 proxy-wasm = { git = "https://github.com/Kuadrant/proxy-wasm-rust-sdk.git", rev = "6ceedbb" }
+prost = "0.14"
 const_format = "0.2.31"
 log = "0.4"
 tracing = "0.1.41"

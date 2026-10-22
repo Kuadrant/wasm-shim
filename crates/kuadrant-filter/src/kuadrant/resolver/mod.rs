@@ -24,6 +24,8 @@ pub trait AttributeResolver: Send + Sync {
         key: &str,
     ) -> Result<Option<String>, AttributeError>;
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError>;
+    /// Removes a property previously written to the host.
+    fn clear_attribute(&self, path: &Path) -> Result<(), AttributeError>;
     fn set_attribute_map(
         &self,
         map_type: MapType,
