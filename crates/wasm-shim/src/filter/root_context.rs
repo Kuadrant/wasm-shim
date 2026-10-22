@@ -2,22 +2,47 @@ use super::kuadrant_filter::KuadrantFilter;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use kuadrant_filter::configuration::PluginConfiguration;
+use kuadrant_filter::configuration::{Action, Operation};
 use kuadrant_filter::filter::DescriptorManager;
 use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
+fn ocsf_exported_property_names(config: &PluginConfiguration) -> Vec<String> {
+    fn collect(actions: &[Action], names: &mut BTreeSet<String>) {
+        for action in actions {
+            match &action.operation {
+                Operation::Store(store)
+                    if store.export_to_host && store.path.starts_with("ocsf.") =>
+                {
+                    names.insert(store.path.clone());
+                }
+                Operation::Grpc(grpc) => collect(&grpc.on_reply, names),
+                _ => {}
+            }
+        }
+    }
+
+    let mut names = BTreeSet::new();
+    for action_set in &config.action_sets {
+        collect(&action_set.actions, &mut names);
+    }
+    names.into_iter().collect()
+}
+
 pub struct FilterRoot {
     pub context_id: u32,
     pub pipeline_factory: Arc<PipelineFactory>,
     pub descriptor_manager: Arc<DescriptorManager>,
     tick_enabled: bool,
+    declared_ocsf_properties: BTreeSet<String>,
 }
 
 impl FilterRoot {
@@ -27,6 +52,7 @@ impl FilterRoot {
             pipeline_factory: Arc::new(PipelineFactory::default()),
             descriptor_manager: Arc::new(DescriptorManager::default()),
             tick_enabled: false,
+            declared_ocsf_properties: BTreeSet::new(),
         }
     }
 
@@ -48,6 +74,7 @@ impl FilterRoot {
 
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
+        let ocsf_properties = ocsf_exported_property_names(&config);
 
         let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
             Ok(f) => f,
@@ -56,6 +83,17 @@ impl FilterRoot {
                 return false;
             }
         };
+
+        for property_path in ocsf_properties {
+            if self.declared_ocsf_properties.contains(&property_path) {
+                continue;
+            }
+            if let Err(err) = crate::wasm_host::declare_ocsf_property(&property_path) {
+                error!("Failed to declare OCSF export `{property_path}`: {err}");
+                return false;
+            }
+            self.declared_ocsf_properties.insert(property_path);
+        }
 
         self.pipeline_factory = Arc::new(factory);
         self.descriptor_manager
@@ -313,5 +351,62 @@ mod tests {
         let config = serde_json::from_slice::<PluginConfiguration>(config_str.as_bytes()).unwrap();
         let result = PipelineFactory::try_from(config, &descriptor_manager);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ocsf_exported_property_names_include_nested_stores_and_skip_other_exports() {
+        let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
+            "services": {},
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": {
+                    "hostnames": [],
+                    "predicates": []
+                },
+                "actions": [
+                    {
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "ocsf.actor.user.name",
+                        "value": "'alice'",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "auth.identity.user",
+                        "value": "'alice'",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "grpc",
+                        "predicate": "true",
+                        "terminal": false,
+                        "var": "response",
+                        "service": "auth",
+                        "messageBuilder": "{}",
+                        "onReply": [{
+                            "type": "store",
+                            "predicate": "true",
+                            "terminal": false,
+                            "path": "ocsf.actor.user.groups",
+                            "value": "[]",
+                            "exportToHost": true
+                        }]
+                    }
+                ]
+            }]
+        }))
+        .expect("valid plugin configuration");
+
+        assert_eq!(
+            ocsf_exported_property_names(&config),
+            vec![
+                "ocsf.actor.user.groups".to_string(),
+                "ocsf.actor.user.name".to_string(),
+            ]
+        );
     }
 }

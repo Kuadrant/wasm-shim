@@ -250,7 +250,12 @@ impl Task for StoreTask {
         };
 
         if self.export_to_host {
-            match MessageConverter::cel_value_to_bytes(&value) {
+            let exported = if self.path.starts_with("ocsf.") {
+                MessageConverter::cel_value_to_protobuf_value_bytes(&value)
+            } else {
+                MessageConverter::cel_value_to_bytes(&value)
+            };
+            match exported {
                 Ok(bytes) => {
                     if let Err(e) = ctx.set_attribute(&self.path, &bytes) {
                         error!("Failed to store attribute {}: {:?}", self.path, e);
@@ -279,9 +284,11 @@ impl Task for StoreTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::attribute::Path;
     use crate::data::cel::Predicate;
     use crate::data::Expression;
     use crate::kuadrant::MockWasmHost;
+    use prost::Message;
     use std::sync::Arc;
 
     fn make_store_task(
@@ -290,6 +297,16 @@ mod tests {
         expression: &str,
         path: &str,
     ) -> Box<StoreTask> {
+        make_store_task_with_export(ctx, predicate, expression, path, false)
+    }
+
+    fn make_store_task_with_export(
+        ctx: &ReqRespCtx,
+        predicate: &str,
+        expression: &str,
+        path: &str,
+        export_to_host: bool,
+    ) -> Box<StoreTask> {
         Box::new(
             StoreTask::new(
                 ctx,
@@ -297,11 +314,110 @@ mod tests {
                 Predicate::new(predicate).unwrap(),
                 Expression::new(expression).unwrap(),
                 path.to_string(),
-                false,
+                export_to_host,
                 false,
             )
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn exported_ocsf_map_and_list_are_typed_protobuf_values() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export(
+            &ctx,
+            "true",
+            "{'name': 'alice', 'groups': [{'name': 'admin'}]}",
+            "ocsf.actor.user.groups",
+            true,
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.ocsf.actor.user.groups"]);
+        let bytes = mock_host
+            .get_property(&property_path)
+            .expect("OCSF export is written to host state");
+        let exported = prost_types::Value::decode(bytes.as_slice())
+            .expect("OCSF map is encoded as google.protobuf.Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(prost_types::value::Kind::StructValue(_))
+        ));
+        let Some(prost_types::value::Kind::StructValue(record)) = exported.kind else {
+            return;
+        };
+        let groups_kind = record
+            .fields
+            .get("groups")
+            .and_then(|value| value.kind.as_ref());
+        assert!(matches!(
+            groups_kind,
+            Some(prost_types::value::Kind::ListValue(_))
+        ));
+        let Some(prost_types::value::Kind::ListValue(groups)) = groups_kind else {
+            return;
+        };
+        let group_kind = groups.values.first().and_then(|value| value.kind.as_ref());
+        assert!(matches!(
+            group_kind,
+            Some(prost_types::value::Kind::StructValue(_))
+        ));
+        let Some(prost_types::value::Kind::StructValue(group)) = group_kind else {
+            return;
+        };
+        assert!(matches!(
+            group.fields.get("name").and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(name)) if name == "admin"
+        ));
+    }
+
+    #[test]
+    fn missing_ocsf_value_is_not_exported() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export(
+            &ctx,
+            "false",
+            "'optional-value'",
+            "ocsf.actor.user.name",
+            true,
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.name",
+            ]))
+            .is_none());
+    }
+
+    #[test]
+    fn non_ocsf_export_keeps_legacy_struct_encoding() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export(
+            &ctx,
+            "true",
+            "{'name': 'alice'}",
+            "auth.identity.user",
+            true,
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.user"]);
+        let bytes = mock_host
+            .get_property(&property_path)
+            .expect("non-OCSF export is written to host state");
+        let exported = prost_types::Struct::decode(bytes.as_slice())
+            .expect("non-OCSF map retains the legacy google.protobuf.Struct encoding");
+        assert!(matches!(
+            exported.fields.get("name").and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(name)) if name == "alice"
+        ));
     }
 
     #[test]

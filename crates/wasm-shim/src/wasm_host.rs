@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use prost::Message;
+
 use tracing::{debug, error};
 
 use kuadrant_filter::data::attribute::{AttributeError, Path};
@@ -22,6 +24,46 @@ pub fn current_log_filter() -> LevelFilter {
 }
 
 pub struct ProxyWasmHost;
+
+const OCSF_PROTOBUF_VALUE_TYPE_URL: &str = "type.googleapis.com/google.protobuf.Value";
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct DeclarePropertyArguments {
+    #[prost(string, tag = "1")]
+    name: String,
+    #[prost(bool, tag = "2")]
+    readonly: bool,
+    #[prost(int32, tag = "3")]
+    property_type: i32,
+    #[prost(bytes = "vec", tag = "4")]
+    schema: Vec<u8>,
+    #[prost(int32, tag = "5")]
+    life_span: i32,
+}
+
+fn ocsf_property_declaration(property_path: &str) -> DeclarePropertyArguments {
+    DeclarePropertyArguments {
+        name: format!("kuadrant.{property_path}"),
+        readonly: false,
+        property_type: 3, // envoy.source.extensions.common.wasm.WasmType.Protobuf
+        schema: OCSF_PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec(),
+        life_span: 1, // envoy.source.extensions.common.wasm.LifeSpan.DownstreamRequest
+    }
+}
+
+/// Declares a flattened OCSF property as google.protobuf.Value to Envoy.
+pub fn declare_ocsf_property(property_path: &str) -> Result<(), String> {
+    let arguments = ocsf_property_declaration(property_path);
+    let encoded_arguments = arguments.encode_to_vec();
+    hostcalls::call_foreign_function("declare_property", Some(&encoded_arguments))
+        .map(|_| ())
+        .map_err(|err| {
+            format!(
+                "failed to declare Envoy protobuf CEL state for `{}`: {:?}",
+                arguments.name, err
+            )
+        })
+}
 
 pub struct WasmMetricsBackend;
 
@@ -215,5 +257,26 @@ impl AttributeResolver for ProxyWasmHost {
         debug!("Sending local reply, status code: {}", status_code);
         hostcalls::send_http_response(status_code, headers, body)
             .map_err(|e| ServiceError::Dispatch(format!("Failed to send HTTP reply: {:?}", e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ocsf_property_declaration_uses_protobuf_value_and_request_lifetime() {
+        let encoded = ocsf_property_declaration("ocsf.actor.user.groups").encode_to_vec();
+        let decoded = DeclarePropertyArguments::decode(encoded.as_slice())
+            .expect("valid Envoy declare_property arguments");
+
+        assert_eq!(decoded.name, "kuadrant.ocsf.actor.user.groups");
+        assert!(!decoded.readonly);
+        assert_eq!(decoded.property_type, 3);
+        assert_eq!(
+            decoded.schema,
+            OCSF_PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec()
+        );
+        assert_eq!(decoded.life_span, 1);
     }
 }
