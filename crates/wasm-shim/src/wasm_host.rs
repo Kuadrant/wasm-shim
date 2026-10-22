@@ -143,6 +143,17 @@ impl AttributeResolver for ProxyWasmHost {
         }
     }
 
+    fn clear_attribute(&self, path: &Path) -> Result<(), AttributeError> {
+        debug!("Clearing property: `{}`", path);
+        match hostcalls::set_property(path.tokens(), None) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(AttributeError::Set(format!(
+                "Failed to clear property `{}`: {:?}",
+                path, err
+            ))),
+        }
+    }
+
     fn set_attribute_map(
         &self,
         map_type: MapType,

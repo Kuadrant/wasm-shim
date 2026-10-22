@@ -14,7 +14,7 @@ use chrono::{DateTime, FixedOffset};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 #[cfg(feature = "debug-host-behaviour")]
@@ -104,6 +104,7 @@ pub(crate) mod errors {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
+    standalone_identifiers: HashSet<String>,
     request_body_values: Vec<String>,
     response_body_values: Vec<String>,
     request_body_groups: Vec<BodyFieldGroup>,
@@ -162,6 +163,7 @@ impl Expression {
         let mut response_props = Vec::with_capacity(1);
         let mut request_groups = Vec::new();
         let mut response_groups = Vec::new();
+        let mut standalone_identifiers = HashSet::new();
         properties(
             &expression,
             &mut props,
@@ -171,6 +173,7 @@ impl Expression {
             &mut response_groups,
             &mut Vec::default(),
         );
+        collect_standalone_identifiers(&expression, &mut standalone_identifiers, &HashSet::new());
 
         let mut needs_grpc = false;
         let mut attributes: Vec<Attribute> = props
@@ -192,6 +195,7 @@ impl Expression {
 
         Ok(Self {
             attributes,
+            standalone_identifiers,
             request_body_values: request_props,
             response_body_values: response_props,
             request_body_groups: request_groups,
@@ -363,6 +367,9 @@ impl Expression {
                 let common_len = attribute_tokens.len().min(path_tokens.len());
                 attribute_tokens[..common_len] == path_tokens[..common_len]
             })
+        }) || paths.iter().any(|path| {
+            let tokens = path.tokens();
+            tokens.len() == 1 && self.standalone_identifiers.contains(tokens[0])
         })
     }
 
@@ -1237,6 +1244,82 @@ fn properties<'e>(
     }
 }
 
+fn collect_standalone_identifiers(
+    ided_exp: &IdedExpr,
+    identifiers: &mut HashSet<String>,
+    bound_variables: &HashSet<String>,
+) {
+    match &ided_exp.expr {
+        Expr::Ident(name) => {
+            if !bound_variables.contains(name) {
+                identifiers.insert(name.clone());
+            }
+        }
+        // Select expressions are already represented in `attributes`.
+        Expr::Select(_) | Expr::Literal(_) | Expr::Unspecified => {}
+        Expr::Call(call) => {
+            if let Some(target) = &call.target {
+                collect_standalone_identifiers(target, identifiers, bound_variables);
+            }
+            for arg in &call.args {
+                collect_standalone_identifiers(arg, identifiers, bound_variables);
+            }
+        }
+        Expr::List(list) => {
+            for elem in &list.elements {
+                collect_standalone_identifiers(elem, identifiers, bound_variables);
+            }
+        }
+        Expr::Map(map) => {
+            for entry in &map.entries {
+                match &entry.expr {
+                    EntryExpr::MapEntry(map_entry) => {
+                        collect_standalone_identifiers(
+                            &map_entry.key,
+                            identifiers,
+                            bound_variables,
+                        );
+                        collect_standalone_identifiers(
+                            &map_entry.value,
+                            identifiers,
+                            bound_variables,
+                        );
+                    }
+                    EntryExpr::StructField(field) => {
+                        collect_standalone_identifiers(
+                            &field.value,
+                            identifiers,
+                            bound_variables,
+                        );
+                    }
+                }
+            }
+        }
+        Expr::Struct(struct_expr) => {
+            for entry in &struct_expr.entries {
+                if let EntryExpr::StructField(field) = &entry.expr {
+                    collect_standalone_identifiers(&field.value, identifiers, bound_variables);
+                }
+            }
+        }
+        Expr::Comprehension(comp) => {
+            collect_standalone_identifiers(&comp.iter_range, identifiers, bound_variables);
+            collect_standalone_identifiers(&comp.accu_init, identifiers, bound_variables);
+
+            let mut loop_variables = bound_variables.clone();
+            loop_variables.insert(comp.iter_var.clone());
+            if let Some(iter_var) = &comp.iter_var2 {
+                loop_variables.insert(iter_var.clone());
+            }
+            loop_variables.insert(comp.accu_var.clone());
+
+            collect_standalone_identifiers(&comp.loop_cond, identifiers, &loop_variables);
+            collect_standalone_identifiers(&comp.loop_step, identifiers, &loop_variables);
+            collect_standalone_identifiers(&comp.result, identifiers, &loop_variables);
+        }
+    }
+}
+
 #[cfg(feature = "debug-host-behaviour")]
 pub fn debug_all_well_known_attributes(resolver: &dyn AttributeResolver) {
     let attributes = new_well_known_attribute_map();
@@ -1425,7 +1508,7 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::attribute::AttributeState;
+    use crate::data::attribute::{AttributeState, Path};
     use crate::data::cel::{known_attribute_for, ExpectedType, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;
@@ -1470,6 +1553,23 @@ mod tests {
         assert_eq!(value.attributes.len(), 2);
         assert_eq!(value.attributes[0].path, "request.host".into());
         assert_eq!(value.attributes[1].path, "source.address".into());
+    }
+
+    #[test]
+    fn standalone_identifiers_are_dependencies_without_becoming_host_attributes() {
+        let expression =
+            Expression::new("authorizationToken == 'sensitive'").expect("valid CEL expression");
+
+        assert!(expression.attributes.is_empty());
+        assert!(expression.references_any_path(&[Path::from("authorizationToken")]));
+    }
+
+    #[test]
+    fn comprehension_variables_are_not_standalone_store_dependencies() {
+        let expression = Expression::new("['admin'].exists(group, group == 'admin')")
+            .expect("valid CEL expression");
+
+        assert!(!expression.references_any_path(&[Path::from("group")]));
     }
 
     #[test]

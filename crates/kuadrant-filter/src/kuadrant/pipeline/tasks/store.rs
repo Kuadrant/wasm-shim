@@ -263,6 +263,10 @@ impl Task for StoreTask {
             );
         } else if self.export_to_host && is_ocsf && matches!(&value, Value::Null) {
             // Missing optional OCSF values are represented by an absent filter-state path.
+            if let Err(e) = ctx.clear_attribute(&self.path) {
+                error!("Failed to clear host attribute {}: {:?}", self.path, e);
+                return TaskOutcome::Failed;
+            }
         } else if self.export_to_host {
             let exported = if is_ocsf {
                 MessageConverter::cel_value_to_protobuf_value_bytes(&value)
@@ -301,7 +305,7 @@ impl Task for StoreTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::attribute::Path;
+    use crate::data::attribute::{AttributeState, Path};
     use crate::data::cel::Predicate;
     use crate::data::Expression;
     use crate::kuadrant::MockWasmHost;
@@ -422,6 +426,29 @@ mod tests {
     }
 
     #[test]
+    fn null_ocsf_value_clears_a_previous_export() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let path = "ocsf.target.resource.name";
+        let property_path = Path::new(vec![
+            "filter_state",
+            "wasm.kuadrant.ocsf.target.resource.name",
+        ]);
+
+        let initial = make_store_task_with_export(&ctx, "true", "'model'", path, true);
+        assert!(matches!(initial.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host.get_property(&property_path).is_some());
+
+        let missing = make_store_task_with_export(&ctx, "true", "null", path, true);
+        assert!(matches!(missing.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host.get_property(&property_path).is_none());
+        assert!(matches!(
+            ctx.get_attribute::<String>(path),
+            Ok(AttributeState::Available(None))
+        ));
+    }
+
+    #[test]
     fn exported_ocsf_scalars_are_typed_protobuf_values() {
         use prost_types::value::Kind;
 
@@ -494,6 +521,30 @@ mod tests {
             .get_property(&Path::new(vec![
                 "filter_state",
                 "wasm.kuadrant.ocsf.actor.user.email",
+            ]))
+            .is_none());
+
+        let stored_secret = make_store_task_with_export(
+            &ctx,
+            "true",
+            "request.headers.authorization",
+            "authorizationToken",
+            false,
+        );
+        assert!(matches!(stored_secret.apply(&mut ctx), TaskOutcome::Done));
+
+        let aliased = make_store_task_with_export(
+            &ctx,
+            "true",
+            "authorizationToken",
+            "ocsf.actor.user.uid",
+            true,
+        );
+        assert!(matches!(aliased.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.uid",
             ]))
             .is_none());
     }
