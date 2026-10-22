@@ -2811,11 +2811,12 @@ mod tests {
             prost_types::Value::decode(bytes.as_slice()).expect("valid protobuf Value")
         };
 
-        assert!(matches!(
+        assert_eq!(
             decode("'alice'").kind,
-            Some(Kind::StringValue(value)) if value == "alice"
-        ));
+            Some(Kind::StringValue("alice".to_string()))
+        );
         assert!(matches!(decode("42").kind, Some(Kind::NumberValue(value)) if value == 42.0));
+        assert!(matches!(decode("42.5").kind, Some(Kind::NumberValue(value)) if value == 42.5));
         assert!(matches!(decode("true").kind, Some(Kind::BoolValue(true))));
 
         let structured = decode("{'name': 'alice', 'groups': [{'name': 'admin'}], 'active': true}");
@@ -2849,7 +2850,7 @@ mod tests {
         };
         assert!(matches!(
             group.fields.get("name").and_then(|value| value.kind.as_ref()),
-            Some(Kind::StringValue(value)) if value == "admin"
+            Some(Kind::StringValue(name)) if name == "admin"
         ));
     }
 }

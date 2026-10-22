@@ -342,6 +342,30 @@ impl Expression {
         !self.request_body_values.is_empty()
     }
 
+    /// Returns true when evaluating this expression can read request headers.
+    ///
+    /// OCSF exports use this to prevent request credentials from crossing the
+    /// host boundary, including when an expression reads the complete header map.
+    pub fn has_request_headers_dependency(&self) -> bool {
+        let request_headers = Path::new(vec!["request", "headers"]);
+        self.references_any_path(std::slice::from_ref(&request_headers))
+    }
+
+    /// Checks whether this expression reads a path that overlaps any given path.
+    ///
+    /// A parent map includes its sensitive descendants, and a child field can
+    /// inherit sensitivity from a stored parent value.
+    pub fn references_any_path(&self, paths: &[Path]) -> bool {
+        self.attributes.iter().any(|attribute| {
+            let attribute_tokens = attribute.path.tokens();
+            paths.iter().any(|path| {
+                let path_tokens = path.tokens();
+                let common_len = attribute_tokens.len().min(path_tokens.len());
+                attribute_tokens[..common_len] == path_tokens[..common_len]
+            })
+        })
+    }
+
     pub fn has_response_body_deps(&self) -> bool {
         !self.response_body_values.is_empty()
     }

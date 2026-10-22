@@ -579,6 +579,8 @@ impl Drop for PathReservation {
 pub struct ValueStore {
     values: BTreeMap<String, Value>,
     reserved: Arc<Mutex<HashMap<String, usize>>>,
+    // Store paths derived from request headers so OCSF exports can avoid leaking them.
+    sensitive_paths: Vec<Path>,
 }
 
 impl ValueStore {
@@ -610,6 +612,17 @@ impl ValueStore {
 
     pub fn store(&mut self, path: String, value: Value) {
         self.values.insert(path, value);
+    }
+
+    pub fn mark_sensitive(&mut self, path: String) {
+        let path = Path::from(path.as_str());
+        if !self.sensitive_paths.contains(&path) {
+            self.sensitive_paths.push(path);
+        }
+    }
+
+    pub fn sensitive_paths(&self) -> &[Path] {
+        &self.sensitive_paths
     }
 
     pub fn reserve(&self, path: String) -> PathReservation {

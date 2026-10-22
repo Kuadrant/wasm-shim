@@ -3,9 +3,10 @@ mod json_body_parser;
 pub(super) mod sse_body_parser;
 
 use body_parser::BodyParser;
+use cel::Value;
 use json_body_parser::JsonBodyParser;
 use sse_body_parser::SseBodyParser;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::{BodyFieldGroup, Predicate};
@@ -249,8 +250,21 @@ impl Task for StoreTask {
             }
         };
 
-        if self.export_to_host {
-            let exported = if self.path.starts_with("ocsf.") {
+        let is_ocsf = self.path.starts_with("ocsf.");
+        let depends_on_sensitive_value = self.expression.has_request_headers_dependency()
+            || self
+                .expression
+                .references_any_path(ctx.values.sensitive_paths());
+
+        if self.export_to_host && is_ocsf && depends_on_sensitive_value {
+            warn!(
+                "Skipping OCSF host export for '{}' because its value depends on request headers",
+                self.path
+            );
+        } else if self.export_to_host && is_ocsf && matches!(&value, Value::Null) {
+            // Missing optional OCSF values are represented by an absent filter-state path.
+        } else if self.export_to_host {
+            let exported = if is_ocsf {
                 MessageConverter::cel_value_to_protobuf_value_bytes(&value)
             } else {
                 MessageConverter::cel_value_to_bytes(&value)
@@ -272,6 +286,9 @@ impl Task for StoreTask {
             }
         }
         ctx.values.store(self.path.clone(), value);
+        if depends_on_sensitive_value {
+            ctx.values.mark_sensitive(self.path.clone());
+        }
 
         if self.terminal {
             TaskOutcome::Terminate(Box::new(SendReplyTask::default()))
@@ -390,6 +407,93 @@ mod tests {
             .get_property(&Path::new(vec![
                 "filter_state",
                 "wasm.kuadrant.ocsf.actor.user.name",
+            ]))
+            .is_none());
+
+        let null_task =
+            make_store_task_with_export(&ctx, "true", "null", "ocsf.target.resource.name", true);
+        assert!(matches!(null_task.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.target.resource.name",
+            ]))
+            .is_none());
+    }
+
+    #[test]
+    fn exported_ocsf_scalars_are_typed_protobuf_values() {
+        use prost_types::value::Kind;
+
+        let cases = ["'alice'", "42", "42.5", "true"];
+        for expression in cases {
+            let mock_host = Arc::new(MockWasmHost::new());
+            let mut ctx = ReqRespCtx::new(mock_host.clone());
+            let task =
+                make_store_task_with_export(&ctx, "true", expression, "ocsf.actor.user.name", true);
+
+            assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+            let bytes = mock_host
+                .get_property(&Path::new(vec![
+                    "filter_state",
+                    "wasm.kuadrant.ocsf.actor.user.name",
+                ]))
+                .expect("OCSF scalar export is written to host state");
+            let exported = prost_types::Value::decode(bytes.as_slice())
+                .expect("OCSF scalar is encoded as google.protobuf.Value");
+            let matches_expected_type = match expression {
+                "'alice'" => {
+                    matches!(exported.kind, Some(Kind::StringValue(name)) if name == "alice")
+                }
+                "42" => matches!(exported.kind, Some(Kind::NumberValue(value)) if value == 42.0),
+                "42.5" => matches!(exported.kind, Some(Kind::NumberValue(value)) if value == 42.5),
+                "true" => matches!(exported.kind, Some(Kind::BoolValue(true))),
+                _ => false,
+            };
+            assert!(
+                matches_expected_type,
+                "CEL value retains its protobuf Value type"
+            );
+        }
+    }
+
+    #[test]
+    fn authorization_header_values_are_not_exported_to_ocsf() {
+        let authorization = "Bearer sensitive-authorization-value";
+        let mock_host = Arc::new(MockWasmHost::new().with_map(
+            "request.headers".to_string(),
+            vec![("authorization".to_string(), authorization.to_string())],
+        ));
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let direct = make_store_task_with_export(
+            &ctx,
+            "true",
+            "request.headers.authorization",
+            "ocsf.actor.user.name",
+            true,
+        );
+
+        assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.name",
+            ]))
+            .is_none());
+
+        let derived = make_store_task_with_export(
+            &ctx,
+            "true",
+            "ocsf.actor.user.name",
+            "ocsf.actor.user.email",
+            true,
+        );
+        assert!(matches!(derived.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.email",
             ]))
             .is_none());
     }
