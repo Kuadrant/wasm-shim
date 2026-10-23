@@ -45,7 +45,7 @@ acutejson = "0.1.0"
 
 
 [dev-dependencies]
-proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", rev = "33b318b" }
+proxy-wasm-test-framework = { git = "https://github.com/Kuadrant/wasm-test-framework.git", rev = "57190bb" }
 serial_test = "2.0.0"
 
 [build-dependencies]
