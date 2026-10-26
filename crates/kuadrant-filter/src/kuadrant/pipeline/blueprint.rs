@@ -758,6 +758,7 @@ mod tests {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
                 export_to_host: false,
+                export_format: None,
             }),
         };
         let store_result = Action::compile(&store_config, &services, "0".to_string());
@@ -1118,6 +1119,7 @@ mod tests {
                         path: "result".to_string(),
                         value: "true".to_string(),
                         export_to_host: false,
+                        export_format: None,
                     }),
                 }],
                 label: String::new(),

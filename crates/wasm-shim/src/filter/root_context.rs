@@ -1,7 +1,7 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
-use kuadrant_filter::configuration::PluginConfiguration;
+use kuadrant_filter::configuration::{ExportFormat, PluginConfiguration};
 use kuadrant_filter::configuration::{Action, Operation};
 use kuadrant_filter::filter::DescriptorManager;
 use kuadrant_filter::kuadrant::PipelineFactory;
@@ -21,8 +21,7 @@ fn protobuf_value_exported_property_names(config: &PluginConfiguration) -> Vec<S
             match &action.operation {
                 Operation::Store(store)
                     if store.export_to_host
-                        && store.export_format
-                            == Some(crate::configuration::ExportFormat::ProtobufValue) =>
+                        && store.export_format == Some(ExportFormat::ProtobufValue) =>
                 {
                     names.insert(store.path.clone());
                 }
