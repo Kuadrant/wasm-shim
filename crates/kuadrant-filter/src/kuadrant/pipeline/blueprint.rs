@@ -48,6 +48,7 @@ pub(crate) enum Operation {
         path: String,
         expression: Expression,
         export_to_host: bool,
+        export_format: Option<crate::configuration::ExportFormat>,
     },
     Fail {
         log_message: String,
@@ -124,6 +125,7 @@ impl Action {
                 path,
                 expression,
                 export_to_host,
+                export_format,
             } => {
                 use crate::kuadrant::pipeline::tasks::StoreTask;
                 match StoreTask::new(
@@ -133,6 +135,7 @@ impl Action {
                     expression.clone(),
                     path.clone(),
                     *export_to_host,
+                    *export_format,
                     self.terminal,
                 ) {
                     Ok(task) => Some(Box::new(task)),
@@ -400,6 +403,7 @@ impl Action {
                     path: store.path.clone(),
                     expression,
                     export_to_host: store.export_to_host,
+                    export_format: store.export_format,
                 }
             }
             configuration::Operation::Fail(fail) => Operation::Fail {
@@ -591,6 +595,7 @@ mod tests {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
                             export_to_host: false,
+                            export_format: None,
                         }),
                     },
                 ],

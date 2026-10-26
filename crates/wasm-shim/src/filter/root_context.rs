@@ -15,12 +15,14 @@ use tracing::{debug, error, info};
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
-fn ocsf_exported_property_names(config: &PluginConfiguration) -> Vec<String> {
+fn protobuf_value_exported_property_names(config: &PluginConfiguration) -> Vec<String> {
     fn collect(actions: &[Action], names: &mut BTreeSet<String>) {
         for action in actions {
             match &action.operation {
                 Operation::Store(store)
-                    if store.export_to_host && store.path.starts_with("ocsf.") =>
+                    if store.export_to_host
+                        && store.export_format
+                            == Some(crate::configuration::ExportFormat::ProtobufValue) =>
                 {
                     names.insert(store.path.clone());
                 }
@@ -42,7 +44,7 @@ pub struct FilterRoot {
     pub pipeline_factory: Arc<PipelineFactory>,
     pub descriptor_manager: Arc<DescriptorManager>,
     tick_enabled: bool,
-    declared_ocsf_properties: BTreeSet<String>,
+    declared_protobuf_value_properties: BTreeSet<String>,
 }
 
 impl FilterRoot {
@@ -52,7 +54,7 @@ impl FilterRoot {
             pipeline_factory: Arc::new(PipelineFactory::default()),
             descriptor_manager: Arc::new(DescriptorManager::default()),
             tick_enabled: false,
-            declared_ocsf_properties: BTreeSet::new(),
+            declared_protobuf_value_properties: BTreeSet::new(),
         }
     }
 
@@ -74,7 +76,7 @@ impl FilterRoot {
 
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
-        let ocsf_properties = ocsf_exported_property_names(&config);
+        let protobuf_value_properties = protobuf_value_exported_property_names(&config);
 
         let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
             Ok(f) => f,
@@ -84,15 +86,15 @@ impl FilterRoot {
             }
         };
 
-        for property_path in ocsf_properties {
-            if self.declared_ocsf_properties.contains(&property_path) {
+        for property_path in protobuf_value_properties {
+            if self.declared_protobuf_value_properties.contains(&property_path) {
                 continue;
             }
-            if let Err(err) = crate::wasm_host::declare_ocsf_property(&property_path) {
-                error!("Failed to declare OCSF export `{property_path}`: {err}");
+            if let Err(err) = crate::wasm_host::declare_protobuf_value_property(&property_path) {
+                error!("Failed to declare typed export `{property_path}`: {err}");
                 return false;
             }
-            self.declared_ocsf_properties.insert(property_path);
+            self.declared_protobuf_value_properties.insert(property_path);
         }
 
         self.pipeline_factory = Arc::new(factory);
@@ -354,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn ocsf_exported_property_names_include_nested_stores_and_skip_other_exports() {
+    fn protobuf_value_exported_property_names_include_nested_stores_and_deduplicate() {
         let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
             "services": {},
             "actionSets": [{
@@ -370,7 +372,8 @@ mod tests {
                         "terminal": false,
                         "path": "ocsf.actor.user.name",
                         "value": "'alice'",
-                        "exportToHost": true
+                        "exportToHost": true,
+                        "exportFormat": "protobufValue"
                     },
                     {
                         "type": "store",
@@ -379,6 +382,15 @@ mod tests {
                         "path": "auth.identity.user",
                         "value": "'alice'",
                         "exportToHost": true
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "custom.audit.metadata",
+                        "value": "{}",
+                        "exportToHost": true,
+                        "exportFormat": "protobufValue"
                     },
                     {
                         "type": "grpc",
@@ -391,9 +403,18 @@ mod tests {
                             "type": "store",
                             "predicate": "true",
                             "terminal": false,
+                            "path": "custom.audit.metadata",
+                            "value": "{}",
+                            "exportToHost": true,
+                            "exportFormat": "protobufValue"
+                        }, {
+                            "type": "store",
+                            "predicate": "true",
+                            "terminal": false,
                             "path": "ocsf.actor.user.groups",
                             "value": "[]",
-                            "exportToHost": true
+                            "exportToHost": true,
+                            "exportFormat": "protobufValue"
                         }]
                     }
                 ]
@@ -402,8 +423,9 @@ mod tests {
         .expect("valid plugin configuration");
 
         assert_eq!(
-            ocsf_exported_property_names(&config),
+            protobuf_value_exported_property_names(&config),
             vec![
+                "custom.audit.metadata".to_string(),
                 "ocsf.actor.user.groups".to_string(),
                 "ocsf.actor.user.name".to_string(),
             ]

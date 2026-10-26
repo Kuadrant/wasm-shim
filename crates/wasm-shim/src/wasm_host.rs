@@ -25,7 +25,7 @@ pub fn current_log_filter() -> LevelFilter {
 
 pub struct ProxyWasmHost;
 
-const OCSF_PROTOBUF_VALUE_TYPE_URL: &str = "type.googleapis.com/google.protobuf.Value";
+const PROTOBUF_VALUE_TYPE_URL: &str = "type.googleapis.com/google.protobuf.Value";
 
 #[derive(Clone, PartialEq, prost::Message)]
 struct DeclarePropertyArguments {
@@ -41,19 +41,19 @@ struct DeclarePropertyArguments {
     life_span: i32,
 }
 
-fn ocsf_property_declaration(property_path: &str) -> DeclarePropertyArguments {
+fn protobuf_value_property_declaration(property_path: &str) -> DeclarePropertyArguments {
     DeclarePropertyArguments {
         name: format!("kuadrant.{property_path}"),
         readonly: false,
         property_type: 3, // envoy.source.extensions.common.wasm.WasmType.Protobuf
-        schema: OCSF_PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec(),
+        schema: PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec(),
         life_span: 1, // envoy.source.extensions.common.wasm.LifeSpan.DownstreamRequest
     }
 }
 
-/// Declares a flattened OCSF property as google.protobuf.Value to Envoy.
-pub fn declare_ocsf_property(property_path: &str) -> Result<(), String> {
-    let arguments = ocsf_property_declaration(property_path);
+/// Declares an exported google.protobuf.Value property to Envoy.
+pub fn declare_protobuf_value_property(property_path: &str) -> Result<(), String> {
+    let arguments = protobuf_value_property_declaration(property_path);
     let encoded_arguments = arguments.encode_to_vec();
     hostcalls::call_foreign_function("declare_property", Some(&encoded_arguments))
         .map(|_| ())
@@ -277,16 +277,16 @@ mod tests {
 
     #[test]
     fn ocsf_property_declaration_uses_protobuf_value_and_request_lifetime() {
-        let encoded = ocsf_property_declaration("ocsf.actor.user.groups").encode_to_vec();
+        let encoded = protobuf_value_property_declaration("custom.audit.metadata").encode_to_vec();
         let decoded = DeclarePropertyArguments::decode(encoded.as_slice())
             .expect("valid Envoy declare_property arguments");
 
-        assert_eq!(decoded.name, "kuadrant.ocsf.actor.user.groups");
+        assert_eq!(decoded.name, "kuadrant.custom.audit.metadata");
         assert!(!decoded.readonly);
         assert_eq!(decoded.property_type, 3);
         assert_eq!(
             decoded.schema,
-            OCSF_PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec()
+            PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec()
         );
         assert_eq!(decoded.life_span, 1);
     }
