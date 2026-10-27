@@ -8,34 +8,69 @@ use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
-fn protobuf_value_exported_property_names(config: &PluginConfiguration) -> Vec<String> {
-    fn collect(actions: &[Action], names: &mut BTreeSet<String>) {
+fn exported_property_formats(
+    config: &PluginConfiguration,
+) -> Result<BTreeMap<String, Option<ExportFormat>>, String> {
+    fn collect(
+        actions: &[Action],
+        formats: &mut BTreeMap<String, Option<ExportFormat>>,
+    ) -> Result<(), String> {
         for action in actions {
             match &action.operation {
-                Operation::Store(store)
-                    if store.export_to_host
-                        && store.export_format == Some(ExportFormat::ProtobufValue) =>
-                {
-                    names.insert(store.path.clone());
+                Operation::Store(store) if store.export_to_host => {
+                    if let Some(existing) = formats.get(&store.path) {
+                        if *existing != store.export_format {
+                            return Err(format!(
+                                "host property '{}' has conflicting export formats ({existing:?} and {:?})",
+                                store.path, store.export_format
+                            ));
+                        }
+                    } else {
+                        formats.insert(store.path.clone(), store.export_format);
+                    }
                 }
-                Operation::Grpc(grpc) => collect(&grpc.on_reply, names),
+                Operation::Grpc(grpc) => collect(&grpc.on_reply, formats)?,
                 _ => {}
             }
         }
+        Ok(())
     }
 
-    let mut names = BTreeSet::new();
+    let mut formats = BTreeMap::new();
     for action_set in &config.action_sets {
-        collect(&action_set.actions, &mut names);
+        collect(&action_set.actions, &mut formats)?;
     }
-    names.into_iter().collect()
+    Ok(formats)
+}
+
+fn validate_exported_property_formats(
+    current: &BTreeMap<String, Option<ExportFormat>>,
+    previously_configured: &BTreeMap<String, Option<ExportFormat>>,
+    declared_protobuf_value_properties: &BTreeSet<String>,
+) -> Result<(), String> {
+    for (path, format) in current {
+        if let Some(previous_format) = previously_configured.get(path) {
+            if previous_format != format {
+                return Err(format!(
+                    "host property '{path}' cannot change export format from {previous_format:?} to {format:?} while the filter root is alive"
+                ));
+            }
+        } else if declared_protobuf_value_properties.contains(path)
+            && *format != Some(ExportFormat::ProtobufValue)
+        {
+            return Err(format!(
+                "host property '{path}' was declared as protobufValue and cannot use a different export format while the filter root is alive"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub struct FilterRoot {
@@ -44,6 +79,8 @@ pub struct FilterRoot {
     pub descriptor_manager: Arc<DescriptorManager>,
     tick_enabled: bool,
     declared_protobuf_value_properties: BTreeSet<String>,
+    // Property declarations are not removed on reconfiguration; retain formats to reject conflicts.
+    configured_export_property_formats: BTreeMap<String, Option<ExportFormat>>,
 }
 
 impl FilterRoot {
@@ -54,6 +91,7 @@ impl FilterRoot {
             descriptor_manager: Arc::new(DescriptorManager::default()),
             tick_enabled: false,
             declared_protobuf_value_properties: BTreeSet::new(),
+            configured_export_property_formats: BTreeMap::new(),
         }
     }
 
@@ -75,7 +113,29 @@ impl FilterRoot {
 
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
-        let protobuf_value_properties = protobuf_value_exported_property_names(&config);
+        let property_formats = match exported_property_formats(&config) {
+            Ok(formats) => formats,
+            Err(err) => {
+                error!("invalid host export configuration: {err}");
+                return false;
+            }
+        };
+
+        if let Err(err) = validate_exported_property_formats(
+            &property_formats,
+            &self.configured_export_property_formats,
+            &self.declared_protobuf_value_properties,
+        ) {
+            error!("invalid host export configuration: {err}");
+            return false;
+        }
+
+        let protobuf_value_properties: Vec<String> = property_formats
+            .iter()
+            .filter_map(|(path, format)| {
+                (*format == Some(ExportFormat::ProtobufValue)).then(|| path.clone())
+            })
+            .collect();
 
         let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
             Ok(f) => f,
@@ -90,12 +150,14 @@ impl FilterRoot {
                 continue;
             }
             if let Err(err) = crate::wasm_host::declare_protobuf_value_property(&property_path) {
-                error!("Failed to declare typed export `{property_path}`: {err}");
+                error!("Failed to declare typed export '{}': {err}", property_path);
                 return false;
             }
             self.declared_protobuf_value_properties.insert(property_path);
         }
 
+        self.configured_export_property_formats
+            .extend(property_formats);
         self.pipeline_factory = Arc::new(factory);
         self.descriptor_manager
             .set_descriptor_service(&descriptor_service);
@@ -355,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn protobuf_value_exported_property_names_include_nested_stores_and_deduplicate() {
+    fn exported_property_formats_include_nested_stores_and_deduplicate() {
         let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
             "services": {},
             "actionSets": [{
@@ -421,13 +483,88 @@ mod tests {
         }))
         .expect("valid plugin configuration");
 
+        let formats = exported_property_formats(&config).expect("valid export formats");
+        assert_eq!(formats.len(), 4);
+        assert_eq!(formats.get("auth.identity.user"), Some(&None));
         assert_eq!(
-            protobuf_value_exported_property_names(&config),
-            vec![
-                "custom.audit.metadata".to_string(),
-                "ocsf.actor.user.groups".to_string(),
-                "ocsf.actor.user.name".to_string(),
-            ]
+            formats.get("custom.audit.metadata"),
+            Some(&Some(ExportFormat::ProtobufValue))
         );
+        assert_eq!(
+            formats.get("ocsf.actor.user.groups"),
+            Some(&Some(ExportFormat::ProtobufValue))
+        );
+        assert_eq!(
+            formats.get("ocsf.actor.user.name"),
+            Some(&Some(ExportFormat::ProtobufValue))
+        );
+    }
+
+    #[test]
+    fn conflicting_formats_for_one_exported_property_are_rejected() {
+        let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
+            "services": {},
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": {
+                    "hostnames": [],
+                    "predicates": []
+                },
+                "actions": [
+                    {
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "ocsf.marker",
+                        "value": "'model'",
+                        "exportToHost": true
+                    },
+                    {
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "ocsf.marker",
+                        "value": "'model'",
+                        "exportToHost": true,
+                        "exportFormat": "protobufValue"
+                    }
+                ]
+            }]
+        }))
+        .expect("valid plugin configuration");
+
+        let error = exported_property_formats(&config)
+            .expect_err("one host property cannot have two export formats");
+        assert!(error.contains("conflicting export formats"));
+    }
+
+    #[test]
+    fn reconfiguration_cannot_change_an_exported_property_format() {
+        let path = "ocsf.marker".to_string();
+        let typed_format = Some(ExportFormat::ProtobufValue);
+        let previously_typed = BTreeMap::from([(path.clone(), typed_format)]);
+        let previously_legacy = BTreeMap::from([(path.clone(), None)]);
+        let declared = BTreeSet::from([path.clone()]);
+        let current_legacy = BTreeMap::from([(path.clone(), None)]);
+        let current_typed = BTreeMap::from([(path.clone(), typed_format)]);
+
+        assert!(validate_exported_property_formats(
+            &current_legacy,
+            &previously_typed,
+            &declared
+        )
+        .is_err());
+        assert!(validate_exported_property_formats(
+            &current_typed,
+            &previously_legacy,
+            &BTreeSet::new()
+        )
+        .is_err());
+        assert!(validate_exported_property_formats(
+            &current_typed,
+            &previously_typed,
+            &declared
+        )
+        .is_ok());
     }
 }

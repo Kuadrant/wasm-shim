@@ -149,7 +149,7 @@ impl AttributeResolver for MockWasmHost {
         self.properties
             .lock()
             .expect("properties mutex poisoned")
-            .remove(&storage_path);
+            .insert(storage_path, Vec::new());
         Ok(())
     }
 

@@ -109,6 +109,7 @@ pub struct Expression {
     response_body_values: Vec<String>,
     request_body_groups: Vec<BodyFieldGroup>,
     response_body_groups: Vec<BodyFieldGroup>,
+    sensitive_request_header_dependency: bool,
     expression: CelExpression,
     extended: bool,
     needs_grpc: bool,
@@ -133,7 +134,13 @@ impl PartialEq for Expression {
         let needs_grpc_match = self.needs_grpc == other.needs_grpc;
         let expressions_match =
             format!("{:?}", self.expression) == format!("{:?}", other.expression);
-        attributes_match && extended_match && needs_grpc_match && expressions_match
+        let sensitive_header_match = self.sensitive_request_header_dependency
+            == other.sensitive_request_header_dependency;
+        attributes_match
+            && extended_match
+            && needs_grpc_match
+            && expressions_match
+            && sensitive_header_match
     }
 }
 
@@ -157,6 +164,8 @@ impl Expression {
         let expression = Parser::new()
             .enable_optional_syntax(true)
             .parse(expression)?;
+        let sensitive_request_header_dependency =
+            reads_sensitive_request_header(&expression);
 
         let mut props = Vec::with_capacity(5);
         let mut request_props = Vec::with_capacity(1);
@@ -200,6 +209,7 @@ impl Expression {
             response_body_values: response_props,
             request_body_groups: request_groups,
             response_body_groups: response_groups,
+            sensitive_request_header_dependency,
             expression,
             extended,
             needs_grpc,
@@ -346,13 +356,12 @@ impl Expression {
         !self.request_body_values.is_empty()
     }
 
-    /// Returns true when evaluating this expression can read request headers.
+    /// Returns true when evaluating this expression can read an Authorization header,
+    /// the complete request header map, or a header selected dynamically.
     ///
-    /// OCSF exports use this to prevent request credentials from crossing the
-    /// host boundary, including when an expression reads the complete header map.
-    pub fn has_request_headers_dependency(&self) -> bool {
-        let request_headers = Path::new(vec!["request", "headers"]);
-        self.references_any_path(std::slice::from_ref(&request_headers))
+    /// Statically selected non-sensitive headers do not make the expression sensitive.
+    pub fn has_sensitive_request_header_dependency(&self) -> bool {
+        self.sensitive_request_header_dependency
     }
 
     /// Checks whether this expression reads a path that overlaps any given path.
@@ -1320,6 +1329,82 @@ fn collect_standalone_identifiers(
     }
 }
 
+fn reads_sensitive_request_header(expression: &IdedExpr) -> bool {
+    fn select_path<'e>(expression: &'e IdedExpr) -> Option<Vec<&'e str>> {
+        match &expression.expr {
+            Expr::Ident(name) => Some(vec![name.as_str()]),
+            Expr::Select(select) => {
+                let mut path = select_path(&select.operand)?;
+                path.push(select.field.as_str());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_request_headers(path: &[&str]) -> bool {
+        path.len() == 2 && path[0] == "request" && path[1] == "headers"
+    }
+
+    fn visit(expression: &IdedExpr) -> bool {
+        match &expression.expr {
+            Expr::Call(call) if call.func_name == cel::common::ast::operators::INDEX => {
+                let target = call.target.as_deref().or_else(|| call.args.first());
+                let key = if call.target.is_some() {
+                    call.args.first()
+                } else {
+                    call.args.get(1)
+                };
+                if target
+                    .and_then(select_path)
+                    .is_some_and(|path| is_request_headers(&path))
+                {
+                    return match key.map(|key| &key.expr) {
+                        Some(Expr::Literal(LiteralValue::String(header))) => {
+                            header.eq_ignore_ascii_case("authorization")
+                        }
+                        _ => true,
+                    };
+                }
+
+                call.target.as_deref().is_some_and(visit) || call.args.iter().any(visit)
+            }
+            Expr::Call(call) => {
+                call.target.as_deref().is_some_and(visit) || call.args.iter().any(visit)
+            }
+            Expr::Select(select) => {
+                if let Some(path) = select_path(expression) {
+                    if path.len() >= 2 && path[0] == "request" && path[1] == "headers" {
+                        return path.len() == 2
+                            || path
+                                .get(2)
+                                .is_some_and(|header| header.eq_ignore_ascii_case("authorization"));
+                    }
+                }
+                visit(&select.operand)
+            }
+            Expr::List(list) => list.elements.iter().any(visit),
+            Expr::Map(map) => map.entries.iter().any(|entry| match &entry.expr {
+                EntryExpr::MapEntry(entry) => visit(&entry.key) || visit(&entry.value),
+                EntryExpr::StructField(field) => visit(&field.value),
+            }),
+            Expr::Struct(struct_expr) => struct_expr.entries.iter().any(|entry| {
+                matches!(&entry.expr, EntryExpr::StructField(field) if visit(&field.value))
+            }),
+            Expr::Comprehension(comprehension) => {
+                visit(&comprehension.iter_range)
+                    || visit(&comprehension.accu_init)
+                    || visit(&comprehension.loop_cond)
+                    || visit(&comprehension.loop_step)
+                    || visit(&comprehension.result)
+            }
+            Expr::Ident(_) | Expr::Literal(_) | Expr::Unspecified => false,
+        }
+    }
+
+    visit(expression)
+}
+
 #[cfg(feature = "debug-host-behaviour")]
 pub fn debug_all_well_known_attributes(resolver: &dyn AttributeResolver) {
     let attributes = new_well_known_attribute_map();
@@ -1570,6 +1655,29 @@ mod tests {
             .expect("valid CEL expression");
 
         assert!(!expression.references_any_path(&[Path::from("group")]));
+    }
+
+    #[test]
+    fn request_header_sensitivity_only_covers_authorization_or_unbounded_access() {
+        let cases = [
+            ("request.headers.authorization", true),
+            ("request.headers.Authorization", true),
+            ("request.headers['authorization']", true),
+            ("request.headers['Authorization']", true),
+            ("request.headers", true),
+            ("request.headers['x-request-id']", false),
+            ("request.headers[header_name]", true),
+            ("request.host", false),
+        ];
+
+        for (source, expected) in cases {
+            let expression = Expression::new(source).expect("valid CEL expression");
+            assert_eq!(
+                expression.has_sensitive_request_header_dependency(),
+                expected,
+                "unexpected sensitivity for {source}: {:?}", expression.expression
+            );
+        }
     }
 
     #[test]

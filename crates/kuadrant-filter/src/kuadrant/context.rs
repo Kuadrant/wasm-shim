@@ -255,9 +255,9 @@ impl ReqRespCtx {
         }
     }
 
-    /// Removes a Kuadrant host property and caches its absence for this request.
+    /// Clears a Kuadrant host property and caches its absence for this request.
     pub fn clear_attribute(&self, attribute_path: &str) -> Result<(), AttributeError> {
-        // Remove the host property and record its absence in the request cache.
+        // Clear the host property and record its absence in the request cache.
         const KUADRANT_NAMESPACE: &str = "kuadrant";
 
         let path: Path = attribute_path.into();
