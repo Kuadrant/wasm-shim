@@ -265,6 +265,10 @@ impl Task for StoreTask {
                 "Skipping typed host export for '{}' because its value depends on sensitive request data",
                 self.path
             );
+            if let Err(e) = ctx.clear_attribute(&self.path) {
+                error!("Failed to clear host attribute {}: {:?}", self.path, e);
+                return TaskOutcome::Failed;
+            }
         } else if self.export_to_host && protobuf_value_export && matches!(&value, Value::Null) {
             // Missing optional values are represented by an absent filter-state path.
             if let Err(e) = ctx.clear_attribute(&self.path) {
@@ -595,6 +599,43 @@ mod tests {
                 "wasm.kuadrant.ocsf.actor.user.uid",
             ]))
             .is_none());
+    }
+
+    #[test]
+    fn sensitive_typed_value_clears_a_previous_export_at_same_path() {
+        let authorization = "Bearer sensitive-authorization-value";
+        let mock_host = Arc::new(MockWasmHost::new().with_map(
+            "request.headers".to_string(),
+            vec![("authorization".to_string(), authorization.to_string())],
+        ));
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let path = "ocsf.actor.user.name";
+        let property_path = Path::new(vec![
+            "filter_state",
+            "wasm.kuadrant.ocsf.actor.user.name",
+        ]);
+
+        let previous = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "'public-user'",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(previous.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host.get_property(&property_path).is_some());
+
+        let sensitive = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "request.headers.authorization",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(sensitive.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host.get_property(&property_path).is_none());
     }
 
     #[test]
