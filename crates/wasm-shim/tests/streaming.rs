@@ -402,6 +402,417 @@ fn it_streams_chunks_without_pausing_until_end_of_stream() {
         .unwrap();
 }
 
+#[test]
+#[serial]
+fn it_streams_json_body_chunks_without_buffering_whole_body() {
+    // A non-SSE (application/json) response whose `/usage/total_tokens` is
+    // *trailing* -- after a large, unregistered `data` array, as in an OpenAI
+    // embeddings response. The body is delivered across several
+    // `on_http_response_body` callbacks, each carrying only the newly-arrived
+    // chunk (per-chunk / drained-buffer delivery). The filter must `Continue` on
+    // every mid-stream chunk (never pause, so Envoy never has to retain the whole
+    // body), read only the new bytes via `(0, buffer_size)`, and resolve the
+    // trailing usage incrementally -- dispatching the report on the chunk that
+    // completes it. This is the JSON analogue of
+    // `it_streams_chunks_without_pausing_until_end_of_stream`; it lives here (not
+    // in `store.rs`) because only this harness models real per-chunk delivery.
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (kuadrant.internal.response.body.total_tokens == 42) ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "dynamic",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
+            {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
+                "type": "grpc",
+                "var": "report_response",
+                "service": "limitador",
+                "predicate": "kuadrant.internal.response.body.total_tokens == 42",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
+            }
+            ]
+        }]
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
+        .expect_increment_metric(Some(1), Some(1))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_increment_metric(Some(2), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(Status::BadArgument)
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some(b"POST"))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Plain JSON, not SSE: selects the JSON body parser, which now reads
+    // per-chunk just like the SSE parser.
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_increment_metric(Some(4), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(Some(vec![("content-type", "application/json")]))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Chunk 1: object head + start of the large, unregistered `data` array. No
+    // usage yet. Only this chunk's bytes are read ((0, buffer_size)); the filter
+    // continues without holding anything.
+    let chunk1 = b"{\"object\":\"list\",\"data\":[[0.1,0.2],";
+    module
+        .call_proxy_on_response_body(http_context, chunk1.len() as i32, false)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(chunk1))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Chunk 2: rest of the `data` array + an unregistered `model` field. Still no
+    // usage. The parser discards the off-path array contents without buffering.
+    let chunk2 = b"[0.3,0.4]],\"model\":\"m\",";
+    module
+        .call_proxy_on_response_body(http_context, chunk2.len() as i32, false)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(chunk2))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Chunk 3: the trailing `usage` object. `/usage/total_tokens` resolves here,
+    // so the report is dispatched right away (it isn't a guard, so the chain
+    // still continues) -- all without the whole body ever being buffered.
+    let chunk3 = b"\"usage\":{\"total_tokens\":42}}";
+    module
+        .call_proxy_on_response_body(http_context, chunk3.len() as i32, false)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(chunk3))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("kuadrant.service.ratelimit.v1.RateLimitService"),
+            Some("Report"),
+            None,
+            None,
+            Some(5000),
+        )
+        .returning(Ok(77))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // end_of_stream = true with 0 bytes (no new chunk), with the gRPC report
+    // still in flight → the filter pauses only to await the report, holding
+    // nothing of the body.
+    module
+        .call_proxy_on_response_body(http_context, 0, true)
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let grpc_response: [u8; 2] = [8, 1];
+    module
+        .call_proxy_on_grpc_receive(http_context, 77, grpc_response.len() as i32)
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+}
+
+#[test]
+#[serial]
+fn it_streams_json_body_with_usage_value_split_across_chunks() {
+    // Same JSON (non-SSE) trailing-usage shape, but the `total_tokens` *number*
+    // is split across a chunk boundary. `acutejson` buffers the partial number
+    // and completes it on the next chunk, so the field still resolves without the
+    // host ever holding the whole body -- proving chunk boundaries may fall
+    // anywhere, including mid-token.
+    let args = tester::MockSettings {
+        wasm_path: wasm_module(),
+        quiet: false,
+        allow_unexpected: false,
+    };
+    let mut module = tester::mock(args).unwrap();
+
+    module
+        .call_start()
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    let root_context = 1;
+    let report_msg = r#"
+        envoy.service.ratelimit.v3.RateLimitRequest {
+            domain: "RLS-domain",
+            hits_addend: 1u,
+            descriptors: [
+                envoy.extensions.common.ratelimit.v3.RateLimitDescriptor {
+                    entries: (
+                        (kuadrant.internal.response.body.total_tokens == 42) ?
+                        [envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry {
+                            key: "request.method",
+                            value: string(request.method)
+                        }] :
+                        []
+                    )
+                }
+            ]
+        }
+    "#;
+    let cfg = r#"{
+        "services": {
+            "limitador": {
+                "type": "dynamic",
+                "endpoint": "limitador-cluster",
+                "failureMode": "deny",
+                "timeout": "5s",
+                "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                "grpcMethod": "Report"
+            }
+        },
+        "actionSets": [
+        {
+            "name": "some-name",
+            "routeRuleConditions": {
+                "hostnames": ["*.toystore.com", "example.com"]
+            },
+            "actions": [
+            {
+                "type": "store",
+                "predicate": "true",
+                "terminal": false,
+                "path": "kuadrant.internal.response.body",
+                "value": "{\"total_tokens\": responseBodyJSON('/usage/total_tokens')}"
+            },
+            {
+                "type": "grpc",
+                "var": "report_response",
+                "service": "limitador",
+                "predicate": "kuadrant.internal.response.body.total_tokens == 42",
+                "terminal": false,
+                "isGuard": false,
+                "label": "ratelimit_report",
+                "messageBuilder": "__REPORT_MSG__",
+                "onReply": [
+                    {
+                        "type": "fail",
+                        "predicate": "!has(report_response.overall_code)",
+                        "terminal": false,
+                        "isGuard": false,
+                        "logMessage": "Rate limit report failed: invalid gRPC response"
+                    }
+                ]
+            }
+            ]
+        }]
+    }"#
+    .replace("__REPORT_MSG__", &json_escape_cel(report_msg));
+
+    module
+        .call_proxy_on_context_create(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 set_root_context"))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+    module
+        .call_proxy_on_configure(root_context, 0)
+        .expect_log(Some(LogLevel::Info), Some("#1 on_configure"))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.configs"))
+        .returning(Some(1))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.hits"))
+        .returning(Some(2))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.misses"))
+        .returning(Some(3))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.allowed"))
+        .returning(Some(4))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.denied"))
+        .returning(Some(5))
+        .expect_define_metric(Some(MetricType::Counter), Some("kuadrant.errors"))
+        .returning(Some(6))
+        .expect_define_metric(
+            Some(MetricType::Counter),
+            Some("kuadrant.body_extraction_misses"),
+        )
+        .returning(Some(7))
+        .expect_increment_metric(Some(1), Some(1))
+        .expect_get_buffer_bytes(Some(BufferType::PluginConfiguration))
+        .returning(Some(cfg.as_bytes()))
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::Bool(true))
+        .unwrap();
+
+    let http_context = 2;
+    module
+        .call_proxy_on_context_create(http_context, root_context)
+        .expect_get_log_level()
+        .returning(Some(LOG_LEVEL))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+
+    module
+        .call_proxy_on_request_headers(http_context, 0, false)
+        .expect_get_property(Some(vec!["request", "host"]))
+        .returning(Some("cars.toystore.com".as_bytes()))
+        .expect_get_header_map_pairs(Some(MapType::HttpRequestHeaders))
+        .returning(None)
+        .expect_increment_metric(Some(2), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .failing_with(Status::BadArgument)
+        .expect_get_property(Some(vec!["request", "method"]))
+        .returning(Some(b"POST"))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_headers(http_context, 0, false)
+        .expect_increment_metric(Some(4), Some(1))
+        .expect_get_header_map_pairs(Some(MapType::HttpResponseHeaders))
+        .returning(Some(vec![("content-type", "application/json")]))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Chunk 1: everything up to a half-written `total_tokens` value (`4`). The
+    // number is incomplete, so nothing resolves yet.
+    let chunk1 = b"{\"data\":[[0.1]],\"usage\":{\"total_tokens\":4";
+    module
+        .call_proxy_on_response_body(http_context, chunk1.len() as i32, false)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(chunk1))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    // Chunk 2: the rest of the number (`2`) and the closing braces. The parser
+    // completes the buffered number → `/usage/total_tokens` == 42 → report.
+    let chunk2 = b"2}}";
+    module
+        .call_proxy_on_response_body(http_context, chunk2.len() as i32, false)
+        .expect_get_buffer_bytes(Some(BufferType::HttpResponseBody))
+        .returning(Some(chunk2))
+        .expect_grpc_call(
+            Some("limitador-cluster"),
+            Some("kuadrant.service.ratelimit.v1.RateLimitService"),
+            Some("Report"),
+            None,
+            None,
+            Some(5000),
+        )
+        .returning(Ok(88))
+        .execute_and_expect(ReturnType::Action(Action::Continue))
+        .unwrap();
+
+    module
+        .call_proxy_on_response_body(http_context, 0, true)
+        .execute_and_expect(ReturnType::Action(Action::Pause))
+        .unwrap();
+
+    let grpc_response: [u8; 2] = [8, 1];
+    module
+        .call_proxy_on_grpc_receive(http_context, 88, grpc_response.len() as i32)
+        .expect_get_buffer_bytes(Some(BufferType::GrpcReceiveBuffer))
+        .returning(Some(&grpc_response))
+        .execute_and_expect(ReturnType::None)
+        .unwrap();
+}
+
 // Documents the accepted "first resolving chunk wins" semantics for an
 // ordered candidate list against a streaming (SSE) body: the store task
 // commits (and dispatches the downstream report) on the first chunk in which
