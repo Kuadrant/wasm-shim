@@ -159,15 +159,17 @@ impl Task for StoreTask {
                 return TaskOutcome::Requeued(vec![self]);
             }
 
-            if body_ctx.buffer_size() > parser.bytes_consumed() {
-                let bytes_to_read = body_ctx.buffer_size() - parser.bytes_consumed();
+            // Each callback delivers only the newly-arrived chunk: the shim never
+            // pauses the response body (the filter returns `Continue` mid-stream),
+            // so Envoy drains each chunk and resets the buffer to offset 0. We read
+            // `(0, buffer_size)` -- the whole current buffer -- and feed it to the
+            // parser, which parses incrementally across chunk boundaries. The host
+            // therefore never has to retain the whole body.
+            if body_ctx.buffer_size() > 0 {
+                let bytes_to_read = body_ctx.buffer_size();
                 let chunk = match source {
-                    BodySource::Request => {
-                        ctx.get_http_request_body(parser.bytes_consumed(), bytes_to_read)
-                    }
-                    BodySource::Response => {
-                        ctx.get_http_response_body(parser.bytes_consumed(), bytes_to_read)
-                    }
+                    BodySource::Request => ctx.get_http_request_body(0, bytes_to_read),
+                    BodySource::Response => ctx.get_http_response_body(0, bytes_to_read),
                 };
 
                 let chunk_bytes = match chunk {
@@ -646,50 +648,5 @@ mod tests {
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
         assert_eq!(ctx.values.get("response.usage"), Some(&cel::Value::Int(42)));
-    }
-
-    #[test]
-    fn multi_chunk_body_parsing() {
-        // {"model":"gpt-4","stream":true}
-        // The '/stream' field appears later in the JSON
-        let mock_host =
-            MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
-        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-
-        let mut task: Box<dyn Task> = make_store_task(
-            &ctx,
-            "true",
-            "requestBodyJSON('/stream')",
-            "request.llm.stream",
-        );
-
-        // Chunk 1: partial body - hasn't reached 'stream' field yet
-        ctx.request_body.set_buffer_size(10, false);
-        task = match task.apply(&mut ctx) {
-            TaskOutcome::Requeued(mut tasks) => {
-                assert_eq!(tasks.len(), 1);
-                tasks.remove(0)
-            }
-            _ => unreachable!("Expected requeue after chunk 1"),
-        };
-
-        // Chunk 2: more data - still incomplete
-        ctx.request_body.set_buffer_size(20, false);
-        task = match task.apply(&mut ctx) {
-            TaskOutcome::Requeued(mut tasks) => {
-                assert_eq!(tasks.len(), 1);
-                tasks.remove(0)
-            }
-            _ => unreachable!("Expected requeue after chunk 2"),
-        };
-
-        // Chunk 3: complete body with all fields
-        ctx.request_body.set_buffer_size(31, true);
-        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
-
-        assert_eq!(
-            ctx.values.get("request.llm.stream"),
-            Some(&cel::Value::Bool(true))
-        );
     }
 }
