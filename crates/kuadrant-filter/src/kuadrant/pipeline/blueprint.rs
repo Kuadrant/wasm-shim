@@ -7,7 +7,7 @@ use crate::kuadrant::pipeline::tasks::{
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use cel::ParseErrors;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -203,9 +203,23 @@ impl Display for CompileError {
 }
 
 impl Blueprint {
+    #[cfg(test)]
     pub fn compile(
         config: &configuration::ActionSet,
         services: &HashMap<String, ServiceInstance>,
+    ) -> Result<Self, CompileError> {
+        let mut exported_property_formats = BTreeMap::new();
+        Self::compile_with_exported_property_formats(
+            config,
+            services,
+            &mut exported_property_formats,
+        )
+    }
+
+    pub(crate) fn compile_with_exported_property_formats(
+        config: &configuration::ActionSet,
+        services: &HashMap<String, ServiceInstance>,
+        exported_property_formats: &mut BTreeMap<String, Option<configuration::ExportFormat>>,
     ) -> Result<Self, CompileError> {
         let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
@@ -226,7 +240,12 @@ impl Blueprint {
             .map(
                 |(i, (action_config, dependencies))| -> Result<Action, CompileError> {
                     let id = i.to_string();
-                    let mut action = Action::compile(action_config, services, id)?;
+                    let mut action = Action::compile_with_exported_property_formats(
+                        action_config,
+                        services,
+                        id,
+                        exported_property_formats,
+                    )?;
                     action.dependencies = dependencies;
                     Ok(action)
                 },
@@ -325,10 +344,26 @@ impl Blueprint {
 }
 
 impl Action {
+    #[cfg(test)]
     fn compile(
         typed: &configuration::Action,
         services: &HashMap<String, ServiceInstance>,
         id: String,
+    ) -> Result<Self, CompileError> {
+        let mut exported_property_formats = BTreeMap::new();
+        Self::compile_with_exported_property_formats(
+            typed,
+            services,
+            id,
+            &mut exported_property_formats,
+        )
+    }
+
+    fn compile_with_exported_property_formats(
+        typed: &configuration::Action,
+        services: &HashMap<String, ServiceInstance>,
+        id: String,
+        exported_property_formats: &mut BTreeMap<String, Option<configuration::ExportFormat>>,
     ) -> Result<Self, CompileError> {
         let predicate =
             Predicate::new(&typed.predicate).map_err(|e| CompileError::InvalidActionPredicate {
@@ -364,7 +399,12 @@ impl Action {
                         if reply_action.execution != configuration::Execution::default() {
                             return Err(CompileError::InvalidOnReplyExecution(reply_id));
                         }
-                        Action::compile(reply_action, services, reply_id)
+                        Action::compile_with_exported_property_formats(
+                            reply_action,
+                            services,
+                            reply_id,
+                            exported_property_formats,
+                        )
                     })
                     .collect::<Result<_, _>>()?;
 
@@ -398,6 +438,19 @@ impl Action {
                 }
             }
             configuration::Operation::Store(store) => {
+                if store.export_to_host {
+                    if let Some(existing_format) = exported_property_formats.get(&store.path) {
+                        if *existing_format != store.export_format {
+                            return Err(CompileError::InvalidDataExpression(format!(
+                                "host property '{}' has conflicting export formats ({existing_format:?} and {:?})",
+                                store.path, store.export_format
+                            )));
+                        }
+                    } else {
+                        exported_property_formats.insert(store.path.clone(), store.export_format);
+                    }
+                }
+
                 let expression = Expression::new(&store.value)?;
                 Operation::Store {
                     path: store.path.clone(),

@@ -253,18 +253,17 @@ impl Task for StoreTask {
             }
         };
 
-        let protobuf_value_export = self.export_format
-            == Some(crate::configuration::ExportFormat::ProtobufValue);
-        let depends_on_sensitive_value = self
-            .expression
-            .has_sensitive_request_header_dependency()
+        let protobuf_value_export =
+            self.export_format == Some(crate::configuration::ExportFormat::ProtobufValue);
+        let depends_on_sensitive_value = self.expression.has_sensitive_request_header_dependency()
             || self
                 .expression
                 .references_any_path(ctx.values.sensitive_paths());
 
-        if self.export_to_host && depends_on_sensitive_value {
+        let is_ocsf_export = self.path.starts_with("ocsf.");
+        if self.export_to_host && is_ocsf_export && depends_on_sensitive_value {
             warn!(
-                "Skipping host export for '{}' because its value depends on sensitive request data",
+                "Skipping OCSF host export for '{}' because its value depends on sensitive request data",
                 self.path
             );
             if let Err(e) = ctx.clear_attribute(&self.path) {
@@ -490,10 +489,7 @@ mod tests {
             Some(crate::configuration::ExportFormat::ProtobufValue),
         );
         assert!(matches!(missing.apply(&mut ctx), TaskOutcome::Done));
-        assert_eq!(
-            mock_host.get_property(&property_path),
-            Some(Vec::new())
-        );
+        assert_eq!(mock_host.get_property(&property_path), Some(Vec::new()));
         assert!(matches!(
             ctx.get_attribute::<String>(path),
             Ok(AttributeState::Available(None))
@@ -555,33 +551,32 @@ mod tests {
         ));
         let mut ctx = ReqRespCtx::new(mock_host.clone());
 
-        for (expression, output_path) in [
-            (
-                "request.headers.authorization",
-                "ocsf.actor.user.name",
-            ),
-            (
-                "request.headers['authorization']",
-                "ocsf.actor.user.email",
-            ),
+        for export_format in [
+            None,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
         ] {
-            let direct = make_store_task_with_export_format(
-                &ctx,
-                "true",
-                expression,
-                output_path,
-                true,
-                Some(crate::configuration::ExportFormat::ProtobufValue),
-            );
+            for (expression, output_path) in [
+                ("request.headers.authorization", "ocsf.actor.user.name"),
+                ("request.headers['authorization']", "ocsf.actor.user.email"),
+            ] {
+                let direct = make_store_task_with_export_format(
+                    &ctx,
+                    "true",
+                    expression,
+                    output_path,
+                    true,
+                    export_format,
+                );
 
-            assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
-            assert_eq!(
-                mock_host.get_property(&Path::new(vec![
-                    "filter_state",
-                    &format!("wasm.kuadrant.{output_path}"),
-                ])),
-                Some(Vec::new())
-            );
+                assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
+                assert_eq!(
+                    mock_host.get_property(&Path::new(vec![
+                        "filter_state",
+                        &format!("wasm.kuadrant.{output_path}"),
+                    ])),
+                    Some(Vec::new())
+                );
+            }
         }
 
         let derived = make_store_task_with_export_format(
@@ -653,8 +648,8 @@ mod tests {
                 "wasm.kuadrant.ocsf.metadata.request_id",
             ]))
             .expect("the non-sensitive request header is exported");
-        let exported = prost_types::Value::decode(bytes.as_slice())
-            .expect("typed export is a protobuf Value");
+        let exported =
+            prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
         assert!(
             matches!(
                 &exported.kind,
@@ -674,10 +669,7 @@ mod tests {
         ));
         let mut ctx = ReqRespCtx::new(mock_host.clone());
         let path = "ocsf.actor.user.name";
-        let property_path = Path::new(vec![
-            "filter_state",
-            "wasm.kuadrant.ocsf.actor.user.name",
-        ]);
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.ocsf.actor.user.name"]);
 
         let previous = make_store_task_with_export_format(
             &ctx,
@@ -699,10 +691,7 @@ mod tests {
             Some(crate::configuration::ExportFormat::ProtobufValue),
         );
         assert!(matches!(sensitive.apply(&mut ctx), TaskOutcome::Done));
-        assert_eq!(
-            mock_host.get_property(&property_path),
-            Some(Vec::new())
-        );
+        assert_eq!(mock_host.get_property(&property_path), Some(Vec::new()));
     }
 
     #[test]
@@ -760,7 +749,10 @@ mod tests {
             return;
         };
         assert!(matches!(
-            record.fields.get("enabled").and_then(|value| value.kind.as_ref()),
+            record
+                .fields
+                .get("enabled")
+                .and_then(|value| value.kind.as_ref()),
             Some(prost_types::value::Kind::BoolValue(true))
         ));
         assert!(matches!(
@@ -787,64 +779,95 @@ mod tests {
 
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
         assert!(mock_host
-            .get_property(&Path::new(vec!["filter_state", "wasm.kuadrant.custom.audit.identity"]))
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.custom.audit.identity"
+            ]))
             .is_none());
     }
 
     #[test]
-    fn authorization_is_not_exported_for_generic_paths_or_formats() {
+    fn explicit_non_sensitive_header_exports_to_non_ocsf_paths_keep_their_encoding() {
+        fn assert_exported_string(
+            mock_host: &MockWasmHost,
+            path: &str,
+            export_format: Option<crate::configuration::ExportFormat>,
+            expected: &str,
+        ) {
+            let bytes = mock_host
+                .get_property(&Path::new(vec![
+                    "filter_state",
+                    &format!("wasm.kuadrant.{path}"),
+                ]))
+                .expect("explicit non-OCSF host export is preserved");
+
+            let encoding = if export_format.is_some() {
+                "typed generic export"
+            } else {
+                "legacy generic export"
+            };
+            assert!(
+                matches!(
+                    prost_types::Value::decode(bytes.as_slice()),
+                    Ok(exported) if matches!(
+                        exported.kind.as_ref(),
+                        Some(prost_types::value::Kind::StringValue(value)) if value == expected
+                    )
+                ),
+                "{encoding} should contain the configured string value"
+            );
+        }
+
         for export_format in [
             None,
             Some(crate::configuration::ExportFormat::ProtobufValue),
         ] {
-            let authorization = "Bearer sensitive-authorization-value";
+            let request_id = "request-123";
             let mock_host = Arc::new(MockWasmHost::new().with_map(
                 "request.headers".to_string(),
-                vec![("authorization".to_string(), authorization.to_string())],
+                vec![("x-request-id".to_string(), request_id.to_string())],
             ));
             let mut ctx = ReqRespCtx::new(mock_host.clone());
 
             let direct = make_store_task_with_export_format(
                 &ctx,
                 "true",
-                "request.headers.authorization",
-                "custom.audit.direct_identity",
+                "request.headers['x-request-id']",
+                "custom.audit.direct_request_id",
                 true,
                 export_format,
             );
             assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
-            assert_eq!(
-                mock_host.get_property(&Path::new(vec![
-                    "filter_state",
-                    "wasm.kuadrant.custom.audit.direct_identity",
-                ])),
-                Some(Vec::new())
+            assert_exported_string(
+                &mock_host,
+                "custom.audit.direct_request_id",
+                export_format,
+                request_id,
             );
 
-            let stored_secret = make_store_task_with_export(
+            let stored_header = make_store_task_with_export(
                 &ctx,
                 "true",
-                "request.headers.authorization",
-                "authorizationToken",
+                "request.headers['x-request-id']",
+                "requestId",
                 false,
             );
-            assert!(matches!(stored_secret.apply(&mut ctx), TaskOutcome::Done));
+            assert!(matches!(stored_header.apply(&mut ctx), TaskOutcome::Done));
 
             let alias = make_store_task_with_export_format(
                 &ctx,
                 "true",
-                "authorizationToken",
-                "custom.audit.aliased_identity",
+                "requestId",
+                "custom.audit.aliased_request_id",
                 true,
                 export_format,
             );
             assert!(matches!(alias.apply(&mut ctx), TaskOutcome::Done));
-            assert_eq!(
-                mock_host.get_property(&Path::new(vec![
-                    "filter_state",
-                    "wasm.kuadrant.custom.audit.aliased_identity",
-                ])),
-                Some(Vec::new())
+            assert_exported_string(
+                &mock_host,
+                "custom.audit.aliased_request_id",
+                export_format,
+                request_id,
             );
         }
     }

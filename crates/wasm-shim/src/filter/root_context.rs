@@ -2,75 +2,54 @@ use super::kuadrant_filter::KuadrantFilter;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
 use kuadrant_filter::configuration::{ExportFormat, PluginConfiguration};
-use kuadrant_filter::configuration::{Action, Operation};
 use kuadrant_filter::filter::DescriptorManager;
 use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
-fn exported_property_formats(
-    config: &PluginConfiguration,
-) -> Result<BTreeMap<String, Option<ExportFormat>>, String> {
-    fn collect(
-        actions: &[Action],
-        formats: &mut BTreeMap<String, Option<ExportFormat>>,
-    ) -> Result<(), String> {
-        for action in actions {
-            match &action.operation {
-                Operation::Store(store) if store.export_to_host => {
-                    if let Some(existing) = formats.get(&store.path) {
-                        if *existing != store.export_format {
-                            return Err(format!(
-                                "host property '{}' has conflicting export formats ({existing:?} and {:?})",
-                                store.path, store.export_format
-                            ));
-                        }
-                    } else {
-                        formats.insert(store.path.clone(), store.export_format);
-                    }
-                }
-                Operation::Grpc(grpc) => collect(&grpc.on_reply, formats)?,
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
-    let mut formats = BTreeMap::new();
-    for action_set in &config.action_sets {
-        collect(&action_set.actions, &mut formats)?;
-    }
-    Ok(formats)
+/// Reserves each host property's format for the lifetime of the filter root.
+/// Envoy has no undeclare operation, and in-flight requests can still use an
+/// older pipeline after reconfiguration, so format history cannot be pruned.
+#[derive(Default)]
+struct ExportedPropertyRegistry {
+    formats_by_path: BTreeMap<String, Option<ExportFormat>>,
 }
 
-fn validate_exported_property_formats(
-    current: &BTreeMap<String, Option<ExportFormat>>,
-    previously_configured: &BTreeMap<String, Option<ExportFormat>>,
-    declared_protobuf_value_properties: &BTreeSet<String>,
-) -> Result<(), String> {
-    for (path, format) in current {
-        if let Some(previous_format) = previously_configured.get(path) {
-            if previous_format != format {
-                return Err(format!(
-                    "host property '{path}' cannot change export format from {previous_format:?} to {format:?} while the filter root is alive"
-                ));
+impl ExportedPropertyRegistry {
+    fn configure(
+        &mut self,
+        current: &BTreeMap<String, Option<ExportFormat>>,
+        mut declare: impl FnMut(&str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for (path, format) in current {
+            if let Some(previous_format) = self.formats_by_path.get(path) {
+                if previous_format != format {
+                    return Err(format!(
+                        "host property '{path}' cannot change export format from {previous_format:?} to {format:?} while the filter root is alive"
+                    ));
+                }
             }
-        } else if declared_protobuf_value_properties.contains(path)
-            && *format != Some(ExportFormat::ProtobufValue)
-        {
-            return Err(format!(
-                "host property '{path}' was declared as protobufValue and cannot use a different export format while the filter root is alive"
-            ));
         }
+
+        for (path, format) in current {
+            if *format == Some(ExportFormat::ProtobufValue)
+                && !self.formats_by_path.contains_key(path)
+            {
+                declare(path)?;
+                self.formats_by_path.insert(path.clone(), *format);
+            }
+        }
+
+        self.formats_by_path.extend(current.clone());
+        Ok(())
     }
-    Ok(())
 }
 
 pub struct FilterRoot {
@@ -78,9 +57,7 @@ pub struct FilterRoot {
     pub pipeline_factory: Arc<PipelineFactory>,
     pub descriptor_manager: Arc<DescriptorManager>,
     tick_enabled: bool,
-    declared_protobuf_value_properties: BTreeSet<String>,
-    // Property declarations are not removed on reconfiguration; retain formats to reject conflicts.
-    configured_export_property_formats: BTreeMap<String, Option<ExportFormat>>,
+    exported_properties: ExportedPropertyRegistry,
 }
 
 impl FilterRoot {
@@ -90,8 +67,7 @@ impl FilterRoot {
             pipeline_factory: Arc::new(PipelineFactory::default()),
             descriptor_manager: Arc::new(DescriptorManager::default()),
             tick_enabled: false,
-            declared_protobuf_value_properties: BTreeSet::new(),
-            configured_export_property_formats: BTreeMap::new(),
+            exported_properties: ExportedPropertyRegistry::default(),
         }
     }
 
@@ -113,30 +89,6 @@ impl FilterRoot {
 
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
-        let property_formats = match exported_property_formats(&config) {
-            Ok(formats) => formats,
-            Err(err) => {
-                error!("invalid host export configuration: {err}");
-                return false;
-            }
-        };
-
-        if let Err(err) = validate_exported_property_formats(
-            &property_formats,
-            &self.configured_export_property_formats,
-            &self.declared_protobuf_value_properties,
-        ) {
-            error!("invalid host export configuration: {err}");
-            return false;
-        }
-
-        let protobuf_value_properties: Vec<String> = property_formats
-            .iter()
-            .filter_map(|(path, format)| {
-                (*format == Some(ExportFormat::ProtobufValue)).then(|| path.clone())
-            })
-            .collect();
-
         let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
             Ok(f) => f,
             Err(err) => {
@@ -145,19 +97,14 @@ impl FilterRoot {
             }
         };
 
-        for property_path in protobuf_value_properties {
-            if self.declared_protobuf_value_properties.contains(&property_path) {
-                continue;
-            }
-            if let Err(err) = crate::wasm_host::declare_protobuf_value_property(&property_path) {
-                error!("Failed to declare typed export '{}': {err}", property_path);
-                return false;
-            }
-            self.declared_protobuf_value_properties.insert(property_path);
+        if let Err(err) = self.exported_properties.configure(
+            factory.exported_property_formats(),
+            crate::wasm_host::declare_protobuf_value_property,
+        ) {
+            error!("invalid host export configuration: {err}");
+            return false;
         }
 
-        self.configured_export_property_formats
-            .extend(property_formats);
         self.pipeline_factory = Arc::new(factory);
         self.descriptor_manager
             .set_descriptor_service(&descriptor_service);
@@ -417,154 +364,37 @@ mod tests {
     }
 
     #[test]
-    fn exported_property_formats_include_nested_stores_and_deduplicate() {
-        let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
-            "services": {},
-            "actionSets": [{
-                "name": "test",
-                "routeRuleConditions": {
-                    "hostnames": [],
-                    "predicates": []
-                },
-                "actions": [
-                    {
-                        "type": "store",
-                        "predicate": "true",
-                        "terminal": false,
-                        "path": "ocsf.actor.user.name",
-                        "value": "'alice'",
-                        "exportToHost": true,
-                        "exportFormat": "protobufValue"
-                    },
-                    {
-                        "type": "store",
-                        "predicate": "true",
-                        "terminal": false,
-                        "path": "auth.identity.user",
-                        "value": "'alice'",
-                        "exportToHost": true
-                    },
-                    {
-                        "type": "store",
-                        "predicate": "true",
-                        "terminal": false,
-                        "path": "custom.audit.metadata",
-                        "value": "{}",
-                        "exportToHost": true,
-                        "exportFormat": "protobufValue"
-                    },
-                    {
-                        "type": "grpc",
-                        "predicate": "true",
-                        "terminal": false,
-                        "var": "response",
-                        "service": "auth",
-                        "messageBuilder": "{}",
-                        "onReply": [{
-                            "type": "store",
-                            "predicate": "true",
-                            "terminal": false,
-                            "path": "custom.audit.metadata",
-                            "value": "{}",
-                            "exportToHost": true,
-                            "exportFormat": "protobufValue"
-                        }, {
-                            "type": "store",
-                            "predicate": "true",
-                            "terminal": false,
-                            "path": "ocsf.actor.user.groups",
-                            "value": "[]",
-                            "exportToHost": true,
-                            "exportFormat": "protobufValue"
-                        }]
-                    }
-                ]
-            }]
-        }))
-        .expect("valid plugin configuration");
-
-        let formats = exported_property_formats(&config).expect("valid export formats");
-        assert_eq!(formats.len(), 4);
-        assert_eq!(formats.get("auth.identity.user"), Some(&None));
-        assert_eq!(
-            formats.get("custom.audit.metadata"),
-            Some(&Some(ExportFormat::ProtobufValue))
-        );
-        assert_eq!(
-            formats.get("ocsf.actor.user.groups"),
-            Some(&Some(ExportFormat::ProtobufValue))
-        );
-        assert_eq!(
-            formats.get("ocsf.actor.user.name"),
-            Some(&Some(ExportFormat::ProtobufValue))
-        );
-    }
-
-    #[test]
-    fn conflicting_formats_for_one_exported_property_are_rejected() {
-        let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
-            "services": {},
-            "actionSets": [{
-                "name": "test",
-                "routeRuleConditions": {
-                    "hostnames": [],
-                    "predicates": []
-                },
-                "actions": [
-                    {
-                        "type": "store",
-                        "predicate": "true",
-                        "terminal": false,
-                        "path": "ocsf.marker",
-                        "value": "'model'",
-                        "exportToHost": true
-                    },
-                    {
-                        "type": "store",
-                        "predicate": "true",
-                        "terminal": false,
-                        "path": "ocsf.marker",
-                        "value": "'model'",
-                        "exportToHost": true,
-                        "exportFormat": "protobufValue"
-                    }
-                ]
-            }]
-        }))
-        .expect("valid plugin configuration");
-
-        let error = exported_property_formats(&config)
-            .expect_err("one host property cannot have two export formats");
-        assert!(error.contains("conflicting export formats"));
-    }
-
-    #[test]
-    fn reconfiguration_cannot_change_an_exported_property_format() {
+    fn exported_property_registry_pins_formats_and_declares_typed_paths_once() {
         let path = "ocsf.marker".to_string();
-        let typed_format = Some(ExportFormat::ProtobufValue);
-        let previously_typed = BTreeMap::from([(path.clone(), typed_format)]);
-        let previously_legacy = BTreeMap::from([(path.clone(), None)]);
-        let declared = BTreeSet::from([path.clone()]);
-        let current_legacy = BTreeMap::from([(path.clone(), None)]);
-        let current_typed = BTreeMap::from([(path.clone(), typed_format)]);
+        let typed = BTreeMap::from([(path.clone(), Some(ExportFormat::ProtobufValue))]);
+        let legacy = BTreeMap::from([(path.clone(), None)]);
+        let empty = BTreeMap::new();
+        let mut registry = ExportedPropertyRegistry::default();
+        let mut declarations = Vec::new();
 
-        assert!(validate_exported_property_formats(
-            &current_legacy,
-            &previously_typed,
-            &declared
-        )
-        .is_err());
-        assert!(validate_exported_property_formats(
-            &current_typed,
-            &previously_legacy,
-            &BTreeSet::new()
-        )
-        .is_err());
-        assert!(validate_exported_property_formats(
-            &current_typed,
-            &previously_typed,
-            &declared
-        )
-        .is_ok());
+        registry
+            .configure(&typed, |property| {
+                declarations.push(property.to_string());
+                Ok(())
+            })
+            .expect("first typed declaration succeeds");
+        registry
+            .configure(&typed, |property| {
+                declarations.push(property.to_string());
+                Ok(())
+            })
+            .expect("same typed format can be reused");
+        registry
+            .configure(&empty, |_| Ok(()))
+            .expect("removed action does not remove Envoy's declaration");
+
+        assert_eq!(declarations, vec![path.clone()]);
+        assert!(registry.configure(&legacy, |_| Ok(())).is_err());
+
+        let mut legacy_registry = ExportedPropertyRegistry::default();
+        legacy_registry
+            .configure(&legacy, |_| Ok(()))
+            .expect("first legacy format succeeds");
+        assert!(legacy_registry.configure(&typed, |_| Ok(())).is_err());
     }
 }
