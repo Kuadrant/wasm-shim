@@ -25,7 +25,9 @@ enum BodySource {
 enum BodyParseState {
     NotNeeded,
     Pending(BodySource, Vec<BodyFieldGroup>),
-    Active(BodySource, Box<dyn BodyParser>),
+    /// The `usize` is the number of stream bytes already fed to this parser,
+    /// tracked per parser (not shared via `BodyContext`).
+    Active(BodySource, Box<dyn BodyParser>, usize),
 }
 
 fn dedup_groups(groups: &mut Vec<BodyFieldGroup>) {
@@ -137,7 +139,7 @@ impl Task for StoreTask {
             let result = Self::create_parser(ctx, source, fields);
             match result {
                 Ok(Some(parser)) => {
-                    self.body_parse_state = BodyParseState::Active(source, parser);
+                    self.body_parse_state = BodyParseState::Active(source, parser, 0);
                 }
                 Ok(None) => {
                     return TaskOutcome::Requeued(vec![self]);
@@ -149,27 +151,27 @@ impl Task for StoreTask {
             }
         }
 
-        if let BodyParseState::Active(source, ref mut parser) = self.body_parse_state {
+        if let BodyParseState::Active(source, ref mut parser, ref mut fed) = self.body_parse_state {
             let body_ctx = match source {
                 BodySource::Request => &ctx.request_body,
                 BodySource::Response => &ctx.response_body,
             };
 
-            if body_ctx.buffer_size() == 0 && !body_ctx.is_end_of_stream() {
+            // Read only the bytes this parser has not consumed yet. `read_offset`
+            // maps this parser's absolute position (`fed`) into the current host
+            // buffer (whose byte 0 is at `buffer_base`); `delta` is the new bytes
+            // beyond it. `delta == 0` means there is nothing new to read.
+            let read_offset = fed.saturating_sub(body_ctx.buffer_base());
+            let delta = body_ctx.buffer_size().saturating_sub(read_offset);
+
+            if delta == 0 && !body_ctx.is_end_of_stream() {
                 return TaskOutcome::Requeued(vec![self]);
             }
 
-            // Each callback delivers only the newly-arrived chunk: the shim never
-            // pauses the response body (the filter returns `Continue` mid-stream),
-            // so Envoy drains each chunk and resets the buffer to offset 0. We read
-            // `(0, buffer_size)` -- the whole current buffer -- and feed it to the
-            // parser, which parses incrementally across chunk boundaries. The host
-            // therefore never has to retain the whole body.
-            if body_ctx.buffer_size() > 0 {
-                let bytes_to_read = body_ctx.buffer_size();
+            if delta > 0 {
                 let chunk = match source {
-                    BodySource::Request => ctx.get_http_request_body(0, bytes_to_read),
-                    BodySource::Response => ctx.get_http_response_body(0, bytes_to_read),
+                    BodySource::Request => ctx.get_http_request_body(read_offset, delta),
+                    BodySource::Response => ctx.get_http_response_body(read_offset, delta),
                 };
 
                 let chunk_bytes = match chunk {
@@ -191,6 +193,7 @@ impl Task for StoreTask {
                     error!("Failed to parse body for '{}': {e}", self.path);
                     return TaskOutcome::Failed;
                 }
+                *fed += delta;
             }
 
             if body_ctx.is_end_of_stream() && !parser.remaining_fields().is_empty() {
@@ -311,7 +314,8 @@ mod tests {
         let response_body = br#"{"usage":{"total_tokens":18,"input_tokens":10,"output_tokens":8}}"#;
         let mock_host = MockWasmHost::new().with_response_body(response_body);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(response_body.len(), true);
+        ctx.response_body
+            .set_buffer_size(response_body.len(), true, false);
 
         let task = make_store_task(
             &ctx,
@@ -346,7 +350,7 @@ mod tests {
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":true}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.request_body.set_buffer_size(31, true);
+        ctx.request_body.set_buffer_size(31, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -385,7 +389,7 @@ mod tests {
     fn requeues_when_field_not_yet_found() {
         let mock_host = MockWasmHost::new().with_request_body(br#"{"stream":tr"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.request_body.set_buffer_size(12, false);
+        ctx.request_body.set_buffer_size(12, false, false);
 
         let task = make_store_task(
             &ctx,
@@ -404,7 +408,7 @@ mod tests {
     fn fails_when_end_of_stream_without_field() {
         let mock_host = MockWasmHost::new().with_request_body(br#"{"stream":true}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.request_body.set_buffer_size(15, true);
+        ctx.request_body.set_buffer_size(15, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -420,7 +424,7 @@ mod tests {
     fn response_body_field_extracted() {
         let mock_host = MockWasmHost::new().with_response_body(br#"{"usage":42}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(12, true);
+        ctx.response_body.set_buffer_size(12, true, false);
 
         let task = make_store_task(&ctx, "true", "responseBodyJSON('/usage')", "response.usage");
 
@@ -436,7 +440,7 @@ mod tests {
         let mock_host =
             MockWasmHost::new().with_response_body(br#"{"usageMetadata":{"totalTokenCount":7}}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(40, true);
+        ctx.response_body.set_buffer_size(40, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -464,7 +468,7 @@ mod tests {
 
         let mock_host = MockWasmHost::new().with_response_body(full_body);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(prefix_len, false);
+        ctx.response_body.set_buffer_size(prefix_len, false, false);
 
         let task = make_store_task(
             &ctx,
@@ -487,7 +491,7 @@ mod tests {
         let mock_host = MockWasmHost::new()
             .with_response_body(br#"{"model":"gpt-4","usage":{"total_tokens":42}}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(46, true);
+        ctx.response_body.set_buffer_size(46, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -507,7 +511,7 @@ mod tests {
     fn ordered_candidate_list_fails_at_eos_when_no_candidate_resolves() {
         let mock_host = MockWasmHost::new().with_response_body(br#"{"other":1}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(11, true);
+        ctx.response_body.set_buffer_size(11, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -523,7 +527,7 @@ mod tests {
     fn predicate_false_skips_store() {
         let mock_host = MockWasmHost::new().with_request_body(br#"{"model":"gpt-4"}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.request_body.set_buffer_size(18, true);
+        ctx.request_body.set_buffer_size(18, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -541,7 +545,7 @@ mod tests {
         let mock_host =
             MockWasmHost::new().with_request_body(br#"{"model":"gpt-4","stream":"yes"}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.request_body.set_buffer_size(31, true);
+        ctx.request_body.set_buffer_size(31, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -577,7 +581,7 @@ mod tests {
     fn invalid_json_pointer_fails_apply() {
         let mock_host = MockWasmHost::new().with_request_body(br#"{"key":"value"}"#);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.request_body.set_buffer_size(15, true);
+        ctx.request_body.set_buffer_size(15, true, false);
 
         let task = make_store_task(
             &ctx,
@@ -597,7 +601,8 @@ mod tests {
             .with_response_body(sse_data)
             .with_map("response.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(sse_data.len(), true);
+        ctx.response_body
+            .set_buffer_size(sse_data.len(), true, false);
 
         let task = make_store_task(
             &ctx,
@@ -622,7 +627,8 @@ mod tests {
             .with_response_body(sse_data)
             .with_map("response.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(sse_data.len(), true);
+        ctx.response_body
+            .set_buffer_size(sse_data.len(), true, false);
 
         let task = make_store_task(
             &ctx,
@@ -641,12 +647,108 @@ mod tests {
             .with_response_body(br#"{"usage":42}"#)
             .with_map("response.headers".to_string(), headers);
         let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
-        ctx.response_body.set_buffer_size(12, true);
+        ctx.response_body.set_buffer_size(12, true, false);
 
         let task = make_store_task(&ctx, "true", "responseBodyJSON('/usage')", "response.usage");
 
         assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
 
         assert_eq!(ctx.values.get("response.usage"), Some(&cel::Value::Int(42)));
+    }
+
+    fn expect_requeue(outcome: TaskOutcome) -> Box<dyn Task> {
+        match outcome {
+            TaskOutcome::Requeued(mut tasks) => {
+                assert_eq!(tasks.len(), 1, "expected a single requeued task");
+                tasks.pop().unwrap()
+            }
+            _ => unreachable!("expected TaskOutcome::Requeued"),
+        }
+    }
+
+    // When a guard gRPC is in flight the shim returns Pause and Envoy ACCUMULATES
+    // the response body: each callback presents the whole buffer-so-far from offset
+    // 0, with `buffer_size` growing. The read must skip the already-fed prefix and
+    // feed only the new tail. A naive `(0, buffer_size)` read would re-feed the
+    // prefix and corrupt the parse. `MockWasmHost` serves `body[start..]` from the
+    // full body, so this faithfully reproduces accumulate (base stays 0).
+    #[test]
+    fn accumulating_buffer_reads_only_new_tail() {
+        let body = br#"{"model":"x","usage":{"total_tokens":42}}"#;
+        let n = body.len();
+        let mock_host = MockWasmHost::new().with_response_body(body);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        // Callback 1: only the first 10 bytes are present; first callback is always
+        // drained (buffering_now = false). The field is not yet available.
+        ctx.response_body.set_buffer_size(10, false, false);
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON('/usage/total_tokens')",
+            "tokens",
+        );
+        let task = expect_requeue(task.apply(&mut ctx));
+
+        // Callback 2: the buffer has grown to the full body and Envoy is now
+        // accumulating (buffering_now = true), so offset 0 is still the body start.
+        ctx.response_body.set_buffer_size(n, false, true);
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(ctx.values.get("tokens"), Some(&cel::Value::Int(42)));
+    }
+
+    // Re-applying a task against the same buffer (no new `set_buffer_size`, e.g. the
+    // extra `eval()` inside `digest()`) must not re-feed bytes: `delta` is 0.
+    #[test]
+    fn reapply_on_same_buffer_does_not_refeed() {
+        let body = br#"{"model":"x","usage":{"total_tokens":42}}"#;
+        let n = body.len();
+        let mock_host = MockWasmHost::new().with_response_body(body);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        ctx.response_body.set_buffer_size(10, false, false);
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON('/usage/total_tokens')",
+            "tokens",
+        );
+        let task = expect_requeue(task.apply(&mut ctx));
+        // Same buffer again: delta == 0 -> still requeued, nothing re-fed/corrupted.
+        let task = expect_requeue(task.apply(&mut ctx));
+
+        ctx.response_body.set_buffer_size(n, false, true);
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(ctx.values.get("tokens"), Some(&cel::Value::Int(42)));
+    }
+
+    // Two stores reading the same accumulating body each track their own `fed`
+    // (per-parser, not shared), so both extract correctly regardless of ordering.
+    #[test]
+    fn two_stores_extract_independently_under_accumulation() {
+        let body = br#"{"early":"E","pad":"xxxxxxxxxx","late":"L"}"#;
+        let n = body.len();
+        let mock_host = MockWasmHost::new().with_response_body(body);
+        let mut ctx = ReqRespCtx::new(Arc::new(mock_host));
+
+        let early = make_store_task(&ctx, "true", "responseBodyJSON('/early')", "early");
+        let late = make_store_task(&ctx, "true", "responseBodyJSON('/late')", "late");
+
+        // Callback 1: first 12 bytes -- "/early" resolved, "/late" not yet.
+        ctx.response_body.set_buffer_size(12, false, false);
+        assert!(matches!(early.apply(&mut ctx), TaskOutcome::Done));
+        let late = expect_requeue(late.apply(&mut ctx));
+        assert_eq!(
+            ctx.values.get("early"),
+            Some(&cel::Value::String(Arc::new("E".to_string())))
+        );
+
+        // Callback 2: accumulated to the full body -> "/late" resolves.
+        ctx.response_body.set_buffer_size(n, false, true);
+        assert!(matches!(late.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(
+            ctx.values.get("late"),
+            Some(&cel::Value::String(Arc::new("L".to_string())))
+        );
     }
 }
