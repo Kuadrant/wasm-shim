@@ -14,7 +14,7 @@ use chrono::{DateTime, FixedOffset};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 #[cfg(feature = "debug-host-behaviour")]
@@ -104,12 +104,10 @@ pub(crate) mod errors {
 #[derive(Clone, Debug)]
 pub struct Expression {
     attributes: Vec<Attribute>,
-    standalone_identifiers: HashSet<String>,
     request_body_values: Vec<String>,
     response_body_values: Vec<String>,
     request_body_groups: Vec<BodyFieldGroup>,
     response_body_groups: Vec<BodyFieldGroup>,
-    sensitive_request_header_dependency: bool,
     expression: CelExpression,
     extended: bool,
     needs_grpc: bool,
@@ -134,13 +132,10 @@ impl PartialEq for Expression {
         let needs_grpc_match = self.needs_grpc == other.needs_grpc;
         let expressions_match =
             format!("{:?}", self.expression) == format!("{:?}", other.expression);
-        let sensitive_header_match = self.sensitive_request_header_dependency
-            == other.sensitive_request_header_dependency;
         attributes_match
             && extended_match
             && needs_grpc_match
             && expressions_match
-            && sensitive_header_match
     }
 }
 
@@ -164,15 +159,11 @@ impl Expression {
         let expression = Parser::new()
             .enable_optional_syntax(true)
             .parse(expression)?;
-        let sensitive_request_header_dependency =
-            reads_sensitive_request_header(&expression);
-
         let mut props = Vec::with_capacity(5);
         let mut request_props = Vec::with_capacity(1);
         let mut response_props = Vec::with_capacity(1);
         let mut request_groups = Vec::new();
         let mut response_groups = Vec::new();
-        let mut standalone_identifiers = HashSet::new();
         properties(
             &expression,
             &mut props,
@@ -182,7 +173,6 @@ impl Expression {
             &mut response_groups,
             &mut Vec::default(),
         );
-        collect_standalone_identifiers(&expression, &mut standalone_identifiers, &HashSet::new());
 
         let mut needs_grpc = false;
         let mut attributes: Vec<Attribute> = props
@@ -204,12 +194,10 @@ impl Expression {
 
         Ok(Self {
             attributes,
-            standalone_identifiers,
             request_body_values: request_props,
             response_body_values: response_props,
             request_body_groups: request_groups,
             response_body_groups: response_groups,
-            sensitive_request_header_dependency,
             expression,
             extended,
             needs_grpc,
@@ -354,32 +342,6 @@ impl Expression {
 
     pub fn has_request_body_deps(&self) -> bool {
         !self.request_body_values.is_empty()
-    }
-
-    /// Returns true when evaluating this expression can read an Authorization header,
-    /// the complete request header map, or a header selected dynamically.
-    ///
-    /// Statically selected non-sensitive headers do not make the expression sensitive.
-    pub fn has_sensitive_request_header_dependency(&self) -> bool {
-        self.sensitive_request_header_dependency
-    }
-
-    /// Checks whether this expression reads a path that overlaps any given path.
-    ///
-    /// A parent map includes its sensitive descendants, and a child field can
-    /// inherit sensitivity from a stored parent value.
-    pub fn references_any_path(&self, paths: &[Path]) -> bool {
-        self.attributes.iter().any(|attribute| {
-            let attribute_tokens = attribute.path.tokens();
-            paths.iter().any(|path| {
-                let path_tokens = path.tokens();
-                let common_len = attribute_tokens.len().min(path_tokens.len());
-                attribute_tokens[..common_len] == path_tokens[..common_len]
-            })
-        }) || paths.iter().any(|path| {
-            let tokens = path.tokens();
-            tokens.len() == 1 && self.standalone_identifiers.contains(tokens[0])
-        })
     }
 
     pub fn has_response_body_deps(&self) -> bool {
@@ -1253,158 +1215,6 @@ fn properties<'e>(
     }
 }
 
-fn collect_standalone_identifiers(
-    ided_exp: &IdedExpr,
-    identifiers: &mut HashSet<String>,
-    bound_variables: &HashSet<String>,
-) {
-    match &ided_exp.expr {
-        Expr::Ident(name) => {
-            if !bound_variables.contains(name) {
-                identifiers.insert(name.clone());
-            }
-        }
-        // Select expressions are already represented in `attributes`.
-        Expr::Select(_) | Expr::Literal(_) | Expr::Unspecified => {}
-        Expr::Call(call) => {
-            if let Some(target) = &call.target {
-                collect_standalone_identifiers(target, identifiers, bound_variables);
-            }
-            for arg in &call.args {
-                collect_standalone_identifiers(arg, identifiers, bound_variables);
-            }
-        }
-        Expr::List(list) => {
-            for elem in &list.elements {
-                collect_standalone_identifiers(elem, identifiers, bound_variables);
-            }
-        }
-        Expr::Map(map) => {
-            for entry in &map.entries {
-                match &entry.expr {
-                    EntryExpr::MapEntry(map_entry) => {
-                        collect_standalone_identifiers(
-                            &map_entry.key,
-                            identifiers,
-                            bound_variables,
-                        );
-                        collect_standalone_identifiers(
-                            &map_entry.value,
-                            identifiers,
-                            bound_variables,
-                        );
-                    }
-                    EntryExpr::StructField(field) => {
-                        collect_standalone_identifiers(
-                            &field.value,
-                            identifiers,
-                            bound_variables,
-                        );
-                    }
-                }
-            }
-        }
-        Expr::Struct(struct_expr) => {
-            for entry in &struct_expr.entries {
-                if let EntryExpr::StructField(field) = &entry.expr {
-                    collect_standalone_identifiers(&field.value, identifiers, bound_variables);
-                }
-            }
-        }
-        Expr::Comprehension(comp) => {
-            collect_standalone_identifiers(&comp.iter_range, identifiers, bound_variables);
-            collect_standalone_identifiers(&comp.accu_init, identifiers, bound_variables);
-
-            let mut loop_variables = bound_variables.clone();
-            loop_variables.insert(comp.iter_var.clone());
-            if let Some(iter_var) = &comp.iter_var2 {
-                loop_variables.insert(iter_var.clone());
-            }
-            loop_variables.insert(comp.accu_var.clone());
-
-            collect_standalone_identifiers(&comp.loop_cond, identifiers, &loop_variables);
-            collect_standalone_identifiers(&comp.loop_step, identifiers, &loop_variables);
-            collect_standalone_identifiers(&comp.result, identifiers, &loop_variables);
-        }
-    }
-}
-
-fn reads_sensitive_request_header(expression: &IdedExpr) -> bool {
-    fn select_path<'e>(expression: &'e IdedExpr) -> Option<Vec<&'e str>> {
-        match &expression.expr {
-            Expr::Ident(name) => Some(vec![name.as_str()]),
-            Expr::Select(select) => {
-                let mut path = select_path(&select.operand)?;
-                path.push(select.field.as_str());
-                Some(path)
-            }
-            _ => None,
-        }
-    }
-
-    fn is_request_headers(path: &[&str]) -> bool {
-        path.len() == 2 && path[0] == "request" && path[1] == "headers"
-    }
-
-    fn visit(expression: &IdedExpr) -> bool {
-        match &expression.expr {
-            Expr::Call(call) if call.func_name == cel::common::ast::operators::INDEX => {
-                let target = call.target.as_deref().or_else(|| call.args.first());
-                let key = if call.target.is_some() {
-                    call.args.first()
-                } else {
-                    call.args.get(1)
-                };
-                if target
-                    .and_then(select_path)
-                    .is_some_and(|path| is_request_headers(&path))
-                {
-                    return match key.map(|key| &key.expr) {
-                        Some(Expr::Literal(LiteralValue::String(header))) => {
-                            header.eq_ignore_ascii_case("authorization")
-                        }
-                        _ => true,
-                    };
-                }
-
-                call.target.as_deref().is_some_and(visit) || call.args.iter().any(visit)
-            }
-            Expr::Call(call) => {
-                call.target.as_deref().is_some_and(visit) || call.args.iter().any(visit)
-            }
-            Expr::Select(select) => {
-                if let Some(path) = select_path(expression) {
-                    if path.len() >= 2 && path[0] == "request" && path[1] == "headers" {
-                        return path.len() == 2
-                            || path
-                                .get(2)
-                                .is_some_and(|header| header.eq_ignore_ascii_case("authorization"));
-                    }
-                }
-                visit(&select.operand)
-            }
-            Expr::List(list) => list.elements.iter().any(visit),
-            Expr::Map(map) => map.entries.iter().any(|entry| match &entry.expr {
-                EntryExpr::MapEntry(entry) => visit(&entry.key) || visit(&entry.value),
-                EntryExpr::StructField(field) => visit(&field.value),
-            }),
-            Expr::Struct(struct_expr) => struct_expr.entries.iter().any(|entry| {
-                matches!(&entry.expr, EntryExpr::StructField(field) if visit(&field.value))
-            }),
-            Expr::Comprehension(comprehension) => {
-                visit(&comprehension.iter_range)
-                    || visit(&comprehension.accu_init)
-                    || visit(&comprehension.loop_cond)
-                    || visit(&comprehension.loop_step)
-                    || visit(&comprehension.result)
-            }
-            Expr::Ident(_) | Expr::Literal(_) | Expr::Unspecified => false,
-        }
-    }
-
-    visit(expression)
-}
-
 #[cfg(feature = "debug-host-behaviour")]
 pub fn debug_all_well_known_attributes(resolver: &dyn AttributeResolver) {
     let attributes = new_well_known_attribute_map();
@@ -1638,46 +1448,6 @@ mod tests {
         assert_eq!(value.attributes.len(), 2);
         assert_eq!(value.attributes[0].path, "request.host".into());
         assert_eq!(value.attributes[1].path, "source.address".into());
-    }
-
-    #[test]
-    fn standalone_identifiers_are_dependencies_without_becoming_host_attributes() {
-        let expression =
-            Expression::new("authorizationToken == 'sensitive'").expect("valid CEL expression");
-
-        assert!(expression.attributes.is_empty());
-        assert!(expression.references_any_path(&[Path::from("authorizationToken")]));
-    }
-
-    #[test]
-    fn comprehension_variables_are_not_standalone_store_dependencies() {
-        let expression = Expression::new("['admin'].exists(group, group == 'admin')")
-            .expect("valid CEL expression");
-
-        assert!(!expression.references_any_path(&[Path::from("group")]));
-    }
-
-    #[test]
-    fn request_header_sensitivity_only_covers_authorization_or_unbounded_access() {
-        let cases = [
-            ("request.headers.authorization", true),
-            ("request.headers.Authorization", true),
-            ("request.headers['authorization']", true),
-            ("request.headers['Authorization']", true),
-            ("request.headers", true),
-            ("request.headers['x-request-id']", false),
-            ("request.headers[header_name]", true),
-            ("request.host", false),
-        ];
-
-        for (source, expected) in cases {
-            let expression = Expression::new(source).expect("valid CEL expression");
-            assert_eq!(
-                expression.has_sensitive_request_header_dependency(),
-                expected,
-                "unexpected sensitivity for {source}: {:?}", expression.expression
-            );
-        }
     }
 
     #[test]

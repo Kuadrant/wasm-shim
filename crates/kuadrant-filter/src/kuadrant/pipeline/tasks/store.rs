@@ -6,7 +6,7 @@ use body_parser::BodyParser;
 use cel::Value;
 use json_body_parser::JsonBodyParser;
 use sse_body_parser::SseBodyParser;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::data::attribute::{AttributeError, AttributeState};
 use crate::data::cel::{BodyFieldGroup, Predicate};
@@ -255,22 +255,7 @@ impl Task for StoreTask {
 
         let protobuf_value_export =
             self.export_format == Some(crate::configuration::ExportFormat::ProtobufValue);
-        let depends_on_sensitive_value = self.expression.has_sensitive_request_header_dependency()
-            || self
-                .expression
-                .references_any_path(ctx.values.sensitive_paths());
-
-        let is_ocsf_export = self.path.starts_with("ocsf.");
-        if self.export_to_host && is_ocsf_export && depends_on_sensitive_value {
-            warn!(
-                "Skipping OCSF host export for '{}' because its value depends on sensitive request data",
-                self.path
-            );
-            if let Err(e) = ctx.clear_attribute(&self.path) {
-                error!("Failed to clear host attribute {}: {:?}", self.path, e);
-                return TaskOutcome::Failed;
-            }
-        } else if self.export_to_host && protobuf_value_export && matches!(&value, Value::Null) {
+        if self.export_to_host && protobuf_value_export && matches!(&value, Value::Null) {
             // The host receives an empty payload; the per-request cache treats the value as absent.
             if let Err(e) = ctx.clear_attribute(&self.path) {
                 error!("Failed to clear host attribute {}: {:?}", self.path, e);
@@ -299,9 +284,6 @@ impl Task for StoreTask {
             }
         }
         ctx.values.store(self.path.clone(), value);
-        if depends_on_sensitive_value {
-            ctx.values.mark_sensitive(self.path.clone());
-        }
 
         if self.terminal {
             TaskOutcome::Terminate(Box::new(SendReplyTask::default()))
@@ -540,61 +522,38 @@ mod tests {
     }
 
     #[test]
-    fn authorization_header_values_are_not_exported_to_ocsf() {
+    fn typed_ocsf_exports_preserve_configured_values() {
+        use prost_types::value::Kind;
+
+        // StoreTask executes configured exports; the control plane decides which sources are safe.
         let authorization = "Bearer sensitive-authorization-value";
         let mock_host = Arc::new(MockWasmHost::new().with_map(
             "request.headers".to_string(),
-            vec![
-                ("authorization".to_string(), authorization.to_string()),
-                ("x-request-id".to_string(), "request-123".to_string()),
-            ],
+            vec![("authorization".to_string(), authorization.to_string())],
         ));
         let mut ctx = ReqRespCtx::new(mock_host.clone());
 
-        for export_format in [
-            None,
-            Some(crate::configuration::ExportFormat::ProtobufValue),
-        ] {
-            for (expression, output_path) in [
-                ("request.headers.authorization", "ocsf.actor.user.name"),
-                ("request.headers['authorization']", "ocsf.actor.user.email"),
-            ] {
-                let direct = make_store_task_with_export_format(
-                    &ctx,
-                    "true",
-                    expression,
-                    output_path,
-                    true,
-                    export_format,
-                );
-
-                assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
-                assert_eq!(
-                    mock_host.get_property(&Path::new(vec![
-                        "filter_state",
-                        &format!("wasm.kuadrant.{output_path}"),
-                    ])),
-                    Some(Vec::new())
-                );
-            }
-        }
-
-        let derived = make_store_task_with_export_format(
+        let direct = make_store_task_with_export_format(
             &ctx,
             "true",
+            "request.headers.authorization",
             "ocsf.actor.user.name",
-            "ocsf.actor.user.uid",
             true,
             Some(crate::configuration::ExportFormat::ProtobufValue),
         );
-        assert!(matches!(derived.apply(&mut ctx), TaskOutcome::Done));
-        assert_eq!(
-            mock_host.get_property(&Path::new(vec![
+        assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
+        let bytes = mock_host
+            .get_property(&Path::new(vec![
                 "filter_state",
-                "wasm.kuadrant.ocsf.actor.user.uid",
-            ])),
-            Some(Vec::new())
-        );
+                "wasm.kuadrant.ocsf.actor.user.name",
+            ]))
+            .expect("an explicitly configured OCSF export is written");
+        let exported = prost_types::Value::decode(bytes.as_slice())
+            .expect("typed export is a protobuf Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(Kind::StringValue(value)) if value == authorization
+        ));
 
         let stored_secret = make_store_task_with_export(
             &ctx,
@@ -609,22 +568,27 @@ mod tests {
             &ctx,
             "true",
             "authorizationToken",
-            "ocsf.actor.user.groups",
+            "ocsf.actor.user.uid",
             true,
             Some(crate::configuration::ExportFormat::ProtobufValue),
         );
         assert!(matches!(aliased.apply(&mut ctx), TaskOutcome::Done));
-        assert_eq!(
-            mock_host.get_property(&Path::new(vec![
+        let bytes = mock_host
+            .get_property(&Path::new(vec![
                 "filter_state",
-                "wasm.kuadrant.ocsf.actor.user.groups",
-            ])),
-            Some(Vec::new())
-        );
+                "wasm.kuadrant.ocsf.actor.user.uid",
+            ]))
+            .expect("an explicitly configured derived OCSF export is written");
+        let exported = prost_types::Value::decode(bytes.as_slice())
+            .expect("typed export is a protobuf Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(Kind::StringValue(value)) if value == authorization
+        ));
     }
 
     #[test]
-    fn statically_selected_non_sensitive_request_header_is_exported() {
+    fn typed_export_preserves_a_statically_selected_request_header() {
         use prost_types::value::Kind;
 
         let mock_host = Arc::new(MockWasmHost::new().with_map(
@@ -647,7 +611,7 @@ mod tests {
                 "filter_state",
                 "wasm.kuadrant.ocsf.metadata.request_id",
             ]))
-            .expect("the non-sensitive request header is exported");
+            .expect("the configured request header export is written");
         let exported =
             prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
         assert!(
@@ -658,40 +622,6 @@ mod tests {
             "unexpected typed header value: {:?}",
             exported.kind
         );
-    }
-
-    #[test]
-    fn sensitive_typed_value_clears_a_previous_export_at_same_path() {
-        let authorization = "Bearer sensitive-authorization-value";
-        let mock_host = Arc::new(MockWasmHost::new().with_map(
-            "request.headers".to_string(),
-            vec![("authorization".to_string(), authorization.to_string())],
-        ));
-        let mut ctx = ReqRespCtx::new(mock_host.clone());
-        let path = "ocsf.actor.user.name";
-        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.ocsf.actor.user.name"]);
-
-        let previous = make_store_task_with_export_format(
-            &ctx,
-            "true",
-            "'public-user'",
-            path,
-            true,
-            Some(crate::configuration::ExportFormat::ProtobufValue),
-        );
-        assert!(matches!(previous.apply(&mut ctx), TaskOutcome::Done));
-        assert!(mock_host.get_property(&property_path).is_some());
-
-        let sensitive = make_store_task_with_export_format(
-            &ctx,
-            "true",
-            "request.headers.authorization",
-            path,
-            true,
-            Some(crate::configuration::ExportFormat::ProtobufValue),
-        );
-        assert!(matches!(sensitive.apply(&mut ctx), TaskOutcome::Done));
-        assert_eq!(mock_host.get_property(&property_path), Some(Vec::new()));
     }
 
     #[test]
