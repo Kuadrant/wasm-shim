@@ -176,6 +176,7 @@ The WASM module exposes the following Prometheus-compatible metrics via Envoy:
 | `kuadrant.allowed`    | Counter | Number of requests allowed after evaluation                      |
 | `kuadrant.denied`     | Counter | Number of requests denied as a result of actions                 |
 | `kuadrant.errors`     | Counter | Number of errors encountered during request processing           |
+| `kuadrant.response_reports_skipped` | Counter | Reports skipped at end of a non-2xx response because required response-body fields were absent |
 
 These metrics are automatically exposed through Envoy's stats endpoint and can be scraped by Prometheus or other monitoring systems. To view metrics, access Envoy's admin interface (typically at `:8001/stats/prometheus`).
 
