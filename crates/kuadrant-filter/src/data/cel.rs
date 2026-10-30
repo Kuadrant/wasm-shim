@@ -156,7 +156,6 @@ impl Expression {
         let expression = Parser::new()
             .enable_optional_syntax(true)
             .parse(expression)?;
-
         let mut props = Vec::with_capacity(5);
         let mut request_props = Vec::with_capacity(1);
         let mut response_props = Vec::with_capacity(1);

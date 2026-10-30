@@ -3,6 +3,7 @@ mod json_body_parser;
 pub(super) mod sse_body_parser;
 
 use body_parser::BodyParser;
+use cel::Value;
 use json_body_parser::JsonBodyParser;
 use sse_body_parser::SseBodyParser;
 use tracing::{debug, error};
@@ -39,6 +40,7 @@ pub struct StoreTask {
     expression: Expression,
     path: String,
     export_to_host: bool,
+    export_format: Option<crate::configuration::ExportFormat>,
     terminal: bool,
     body_parse_state: BodyParseState,
     _reservation: PathReservation,
@@ -62,10 +64,19 @@ impl StoreTask {
             expression,
             path,
             export_to_host,
+            export_format: None,
             terminal,
             body_parse_state,
             _reservation: reservation,
         })
+    }
+
+    pub fn with_export_format(
+        mut self,
+        export_format: Option<crate::configuration::ExportFormat>,
+    ) -> Self {
+        self.export_format = export_format;
+        self
     }
 
     fn initial_body_state(predicate: &Predicate, expression: &Expression) -> BodyParseState {
@@ -249,8 +260,21 @@ impl Task for StoreTask {
             }
         };
 
-        if self.export_to_host {
-            match MessageConverter::cel_value_to_bytes(&value) {
+        let protobuf_value_export =
+            self.export_format == Some(crate::configuration::ExportFormat::ProtobufValue);
+        if self.export_to_host && protobuf_value_export && matches!(&value, Value::Null) {
+            // The host receives an empty payload; the per-request cache treats the value as absent.
+            if let Err(e) = ctx.clear_attribute(&self.path) {
+                error!("Failed to clear host attribute {}: {:?}", self.path, e);
+                return TaskOutcome::Failed;
+            }
+        } else if self.export_to_host {
+            let exported = if protobuf_value_export {
+                MessageConverter::cel_value_to_protobuf_value_bytes(&value)
+            } else {
+                MessageConverter::cel_value_to_bytes(&value)
+            };
+            match exported {
                 Ok(bytes) => {
                     if let Err(e) = ctx.set_attribute(&self.path, &bytes) {
                         error!("Failed to store attribute {}: {:?}", self.path, e);
@@ -279,9 +303,11 @@ impl Task for StoreTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::attribute::{AttributeState, Path};
     use crate::data::cel::Predicate;
     use crate::data::Expression;
     use crate::kuadrant::MockWasmHost;
+    use prost::Message;
     use std::sync::Arc;
 
     fn make_store_task(
@@ -290,6 +316,27 @@ mod tests {
         expression: &str,
         path: &str,
     ) -> Box<StoreTask> {
+        make_store_task_with_export(ctx, predicate, expression, path, false)
+    }
+
+    fn make_store_task_with_export(
+        ctx: &ReqRespCtx,
+        predicate: &str,
+        expression: &str,
+        path: &str,
+        export_to_host: bool,
+    ) -> Box<StoreTask> {
+        make_store_task_with_export_format(ctx, predicate, expression, path, export_to_host, None)
+    }
+
+    fn make_store_task_with_export_format(
+        ctx: &ReqRespCtx,
+        predicate: &str,
+        expression: &str,
+        path: &str,
+        export_to_host: bool,
+        export_format: Option<crate::configuration::ExportFormat>,
+    ) -> Box<StoreTask> {
         Box::new(
             StoreTask::new(
                 ctx,
@@ -297,11 +344,469 @@ mod tests {
                 Predicate::new(predicate).unwrap(),
                 Expression::new(expression).unwrap(),
                 path.to_string(),
-                false,
+                export_to_host,
                 false,
             )
-            .unwrap(),
+            .unwrap()
+            .with_export_format(export_format),
         )
+    }
+
+    #[test]
+    fn exported_ocsf_map_and_list_are_typed_protobuf_values() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "{'name': 'alice', 'groups': [{'name': 'admin'}]}",
+            "ocsf.actor.user.groups",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.ocsf.actor.user.groups"]);
+        let bytes = mock_host
+            .get_property(&property_path)
+            .expect("OCSF export is written to host state");
+        let exported = prost_types::Value::decode(bytes.as_slice())
+            .expect("OCSF map is encoded as google.protobuf.Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(prost_types::value::Kind::StructValue(_))
+        ));
+        let Some(prost_types::value::Kind::StructValue(record)) = exported.kind else {
+            return;
+        };
+        let groups_kind = record
+            .fields
+            .get("groups")
+            .and_then(|value| value.kind.as_ref());
+        assert!(matches!(
+            groups_kind,
+            Some(prost_types::value::Kind::ListValue(_))
+        ));
+        let Some(prost_types::value::Kind::ListValue(groups)) = groups_kind else {
+            return;
+        };
+        let group_kind = groups.values.first().and_then(|value| value.kind.as_ref());
+        assert!(matches!(
+            group_kind,
+            Some(prost_types::value::Kind::StructValue(_))
+        ));
+        let Some(prost_types::value::Kind::StructValue(group)) = group_kind else {
+            return;
+        };
+        assert!(matches!(
+            group.fields.get("name").and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(name)) if name == "admin"
+        ));
+    }
+
+    #[test]
+    fn missing_ocsf_value_is_not_exported() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "false",
+            "'optional-value'",
+            "ocsf.actor.user.name",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.name",
+            ]))
+            .is_none());
+
+        let null_task = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "null",
+            "ocsf.target.resource.name",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(null_task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(
+            mock_host.get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.target.resource.name",
+            ])),
+            Some(Vec::new())
+        );
+        assert!(matches!(
+            ctx.get_attribute::<String>("ocsf.target.resource.name"),
+            Ok(AttributeState::Available(None))
+        ));
+    }
+
+    #[test]
+    fn null_ocsf_value_clears_a_previous_export() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let path = "ocsf.target.resource.name";
+        let property_path = Path::new(vec![
+            "filter_state",
+            "wasm.kuadrant.ocsf.target.resource.name",
+        ]);
+
+        let initial = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "'model'",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(initial.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host.get_property(&property_path).is_some());
+
+        let missing = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "null",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(missing.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(mock_host.get_property(&property_path), Some(Vec::new()));
+        assert!(matches!(
+            ctx.get_attribute::<String>(path),
+            Ok(AttributeState::Available(None))
+        ));
+    }
+
+    #[test]
+    fn exported_ocsf_scalars_are_typed_protobuf_values() {
+        use prost_types::value::Kind;
+
+        let cases = ["'alice'", "42", "42.5", "true"];
+        for expression in cases {
+            let mock_host = Arc::new(MockWasmHost::new());
+            let mut ctx = ReqRespCtx::new(mock_host.clone());
+            let task = make_store_task_with_export_format(
+                &ctx,
+                "true",
+                expression,
+                "ocsf.actor.user.name",
+                true,
+                Some(crate::configuration::ExportFormat::ProtobufValue),
+            );
+
+            assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+            let bytes = mock_host
+                .get_property(&Path::new(vec![
+                    "filter_state",
+                    "wasm.kuadrant.ocsf.actor.user.name",
+                ]))
+                .expect("OCSF scalar export is written to host state");
+            let exported = prost_types::Value::decode(bytes.as_slice())
+                .expect("OCSF scalar is encoded as google.protobuf.Value");
+            let matches_expected_type = match expression {
+                "'alice'" => {
+                    matches!(exported.kind, Some(Kind::StringValue(name)) if name == "alice")
+                }
+                "42" => matches!(exported.kind, Some(Kind::NumberValue(value)) if value == 42.0),
+                "42.5" => matches!(exported.kind, Some(Kind::NumberValue(value)) if value == 42.5),
+                "true" => matches!(exported.kind, Some(Kind::BoolValue(true))),
+                _ => false,
+            };
+            assert!(
+                matches_expected_type,
+                "CEL value retains its protobuf Value type"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_ocsf_exports_preserve_configured_values() {
+        use prost_types::value::Kind;
+
+        // StoreTask executes configured exports; the control plane decides which sources are safe.
+        let authorization = "Bearer sensitive-authorization-value";
+        let mock_host = Arc::new(MockWasmHost::new().with_map(
+            "request.headers".to_string(),
+            vec![("authorization".to_string(), authorization.to_string())],
+        ));
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+
+        let direct = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "request.headers['authorization']",
+            "ocsf.actor.user.name",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
+        let bytes = mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.name",
+            ]))
+            .expect("an explicitly configured OCSF export is written");
+        let exported =
+            prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(Kind::StringValue(value)) if value == authorization
+        ));
+
+        let stored_secret = make_store_task_with_export(
+            &ctx,
+            "true",
+            "request.headers['authorization']",
+            "authorizationToken",
+            false,
+        );
+        assert!(matches!(stored_secret.apply(&mut ctx), TaskOutcome::Done));
+
+        let aliased = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "authorizationToken",
+            "ocsf.actor.user.uid",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+        assert!(matches!(aliased.apply(&mut ctx), TaskOutcome::Done));
+        let bytes = mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.actor.user.uid",
+            ]))
+            .expect("an explicitly configured derived OCSF export is written");
+        let exported =
+            prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(Kind::StringValue(value)) if value == authorization
+        ));
+    }
+
+    #[test]
+    fn typed_export_preserves_a_statically_selected_request_header() {
+        use prost_types::value::Kind;
+
+        let mock_host = Arc::new(MockWasmHost::new().with_map(
+            "request.headers".to_string(),
+            vec![("x-request-id".to_string(), "request-123".to_string())],
+        ));
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "request.headers['x-request-id']",
+            "ocsf.metadata.request_id",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        let bytes = mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.metadata.request_id",
+            ]))
+            .expect("the configured request header export is written");
+        let exported =
+            prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
+        assert!(
+            matches!(
+                &exported.kind,
+                Some(Kind::StringValue(value)) if value == "request-123"
+            ),
+            "unexpected typed header value: {:?}",
+            exported.kind
+        );
+    }
+
+    #[test]
+    fn non_ocsf_export_keeps_legacy_struct_encoding() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export(
+            &ctx,
+            "true",
+            "{'name': 'alice'}",
+            "auth.identity.user",
+            true,
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.auth.identity.user"]);
+        let bytes = mock_host
+            .get_property(&property_path)
+            .expect("non-OCSF export is written to host state");
+        let exported = prost_types::Struct::decode(bytes.as_slice())
+            .expect("non-OCSF map retains the legacy google.protobuf.Struct encoding");
+        assert!(matches!(
+            exported.fields.get("name").and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(name)) if name == "alice"
+        ));
+    }
+
+    #[test]
+    fn protobuf_value_export_works_for_non_ocsf_paths() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "{'groups': [{'name': 'admin'}], 'enabled': true}",
+            "custom.audit.metadata",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.custom.audit.metadata"]);
+        let bytes = mock_host
+            .get_property(&property_path)
+            .expect("typed generic export is written to host state");
+        let exported = prost_types::Value::decode(bytes.as_slice())
+            .expect("typed generic export uses google.protobuf.Value");
+        assert!(matches!(
+            &exported.kind,
+            Some(prost_types::value::Kind::StructValue(_))
+        ));
+        let Some(prost_types::value::Kind::StructValue(record)) = exported.kind else {
+            return;
+        };
+        assert!(matches!(
+            record
+                .fields
+                .get("enabled")
+                .and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::BoolValue(true))
+        ));
+        assert!(matches!(
+            record
+                .fields
+                .get("groups")
+                .and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::ListValue(_))
+        ));
+    }
+
+    #[test]
+    fn typed_export_does_not_write_when_predicate_is_false() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "false",
+            "'should-not-export'",
+            "custom.audit.identity",
+            true,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.custom.audit.identity"
+            ]))
+            .is_none());
+    }
+
+    #[test]
+    fn explicit_non_sensitive_header_exports_to_non_ocsf_paths_keep_their_encoding() {
+        fn assert_exported_string(
+            mock_host: &MockWasmHost,
+            path: &str,
+            export_format: Option<crate::configuration::ExportFormat>,
+            expected: &str,
+        ) {
+            let bytes = mock_host
+                .get_property(&Path::new(vec![
+                    "filter_state",
+                    &format!("wasm.kuadrant.{path}"),
+                ]))
+                .expect("explicit non-OCSF host export is preserved");
+
+            let encoding = if export_format.is_some() {
+                "typed generic export"
+            } else {
+                "legacy generic export"
+            };
+            assert!(
+                matches!(
+                    prost_types::Value::decode(bytes.as_slice()),
+                    Ok(exported) if matches!(
+                        exported.kind.as_ref(),
+                        Some(prost_types::value::Kind::StringValue(value)) if value == expected
+                    )
+                ),
+                "{encoding} should contain the configured string value"
+            );
+        }
+
+        for export_format in [
+            None,
+            Some(crate::configuration::ExportFormat::ProtobufValue),
+        ] {
+            let request_id = "request-123";
+            let mock_host = Arc::new(MockWasmHost::new().with_map(
+                "request.headers".to_string(),
+                vec![("x-request-id".to_string(), request_id.to_string())],
+            ));
+            let mut ctx = ReqRespCtx::new(mock_host.clone());
+
+            let direct = make_store_task_with_export_format(
+                &ctx,
+                "true",
+                "request.headers['x-request-id']",
+                "custom.audit.direct_request_id",
+                true,
+                export_format,
+            );
+            assert!(matches!(direct.apply(&mut ctx), TaskOutcome::Done));
+            assert_exported_string(
+                &mock_host,
+                "custom.audit.direct_request_id",
+                export_format,
+                request_id,
+            );
+
+            let stored_header = make_store_task_with_export(
+                &ctx,
+                "true",
+                "request.headers['x-request-id']",
+                "requestId",
+                false,
+            );
+            assert!(matches!(stored_header.apply(&mut ctx), TaskOutcome::Done));
+
+            let alias = make_store_task_with_export_format(
+                &ctx,
+                "true",
+                "requestId",
+                "custom.audit.aliased_request_id",
+                true,
+                export_format,
+            );
+            assert!(matches!(alias.apply(&mut ctx), TaskOutcome::Done));
+            assert_exported_string(
+                &mock_host,
+                "custom.audit.aliased_request_id",
+                export_format,
+                request_id,
+            );
+        }
     }
 
     #[test]

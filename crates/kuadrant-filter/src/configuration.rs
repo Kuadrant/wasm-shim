@@ -84,6 +84,14 @@ pub struct StoreOperation {
     pub value: String,
     #[serde(default)]
     pub export_to_host: bool,
+    #[serde(default)]
+    pub export_format: Option<ExportFormat>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportFormat {
+    ProtobufValue,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -478,6 +486,34 @@ mod test {
         };
         assert_eq!(store.path, "auth.metadata");
         assert_eq!(store.value, "auth_check.dynamic_metadata");
+        assert_eq!(store.export_format, None);
+    }
+
+    #[test]
+    fn parse_store_action_with_protobuf_value_export_format() {
+        let config = r#"{
+            "services": {},
+            "actionSets": [{
+                "name": "test-store",
+                "routeRuleConditions": {"hostnames": ["example.com"]},
+                "actions": [{
+                    "type": "store",
+                    "predicate": "true",
+                    "terminal": false,
+                    "path": "custom.identity",
+                    "value": "'alice'",
+                    "exportToHost": true,
+                    "exportFormat": "protobufValue"
+                }]
+            }]
+        }"#;
+
+        let plugin_config = serde_json::from_str::<PluginConfiguration>(config)
+            .expect("valid protobufValue store configuration");
+        let Operation::Store(store) = &plugin_config.action_sets[0].actions[0].operation else {
+            unreachable!("expected store operation");
+        };
+        assert_eq!(store.export_format, Some(ExportFormat::ProtobufValue));
     }
 
     #[test]

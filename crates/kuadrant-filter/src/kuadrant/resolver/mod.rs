@@ -24,6 +24,8 @@ pub trait AttributeResolver: Send + Sync {
         key: &str,
     ) -> Result<Option<String>, AttributeError>;
     fn set_attribute(&self, path: &Path, value: &[u8]) -> Result<(), AttributeError>;
+    /// Clears a property using the host resolver's empty-value semantics.
+    fn clear_attribute(&self, path: &Path) -> Result<(), AttributeError>;
     fn set_attribute_map(
         &self,
         map_type: MapType,

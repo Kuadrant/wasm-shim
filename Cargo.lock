@@ -2275,6 +2275,7 @@ dependencies = [
  "log",
  "opentelemetry",
  "opentelemetry_sdk",
+ "prost",
  "prost-reflect",
  "prost-types",
  "proxy-wasm",

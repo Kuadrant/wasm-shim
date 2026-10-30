@@ -1,23 +1,63 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
-use kuadrant_filter::configuration::PluginConfiguration;
+use kuadrant_filter::configuration::{ExportFormat, PluginConfiguration};
 use kuadrant_filter::filter::DescriptorManager;
 use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
 use proxy_wasm::traits::{Context, HttpContext, RootContext};
 use proxy_wasm::types::ContextType;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
 const WASM_SHIM_HEADER: &str = "Kuadrant wasm module";
 
+/// Reserves each host property's format for the lifetime of the filter root.
+/// Envoy has no undeclare operation, and in-flight requests can still use an
+/// older pipeline after reconfiguration, so format history cannot be pruned.
+#[derive(Default)]
+struct ExportedPropertyRegistry {
+    formats_by_path: BTreeMap<String, Option<ExportFormat>>,
+}
+
+impl ExportedPropertyRegistry {
+    fn configure(
+        &mut self,
+        current: &BTreeMap<String, Option<ExportFormat>>,
+        mut declare: impl FnMut(&str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for (path, format) in current {
+            if let Some(previous_format) = self.formats_by_path.get(path) {
+                if previous_format != format {
+                    return Err(format!(
+                        "host property '{path}' cannot change export format from {previous_format:?} to {format:?} while the filter root is alive"
+                    ));
+                }
+            }
+        }
+
+        for (path, format) in current {
+            if *format == Some(ExportFormat::ProtobufValue)
+                && !self.formats_by_path.contains_key(path)
+            {
+                declare(path)?;
+                self.formats_by_path.insert(path.clone(), *format);
+            }
+        }
+
+        self.formats_by_path.extend(current.clone());
+        Ok(())
+    }
+}
+
 pub struct FilterRoot {
     pub context_id: u32,
     pub pipeline_factory: Arc<PipelineFactory>,
     pub descriptor_manager: Arc<DescriptorManager>,
     tick_enabled: bool,
+    exported_properties: ExportedPropertyRegistry,
 }
 
 impl FilterRoot {
@@ -27,6 +67,7 @@ impl FilterRoot {
             pipeline_factory: Arc::new(PipelineFactory::default()),
             descriptor_manager: Arc::new(DescriptorManager::default()),
             tick_enabled: false,
+            exported_properties: ExportedPropertyRegistry::default(),
         }
     }
 
@@ -48,7 +89,6 @@ impl FilterRoot {
 
     fn process_config(&mut self, config: PluginConfiguration) -> bool {
         let descriptor_service = config.descriptor_service.clone();
-
         let factory = match PipelineFactory::try_from(config, &self.descriptor_manager) {
             Ok(f) => f,
             Err(err) => {
@@ -56,6 +96,14 @@ impl FilterRoot {
                 return false;
             }
         };
+
+        if let Err(err) = self.exported_properties.configure(
+            factory.exported_property_formats(),
+            crate::wasm_host::declare_protobuf_value_property,
+        ) {
+            error!("invalid host export configuration: {err}");
+            return false;
+        }
 
         self.pipeline_factory = Arc::new(factory);
         self.descriptor_manager
@@ -313,5 +361,40 @@ mod tests {
         let config = serde_json::from_slice::<PluginConfiguration>(config_str.as_bytes()).unwrap();
         let result = PipelineFactory::try_from(config, &descriptor_manager);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn exported_property_registry_pins_formats_and_declares_typed_paths_once() {
+        let path = "ocsf.marker".to_string();
+        let typed = BTreeMap::from([(path.clone(), Some(ExportFormat::ProtobufValue))]);
+        let legacy = BTreeMap::from([(path.clone(), None)]);
+        let empty = BTreeMap::new();
+        let mut registry = ExportedPropertyRegistry::default();
+        let mut declarations = Vec::new();
+
+        registry
+            .configure(&typed, |property| {
+                declarations.push(property.to_string());
+                Ok(())
+            })
+            .expect("first typed declaration succeeds");
+        registry
+            .configure(&typed, |property| {
+                declarations.push(property.to_string());
+                Ok(())
+            })
+            .expect("same typed format can be reused");
+        registry
+            .configure(&empty, |_| Ok(()))
+            .expect("removed action does not remove Envoy's declaration");
+
+        assert_eq!(declarations, vec![path.clone()]);
+        assert!(registry.configure(&legacy, |_| Ok(())).is_err());
+
+        let mut legacy_registry = ExportedPropertyRegistry::default();
+        legacy_registry
+            .configure(&legacy, |_| Ok(()))
+            .expect("first legacy format succeeds");
+        assert!(legacy_registry.configure(&typed, |_| Ok(())).is_err());
     }
 }

@@ -7,7 +7,7 @@ use crate::kuadrant::pipeline::tasks::{
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use cel::ParseErrors;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -48,6 +48,7 @@ pub(crate) enum Operation {
         path: String,
         expression: Expression,
         export_to_host: bool,
+        export_format: Option<crate::configuration::ExportFormat>,
     },
     Fail {
         log_message: String,
@@ -124,6 +125,7 @@ impl Action {
                 path,
                 expression,
                 export_to_host,
+                export_format,
             } => {
                 use crate::kuadrant::pipeline::tasks::StoreTask;
                 match StoreTask::new(
@@ -134,7 +136,9 @@ impl Action {
                     path.clone(),
                     *export_to_host,
                     self.terminal,
-                ) {
+                )
+                .map(|task| task.with_export_format(*export_format))
+                {
                     Ok(task) => Some(Box::new(task)),
                     Err(e) => {
                         tracing::error!(
@@ -200,9 +204,23 @@ impl Display for CompileError {
 }
 
 impl Blueprint {
+    #[cfg(test)]
     pub fn compile(
         config: &configuration::ActionSet,
         services: &HashMap<String, ServiceInstance>,
+    ) -> Result<Self, CompileError> {
+        let mut exported_property_formats = BTreeMap::new();
+        Self::compile_with_exported_property_formats(
+            config,
+            services,
+            &mut exported_property_formats,
+        )
+    }
+
+    pub(crate) fn compile_with_exported_property_formats(
+        config: &configuration::ActionSet,
+        services: &HashMap<String, ServiceInstance>,
+        exported_property_formats: &mut BTreeMap<String, Option<configuration::ExportFormat>>,
     ) -> Result<Self, CompileError> {
         let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
@@ -223,7 +241,12 @@ impl Blueprint {
             .map(
                 |(i, (action_config, dependencies))| -> Result<Action, CompileError> {
                     let id = i.to_string();
-                    let mut action = Action::compile(action_config, services, id)?;
+                    let mut action = Action::compile_with_exported_property_formats(
+                        action_config,
+                        services,
+                        id,
+                        exported_property_formats,
+                    )?;
                     action.dependencies = dependencies;
                     Ok(action)
                 },
@@ -322,10 +345,26 @@ impl Blueprint {
 }
 
 impl Action {
+    #[cfg(test)]
     fn compile(
         typed: &configuration::Action,
         services: &HashMap<String, ServiceInstance>,
         id: String,
+    ) -> Result<Self, CompileError> {
+        let mut exported_property_formats = BTreeMap::new();
+        Self::compile_with_exported_property_formats(
+            typed,
+            services,
+            id,
+            &mut exported_property_formats,
+        )
+    }
+
+    fn compile_with_exported_property_formats(
+        typed: &configuration::Action,
+        services: &HashMap<String, ServiceInstance>,
+        id: String,
+        exported_property_formats: &mut BTreeMap<String, Option<configuration::ExportFormat>>,
     ) -> Result<Self, CompileError> {
         let predicate =
             Predicate::new(&typed.predicate).map_err(|e| CompileError::InvalidActionPredicate {
@@ -361,7 +400,12 @@ impl Action {
                         if reply_action.execution != configuration::Execution::default() {
                             return Err(CompileError::InvalidOnReplyExecution(reply_id));
                         }
-                        Action::compile(reply_action, services, reply_id)
+                        Action::compile_with_exported_property_formats(
+                            reply_action,
+                            services,
+                            reply_id,
+                            exported_property_formats,
+                        )
                     })
                     .collect::<Result<_, _>>()?;
 
@@ -395,11 +439,25 @@ impl Action {
                 }
             }
             configuration::Operation::Store(store) => {
+                if store.export_to_host {
+                    if let Some(existing_format) = exported_property_formats.get(&store.path) {
+                        if *existing_format != store.export_format {
+                            return Err(CompileError::InvalidDataExpression(format!(
+                                "host property '{}' has conflicting export formats ({existing_format:?} and {:?})",
+                                store.path, store.export_format
+                            )));
+                        }
+                    } else {
+                        exported_property_formats.insert(store.path.clone(), store.export_format);
+                    }
+                }
+
                 let expression = Expression::new(&store.value)?;
                 Operation::Store {
                     path: store.path.clone(),
                     expression,
                     export_to_host: store.export_to_host,
+                    export_format: store.export_format,
                 }
             }
             configuration::Operation::Fail(fail) => Operation::Fail {
@@ -591,6 +649,7 @@ mod tests {
                             path: "rl.remaining".to_string(),
                             value: "result.remaining".to_string(),
                             export_to_host: false,
+                            export_format: None,
                         }),
                     },
                 ],
@@ -753,6 +812,7 @@ mod tests {
                 path: "a.b".to_string(),
                 value: "result.x".to_string(),
                 export_to_host: false,
+                export_format: None,
             }),
         };
         let store_result = Action::compile(&store_config, &services, "0".to_string());
@@ -1113,6 +1173,7 @@ mod tests {
                         path: "result".to_string(),
                         value: "true".to_string(),
                         export_to_host: false,
+                        export_format: None,
                     }),
                 }],
                 label: String::new(),

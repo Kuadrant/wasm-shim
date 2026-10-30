@@ -1,4 +1,4 @@
-use crate::configuration::PluginConfiguration;
+use crate::configuration::{ExportFormat, PluginConfiguration};
 use crate::data::{
     attribute::AttributeState,
     cel::{Predicate, PredicateVec},
@@ -11,7 +11,7 @@ use crate::kuadrant::pipeline::executor::Pipeline;
 use crate::kuadrant::ReqRespCtx;
 use crate::services::ServiceInstance;
 use radix_trie::Trie;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
 use tracing::debug;
@@ -19,6 +19,7 @@ use tracing::debug;
 pub struct PipelineFactory {
     index: Trie<String, Vec<Arc<Blueprint>>>,
     fallback_blueprint: Option<Arc<Blueprint>>,
+    exported_property_formats: BTreeMap<String, Option<ExportFormat>>,
 }
 
 #[derive(Debug)]
@@ -41,6 +42,7 @@ impl Default for PipelineFactory {
         Self {
             index: Trie::new(),
             fallback_blueprint: None,
+            exported_property_formats: BTreeMap::new(),
         }
     }
 }
@@ -89,8 +91,13 @@ impl PipelineFactory {
                 is_guard: true,
             });
         let mut index = Trie::new();
+        let mut exported_property_formats = BTreeMap::new();
         for config_action_set in &config.action_sets {
-            let mut blueprint = Blueprint::compile(config_action_set, &services)?;
+            let mut blueprint = Blueprint::compile_with_exported_property_formats(
+                config_action_set,
+                &services,
+                &mut exported_property_formats,
+            )?;
             if let Some(dev_mode) = &dev_mode_action {
                 blueprint.actions.push(dev_mode.clone());
             }
@@ -116,7 +123,12 @@ impl PipelineFactory {
                 }
                 .into()
             }),
+            exported_property_formats,
         })
+    }
+
+    pub fn exported_property_formats(&self) -> &BTreeMap<String, Option<ExportFormat>> {
+        &self.exported_property_formats
     }
 
     pub fn build(&self, mut ctx: ReqRespCtx) -> Result<Option<Pipeline>, BuildError> {
@@ -280,6 +292,125 @@ mod tests {
 
         let result = PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default()));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn factory_collects_export_formats_while_compiling_nested_actions() {
+        let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
+            "services": {
+                "auth": {
+                    "type": "dynamic",
+                    "endpoint": "test-cluster",
+                    "failureMode": "deny",
+                    "timeout": "1s",
+                    "grpcService": "envoy.service.auth.v3.Authorization",
+                    "grpcMethod": "Check"
+                }
+            },
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": {
+                    "hostnames": [],
+                    "predicates": []
+                },
+                "actions": [{
+                    "type": "grpc",
+                    "predicate": "true",
+                    "terminal": false,
+                    "var": "auth_response",
+                    "service": "auth",
+                    "messageBuilder": "{}",
+                    "onReply": [{
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "ocsf.actor.user.groups",
+                        "value": "[]",
+                        "exportToHost": true,
+                        "exportFormat": "protobufValue"
+                    }, {
+                        "type": "store",
+                        "predicate": "true",
+                        "terminal": false,
+                        "path": "custom.audit.metadata",
+                        "value": "{}",
+                        "exportToHost": true,
+                        "exportFormat": "protobufValue"
+                    }]
+                }, {
+                    "type": "store",
+                    "predicate": "true",
+                    "terminal": false,
+                    "path": "ocsf.actor.user.name",
+                    "value": "'alice'",
+                    "exportToHost": true,
+                    "exportFormat": "protobufValue"
+                }, {
+                    "type": "store",
+                    "predicate": "true",
+                    "terminal": false,
+                    "path": "custom.audit.metadata",
+                    "value": "{}",
+                    "exportToHost": true,
+                    "exportFormat": "protobufValue"
+                }]
+            }]
+        }))
+        .expect("valid plugin configuration");
+
+        let factory = PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default()))
+            .expect("valid pipeline configuration");
+        let formats = factory.exported_property_formats();
+
+        assert_eq!(formats.len(), 3);
+        assert_eq!(
+            formats.get("ocsf.actor.user.groups"),
+            Some(&Some(ExportFormat::ProtobufValue))
+        );
+        assert_eq!(
+            formats.get("ocsf.actor.user.name"),
+            Some(&Some(ExportFormat::ProtobufValue))
+        );
+        assert_eq!(
+            formats.get("custom.audit.metadata"),
+            Some(&Some(ExportFormat::ProtobufValue))
+        );
+    }
+
+    #[test]
+    fn factory_rejects_conflicting_formats_for_an_exported_property() {
+        let config = serde_json::from_value::<PluginConfiguration>(serde_json::json!({
+            "services": {},
+            "actionSets": [{
+                "name": "test",
+                "routeRuleConditions": {
+                    "hostnames": [],
+                    "predicates": []
+                },
+                "actions": [{
+                    "type": "store",
+                    "predicate": "true",
+                    "terminal": false,
+                    "path": "ocsf.marker",
+                    "value": "'model'",
+                    "exportToHost": true
+                }, {
+                    "type": "store",
+                    "predicate": "true",
+                    "terminal": false,
+                    "path": "ocsf.marker",
+                    "value": "'model'",
+                    "exportToHost": true,
+                    "exportFormat": "protobufValue"
+                }]
+            }]
+        }))
+        .expect("valid plugin configuration");
+
+        let error = PipelineFactory::try_from(config, &Arc::new(DescriptorManager::default()))
+            .err()
+            .expect("one host property cannot have two export formats");
+        assert!(error.to_string().contains("conflicting export formats"));
     }
 
     #[test]

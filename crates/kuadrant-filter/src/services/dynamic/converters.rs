@@ -266,6 +266,14 @@ impl MessageConverter {
         }
     }
 
+    /// Encodes any CEL value as google.protobuf.Value, including maps and lists.
+    /// Envoy can expose the oneof payload as a typed CEL value when the filter
+    /// state property is declared with the google.protobuf.Value schema.
+    pub fn cel_value_to_protobuf_value_bytes(value: &Value) -> Result<Vec<u8>, ConversionError> {
+        use prost::Message;
+        Ok(Self::cel_to_prost_value(value)?.encode_to_vec())
+    }
+
     fn cel_to_prost_value(value: &Value) -> Result<prost_types::Value, ConversionError> {
         let kind = match value {
             Value::Null => prost_types::value::Kind::NullValue(0),
@@ -2782,5 +2790,67 @@ mod tests {
                 .map(|d| *d.inner()),
             Some(2.0)
         );
+    }
+
+    #[test]
+    fn protobuf_value_export_preserves_scalar_and_structured_types() {
+        use prost::Message;
+        use prost_types::value::Kind;
+
+        let evaluate = |expression: &str| {
+            let ctx = Context::with_env(Arc::new(Env::stdlib()));
+            Program::compile(expression)
+                .expect("valid CEL expression")
+                .execute(&ctx)
+                .expect("CEL expression evaluates")
+        };
+        let decode = |expression: &str| {
+            let cel_value = evaluate(expression);
+            let bytes = MessageConverter::cel_value_to_protobuf_value_bytes(&cel_value)
+                .expect("CEL value encodes as google.protobuf.Value");
+            prost_types::Value::decode(bytes.as_slice()).expect("valid protobuf Value")
+        };
+
+        assert_eq!(
+            decode("'alice'").kind,
+            Some(Kind::StringValue("alice".to_string()))
+        );
+        assert!(matches!(decode("42").kind, Some(Kind::NumberValue(value)) if value == 42.0));
+        assert!(matches!(decode("42.5").kind, Some(Kind::NumberValue(value)) if value == 42.5));
+        assert!(matches!(decode("true").kind, Some(Kind::BoolValue(true))));
+
+        let structured = decode("{'name': 'alice', 'groups': [{'name': 'admin'}], 'active': true}");
+        assert!(matches!(&structured.kind, Some(Kind::StructValue(_))));
+        let Some(Kind::StructValue(record)) = structured.kind else {
+            return;
+        };
+        assert!(matches!(
+            record.fields.get("name").and_then(|value| value.kind.as_ref()),
+            Some(Kind::StringValue(value)) if value == "alice"
+        ));
+        assert!(matches!(
+            record
+                .fields
+                .get("active")
+                .and_then(|value| value.kind.as_ref()),
+            Some(Kind::BoolValue(true))
+        ));
+        let groups_kind = record
+            .fields
+            .get("groups")
+            .and_then(|value| value.kind.as_ref());
+        assert!(matches!(groups_kind, Some(Kind::ListValue(_))));
+        let Some(Kind::ListValue(groups)) = groups_kind else {
+            return;
+        };
+        let group_kind = groups.values.first().and_then(|value| value.kind.as_ref());
+        assert!(matches!(group_kind, Some(Kind::StructValue(_))));
+        let Some(Kind::StructValue(group)) = group_kind else {
+            return;
+        };
+        assert!(matches!(
+            group.fields.get("name").and_then(|value| value.kind.as_ref()),
+            Some(Kind::StringValue(name)) if name == "admin"
+        ));
     }
 }
