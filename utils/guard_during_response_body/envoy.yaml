@@ -1,0 +1,139 @@
+---
+# Repro: a GUARD gRPC in flight during response-body streaming, concurrent with a
+# response-body `store`. While the guard is in flight the barrier is tripped, so
+# every on_http_response_body callback returns Pause -> Envoy ACCUMULATES the body
+# in one buffer. The store reads `(0, buffer_size)` each callback and therefore
+# re-reads the already-consumed prefix (the offset-0 assumption is wrong here).
+static_resources:
+  listeners:
+    - name: main
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 80
+      per_connection_buffer_limit_bytes: 1048576
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                use_remote_address: true
+                xff_num_trusted_hops: 1
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: local_service
+                      domains:
+                        - "*"
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: upstream
+                            timeout: 30s
+                http_filters:
+                  - name: envoy.filters.http.wasm
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+                      config:
+                        name: kuadrant_wasm
+                        root_id: kuadrant_wasm
+                        vm_config:
+                          vm_id: vm.sentinel.kuadrant_wasm
+                          runtime: envoy.wasm.runtime.v8
+                          code:
+                            local:
+                              filename: /opt/kuadrant/wasm/wasm_shim.wasm
+                          allow_precompiled: true
+                        configuration:
+                          "@type": "type.googleapis.com/google.protobuf.StringValue"
+                          value: >
+                            {
+                              "services": {
+                                "slow-guard": {
+                                  "type": "dynamic",
+                                  "endpoint": "slowgrpc",
+                                  "failureMode": "allow",
+                                  "timeout": "10s",
+                                  "grpcService": "kuadrant.service.ratelimit.v1.RateLimitService",
+                                  "grpcMethod": "Report"
+                                }
+                              },
+                              "actionSets": [
+                                {
+                                  "name": "embeddings",
+                                  "routeRuleConditions": {
+                                    "hostnames": ["*.example.com"]
+                                  },
+                                  "actions": [
+                                    {
+                                      "type": "store",
+                                      "predicate": "request.path == \"/v1/embeddings\"",
+                                      "terminal": false,
+                                      "isGuard": false,
+                                      "path": "early_obj",
+                                      "value": "responseBodyJSON(\"/object\")"
+                                    },
+                                    {
+                                      "type": "store",
+                                      "predicate": "request.path == \"/v1/embeddings\"",
+                                      "terminal": false,
+                                      "isGuard": false,
+                                      "path": "kuadrant.internal.response.body",
+                                      "value": "{\"total_tokens\": responseBodyJSON(\"/usage/total_tokens\")}"
+                                    },
+                                    {
+                                      "type": "grpc",
+                                      "var": "guard_response",
+                                      "service": "slow-guard",
+                                      "predicate": "request.path == \"/v1/embeddings\"",
+                                      "terminal": false,
+                                      "isGuard": true,
+                                      "label": "slow_guard",
+                                      "messageBuilder": "envoy.service.ratelimit.v3.RateLimitRequest { domain: responseBodyJSON(\"/object\"), descriptors: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor { entries: [ envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry { key: \"g\", value: string(1) } ] } ] }"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: upstream
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      lb_policy: round_robin
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: upstream
+                      port_value: 80
+    - name: slowgrpc
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      lb_policy: round_robin
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: slowgrpc
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: slowgrpc
+                      port_value: 50051
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8001

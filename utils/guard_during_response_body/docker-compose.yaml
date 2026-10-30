@@ -1,0 +1,67 @@
+---
+services:
+  envoy:
+    image: envoyproxy/envoy:v1.35-latest
+    container_name: gdrb-envoy
+    user: root
+    environment:
+      - ENVOY_UID=0
+    depends_on:
+      - slowgrpc
+      - upstream
+    command:
+      - /usr/local/bin/envoy
+      - --config-path
+      - /etc/envoy.yaml
+      - --log-level
+      - info
+      - --component-log-level
+      - wasm:trace,http:debug,router:debug
+      - --service-cluster
+      - proxy
+    expose:
+      - "80"
+      - "8001"
+    ports:
+      - "18000:80"
+      - "18001:8001"
+    volumes:
+      - ./envoy.yaml:/etc/envoy.yaml
+      - ../../target/wasm32-wasip1/debug/wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
+  upstream:
+    image: python:3-alpine
+    container_name: gdrb-upstream
+    command: ["python3", "/app/chunked_upstream.py"]
+    environment:
+      - N_INPUTS=${N_INPUTS:-40}
+      - N_CHUNKS=${N_CHUNKS:-6}
+      - CHUNK_GAP=${CHUNK_GAP:-0.08}
+    expose:
+      - "80"
+    restart: unless-stopped
+    volumes:
+      - ./chunked_upstream.py:/app/chunked_upstream.py
+  slowgrpc:
+    image: python:3
+    container_name: gdrb-slowgrpc
+    command: ["sh", "-c", "pip install --quiet --root-user-action=ignore grpcio && python3 /app/slow_grpc.py"]
+    environment:
+      - SLEEP_SECONDS=${SLEEP_SECONDS:-5}
+    expose:
+      - "50051"
+    restart: unless-stopped
+    volumes:
+      - ./slow_grpc.py:/app/slow_grpc.py
+  start_services:
+    image: alpine
+    depends_on:
+      - envoy
+    command: >
+      /bin/sh -c "
+      while ! nc -z envoy 80;
+      do
+      echo sleeping;
+      sleep 1;
+      done;
+      echo Connected!
+      "

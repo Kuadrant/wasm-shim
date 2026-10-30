@@ -43,6 +43,17 @@ cargo test test_name
 cargo test module_name::
 ```
 
+> [!IMPORTANT]
+> The proxy-wasm integration tests (`crates/wasm-shim/tests/*.rs`, e.g.
+> `streaming.rs`, `response_body.rs`) load the **release** wasm module from
+> `target/wasm32-wasip1/release/wasm_shim.wasm` (see `wasm_module()` in
+> `crates/wasm-shim/tests/util/common.rs`). You MUST rebuild it with
+> `cargo build --release --target=wasm32-wasip1` (or `make build BUILD=release`)
+> before running them, otherwise the tests run against a stale binary and your
+> changes won't take effect. A debug build does **not** satisfy these tests.
+> The unit tests in `kuadrant-filter` (`cargo test -p kuadrant-filter`) don't
+> need the wasm target.
+
 ### Code Quality
 
 ```bash

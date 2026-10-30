@@ -465,6 +465,9 @@ impl Barrier {
 #[derive(Default)]
 pub struct BodyContext {
     buffer_size: usize,
+    /// Absolute stream offset of byte 0 of the current host buffer;
+    /// `buffer_base + buffer_size` is the total number of bytes streamed so far.
+    buffer_base: usize,
     end_of_stream: bool,
     values: HashMap<String, Value>,
 }
@@ -474,11 +477,22 @@ impl BodyContext {
         self.buffer_size
     }
 
+    pub fn buffer_base(&self) -> usize {
+        self.buffer_base
+    }
+
     pub fn is_end_of_stream(&self) -> bool {
         self.end_of_stream
     }
 
-    pub fn set_buffer_size(&mut self, size: usize, end_of_stream: bool) {
+    /// Records the current body callback's buffer `size` and `end_of_stream`.
+    /// When `buffering_now` is false, advances `buffer_base` by the previous size
+    /// (the host drained it); when true, leaves `buffer_base` unchanged (the host
+    /// is accumulating).
+    pub fn set_buffer_size(&mut self, size: usize, end_of_stream: bool, buffering_now: bool) {
+        if !buffering_now {
+            self.buffer_base += self.buffer_size;
+        }
         self.buffer_size = size;
         self.end_of_stream = end_of_stream;
     }
@@ -646,6 +660,37 @@ mod tests {
         let barrier = Barrier::default();
         assert_eq!(barrier.count(), 0);
         assert!(!barrier.is_tripped());
+    }
+
+    // The buffer_base recurrence that lets body reads pick the right offset:
+    // it advances by the previous size while Envoy drains (filter returned
+    // Continue) and holds steady while Envoy accumulates (filter returned Pause).
+    // `buffer_base + buffer_size` is always the total bytes streamed so far.
+    #[test]
+    fn body_context_buffer_base_tracks_drain_and_accumulate() {
+        let mut body = BodyContext::default();
+        assert_eq!(body.buffer_base(), 0);
+        assert_eq!(body.buffer_size(), 0);
+
+        // First callback is always drained.
+        body.set_buffer_size(10, false, false);
+        assert_eq!((body.buffer_base(), body.buffer_size()), (0, 10));
+
+        // Another drained chunk: base advances past the bytes just forwarded.
+        body.set_buffer_size(20, false, false);
+        assert_eq!((body.buffer_base(), body.buffer_size()), (10, 20));
+
+        // Guard trips -> Envoy accumulates: base is pinned at 10, size is cumulative.
+        body.set_buffer_size(35, false, true);
+        assert_eq!((body.buffer_base(), body.buffer_size()), (10, 35));
+        body.set_buffer_size(50, false, true);
+        assert_eq!((body.buffer_base(), body.buffer_size()), (10, 50));
+
+        // Guard reply resumes -> Envoy drains again: base jumps past the whole
+        // accumulated buffer (10 + 50), so the next fresh chunk reads from offset 0.
+        body.set_buffer_size(8, true, false);
+        assert_eq!((body.buffer_base(), body.buffer_size()), (60, 8));
+        assert!(body.is_end_of_stream());
     }
 
     #[test]

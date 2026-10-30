@@ -13,6 +13,11 @@ pub struct KuadrantFilter {
     pipeline: Option<Pipeline>,
     in_response_phase: bool,
     force_resume: bool,
+    // Whether the previous `on_http_response_body` callback returned `Pause` (so
+    // Envoy is accumulating the response body). Passed to `set_buffer_size` so the
+    // next read uses the correct offset. There is no request-body counterpart:
+    // request-body reading is unsupported, so the request path is always drained.
+    response_buffering: bool,
 }
 
 impl KuadrantFilter {
@@ -23,6 +28,7 @@ impl KuadrantFilter {
             pipeline: None,
             in_response_phase: false,
             force_resume: false,
+            response_buffering: false,
         }
     }
 
@@ -67,7 +73,10 @@ impl Context for KuadrantFilter {
 
             if should_resume {
                 let result = if self.in_response_phase {
+                    // Resuming returns `Continue`, so Envoy drains the accumulated
+                    // buffer; clear the flag so the next callback reads a fresh buffer.
                     trace!("on_grpc_call_response: resume_http_response");
+                    self.response_buffering = false;
                     self.resume_http_response()
                 } else {
                     trace!("on_grpc_call_response: resume_http_request");
@@ -141,10 +150,12 @@ impl HttpContext for KuadrantFilter {
     fn on_http_request_body(&mut self, buffer_size: usize, end_of_stream: bool) -> Action {
         debug!("#{} on_http_request_body", self.context_id);
         if let Some(mut pipeline) = self.pipeline.take() {
+            // Request-body reading is not supported by Kuadrant, so the request
+            // buffer is always treated as drained (`buffering_now = false`).
             pipeline
                 .ctx
                 .request_body
-                .set_buffer_size(buffer_size, end_of_stream);
+                .set_buffer_size(buffer_size, end_of_stream, false);
             match pipeline.eval() {
                 PipelineState::InProgress(p) => {
                     self.pipeline = Some(*p);
@@ -188,11 +199,12 @@ impl HttpContext for KuadrantFilter {
 
     fn on_http_response_body(&mut self, buffer_size: usize, end_of_stream: bool) -> Action {
         debug!("#{} on_http_response_body", self.context_id);
+        let buffering_now = self.response_buffering;
         if let Some(mut pipeline) = self.pipeline.take() {
             pipeline
                 .ctx
                 .response_body
-                .set_buffer_size(buffer_size, end_of_stream);
+                .set_buffer_size(buffer_size, end_of_stream, buffering_now);
             match pipeline.eval() {
                 PipelineState::InProgress(p) => {
                     self.pipeline = Some(*p);
@@ -202,18 +214,18 @@ impl HttpContext for KuadrantFilter {
                 }
             }
         }
-        if self.should_pause() {
+        let action = if self.should_pause() {
             trace!("on_http_response_body: pause");
             Action::Pause
+        } else if self.pipeline.is_some() && end_of_stream {
+            trace!("on_http_response_body: pipeline is some, pause");
+            self.force_resume = true;
+            Action::Pause
         } else {
-            if self.pipeline.is_some() && end_of_stream {
-                trace!("on_http_response_body: pipeline is some, pause");
-                self.force_resume = true;
-                Action::Pause
-            } else {
-                trace!("on_http_response_body: continue");
-                Action::Continue
-            }
-        }
+            trace!("on_http_response_body: continue");
+            Action::Continue
+        };
+        self.response_buffering = matches!(action, Action::Pause);
+        action
     }
 }

@@ -255,10 +255,6 @@ impl SseBodyParser {
 }
 
 impl BodyParser for SseBodyParser {
-    fn bytes_consumed(&self) -> usize {
-        0
-    }
-
     fn finalize(&mut self) -> Result<(), AttributeError> {
         self.complete = true;
         Ok(())
@@ -748,17 +744,6 @@ mod tests {
         let mut body_ctx = BodyContext::default();
         parser.populate(&mut body_ctx);
         assert_eq!(body_ctx.get_value("/field"), Some(&Value::Int(42)));
-    }
-
-    #[test]
-    fn sse_body_parser_bytes_consumed_always_zero() {
-        let mut parser = SseBodyParser::new(vec![group("/field")]);
-        assert_eq!(parser.bytes_consumed(), 0);
-
-        parser
-            .feed(b"data: {\"field\":1}\n\n")
-            .expect("feed should succeed");
-        assert_eq!(parser.bytes_consumed(), 0);
     }
 
     #[test]
