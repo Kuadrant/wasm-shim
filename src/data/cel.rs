@@ -324,6 +324,26 @@ impl Expression {
         &self.response_body_values
     }
 
+    /// True only when this response field is the expression's sole unresolved
+    /// input. Other missing body values or pending host attributes must still
+    /// follow the action's configured failure mode.
+    pub fn has_only_missing_response_body_value(&self, ctx: &ReqRespCtx, field: &str) -> bool {
+        if ctx.response_body.get_value(field).is_some()
+            || !self.response_body_values.iter().any(|value| value == field)
+            || self
+                .response_body_values
+                .iter()
+                .any(|value| value != field && ctx.response_body.get_value(value).is_none())
+            || self
+                .request_body_values
+                .iter()
+                .any(|value| ctx.request_body.get_value(value).is_none())
+        {
+            return false;
+        }
+        matches!(self.build_data_map(ctx), Ok(AttributeState::Available(_)))
+    }
+
     // todo(@adam-cattermole): Temporary method for legacy config translation, remove when legacy support is dropped
     pub fn source(&self) -> &str {
         &self.source

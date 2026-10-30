@@ -271,7 +271,7 @@ impl Blueprint {
                                 ));
                             }
 
-                            let task: Box<dyn Task> = Box::new(DynamicTask::new_with_attributes(
+                            let mut task = DynamicTask::new_with_attributes(
                                 ctx,
                                 action.id.clone(),
                                 Rc::clone(dynamic_service),
@@ -281,8 +281,12 @@ impl Blueprint {
                                 action.predicate.clone(),
                                 action.dependencies.clone(),
                                 action.is_guard,
-                            ));
-                            let task = Box::new(FailureModeTask::new(task, abort_on_failure));
+                            );
+                            if matches!(service, ServiceInstance::RateLimitReport(_)) {
+                                task = task.with_token_report();
+                            }
+                            let task =
+                                Box::new(FailureModeTask::new(Box::new(task), abort_on_failure));
                             if tracing_enabled {
                                 tasks.push(Box::new(TracingDecoratorTask::new(
                                     label.clone(),
