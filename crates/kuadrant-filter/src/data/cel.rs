@@ -132,10 +132,7 @@ impl PartialEq for Expression {
         let needs_grpc_match = self.needs_grpc == other.needs_grpc;
         let expressions_match =
             format!("{:?}", self.expression) == format!("{:?}", other.expression);
-        attributes_match
-            && extended_match
-            && needs_grpc_match
-            && expressions_match
+        attributes_match && extended_match && needs_grpc_match && expressions_match
     }
 }
 
@@ -1403,7 +1400,7 @@ pub mod data {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::attribute::{AttributeState, Path};
+    use crate::data::attribute::AttributeState;
     use crate::data::cel::{known_attribute_for, ExpectedType, Expression, Predicate};
     use crate::kuadrant::MockWasmHost;
     use crate::kuadrant::ReqRespCtx;

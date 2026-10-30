@@ -135,9 +135,10 @@ impl Action {
                     expression.clone(),
                     path.clone(),
                     *export_to_host,
-                    *export_format,
                     self.terminal,
-                ) {
+                )
+                .map(|task| task.with_export_format(*export_format))
+                {
                     Ok(task) => Some(Box::new(task)),
                     Err(e) => {
                         tracing::error!(

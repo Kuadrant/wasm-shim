@@ -54,7 +54,6 @@ impl StoreTask {
         expression: Expression,
         path: String,
         export_to_host: bool,
-        export_format: Option<crate::configuration::ExportFormat>,
         terminal: bool,
     ) -> Result<Self, AttributeError> {
         let body_parse_state = Self::initial_body_state(&predicate, &expression);
@@ -65,11 +64,19 @@ impl StoreTask {
             expression,
             path,
             export_to_host,
-            export_format,
+            export_format: None,
             terminal,
             body_parse_state,
             _reservation: reservation,
         })
+    }
+
+    pub fn with_export_format(
+        mut self,
+        export_format: Option<crate::configuration::ExportFormat>,
+    ) -> Self {
+        self.export_format = export_format;
+        self
     }
 
     fn initial_body_state(predicate: &Predicate, expression: &Expression) -> BodyParseState {
@@ -338,10 +345,10 @@ mod tests {
                 Expression::new(expression).unwrap(),
                 path.to_string(),
                 export_to_host,
-                export_format,
                 false,
             )
-            .unwrap(),
+            .unwrap()
+            .with_export_format(export_format),
         )
     }
 
@@ -536,7 +543,7 @@ mod tests {
         let direct = make_store_task_with_export_format(
             &ctx,
             "true",
-            "request.headers.authorization",
+            "request.headers['authorization']",
             "ocsf.actor.user.name",
             true,
             Some(crate::configuration::ExportFormat::ProtobufValue),
@@ -548,8 +555,8 @@ mod tests {
                 "wasm.kuadrant.ocsf.actor.user.name",
             ]))
             .expect("an explicitly configured OCSF export is written");
-        let exported = prost_types::Value::decode(bytes.as_slice())
-            .expect("typed export is a protobuf Value");
+        let exported =
+            prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
         assert!(matches!(
             &exported.kind,
             Some(Kind::StringValue(value)) if value == authorization
@@ -558,7 +565,7 @@ mod tests {
         let stored_secret = make_store_task_with_export(
             &ctx,
             "true",
-            "request.headers.authorization",
+            "request.headers['authorization']",
             "authorizationToken",
             false,
         );
@@ -579,8 +586,8 @@ mod tests {
                 "wasm.kuadrant.ocsf.actor.user.uid",
             ]))
             .expect("an explicitly configured derived OCSF export is written");
-        let exported = prost_types::Value::decode(bytes.as_slice())
-            .expect("typed export is a protobuf Value");
+        let exported =
+            prost_types::Value::decode(bytes.as_slice()).expect("typed export is a protobuf Value");
         assert!(matches!(
             &exported.kind,
             Some(Kind::StringValue(value)) if value == authorization

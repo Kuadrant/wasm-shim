@@ -284,10 +284,7 @@ mod tests {
         assert_eq!(decoded.name, "kuadrant.custom.audit.metadata");
         assert!(!decoded.readonly);
         assert_eq!(decoded.property_type, 3);
-        assert_eq!(
-            decoded.schema,
-            PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec()
-        );
+        assert_eq!(decoded.schema, PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec());
         assert_eq!(decoded.life_span, 1);
     }
 }
