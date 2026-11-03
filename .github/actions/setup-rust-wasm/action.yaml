@@ -14,13 +14,13 @@ runs:
   using: "composite"
   steps:
     - name: Set up Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # ratchet:dtolnay/rust-toolchain@stable
       with:
         targets: wasm32-wasip1
         components: ${{ inputs.rust-components }}
 
     - name: Set up Rust cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # ratchet:Swatinem/rust-cache@v2
 
     - name: Set up protoc
       shell: bash
