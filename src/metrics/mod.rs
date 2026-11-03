@@ -7,6 +7,7 @@ const MISSES: &str = "kuadrant.misses";
 const ALLOW: &str = "kuadrant.allowed";
 const DENIED: &str = "kuadrant.denied";
 const ERRORS: &str = "kuadrant.errors";
+const RESPONSE_REPORTS_SKIPPED: &str = "kuadrant.response_reports_skipped";
 
 const NOOP: Counter = Counter(None);
 
@@ -44,13 +45,25 @@ impl Metrics {
     pub fn errors(&self) -> &Counter {
         self.get_counter(ERRORS)
     }
+
+    pub fn response_reports_skipped(&self) -> &Counter {
+        self.get_counter(RESPONSE_REPORTS_SKIPPED)
+    }
 }
 
 impl Default for Metrics {
     fn default() -> Self {
         let mut counters = BTreeMap::new();
 
-        for metric in [CONFIGS, HITS, MISSES, ALLOW, DENIED, ERRORS] {
+        for metric in [
+            CONFIGS,
+            HITS,
+            MISSES,
+            ALLOW,
+            DENIED,
+            ERRORS,
+            RESPONSE_REPORTS_SKIPPED,
+        ] {
             let result = if cfg!(target_arch = "wasm32") {
                 proxy_wasm::hostcalls::define_metric(proxy_wasm::types::MetricType::Counter, metric)
             } else {
