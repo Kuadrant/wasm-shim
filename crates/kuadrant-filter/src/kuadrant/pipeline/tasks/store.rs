@@ -1269,7 +1269,7 @@ mod tests {
         // - First chunk (100 bytes) drained before StoreTask could read
         // - Second chunk (100 bytes) arrives, buffer_base = 100
         // - StoreTask created with fed = 0 (late start)
-        let _chunk1 = vec![b'{'; 100]; // First chunk (drained, never read)
+        let _chunk1 = [b'{'; 100]; // First chunk (drained, never read)
         let chunk2 = br#"{"value":42}"#.to_vec(); // Second chunk (current buffer)
 
         let mock_host = MockWasmHost::new().with_response_body(&chunk2);
