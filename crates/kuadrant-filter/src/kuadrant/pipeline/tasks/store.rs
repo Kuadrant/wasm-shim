@@ -178,7 +178,7 @@ impl Task for StoreTask {
             let read_offset = fed_clamped - body_ctx.buffer_base();
             let delta = body_ctx.buffer_size().saturating_sub(read_offset);
 
-            if delta == 0 && !body_ctx.is_end_of_stream() {
+            if delta == 0 && !body_ctx.is_end_of_stream() && !parser.remaining_fields().is_empty() {
                 return TaskOutcome::Requeued(vec![self]);
             }
 
