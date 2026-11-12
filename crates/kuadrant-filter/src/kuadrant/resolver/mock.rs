@@ -10,7 +10,7 @@ pub struct MockWasmHost {
     properties: Mutex<HashMap<Path, Vec<u8>>>,
     maps: Mutex<HashMap<String, Vec<(String, String)>>>,
     grpc_response: Mutex<Option<Vec<u8>>>,
-    pending_properties: Vec<Path>,
+    pending_properties: Mutex<Vec<Path>>,
     request_body: Option<Vec<u8>>,
     response_body: Option<Vec<u8>>,
 }
@@ -27,7 +27,7 @@ impl MockWasmHost {
             properties: Mutex::new(HashMap::new()),
             maps: Mutex::new(HashMap::new()),
             grpc_response: Mutex::new(None),
-            pending_properties: Vec::new(),
+            pending_properties: Mutex::new(Vec::new()),
             request_body: None,
             response_body: None,
         }
@@ -49,9 +49,25 @@ impl MockWasmHost {
         self
     }
 
-    pub fn with_pending_property(mut self, path: Path) -> Self {
-        self.pending_properties.push(path);
+    pub fn with_pending_property(self, path: Path) -> Self {
+        self.pending_properties
+            .lock()
+            .expect("pending_properties mutex poisoned")
+            .push(path);
         self
+    }
+
+    // Transition a previously-pending property into an available one, as happens
+    // when a deferred dependency (e.g. a gRPC result) is published mid-request.
+    pub fn publish_property(&self, path: Path, value: Vec<u8>) {
+        self.pending_properties
+            .lock()
+            .expect("pending_properties mutex poisoned")
+            .retain(|p| p != &path);
+        self.properties
+            .lock()
+            .expect("properties mutex poisoned")
+            .insert(path, value);
     }
 
     pub fn with_request_body(mut self, bytes: &[u8]) -> Self {
@@ -83,7 +99,12 @@ impl MockWasmHost {
 
 impl AttributeResolver for MockWasmHost {
     fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
-        if self.pending_properties.contains(path) {
+        if self
+            .pending_properties
+            .lock()
+            .expect("pending_properties mutex poisoned")
+            .contains(path)
+        {
             return Err(AttributeError::NotAvailable(format!(
                 "Property {} is pending",
                 path
