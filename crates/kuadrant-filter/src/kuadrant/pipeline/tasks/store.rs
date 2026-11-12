@@ -1290,4 +1290,39 @@ mod tests {
         // Verify the parser's internal fed counter would be correct for subsequent reads
         // (we can't directly inspect it, but TaskOutcome::Done proves it worked)
     }
+
+    // Regression test for the `!parser.remaining_fields().is_empty()` guard on the
+    // `delta == 0` requeue: once the body parser has resolved every field from a
+    // non-EOS buffer, the task must finish as soon as a *second* (non-body)
+    // dependency is published, without waiting for another body callback.
+    #[test]
+    fn completed_parser_finishes_when_dependency_published_without_new_body() {
+        let body = br#"{"value":42}"#;
+        let mock_host = Arc::new(
+            MockWasmHost::new()
+                .with_response_body(body)
+                .with_pending_property("destination.port".into()),
+        );
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+
+        // Non-EOS buffer already holding the whole field.
+        ctx.response_body.set_buffer_size(body.len(), false, false);
+        let task = make_store_task(
+            &ctx,
+            "true",
+            "responseBodyJSON('/value') + destination.port",
+            "out",
+        );
+
+        // Parser resolves `/value`, but the second dependency is still pending.
+        let task = expect_requeue(task.apply(&mut ctx));
+
+        // Publish the second dependency WITHOUT a new body callback (delta == 0).
+        mock_host.publish_property("destination.port".into(), 80_i64.to_le_bytes().to_vec());
+
+        // Re-apply against the same buffer: the completed parser lets the expression
+        // re-evaluate and finish immediately.
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(ctx.values.get("out"), Some(&cel::Value::Int(122)));
+    }
 }
