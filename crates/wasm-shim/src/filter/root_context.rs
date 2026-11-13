@@ -1,7 +1,9 @@
 use super::kuadrant_filter::KuadrantFilter;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
 use const_format::formatcp;
-use kuadrant_filter::configuration::{ExportFormat, PluginConfiguration};
+use kuadrant_filter::configuration::{
+    encoding::decode_configuration, ExportFormat, PluginConfiguration,
+};
 use kuadrant_filter::filter::DescriptorManager;
 use kuadrant_filter::kuadrant::PipelineFactory;
 use kuadrant_filter::metrics::METRICS;
@@ -188,7 +190,18 @@ impl RootContext for FilterRoot {
                 return false;
             }
         };
-        match serde_json::from_slice::<PluginConfiguration>(&configuration) {
+        let decoded = match decode_configuration(&configuration) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                log::error!("failed to load plugin config: {error}");
+                return false;
+            }
+        };
+        let config = serde_json::from_slice::<PluginConfiguration>(&decoded);
+        // Free config buffers before compilation
+        drop(decoded);
+        drop(configuration);
+        match config {
             Ok(config) => {
                 let use_tracing_exporter = config.observability.tracing.is_some();
                 kuadrant_filter::tracing::init_observability(
@@ -197,7 +210,8 @@ impl RootContext for FilterRoot {
                     crate::wasm_host::current_log_filter(),
                 );
 
-                info!("plugin config parsed: {:?}", config);
+                info!("plugin config parsed");
+                debug!("plugin config: {config:?}");
                 self.process_config(config)
             }
             Err(e) => {
