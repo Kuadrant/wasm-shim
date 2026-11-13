@@ -8,6 +8,12 @@ pub(crate) const WASM_SHIM_PROFILE: &str = env!("WASM_SHIM_PROFILE");
 pub(crate) const WASM_SHIM_FEATURES: &str = env!("WASM_SHIM_FEATURES");
 pub(crate) const WASM_SHIM_GIT_HASH: &str = env!("WASM_SHIM_GIT_HASH");
 
+// WASI reactors initialize through constructors
+#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
+#[used]
+#[link_section = ".init_array"]
+static INITIALIZE: extern "C" fn() = start;
+
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "wasi"),
     export_name = "_start"
@@ -15,6 +21,12 @@ pub(crate) const WASM_SHIM_GIT_HASH: &str = env!("WASM_SHIM_GIT_HASH");
 #[cfg_attr(not(all(target_arch = "wasm32", target_os = "wasi")), allow(dead_code))]
 // This is a C interface, so make it explicit in the fn signature (and avoid mangling)
 extern "C" fn start() {
+    // Older toolchains also enter through _start
+    static INITIALIZATION: std::sync::Once = std::sync::Once::new();
+    INITIALIZATION.call_once(initialize);
+}
+
+fn initialize() {
     use filter::FilterRoot;
     use log::info;
     use proxy_wasm::traits::RootContext;
