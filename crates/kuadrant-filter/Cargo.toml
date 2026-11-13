@@ -7,7 +7,6 @@ description = "Wasm module connecting envoy and authorino/limitador"
 license = "Apache-2.0"
 keywords = ["rate-limiting", "rate", "limiter", "envoy", "rls"]
 categories = ["web-programming"]
-homepage = "https://kuadrant.io"
 repository = "https://github.com/Kuadrant/wasm-shim"
 documentation = "https://kuadrant.io"
 readme = "README.md"
@@ -24,7 +23,6 @@ prost = "0.14"
 prost-types = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
 radix_trie = "0.2.1"
-const_format = "0.2.31"
 chrono = { version = "0.4.38", default-features = false, features = ["alloc", "std"] }
 cel = {git = "https://github.com/cel-rust/cel-rust.git", features = ["structs"], rev = "d23d0a7" }
 urlencoding = "2.1.3"
