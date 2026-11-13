@@ -8,6 +8,8 @@ use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
+pub mod encoding;
+
 fn default_is_guard() -> bool {
     true
 }
@@ -144,6 +146,7 @@ pub struct Tracing {
     pub service: String,
 }
 
+/// Top-level `encoding` and `data` are reserved for the transport envelope.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {

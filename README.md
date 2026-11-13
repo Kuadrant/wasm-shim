@@ -68,6 +68,12 @@ actionSets:
 
 Top level fields:
 
+The transport reserves top-level `encoding` and `data` for compressed envelopes:
+`{"encoding":"gzip+base64","data":"..."}`. Both fields must be present and valid;
+`null` is not omission. Unknown envelope metadata is ignored; only the decoded
+payload supplies the configuration. Metadata requiring reader support needs a new encoding.
+Decoded payloads are limited to 32 MiB.
+
 | Field               | Required | Description                                                                                                        |
 |---------------------|----------|----------------------------------------------------------------------------------------------------------------------|
 | `services`          | yes      | Map of service name to service configuration, see [Services](#services)                                             |
