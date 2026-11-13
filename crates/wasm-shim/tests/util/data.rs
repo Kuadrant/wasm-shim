@@ -233,3 +233,64 @@ pub mod descriptor_response {
         0x54, 0x65, 0x73, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
     ];
 }
+
+pub mod compressed_config {
+    pub const HEADERS: &[u8] = br#"{
+  "services": {},
+  "actionSets": [{
+    "name": "compressed-headers",
+    "routeRuleConditions": {"hostnames": ["example.com"]},
+    "actions": [{
+      "type": "headers",
+      "predicate": "true",
+      "terminal": false,
+      "target": "request",
+      "headers": "[['x-config', 'decoded']]"
+    }]
+  }]
+}
+"#;
+
+    // Go gzip.BestCompression and base64.StdEncoding
+    pub const GO_HEADERS: &[u8] = br#"{"data":"H4sIAAAAAAAC/1SNMW7DMAxFd5+C4OLF6QG89gbtaHgQpJ9EgCW5JF2kCHz3QnILtwsH/v/fe3ZErJDP6KE80nMf6sd5iyW/w+pvqiUizi6BR2Jf0ipQRbjc4QJEeTgaUjbD27bgteQQK6Ix+V7U6rrRGA+X1gUvviSe95/pYfyjI2L7Wpvwv4WIV0GI3llLTTackUFSzG7hka5uUZyBkxusDgQfG9TOzS9/JJ6m/nHxJV/jrR+oD/AlIPTzzK28z107e/c9AHJk4oQ5AQAA","encoding":"gzip+base64"}
+"#;
+
+    pub const GRPC: &[u8] = br#"{
+    "descriptorService": "descriptor-service-cluster",
+    "services": {
+        "my-service": {
+            "type": "dynamic",
+            "endpoint": "limitador-cluster",
+            "failureMode": "deny",
+            "timeout": "5s",
+            "grpcService": "test.TestService",
+            "grpcMethod": "TestMethod"
+        }
+    },
+    "actionSets": [{
+        "name": "deny-test",
+        "routeRuleConditions": {
+            "hostnames": ["*.toystore.com"]
+        },
+        "actions": [{
+            "type": "grpc",
+            "var": "my_check",
+            "service": "my-service",
+            "predicate": "true",
+            "terminal": false,
+            "messageBuilder": "test.TestRequest{message: 'hello'}",
+            "onReply": [{
+                "type": "deny",
+                "predicate": "my_check.result == 'denied'",
+                "denyWith": "DenyResponse{status: 429u, body: 'Too Many Requests', headers: [['x-ratelimit-reason', my_check.result]]}",
+                "terminal": true
+            }, {
+                "type": "fail",
+                "predicate": "my_check.result != 'allowed' && my_check.result != 'denied'",
+                "terminal": true,
+                "logMessage": "Invalid result from service"
+            }]
+        }]
+    }]
+}"#;
+}

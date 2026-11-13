@@ -2303,7 +2303,9 @@ dependencies = [
 name = "wasm-shim"
 version = "0.16.0-dev"
 dependencies = [
+ "base64",
  "const_format",
+ "flate2",
  "kuadrant-filter",
  "log",
  "opentelemetry",
