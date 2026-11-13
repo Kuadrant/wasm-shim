@@ -1,19 +1,24 @@
 use std::borrow::Cow;
 use std::io::{self, Read};
+use std::num::NonZeroU32;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use flate2::bufread::GzDecoder;
 use serde::{Deserialize, Deserializer};
 
-pub const MAX_DECODED_BYTES: usize = 32 * 1024 * 1024;
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = 32 * 1024 * 1024;
 
 /// Returns plain JSON or decompresses a `gzip+base64` envelope
 ///
 /// # Errors
 /// Fails on invalid input, oversized output, or allocation failure
 pub fn decode_configuration(input: &[u8]) -> io::Result<Cow<'_, [u8]>> {
-    let Some(data) = parse_envelope(input)? else {
+    let Some(Envelope {
+        data,
+        max_decompressed_bytes,
+    }) = parse_envelope(input)?
+    else {
         return Ok(Cow::Borrowed(input));
     };
     let compressed = STANDARD.decode(data.as_bytes()).map_err(invalid_data)?;
@@ -27,9 +32,9 @@ pub fn decode_configuration(input: &[u8]) -> io::Result<Cow<'_, [u8]>> {
         if count == 0 {
             break;
         }
-        if count > MAX_DECODED_BYTES - output.len() {
+        if count > max_decompressed_bytes - output.len() {
             return Err(invalid_data(format!(
-                "decoded configuration exceeds {MAX_DECODED_BYTES} bytes"
+                "decompressed configuration exceeds {max_decompressed_bytes} bytes; set a larger maxDecompressedBytes to raise the limit"
             )));
         }
         output
@@ -58,6 +63,28 @@ struct MaybeEnvelope<'a> {
     encoding: Field<Encoding>,
     #[serde(default, borrow)]
     data: Field<Payload<'a>>,
+    #[serde(default, rename = "maxDecompressedBytes")]
+    max_decompressed_bytes: Field<MaxDecompressedBytes>,
+}
+
+struct Envelope<'a> {
+    data: Cow<'a, str>,
+    max_decompressed_bytes: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(try_from = "u32")]
+struct MaxDecompressedBytes(NonZeroU32);
+
+impl TryFrom<u32> for MaxDecompressedBytes {
+    type Error = &'static str;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        NonZeroU32::new(value)
+            .filter(|value| value.get() <= i32::MAX as u32)
+            .map(Self)
+            .ok_or("maxDecompressedBytes must be between 1 and 2147483647")
+    }
 }
 
 #[derive(Deserialize)]
@@ -83,7 +110,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Field<T> {
     }
 }
 
-fn parse_envelope(input: &[u8]) -> io::Result<Option<Cow<'_, str>>> {
+fn parse_envelope(input: &[u8]) -> io::Result<Option<Envelope<'_>>> {
     // Serde structs also accept sequences
     if input.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
         return Err(invalid_data("configuration must be a JSON object"));
@@ -93,11 +120,22 @@ fn parse_envelope(input: &[u8]) -> io::Result<Option<Cow<'_, str>>> {
         MaybeEnvelope {
             encoding: Field::Missing,
             data: Field::Missing,
+            max_decompressed_bytes: Field::Missing,
         } => Ok(None),
         MaybeEnvelope {
             encoding: Field::Present(Encoding::GzipBase64),
             data: Field::Present(Payload(data)),
-        } => Ok(Some(data)),
+            max_decompressed_bytes,
+        } => {
+            let max_decompressed_bytes = match max_decompressed_bytes {
+                Field::Missing => DEFAULT_MAX_DECOMPRESSED_BYTES,
+                Field::Present(limit) => usize::try_from(limit.0.get()).map_err(invalid_data)?,
+            };
+            Ok(Some(Envelope {
+                data,
+                max_decompressed_bytes,
+            }))
+        }
         _ => Err(invalid_data("envelope requires both encoding and data")),
     }
 }
@@ -130,10 +168,101 @@ mod tests {
             .into_bytes()
     }
 
+    fn envelope_with_limit(compressed: &[u8], limit: usize) -> Vec<u8> {
+        serde_json::json!({
+            "encoding": "gzip+base64",
+            "data": STANDARD.encode(compressed),
+            "maxDecompressedBytes": limit
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    #[test]
+    fn defaults_to_32_mib_when_limit_is_omitted() -> TestResult {
+        let input = envelope(&gzip(b"{}")?);
+        let parsed = parse_envelope(&input)?.ok_or("expected envelope")?;
+        assert_eq!(parsed.max_decompressed_bytes, 33_554_432);
+        Ok(())
+    }
+
+    #[test]
+    fn enforces_smaller_limits_at_the_exact_boundary() -> TestResult {
+        for (input, accepted) in [(b"{}".as_slice(), true), (b"{} ", false)] {
+            let encoded = envelope_with_limit(&gzip(input)?, 2);
+            let result = decode_configuration(&encoded);
+            if accepted {
+                assert_eq!(result?.as_ref(), input);
+            } else {
+                assert!(
+                    matches!(result, Err(error) if error.to_string() == "decompressed configuration exceeds 2 bytes; set a larger maxDecompressedBytes to raise the limit")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_output_above_default_with_an_override() -> TestResult {
+        let mut input = vec![b' '; DEFAULT_MAX_DECOMPRESSED_BYTES + 1];
+        input[..2].copy_from_slice(b"{}");
+        let compressed = gzip(&input)?;
+        let encoded = envelope_with_limit(&compressed, input.len());
+        assert!(decode_configuration(&encoded)?.as_ref() == input);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_limits() -> TestResult {
+        let compressed = STANDARD.encode(gzip(b"{}")?);
+        for limit in [
+            "null",
+            "0",
+            "-1",
+            "1.5",
+            "2.0",
+            "1e3",
+            "\"64Mi\"",
+            "2147483648",
+            "4294967296",
+        ] {
+            let input = format!(
+                r#"{{"encoding":"gzip+base64","data":"{compressed}","maxDecompressedBytes":{limit}}}"#
+            );
+            assert!(
+                matches!(decode_configuration(input.as_bytes()), Err(error) if error.kind() == io::ErrorKind::InvalidData),
+                "accepted {limit}"
+            );
+        }
+        let duplicate = format!(
+            r#"{{"encoding":"gzip+base64","data":"{compressed}","maxDecompressedBytes":2,"maxDecompressedBytes":3}}"#
+        );
+        assert!(decode_configuration(duplicate.as_bytes()).is_err());
+        assert!(decode_configuration(br#"{"maxDecompressedBytes":2}"#).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_the_largest_supported_limit_without_preallocating_it() -> TestResult {
+        let encoded = envelope_with_limit(&gzip(b"{}")?, 2_147_483_647);
+        assert_eq!(decode_configuration(&encoded)?.as_ref(), b"{}");
+        Ok(())
+    }
+
+    #[test]
+    fn validates_the_gzip_trailer_at_an_overridden_limit() -> TestResult {
+        let mut compressed = gzip(b"{}")?;
+        let offset = compressed.len() - 8;
+        compressed[offset] ^= 1;
+        let encoded = envelope_with_limit(&compressed, 2);
+        assert!(decode_configuration(&encoded).is_err());
+        Ok(())
+    }
+
     #[test]
     fn borrows_unescaped_payload_from_the_input() -> TestResult {
         let input = br#"{"encoding":"gzip+base64","data":"e30="}"#;
-        let data = parse_envelope(input)?.ok_or("expected envelope")?;
+        let Envelope { data, .. } = parse_envelope(input)?.ok_or("expected envelope")?;
         assert!(matches!(data, Cow::Borrowed(_)));
         assert_eq!(data, "e30=");
         let offset = input
@@ -147,7 +276,7 @@ mod tests {
     #[test]
     fn owns_unescaped_result_of_an_escaped_payload() -> TestResult {
         let input = br#"{"encoding":"gzip+base64","data":"\u006530="}"#;
-        let data = parse_envelope(input)?.ok_or("expected envelope")?;
+        let Envelope { data, .. } = parse_envelope(input)?.ok_or("expected envelope")?;
         assert!(matches!(data, Cow::Owned(_)));
         assert_eq!(data, "e30=");
         Ok(())
@@ -352,14 +481,17 @@ mod tests {
 
     #[test]
     fn decoded_limit_is_inclusive_and_plain_input_is_not_capped() -> TestResult {
-        for length in [MAX_DECODED_BYTES, MAX_DECODED_BYTES + 1] {
+        for length in [
+            DEFAULT_MAX_DECOMPRESSED_BYTES,
+            DEFAULT_MAX_DECOMPRESSED_BYTES + 1,
+        ] {
             let mut input = vec![b' '; length];
             input[..2].copy_from_slice(b"{}");
             assert!(matches!(decode_configuration(&input)?, Cow::Borrowed(_)));
             let encoded = envelope(&gzip(&input)?);
             assert!(encoded.len() < 100_000);
             let result = decode_configuration(&encoded);
-            if length == MAX_DECODED_BYTES {
+            if length == DEFAULT_MAX_DECOMPRESSED_BYTES {
                 assert!(result?.as_ref() == input);
             } else {
                 assert!(matches!(result, Err(error) if error.to_string().contains("exceeds")));
@@ -370,7 +502,7 @@ mod tests {
 
     #[test]
     fn corrupt_trailer_at_exact_output_limit_is_still_validated() -> TestResult {
-        let mut input = vec![b' '; MAX_DECODED_BYTES];
+        let mut input = vec![b' '; DEFAULT_MAX_DECOMPRESSED_BYTES];
         input[..2].copy_from_slice(b"{}");
         let mut compressed = gzip(&input)?;
         let offset = compressed.len() - 8;

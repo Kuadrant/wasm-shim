@@ -146,7 +146,7 @@ pub struct Tracing {
     pub service: String,
 }
 
-/// Top-level `encoding` and `data` are reserved for the transport envelope.
+/// Top-level `encoding`, `data`, and `maxDecompressedBytes` are reserved for the transport envelope
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {

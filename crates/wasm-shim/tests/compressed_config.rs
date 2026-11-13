@@ -5,7 +5,9 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use kuadrant_filter::configuration::encoding::{decode_configuration, MAX_DECODED_BYTES};
+use kuadrant_filter::configuration::encoding::{
+    decode_configuration, DEFAULT_MAX_DECOMPRESSED_BYTES,
+};
 use proxy_wasm_test_framework::tester::{self, Tester};
 use proxy_wasm_test_framework::types::{
     Action, BufferType, LogLevel, MapType, MetricType, ReturnType,
@@ -30,6 +32,12 @@ fn envelope(compressed: &[u8]) -> Vec<u8> {
     serde_json::json!({"encoding":"gzip+base64", "data":STANDARD.encode(compressed)})
         .to_string()
         .into_bytes()
+}
+
+fn with_limit(config: &[u8], limit: usize) -> TestResult<Vec<u8>> {
+    let mut config: serde_json::Value = serde_json::from_slice(config)?;
+    config["maxDecompressedBytes"] = serde_json::json!(limit);
+    Ok(serde_json::to_vec(&config)?)
 }
 
 fn module() -> TestResult<Tester> {
@@ -186,6 +194,7 @@ fn rejects_invalid_compressed_configuration() -> TestResult {
         br#"{"encoding":"gzip+base64","data":"invalid base64"}"#.to_vec(),
         envelope(&corrupt),
         envelope(&gzip(br#"{"encoding":"gzip+base64","data":""}"#)?),
+        with_limit(GO_HEADERS, 0)?,
     ] {
         let error = decode_configuration(&config)
             .err()
@@ -217,18 +226,13 @@ fn rejects_plain_json_syntax_errors_without_compression_diagnostics() -> TestRes
 }
 
 #[test]
-#[ignore = "checks 32 MiB decompression in the WASM runtime"]
 #[serial]
-fn accepts_the_decoded_limit_and_rejects_one_byte_above() -> TestResult {
-    for length in [MAX_DECODED_BYTES, MAX_DECODED_BYTES + 1] {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(HEADERS)?;
-        let mut padding = std::io::repeat(b' ').take((length - HEADERS.len()) as u64);
-        std::io::copy(&mut padding, &mut encoder)?;
-        let config = envelope(&encoder.finish()?);
+fn enforces_a_smaller_override_at_the_boundary() -> TestResult {
+    for limit in [HEADERS.len(), HEADERS.len() - 1] {
+        let config = with_limit(GO_HEADERS, limit)?;
         let mut module = module()?;
         configure(&mut module, &config);
-        if length == MAX_DECODED_BYTES {
+        if limit == HEADERS.len() {
             module
                 .expect_get_log_level()
                 .returning(Some(LOG_LEVEL))
@@ -236,7 +240,49 @@ fn accepts_the_decoded_limit_and_rejects_one_byte_above() -> TestResult {
             assert_header_change(&mut module, 2)?;
         } else {
             let message = format!(
-                "failed to load plugin config: decoded configuration exceeds {MAX_DECODED_BYTES} bytes"
+                "failed to load plugin config: decompressed configuration exceeds {limit} bytes; set a larger maxDecompressedBytes to raise the limit"
+            );
+            module
+                .expect_log(Some(LogLevel::Error), Some(&message))
+                .execute_and_expect(ReturnType::Bool(false))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "checks 32 MiB decompression in the WASM runtime"]
+#[serial]
+fn honors_default_and_overridden_decoded_limits() -> TestResult {
+    for (length, limit, accepted) in [
+        (DEFAULT_MAX_DECOMPRESSED_BYTES, None, true),
+        (DEFAULT_MAX_DECOMPRESSED_BYTES + 1, None, false),
+        (
+            DEFAULT_MAX_DECOMPRESSED_BYTES + 1,
+            Some(64 * 1024 * 1024),
+            true,
+        ),
+    ] {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(HEADERS)?;
+        let mut padding = std::io::repeat(b' ').take((length - HEADERS.len()) as u64);
+        std::io::copy(&mut padding, &mut encoder)?;
+        let config = envelope(&encoder.finish()?);
+        let config = match limit {
+            Some(limit) => with_limit(&config, limit)?,
+            None => config,
+        };
+        let mut module = module()?;
+        configure(&mut module, &config);
+        if accepted {
+            module
+                .expect_get_log_level()
+                .returning(Some(LOG_LEVEL))
+                .execute_and_expect(ReturnType::Bool(true))?;
+            assert_header_change(&mut module, 2)?;
+        } else {
+            let message = format!(
+                "failed to load plugin config: decompressed configuration exceeds {DEFAULT_MAX_DECOMPRESSED_BYTES} bytes; set a larger maxDecompressedBytes to raise the limit"
             );
             module
                 .expect_log(Some(LogLevel::Error), Some(&message))
