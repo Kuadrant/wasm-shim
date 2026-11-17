@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Duration, FixedOffset};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -145,6 +145,18 @@ impl AttributeValue for DateTime<FixedOffset> {
             }
             Err(_) => Err(AttributeError::Parse(format!(
                 "parse: Timestamp expected to be 8 bytes, but got {ra_len}",
+            ))),
+        }
+    }
+}
+
+impl AttributeValue for Duration {
+    fn parse(raw_attribute: Vec<u8>) -> Result<Self, AttributeError> {
+        let ra_len = raw_attribute.len();
+        match <[u8; 8]>::try_from(raw_attribute) {
+            Ok(bytes) => Ok(Duration::nanoseconds(i64::from_le_bytes(bytes))),
+            Err(_) => Err(AttributeError::Parse(format!(
+                "parse: Duration value expected to be 8 bytes, but got {ra_len}",
             ))),
         }
     }

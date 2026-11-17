@@ -26,7 +26,7 @@ impl ExportedPropertyRegistry {
     fn configure(
         &mut self,
         current: &BTreeMap<String, Option<ExportFormat>>,
-        mut declare: impl FnMut(&str) -> Result<(), String>,
+        mut declare: impl FnMut(&str, ExportFormat) -> Result<(), String>,
     ) -> Result<(), String> {
         for (path, format) in current {
             if let Some(previous_format) = self.formats_by_path.get(path) {
@@ -39,11 +39,11 @@ impl ExportedPropertyRegistry {
         }
 
         for (path, format) in current {
-            if *format == Some(ExportFormat::ProtobufValue)
-                && !self.formats_by_path.contains_key(path)
-            {
-                declare(path)?;
-                self.formats_by_path.insert(path.clone(), *format);
+            if let Some(format) = format {
+                if !self.formats_by_path.contains_key(path) {
+                    declare(path, *format)?;
+                    self.formats_by_path.insert(path.clone(), Some(*format));
+                }
             }
         }
 
@@ -99,7 +99,7 @@ impl FilterRoot {
 
         if let Err(err) = self.exported_properties.configure(
             factory.exported_property_formats(),
-            crate::wasm_host::declare_protobuf_value_property,
+            crate::wasm_host::declare_exported_property,
         ) {
             error!("invalid host export configuration: {err}");
             return false;
@@ -366,35 +366,58 @@ mod tests {
     #[test]
     fn exported_property_registry_pins_formats_and_declares_typed_paths_once() {
         let path = "ocsf.marker".to_string();
-        let typed = BTreeMap::from([(path.clone(), Some(ExportFormat::ProtobufValue))]);
+        let protobuf = BTreeMap::from([(path.clone(), Some(ExportFormat::ProtobufValue))]);
+        let json = BTreeMap::from([(path.clone(), Some(ExportFormat::Json))]);
         let legacy = BTreeMap::from([(path.clone(), None)]);
         let empty = BTreeMap::new();
         let mut registry = ExportedPropertyRegistry::default();
         let mut declarations = Vec::new();
 
         registry
-            .configure(&typed, |property| {
-                declarations.push(property.to_string());
+            .configure(&protobuf, |property, format| {
+                declarations.push((property.to_string(), format));
                 Ok(())
             })
-            .expect("first typed declaration succeeds");
+            .expect("first protobuf declaration succeeds");
         registry
-            .configure(&typed, |property| {
-                declarations.push(property.to_string());
+            .configure(&protobuf, |property, format| {
+                declarations.push((property.to_string(), format));
                 Ok(())
             })
-            .expect("same typed format can be reused");
+            .expect("same protobuf format can be reused");
         registry
-            .configure(&empty, |_| Ok(()))
+            .configure(&empty, |_, _| Ok(()))
             .expect("removed action does not remove Envoy's declaration");
 
-        assert_eq!(declarations, vec![path.clone()]);
-        assert!(registry.configure(&legacy, |_| Ok(())).is_err());
+        assert_eq!(
+            declarations,
+            vec![(path.clone(), ExportFormat::ProtobufValue)]
+        );
+        assert!(registry.configure(&legacy, |_, _| Ok(())).is_err());
+        assert!(registry.configure(&json, |_, _| Ok(())).is_err());
+
+        let mut json_registry = ExportedPropertyRegistry::default();
+        let mut json_declarations = Vec::new();
+        json_registry
+            .configure(&json, |property, format| {
+                json_declarations.push((property.to_string(), format));
+                Ok(())
+            })
+            .expect("first JSON string declaration succeeds");
+        json_registry
+            .configure(&json, |property, format| {
+                json_declarations.push((property.to_string(), format));
+                Ok(())
+            })
+            .expect("same JSON format can be reused without another declaration");
+        assert_eq!(json_declarations, vec![(path.clone(), ExportFormat::Json)]);
+        assert!(json_registry.configure(&protobuf, |_, _| Ok(())).is_err());
+        assert!(json_registry.configure(&legacy, |_, _| Ok(())).is_err());
 
         let mut legacy_registry = ExportedPropertyRegistry::default();
         legacy_registry
-            .configure(&legacy, |_| Ok(()))
+            .configure(&legacy, |_, _| Ok(()))
             .expect("first legacy format succeeds");
-        assert!(legacy_registry.configure(&typed, |_| Ok(())).is_err());
+        assert!(legacy_registry.configure(&protobuf, |_, _| Ok(())).is_err());
     }
 }

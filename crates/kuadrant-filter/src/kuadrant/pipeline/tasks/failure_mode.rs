@@ -57,4 +57,8 @@ impl Task for FailureModeTask {
     fn dependencies(&self) -> &[String] {
         self.task.dependencies()
     }
+
+    fn runs_at_access_log(&self) -> bool {
+        self.task.runs_at_access_log()
+    }
 }

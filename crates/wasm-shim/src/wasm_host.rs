@@ -65,6 +65,44 @@ pub fn declare_protobuf_value_property(property_path: &str) -> Result<(), String
         })
 }
 
+fn json_string_property_declaration(property_path: &str) -> DeclarePropertyArguments {
+    DeclarePropertyArguments {
+        name: format!("kuadrant.{property_path}"),
+        readonly: false,
+        property_type: 1, // envoy.source.extensions.common.wasm.WasmType.String
+        schema: Vec::new(),
+        life_span: 1, // envoy.source.extensions.common.wasm.LifeSpan.DownstreamRequest
+    }
+}
+
+/// Declares an exported UTF-8 JSON string property to Envoy.
+pub fn declare_json_string_property(property_path: &str) -> Result<(), String> {
+    let arguments = json_string_property_declaration(property_path);
+    let encoded_arguments = arguments.encode_to_vec();
+    hostcalls::call_foreign_function("declare_property", Some(&encoded_arguments))
+        .map(|_| ())
+        .map_err(|err| {
+            format!(
+                "failed to declare Envoy JSON string state for `{}`: {:?}",
+                arguments.name, err
+            )
+        })
+}
+
+pub fn declare_exported_property(
+    property_path: &str,
+    format: kuadrant_filter::configuration::ExportFormat,
+) -> Result<(), String> {
+    match format {
+        kuadrant_filter::configuration::ExportFormat::Json => {
+            declare_json_string_property(property_path)
+        }
+        kuadrant_filter::configuration::ExportFormat::ProtobufValue => {
+            declare_protobuf_value_property(property_path)
+        }
+    }
+}
+
 pub struct WasmMetricsBackend;
 
 impl MetricsBackend for WasmMetricsBackend {
@@ -87,7 +125,8 @@ fn to_proxy_map_type(map_type: MapType) -> proxy_wasm::types::MapType {
 impl AttributeResolver for ProxyWasmHost {
     fn get_attribute(&self, path: &Path) -> Result<Option<Vec<u8>>, AttributeError> {
         debug!("Getting property: `{}`", path);
-        match hostcalls::get_property(path.tokens()) {
+        let result = hostcalls::get_property(path.tokens());
+        match result {
             Ok(data) => Ok(data),
             Err(proxy_wasm::types::Status::BadArgument) => Err(AttributeError::NotAvailable(
                 format!("Property `{path}` not available in current request phase"),
@@ -285,6 +324,19 @@ mod tests {
         assert!(!decoded.readonly);
         assert_eq!(decoded.property_type, 3);
         assert_eq!(decoded.schema, PROTOBUF_VALUE_TYPE_URL.as_bytes().to_vec());
+        assert_eq!(decoded.life_span, 1);
+    }
+
+    #[test]
+    fn json_property_declaration_uses_string_and_request_lifetime() {
+        let encoded = json_string_property_declaration("custom.audit.event").encode_to_vec();
+        let decoded = DeclarePropertyArguments::decode(encoded.as_slice())
+            .expect("valid Envoy declare_property arguments");
+
+        assert_eq!(decoded.name, "kuadrant.custom.audit.event");
+        assert!(!decoded.readonly);
+        assert_eq!(decoded.property_type, 1);
+        assert!(decoded.schema.is_empty());
         assert_eq!(decoded.life_span, 1);
     }
 }

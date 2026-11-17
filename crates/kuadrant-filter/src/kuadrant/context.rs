@@ -141,6 +141,11 @@ impl ReqRespCtx {
             .get_or_insert_with(path, || self.fetch_attribute(path))
     }
 
+    /// Refreshes host attributes before evaluating access-log-phase expressions.
+    pub fn invalidate_attribute_cache(&mut self) {
+        self.cache = Arc::new(AttributeCache::new());
+    }
+
     fn fetch_attribute(&self, path: &Path) -> Result<CachedValue, AttributeError> {
         match *path.tokens() {
             ["request", "headers"] => {

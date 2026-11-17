@@ -3,7 +3,7 @@ mod json_body_parser;
 pub(super) mod sse_body_parser;
 
 use body_parser::BodyParser;
-use cel::Value;
+use cel::{objects::OptionalValue, Value};
 use json_body_parser::JsonBodyParser;
 use sse_body_parser::SseBodyParser;
 use tracing::{debug, error};
@@ -34,6 +34,13 @@ enum BodyParseState {
 fn dedup_groups(groups: &mut Vec<BodyFieldGroup>) {
     groups.sort_by(|a, b| a.key.cmp(&b.key));
     groups.dedup_by(|a, b| a.key == b.key);
+}
+
+fn unwrap_optional_value(value: Value) -> Value {
+    match <&OptionalValue>::try_from(&value) {
+        Ok(optional) => optional.value().cloned().unwrap_or(Value::Null),
+        Err(_) => value,
+    }
 }
 
 pub struct StoreTask {
@@ -143,6 +150,10 @@ impl StoreTask {
 impl Task for StoreTask {
     fn id(&self) -> &str {
         &self.task_id
+    }
+
+    fn runs_at_access_log(&self) -> bool {
+        self.export_to_host && self.export_format == Some(crate::configuration::ExportFormat::Json)
     }
 
     fn apply(mut self: Box<Self>, ctx: &mut ReqRespCtx) -> TaskOutcome {
@@ -258,7 +269,7 @@ impl Task for StoreTask {
             Ok(AttributeState::Pending) => {
                 return TaskOutcome::Requeued(vec![self]);
             }
-            Ok(AttributeState::Available(val)) => val,
+            Ok(AttributeState::Available(val)) => unwrap_optional_value(val),
             Err(e) => {
                 error!(
                     "Failed to evaluate store expression for '{}': {e}",
@@ -268,19 +279,22 @@ impl Task for StoreTask {
             }
         };
 
-        let protobuf_value_export =
-            self.export_format == Some(crate::configuration::ExportFormat::ProtobufValue);
-        if self.export_to_host && protobuf_value_export && matches!(&value, Value::Null) {
+        let clear_on_null = self.export_format.is_some() && matches!(&value, Value::Null);
+        if self.export_to_host && clear_on_null {
             // The host receives an empty payload; the per-request cache treats the value as absent.
             if let Err(e) = ctx.clear_attribute(&self.path) {
                 error!("Failed to clear host attribute {}: {:?}", self.path, e);
                 return TaskOutcome::Failed;
             }
         } else if self.export_to_host {
-            let exported = if protobuf_value_export {
-                MessageConverter::cel_value_to_protobuf_value_bytes(&value)
-            } else {
-                MessageConverter::cel_value_to_bytes(&value)
+            let exported = match self.export_format {
+                Some(crate::configuration::ExportFormat::Json) => {
+                    MessageConverter::cel_value_to_json_bytes(&value)
+                }
+                Some(crate::configuration::ExportFormat::ProtobufValue) => {
+                    MessageConverter::cel_value_to_protobuf_value_bytes(&value)
+                }
+                None => MessageConverter::cel_value_to_bytes(&value),
             };
             match exported {
                 Ok(bytes) => {
@@ -707,6 +721,486 @@ mod tests {
                 .and_then(|value| value.kind.as_ref()),
             Some(prost_types::value::Kind::ListValue(_))
         ));
+    }
+
+    #[test]
+    fn json_export_preserves_utf8_strings_numbers_booleans_lists_and_maps_on_generic_path() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            r#"{'actor': {'name': 'alice'}, 'message': 'quoted " value café', 'count': 42, 'ratio': 1.5, 'enabled': true, 'groups': ['admin', {'name': 'ops'}]}"#,
+            "custom.audit.event",
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+
+        assert!(task.runs_at_access_log());
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.custom.audit.event"]);
+        let bytes = mock_host
+            .get_property(&property_path)
+            .expect("JSON export is written to a generic host property");
+        let text = std::str::from_utf8(&bytes).expect("JSON export is UTF-8");
+        assert!(text.starts_with('{'));
+        assert!(text.contains("café"));
+        let exported: serde_json::Value =
+            serde_json::from_str(text).expect("JSON export is valid JSON");
+        assert_eq!(exported["actor"]["name"], "alice");
+        assert_eq!(exported["message"], "quoted \" value café");
+        assert_eq!(exported["count"].as_i64(), Some(42));
+        assert_eq!(exported["ratio"].as_f64(), Some(1.5));
+        assert_eq!(exported["enabled"], true);
+        assert_eq!(exported["groups"][0], "admin");
+        assert_eq!(exported["groups"][1]["name"], "ops");
+    }
+
+    #[test]
+    fn json_export_evaluates_complete_event_with_typed_envoy_properties() {
+        struct EventCase {
+            name: &'static str,
+            request_time_ns: Option<i64>,
+            request_duration_ns: Option<i64>,
+            response_code: Option<i64>,
+            response_size: Option<i64>,
+            request_method: Option<&'static str>,
+            request_protocol: Option<&'static str>,
+            request_path: Option<&'static str>,
+            include_resources: bool,
+            include_ai_model: bool,
+            expected_time: i64,
+            expected_logged_time: i64,
+            expected_latency: i64,
+            expected_code: i64,
+            expected_size: i64,
+            expected_status_id: i64,
+            expected_status: &'static str,
+            expected_status_code: &'static str,
+            expected_method: &'static str,
+            expected_version: &'static str,
+            expected_path: &'static str,
+        }
+
+        let cases = [
+            EventCase {
+                name: "success",
+                request_time_ns: Some(1_700_000_000_123_456_789),
+                request_duration_ns: Some(1_234_567_890),
+                response_code: Some(200),
+                response_size: Some(987),
+                request_method: Some("POST"),
+                request_protocol: Some("HTTP/2"),
+                request_path: Some("/v1/models/demo:infer"),
+                include_resources: true,
+                include_ai_model: true,
+                expected_time: 1_700_000_000_123,
+                expected_logged_time: 1_700_000_001_357,
+                expected_latency: 1_234,
+                expected_code: 200,
+                expected_size: 987,
+                expected_status_id: 1,
+                expected_status: "Success",
+                expected_status_code: "200",
+                expected_method: "POST",
+                expected_version: "2.0",
+                expected_path: "/v1/models/demo:infer",
+            },
+            EventCase {
+                name: "denied",
+                request_time_ns: Some(1_700_000_100_999_000_000),
+                request_duration_ns: Some(50_999_999),
+                response_code: Some(403),
+                response_size: Some(128),
+                request_method: Some("GET"),
+                request_protocol: Some("HTTP/1.1"),
+                request_path: Some("/denied"),
+                include_resources: true,
+                include_ai_model: false,
+                expected_time: 1_700_000_100_999,
+                expected_logged_time: 1_700_000_101_049,
+                expected_latency: 50,
+                expected_code: 403,
+                expected_size: 128,
+                expected_status_id: 2,
+                expected_status: "Failure",
+                expected_status_code: "403",
+                expected_method: "GET",
+                expected_version: "1.1",
+                expected_path: "/denied",
+            },
+            EventCase {
+                name: "failed",
+                request_time_ns: Some(1_700_000_200_000_000_000),
+                request_duration_ns: None,
+                response_code: Some(500),
+                response_size: None,
+                request_method: None,
+                request_protocol: None,
+                request_path: None,
+                include_resources: false,
+                include_ai_model: false,
+                expected_time: 1_700_000_200_000,
+                expected_logged_time: 1_700_000_200_000,
+                expected_latency: 0,
+                expected_code: 500,
+                expected_size: 0,
+                expected_status_id: 2,
+                expected_status: "Failure",
+                expected_status_code: "500",
+                expected_method: "",
+                expected_version: "",
+                expected_path: "",
+            },
+            EventCase {
+                name: "missing optional properties",
+                request_time_ns: None,
+                request_duration_ns: None,
+                response_code: None,
+                response_size: None,
+                request_method: None,
+                request_protocol: None,
+                request_path: None,
+                include_resources: false,
+                include_ai_model: false,
+                expected_time: 0,
+                expected_logged_time: 0,
+                expected_latency: 0,
+                expected_code: 0,
+                expected_size: 0,
+                expected_status_id: 2,
+                expected_status: "Failure",
+                expected_status_code: "0",
+                expected_method: "",
+                expected_version: "",
+                expected_path: "",
+            },
+        ];
+
+        let event_expression = r#"{
+            'activity_id': 99,
+            'time': isPresent(request.time) ? timestampToEpochMillis(request.time) : 0,
+            'metadata': {
+                'logged_time': (isPresent(request.time) ? timestampToEpochMillis(request.time) : 0) +
+                    (isPresent(request.duration) ? durationToMillis(request.duration) : 0)
+            },
+            'actor': {'user': {
+                'name': 'alice',
+                'uid': 'user-7',
+                'groups': [{'name': 'operators'}],
+                'type_id': 1
+            }},
+            'api': {'operation': (isPresent(request.method) ? request.method : '') + ' ' +
+                (isPresent(request.url_path) ? request.url_path : '')},
+            'http_request': {
+                'http_method': isPresent(request.method) ? request.method : '',
+                'version': isPresent(request.protocol) ?
+                    (request.protocol == 'HTTP/1.0' ? '1.0' :
+                    request.protocol == 'HTTP/1.1' ? '1.1' :
+                    request.protocol == 'HTTP/2' ? '2.0' :
+                    request.protocol == 'HTTP/3' ? '3.0' : request.protocol) : '',
+                'url': {'path': isPresent(request.url_path) ? request.url_path : ''}
+            },
+            'http_response': {
+                'code': isPresent(response.code) ? response.code : 0,
+                'body_length': isPresent(response.size) ? response.size : 0,
+                'latency': isPresent(request.duration) ? durationToMillis(request.duration) : 0
+            },
+            'status_id': (isPresent(response.code) && response.code < 400) ? 1 : 2,
+            'status': (isPresent(response.code) && response.code < 400) ? 'Success' : 'Failure',
+            'status_code': intToString(isPresent(response.code) ? response.code : 0),
+            'resources': isPresent(ocsf.resources) ? ocsf.resources : [],
+            'ai_model': isPresent(ocsf.ai_model) ? ocsf.ai_model : {}
+        }"#;
+
+        for case in cases {
+            let authorization = "Bearer credential-that-must-not-be-exported";
+            let cookie = "session=cookie-that-must-not-be-exported";
+            let api_key = "api-key-that-must-not-be-exported";
+            let mut mock_host = MockWasmHost::new().with_map(
+                "request.headers".to_string(),
+                vec![
+                    ("authorization".to_string(), authorization.to_string()),
+                    ("cookie".to_string(), cookie.to_string()),
+                    ("x-api-key".to_string(), api_key.to_string()),
+                ],
+            );
+            if let Some(value) = case.request_time_ns {
+                mock_host = mock_host.with_property(
+                    Path::new(vec!["request", "time"]),
+                    value.to_le_bytes().to_vec(),
+                );
+            }
+            if let Some(value) = case.request_duration_ns {
+                mock_host = mock_host.with_property(
+                    Path::new(vec!["request", "duration"]),
+                    value.to_le_bytes().to_vec(),
+                );
+            }
+            if let Some(value) = case.response_code {
+                mock_host = mock_host.with_property(
+                    Path::new(vec!["response", "code"]),
+                    value.to_le_bytes().to_vec(),
+                );
+            }
+            if let Some(value) = case.response_size {
+                mock_host = mock_host.with_property(
+                    Path::new(vec!["response", "size"]),
+                    value.to_le_bytes().to_vec(),
+                );
+            }
+            for (property, value) in [
+                ("request.method", case.request_method),
+                ("request.protocol", case.request_protocol),
+                ("request.url_path", case.request_path),
+            ] {
+                if let Some(value) = value {
+                    mock_host = mock_host.with_property(property.into(), value.as_bytes().to_vec());
+                }
+            }
+
+            let mock_host = Arc::new(mock_host);
+            let mut ctx = ReqRespCtx::new(mock_host.clone());
+            if case.include_resources {
+                let resource_task = make_store_task(
+                    &ctx,
+                    "true",
+                    "[{'type_id': 8, 'name': 'inference-model'}]",
+                    "ocsf.resources",
+                );
+                assert!(matches!(resource_task.apply(&mut ctx), TaskOutcome::Done));
+            }
+            if case.include_ai_model {
+                let model_task = make_store_task(
+                    &ctx,
+                    "true",
+                    "{'name': 'demo-model', 'provider': 'local'}",
+                    "ocsf.ai_model",
+                );
+                assert!(matches!(model_task.apply(&mut ctx), TaskOutcome::Done));
+            }
+
+            let event_task = make_store_task_with_export_format(
+                &ctx,
+                "true",
+                event_expression,
+                "ocsf.event",
+                true,
+                Some(crate::configuration::ExportFormat::Json),
+            );
+            assert!(event_task.runs_at_access_log());
+            assert!(matches!(event_task.apply(&mut ctx), TaskOutcome::Done));
+
+            let maybe_bytes = mock_host
+                .get_property(&Path::new(vec!["filter_state", "wasm.kuadrant.ocsf.event"]));
+            assert!(
+                maybe_bytes.is_some(),
+                "{} event JSON was not exported",
+                case.name
+            );
+            let bytes = maybe_bytes.unwrap_or_default();
+            let text = std::str::from_utf8(&bytes).expect("event export is UTF-8 JSON");
+            let event: serde_json::Value =
+                serde_json::from_str(text).expect("complete event export is valid JSON");
+
+            assert_eq!(
+                event["time"].as_i64(),
+                Some(case.expected_time),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["metadata"]["logged_time"].as_i64(),
+                Some(case.expected_logged_time),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["http_response"]["latency"].as_i64(),
+                Some(case.expected_latency),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["http_response"]["code"].as_i64(),
+                Some(case.expected_code),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["http_response"]["body_length"].as_i64(),
+                Some(case.expected_size),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["status_id"].as_i64(),
+                Some(case.expected_status_id),
+                "{}",
+                case.name
+            );
+            assert_eq!(event["status"], case.expected_status, "{}", case.name);
+            assert_eq!(
+                event["status_code"].as_str(),
+                Some(case.expected_status_code),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["http_request"]["http_method"], case.expected_method,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["http_request"]["version"], case.expected_version,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                event["http_request"]["url"]["path"], case.expected_path,
+                "{}",
+                case.name
+            );
+            assert_eq!(event["actor"]["user"]["name"], "alice");
+            assert_eq!(event["actor"]["user"]["uid"], "user-7");
+            assert_eq!(event["actor"]["user"]["groups"][0]["name"], "operators");
+            if case.include_resources {
+                assert_eq!(event["resources"][0]["type_id"].as_i64(), Some(8));
+                assert_eq!(event["resources"][0]["name"], "inference-model");
+            } else {
+                assert_eq!(event["resources"], serde_json::json!([]));
+            }
+            if case.include_ai_model {
+                assert_eq!(event["ai_model"]["name"], "demo-model");
+                assert_eq!(event["ai_model"]["provider"], "local");
+            } else {
+                assert_eq!(event["ai_model"], serde_json::json!({}));
+            }
+            assert!(!text.contains(authorization));
+            assert!(!text.contains(cookie));
+            assert!(!text.contains(api_key));
+            assert!(!text.to_ascii_lowercase().contains("authorization"));
+            assert!(!text.to_ascii_lowercase().contains("cookie"));
+            assert!(!text.to_ascii_lowercase().contains("x-api-key"));
+        }
+    }
+
+    #[test]
+    fn json_export_null_and_missing_optional_value_clear_host_property() {
+        let mock_host = Arc::new(MockWasmHost::new().with_map(
+            "request.headers".to_string(),
+            vec![(
+                "authorization".to_string(),
+                "Bearer credential-that-must-not-leak".to_string(),
+            )],
+        ));
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let path = "custom.audit.event";
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.custom.audit.event"]);
+
+        let initial = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "{'name': 'old'}",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+        assert!(matches!(initial.apply(&mut ctx), TaskOutcome::Done));
+        assert!(mock_host.get_property(&property_path).is_some());
+
+        let null_value = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "null",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+        assert!(matches!(null_value.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(mock_host.get_property(&property_path), Some(Vec::new()));
+
+        let missing_optional = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "request.headers[?'x-request-id']",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+        assert!(matches!(
+            missing_optional.apply(&mut ctx),
+            TaskOutcome::Done
+        ));
+        assert_eq!(mock_host.get_property(&property_path), Some(Vec::new()));
+    }
+
+    #[test]
+    fn json_export_false_predicate_preserves_previous_value() {
+        let mock_host = Arc::new(MockWasmHost::new());
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let path = "custom.audit.event";
+        let property_path = Path::new(vec!["filter_state", "wasm.kuadrant.custom.audit.event"]);
+
+        let initial = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "{'name': 'existing'}",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+        assert!(matches!(initial.apply(&mut ctx), TaskOutcome::Done));
+        let previous = mock_host
+            .get_property(&property_path)
+            .expect("initial JSON export is written");
+
+        let skipped = make_store_task_with_export_format(
+            &ctx,
+            "false",
+            "{'name': 'must-not-replace'}",
+            path,
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+        assert!(matches!(skipped.apply(&mut ctx), TaskOutcome::Done));
+        assert_eq!(mock_host.get_property(&property_path), Some(previous));
+    }
+
+    #[test]
+    fn json_export_does_not_copy_unselected_credentials() {
+        let authorization = "Bearer secret-token-value";
+        let request_id = "request-123";
+        let mock_host = Arc::new(MockWasmHost::new().with_map(
+            "request.headers".to_string(),
+            vec![
+                ("authorization".to_string(), authorization.to_string()),
+                ("x-request-id".to_string(), request_id.to_string()),
+            ],
+        ));
+        let mut ctx = ReqRespCtx::new(mock_host.clone());
+        let task = make_store_task_with_export_format(
+            &ctx,
+            "true",
+            "{'requestId': request.headers['x-request-id']}",
+            "ocsf.metadata.event",
+            true,
+            Some(crate::configuration::ExportFormat::Json),
+        );
+
+        assert!(matches!(task.apply(&mut ctx), TaskOutcome::Done));
+        let bytes = mock_host
+            .get_property(&Path::new(vec![
+                "filter_state",
+                "wasm.kuadrant.ocsf.metadata.event",
+            ]))
+            .expect("explicit JSON event is exported");
+        let text = std::str::from_utf8(&bytes).expect("JSON export is UTF-8");
+        let exported: serde_json::Value =
+            serde_json::from_str(text).expect("JSON export is valid JSON");
+        assert_eq!(exported["requestId"], request_id);
+        assert!(!text.contains(authorization));
     }
 
     #[test]

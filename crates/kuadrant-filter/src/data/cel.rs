@@ -10,7 +10,7 @@ use cel::extractors::{Arguments, This};
 use cel::objects::{Key, Map, ValueType};
 use cel::parser::{Expression as CelExpression, ParseErrors, Parser};
 use cel::{Context, ExecutionError, FunctionContext, ResolveResult, Value};
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Duration, FixedOffset};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -212,6 +212,7 @@ impl Expression {
 
     pub fn eval(&self, req_ctx: &ReqRespCtx, cel_ctx: &mut Context<'_>) -> EvalResult {
         add_string_extensions(cel_ctx);
+        add_export_conversions(cel_ctx);
         if self.extended {
             Self::add_extended_capabilities(cel_ctx)
         }
@@ -249,7 +250,7 @@ impl Expression {
         }
         cel_ctx.add_variable_from_value("request", request_value);
 
-        for binding in ["metadata", "source", "destination", "auth"] {
+        for binding in ["response", "metadata", "source", "destination", "auth"] {
             let key: Key = binding.into();
             cel_ctx.add_variable_from_value(binding, map.get(&key).cloned().unwrap_or(Value::Null));
         }
@@ -708,6 +709,61 @@ fn add_string_extensions(ctx: &mut Context<'_>) {
     ctx.add_function("substring", strings::substring);
 }
 
+fn add_export_conversions(ctx: &mut Context<'_>) {
+    ctx.add_function("timestampToEpochMillis", timestamp_to_epoch_millis);
+    ctx.add_function("durationToMillis", duration_to_millis);
+    ctx.add_function("intToString", int_to_string);
+    ctx.add_function("isPresent", is_present);
+}
+
+fn single_conversion_arg<'a>(
+    function: &str,
+    args: &'a [Value],
+) -> Result<&'a Value, ExecutionError> {
+    match args {
+        [value] => Ok(value),
+        _ => Err(ExecutionError::FunctionError {
+            function: function.to_string(),
+            message: format!("expected one argument, got {}", args.len()),
+        }),
+    }
+}
+
+fn timestamp_to_epoch_millis(_ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
+    match single_conversion_arg("timestampToEpochMillis", &args)? {
+        Value::Timestamp(timestamp) => Ok(Value::Int(timestamp.timestamp_millis())),
+        value => Err(ExecutionError::FunctionError {
+            function: "timestampToEpochMillis".to_string(),
+            message: format!("expected timestamp, got {value:?}"),
+        }),
+    }
+}
+
+fn duration_to_millis(_ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
+    match single_conversion_arg("durationToMillis", &args)? {
+        Value::Duration(duration) => Ok(Value::Int(duration.num_milliseconds())),
+        value => Err(ExecutionError::FunctionError {
+            function: "durationToMillis".to_string(),
+            message: format!("expected duration, got {value:?}"),
+        }),
+    }
+}
+
+fn is_present(_ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
+    single_conversion_arg("isPresent", &args)
+        .map(|value| Value::Bool(!matches!(value, Value::Null)))
+}
+
+fn int_to_string(_ftx: &FunctionContext, Arguments(args): Arguments) -> ResolveResult {
+    match single_conversion_arg("intToString", &args)? {
+        Value::Int(value) => Ok(Value::String(Arc::new(value.to_string()))),
+        value => Err(ExecutionError::FunctionError {
+            function: "intToString".to_string(),
+            message: format!("expected int, got {value:?}"),
+        }),
+    }
+}
+
 pub mod strings;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -874,6 +930,9 @@ impl Attribute {
                 ValueType::Timestamp => Ok(ctx
                     .get_attribute_ref::<DateTime<FixedOffset>>(&self.path)?
                     .map(|opt| opt.map(Value::Timestamp).unwrap_or(Value::Null))),
+                ValueType::Duration => Ok(ctx
+                    .get_attribute_ref::<Duration>(&self.path)?
+                    .map(|opt| opt.map(Value::Duration).unwrap_or(Value::Null))),
                 ValueType::Map => Ok(ctx.get_attribute_ref::<Headers>(&self.path)?.map(|opt| {
                     //todo(refactor/pull/245): We should think about and handle other types of maps
                     // other than Headers / Vec<(String, String)>
@@ -962,6 +1021,9 @@ fn copy(value_type: &ValueType) -> ValueType {
 fn new_well_known_attribute_map() -> HashMap<Path, ValueType> {
     HashMap::from([
         ("request.time".into(), ValueType::Timestamp),
+        ("request.duration".into(), ValueType::Duration),
+        ("response.code".into(), ValueType::Int),
+        ("response.size".into(), ValueType::Int),
         ("request.id".into(), ValueType::String),
         ("request.protocol".into(), ValueType::String),
         ("request.scheme".into(), ValueType::String),

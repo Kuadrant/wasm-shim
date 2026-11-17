@@ -91,6 +91,7 @@ pub struct StoreOperation {
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ExportFormat {
+    Json,
     ProtobufValue,
 }
 
@@ -514,6 +515,33 @@ mod test {
             unreachable!("expected store operation");
         };
         assert_eq!(store.export_format, Some(ExportFormat::ProtobufValue));
+    }
+
+    #[test]
+    fn parse_store_action_with_json_export_format() {
+        let config = r#"{
+            "services": {},
+            "actionSets": [{
+                "name": "test-store",
+                "routeRuleConditions": {"hostnames": ["example.com"]},
+                "actions": [{
+                    "type": "store",
+                    "predicate": "true",
+                    "terminal": false,
+                    "path": "custom.audit.event",
+                    "value": "{'name': 'alice'}",
+                    "exportToHost": true,
+                    "exportFormat": "json"
+                }]
+            }]
+        }"#;
+
+        let plugin_config = serde_json::from_str::<PluginConfiguration>(config)
+            .expect("valid json store configuration");
+        let Operation::Store(store) = &plugin_config.action_sets[0].actions[0].operation else {
+            unreachable!("expected store operation");
+        };
+        assert_eq!(store.export_format, Some(ExportFormat::Json));
     }
 
     #[test]

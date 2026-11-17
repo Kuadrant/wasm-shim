@@ -217,6 +217,13 @@ impl HttpContext for KuadrantFilter {
         let action = if self.should_pause() {
             trace!("on_http_response_body: pause");
             Action::Pause
+        } else if self
+            .pipeline
+            .as_ref()
+            .is_some_and(Pipeline::only_access_log_tasks_pending)
+        {
+            trace!("on_http_response_body: access-log tasks remain; continue");
+            Action::Continue
         } else if self.pipeline.is_some() && end_of_stream {
             trace!("on_http_response_body: pipeline is some, pause");
             self.force_resume = true;
@@ -227,5 +234,14 @@ impl HttpContext for KuadrantFilter {
         };
         self.response_buffering = matches!(action, Action::Pause);
         action
+    }
+
+    fn on_log(&mut self) {
+        debug!("#{} on_log", self.context_id);
+        if let Some(pipeline) = self.pipeline.as_mut() {
+            if pipeline.has_access_log_tasks() {
+                pipeline.eval_access_log();
+            }
+        }
     }
 }

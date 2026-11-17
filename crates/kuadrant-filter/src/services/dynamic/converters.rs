@@ -274,6 +274,53 @@ impl MessageConverter {
         Ok(Self::cel_to_prost_value(value)?.encode_to_vec())
     }
 
+    /// Encodes JSON-compatible CEL values as raw UTF-8 JSON bytes.
+    pub fn cel_value_to_json_bytes(value: &Value) -> Result<Vec<u8>, ConversionError> {
+        Ok(Self::cel_to_json_value(value)?.to_string().into_bytes())
+    }
+
+    fn cel_to_json_value(value: &Value) -> Result<serde_json::Value, ConversionError> {
+        match value {
+            Value::Null => Ok(serde_json::Value::Null),
+            Value::Bool(value) => Ok(serde_json::Value::Bool(*value)),
+            Value::Int(value) => Ok(serde_json::Value::Number((*value).into())),
+            Value::UInt(value) => Ok(serde_json::Value::Number((*value).into())),
+            Value::Float(value) => serde_json::Number::from_f64(*value)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| ConversionError::TypeMismatch {
+                    field: "value".to_string(),
+                    expected: "finite JSON number".to_string(),
+                    got: format!("{value:?}"),
+                }),
+            Value::String(value) => Ok(serde_json::Value::String(value.to_string())),
+            Value::List(items) => items
+                .iter()
+                .map(Self::cel_to_json_value)
+                .collect::<Result<Vec<_>, _>>()
+                .map(serde_json::Value::Array),
+            Value::Map(map) => {
+                let mut fields = serde_json::Map::new();
+                for (key, value) in map.map.iter() {
+                    let Key::String(key) = key else {
+                        return Err(ConversionError::TypeMismatch {
+                            field: "map key".to_string(),
+                            expected: "string".to_string(),
+                            got: format!("{key:?}"),
+                        });
+                    };
+                    fields.insert(key.to_string(), Self::cel_to_json_value(value)?);
+                }
+                Ok(serde_json::Value::Object(fields))
+            }
+            _ => Err(ConversionError::TypeMismatch {
+                field: "value".to_string(),
+                expected: "null, string, finite number, boolean, list, or string-keyed map"
+                    .to_string(),
+                got: format!("{value:?}"),
+            }),
+        }
+    }
+
     fn cel_to_prost_value(value: &Value) -> Result<prost_types::Value, ConversionError> {
         let kind = match value {
             Value::Null => prost_types::value::Kind::NullValue(0),

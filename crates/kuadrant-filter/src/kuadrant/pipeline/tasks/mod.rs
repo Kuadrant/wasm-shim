@@ -35,6 +35,10 @@ pub trait Task {
         false
     }
 
+    fn runs_at_access_log(&self) -> bool {
+        false
+    }
+
     fn cel_types(&self) -> Vec<cel::StructDef> {
         vec![]
     }

@@ -222,6 +222,8 @@ impl Blueprint {
         services: &HashMap<String, ServiceInstance>,
         exported_property_formats: &mut BTreeMap<String, Option<configuration::ExportFormat>>,
     ) -> Result<Self, CompileError> {
+        validate_access_log_exports(&config.actions)?;
+
         let route_predicates: Vec<Predicate> = config
             .route_rule_conditions
             .predicates
@@ -259,6 +261,40 @@ impl Blueprint {
             actions,
         })
     }
+}
+
+fn validate_access_log_exports(actions: &[configuration::Action]) -> Result<(), CompileError> {
+    let mut access_log_phase_started = false;
+    for action in actions {
+        let is_json_export = matches!(
+            &action.operation,
+            configuration::Operation::Store(store)
+                if store.export_to_host
+                    && store.export_format == Some(configuration::ExportFormat::Json)
+        );
+
+        if access_log_phase_started && !is_json_export {
+            return Err(CompileError::InvalidDataExpression(
+                "exportFormat json StoreActions must be the final actions in their action list"
+                    .to_string(),
+            ));
+        }
+
+        if is_json_export {
+            if action.terminal {
+                return Err(CompileError::InvalidDataExpression(
+                    "exportFormat json StoreActions cannot be terminal because they run during access logging"
+                        .to_string(),
+                ));
+            }
+            access_log_phase_started = true;
+        }
+
+        if let configuration::Operation::Grpc(grpc) = &action.operation {
+            validate_access_log_exports(&grpc.on_reply)?;
+        }
+    }
+    Ok(())
 }
 
 fn compute_dependencies(actions: &[configuration::Action]) -> Vec<Vec<String>> {

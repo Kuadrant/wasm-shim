@@ -22,6 +22,7 @@ enum ProcessOutcome {
 pub struct Pipeline {
     pub ctx: ReqRespCtx,
     task_queue: Vec<Box<dyn Task>>,
+    access_log_task_queue: Vec<Box<dyn Task>>,
     deferred_tasks: BTreeMap<u32, Box<dyn Task>>,
     settled_tasks: HashSet<String>,
     teardown_tasks: Vec<Box<dyn TeardownAction>>,
@@ -30,7 +31,10 @@ pub struct Pipeline {
 
 impl From<Pipeline> for PipelineState {
     fn from(pipeline: Pipeline) -> Self {
-        if pipeline.task_queue.is_empty() && pipeline.deferred_tasks.is_empty() {
+        if pipeline.task_queue.is_empty()
+            && pipeline.access_log_task_queue.is_empty()
+            && pipeline.deferred_tasks.is_empty()
+        {
             PipelineState::Completed {
                 should_resume: pipeline.terminated.not(),
             }
@@ -45,6 +49,7 @@ impl Pipeline {
         Self {
             ctx,
             task_queue: Vec::new(),
+            access_log_task_queue: Vec::new(),
             deferred_tasks: BTreeMap::new(),
             settled_tasks: HashSet::new(),
             teardown_tasks: Vec::new(),
@@ -53,8 +58,18 @@ impl Pipeline {
     }
 
     pub fn with_tasks(mut self, tasks: Vec<Box<dyn Task>>) -> Self {
-        self.task_queue = tasks;
+        self.enqueue_tasks(tasks);
         self
+    }
+
+    fn enqueue_tasks(&mut self, tasks: Vec<Box<dyn Task>>) {
+        for task in tasks {
+            if task.runs_at_access_log() {
+                self.access_log_task_queue.push(task);
+            } else {
+                self.task_queue.push(task);
+            }
+        }
     }
 
     pub fn with_teardown_tasks(mut self, tasks: Vec<Box<dyn TeardownAction>>) -> Self {
@@ -107,6 +122,11 @@ impl Pipeline {
 
     fn process_tasks(&mut self, tasks: Vec<Box<dyn Task>>) -> ProcessOutcome {
         for task in tasks {
+            if task.runs_at_access_log() {
+                self.access_log_task_queue.push(task);
+                continue;
+            }
+
             if task
                 .dependencies()
                 .iter()
@@ -127,10 +147,9 @@ impl Pipeline {
                     }
                 }
                 TaskOutcome::Requeued(tasks) => {
-                    self.task_queue.extend(tasks);
+                    self.enqueue_tasks(tasks);
                 }
                 TaskOutcome::Failed => {
-                    // todo(refactor): error handling
                     error!("Task failed: {:?}", task_id);
                     self.settled_tasks.insert(task_id);
                 }
@@ -164,6 +183,54 @@ impl Pipeline {
         self.into()
     }
 
+    /// Runs JSON StoreTasks after Envoy has completed the stream and before access logs emit.
+    pub fn eval_access_log(&mut self) {
+        self.ctx.invalidate_attribute_cache();
+        let tasks = std::mem::take(&mut self.access_log_task_queue);
+        for task in tasks {
+            let task_id = task.id().to_string();
+            if task
+                .dependencies()
+                .iter()
+                .any(|dep| !self.settled_tasks.contains(dep))
+            {
+                error!(
+                    "Skipping access-log task with unsettled dependencies: {}",
+                    task_id
+                );
+                continue;
+            }
+
+            match task.apply(&mut self.ctx) {
+                TaskOutcome::Done => {
+                    self.settled_tasks.insert(task_id);
+                }
+                TaskOutcome::Failed => {
+                    error!("Access-log task failed: {}", task_id);
+                    self.settled_tasks.insert(task_id);
+                }
+                TaskOutcome::Requeued(_) => {
+                    error!(
+                        "Access-log task remained pending and was skipped: {}",
+                        task_id
+                    );
+                }
+                TaskOutcome::Deferred { .. } => {
+                    error!(
+                        "Access-log task cannot make an asynchronous call: {}",
+                        task_id
+                    );
+                }
+                TaskOutcome::Terminate(_) => {
+                    error!(
+                        "Access-log task cannot terminate response processing: {}",
+                        task_id
+                    );
+                }
+            }
+        }
+    }
+
     pub fn digest(
         mut self,
         token_id: u32,
@@ -183,7 +250,11 @@ impl Pipeline {
                 TaskOutcome::Requeued(tasks) => {
                     self.settled_tasks.insert(task_id);
                     for task in tasks.into_iter().rev() {
-                        self.task_queue.insert(0, task);
+                        if task.runs_at_access_log() {
+                            self.access_log_task_queue.insert(0, task);
+                        } else {
+                            self.task_queue.insert(0, task);
+                        }
                     }
                 }
                 TaskOutcome::Deferred { token_id, pending } => {
@@ -192,7 +263,6 @@ impl Pipeline {
                     }
                 }
                 TaskOutcome::Failed => {
-                    // todo(refactor): error handling
                     error!("Failed to process response for token_id: {}", token_id);
                     self.settled_tasks.insert(task_id);
                 }
@@ -215,13 +285,27 @@ impl Pipeline {
     pub fn requires_pause(&self) -> bool {
         self.ctx.barrier.is_tripped()
     }
+
+    pub fn only_access_log_tasks_pending(&self) -> bool {
+        !self.access_log_task_queue.is_empty()
+            && self.task_queue.is_empty()
+            && self.deferred_tasks.is_empty()
+    }
+
+    pub fn has_access_log_tasks(&self) -> bool {
+        !self.access_log_task_queue.is_empty()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kuadrant::pipeline::tasks::{FailureModeTask, TracingDecoratorTask};
     use crate::kuadrant::MockWasmHost;
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     fn create_test_context() -> ReqRespCtx {
         let mock_host = MockWasmHost::new();
@@ -491,5 +575,107 @@ mod tests {
                 unreachable!("Expected InProgress after auth dispatch");
             }
         }
+    }
+
+    struct MockAccessLogTask {
+        id: String,
+        runs: Arc<AtomicUsize>,
+    }
+
+    impl MockAccessLogTask {
+        fn new(id: &str, runs: Arc<AtomicUsize>) -> Self {
+            Self {
+                id: id.to_string(),
+                runs,
+            }
+        }
+    }
+
+    impl Task for MockAccessLogTask {
+        fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            TaskOutcome::Done
+        }
+
+        fn id(&self) -> &str {
+            &self.id
+        }
+
+        fn runs_at_access_log(&self) -> bool {
+            true
+        }
+    }
+
+    struct MockDeferredAccessLogChildTask {
+        id: String,
+        runs: Arc<AtomicUsize>,
+    }
+
+    impl Task for MockDeferredAccessLogChildTask {
+        fn apply(self: Box<Self>, _ctx: &mut ReqRespCtx) -> TaskOutcome {
+            let child = Box::new(MockAccessLogTask::new("access-log-child", self.runs));
+            TaskOutcome::Deferred {
+                token_id: 42,
+                pending: Box::new(PendingTask::new(
+                    self.id.clone(),
+                    Box::new(move |_ctx| TaskOutcome::Requeued(vec![child])),
+                    false,
+                )),
+            }
+        }
+
+        fn id(&self) -> &str {
+            &self.id
+        }
+    }
+
+    #[test]
+    fn wrapped_on_reply_access_log_tasks_wait_for_access_log_eval() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let task: Box<dyn Task> = Box::new(MockDeferredAccessLogChildTask {
+            id: "auth".to_string(),
+            runs: runs.clone(),
+        });
+        let task: Box<dyn Task> = Box::new(FailureModeTask::new(task, false));
+        let task: Box<dyn Task> =
+            Box::new(TracingDecoratorTask::new("auth".to_string(), task, vec![]));
+
+        let PipelineState::InProgress(pipeline) = Pipeline::new(create_test_context())
+            .with_tasks(vec![task])
+            .eval()
+        else {
+            unreachable!("the gRPC action should remain pending")
+        };
+        let PipelineState::InProgress(mut pipeline) = pipeline.digest(42, 0, 0) else {
+            unreachable!("the access-log child should remain pending until on_log")
+        };
+
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+        assert!(pipeline.only_access_log_tasks_pending());
+
+        pipeline.eval_access_log();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert!(!pipeline.has_access_log_tasks());
+    }
+
+    #[test]
+    fn access_log_tasks_run_only_during_access_log_eval() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let pipeline = Pipeline::new(create_test_context()).with_tasks(vec![Box::new(
+            MockAccessLogTask::new("access-log-export", runs.clone()),
+        )]);
+
+        let PipelineState::InProgress(mut pipeline) = pipeline.eval() else {
+            unreachable!("access-log task should keep the pipeline pending until on_log")
+        };
+
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+        assert!(pipeline.only_access_log_tasks_pending());
+
+        pipeline.eval_access_log();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert!(!pipeline.has_access_log_tasks());
     }
 }
