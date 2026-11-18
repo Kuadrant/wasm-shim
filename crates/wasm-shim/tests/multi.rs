@@ -555,11 +555,6 @@ fn authenticated_one_ratelimit_action_matches() {
     .replace("__AUTH_MSG__", &json_escape_cel(&auth_msg))
     .replace("__RATELIMIT_MSG__", &json_escape_cel(ratelimit_msg));
 
-    module
-        .call_start()
-        .execute_and_expect(ReturnType::None)
-        .unwrap();
-
     let root_context = 1;
 
     module
