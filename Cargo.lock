@@ -938,7 +938,6 @@ dependencies = [
  "acutejson",
  "cel",
  "chrono",
- "const_format",
  "lazy_static",
  "log",
  "nom 8.0.0",
