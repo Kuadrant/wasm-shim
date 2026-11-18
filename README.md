@@ -7,6 +7,19 @@ A Proxy-Wasm module written in Rust, acting as a shim between Envoy and both Rat
 
 ## Sample configuration
 
+Configuration accepts plain JSON or a compressed envelope:
+`{"encoding":"gzip+base64","data":"..."}`. The payload is gzip-compressed JSON
+encoded as standard base64. This works with both legacy and typed actions.
+Top-level `encoding`, `data`, and `maxDecompressedBytes` are reserved for envelopes.
+`encoding` and `data` must be present and valid; `null` is not omission.
+Unknown envelope metadata is ignored; only the decompressed payload supplies the configuration.
+Metadata requiring reader support needs a new encoding.
+
+Decompressed configuration defaults to a 32 MiB limit. Optional `maxDecompressedBytes`
+sets your chosen limit in bytes, for example `67108864` for 64 MiB. Values must be
+integers from 1 to 2147483647. The limit is a cap, not a memory reservation;
+raising it allows larger allocations during decompression.
+
 Following is a sample configuration used by the shim.
 
 ```yaml

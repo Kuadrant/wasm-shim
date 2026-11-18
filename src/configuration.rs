@@ -8,6 +8,7 @@ use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
+pub mod encoding;
 mod legacy_translation;
 #[allow(deprecated)]
 pub(crate) use legacy_translation::auth::translate_legacy_auth_to_typed;
@@ -195,6 +196,7 @@ pub struct Tracing {
     pub service: String,
 }
 
+/// Top-level encoding, data, and maxDecompressedBytes are reserved for transport envelopes
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfiguration {
