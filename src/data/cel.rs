@@ -113,6 +113,11 @@ pub struct Expression {
 
 pub type EvalResult = Result<AttributeState<Value>, CelError>;
 
+pub enum ExpressionState {
+    Pending { response_body_only: bool },
+    Available(Value),
+}
+
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -206,6 +211,19 @@ impl Expression {
     }
 
     pub fn eval(&self, req_ctx: &ReqRespCtx, cel_ctx: &mut Context<'_>) -> EvalResult {
+        self.eval_with_pending_reason(req_ctx, cel_ctx)
+            .map(|state| match state {
+                ExpressionState::Pending { .. } => AttributeState::Pending,
+                ExpressionState::Available(value) => AttributeState::Available(value),
+            })
+    }
+
+    /// Evaluate once, retaining whether only response-body inputs are unresolved.
+    pub fn eval_with_pending_reason(
+        &self,
+        req_ctx: &ReqRespCtx,
+        cel_ctx: &mut Context<'_>,
+    ) -> Result<ExpressionState, CelError> {
         add_string_extensions(cel_ctx);
         if self.extended {
             Self::add_extended_capabilities(cel_ctx)
@@ -226,7 +244,11 @@ impl Expression {
         req_ctx.ensure_attributes(&paths);
 
         let Map { map } = match self.build_data_map(req_ctx)? {
-            AttributeState::Pending => return Ok(AttributeState::Pending),
+            AttributeState::Pending => {
+                return Ok(ExpressionState::Pending {
+                    response_body_only: false,
+                })
+            }
             AttributeState::Available(m) => m,
         };
 
@@ -270,30 +292,17 @@ impl Expression {
         }
 
         {
-            let mut response_json_map = HashMap::new();
-            for field_key in &self.response_body_values {
-                match req_ctx.response_body.get_value(field_key) {
-                    Some(value) => {
-                        response_json_map.insert(field_key.clone(), value.clone());
-                    }
-                    None => return Ok(AttributeState::Pending),
-                }
-            }
-            cel_ctx.add_variable_from_value(
-                RESPONSE_BODY_JSON_DATA,
-                Value::Map(response_json_map.into()),
-            );
-            cel_ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
-        }
-
-        {
             let mut request_json_map = HashMap::new();
             for field_key in &self.request_body_values {
                 match req_ctx.request_body.get_value(field_key) {
                     Some(value) => {
                         request_json_map.insert(field_key.clone(), value.clone());
                     }
-                    None => return Ok(AttributeState::Pending),
+                    None => {
+                        return Ok(ExpressionState::Pending {
+                            response_body_only: false,
+                        })
+                    }
                 }
             }
             cel_ctx.add_variable_from_value(
@@ -303,8 +312,29 @@ impl Expression {
             cel_ctx.add_function(REQUEST_BODY_JSON_FN, request_body_json);
         }
 
+        {
+            let mut response_json_map = HashMap::new();
+            for field_key in &self.response_body_values {
+                match req_ctx.response_body.get_value(field_key) {
+                    Some(value) => {
+                        response_json_map.insert(field_key.clone(), value.clone());
+                    }
+                    None => {
+                        return Ok(ExpressionState::Pending {
+                            response_body_only: true,
+                        })
+                    }
+                }
+            }
+            cel_ctx.add_variable_from_value(
+                RESPONSE_BODY_JSON_DATA,
+                Value::Map(response_json_map.into()),
+            );
+            cel_ctx.add_function(RESPONSE_BODY_JSON_FN, response_body_json);
+        }
+
         let result = Value::resolve(&self.expression, cel_ctx).map_err(CelError::from)?;
-        Ok(AttributeState::Available(result))
+        Ok(ExpressionState::Available(result))
     }
 
     /// Add support for `queryMap`, see [`decode_query_string`]

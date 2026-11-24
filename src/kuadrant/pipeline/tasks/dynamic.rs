@@ -4,13 +4,14 @@ use cel::Value;
 use tracing::{debug, error};
 
 use crate::data::attribute::AttributeState;
-use crate::data::cel::Predicate;
-use crate::data::Expression;
+use crate::data::cel::{ExpressionState, Predicate};
+use crate::data::{Expression, Headers};
 use crate::kuadrant::pipeline::blueprint::{Action, Operation};
 use crate::kuadrant::pipeline::tasks::{
     HeaderOperation, ModifyHeadersTask, PendingTask, SendReplyTask, Task, TaskOutcome,
 };
 use crate::kuadrant::ReqRespCtx;
+use crate::metrics::METRICS;
 use crate::record_error;
 use crate::services::{cel_value_to_header_pairs, DynamicService, MessageConverter};
 
@@ -23,6 +24,7 @@ pub struct DynamicTask {
     predicate: Predicate,
     dependencies: Vec<String>,
     is_guard: bool,
+    token_report: bool,
 }
 
 impl DynamicTask {
@@ -80,6 +82,22 @@ impl DynamicTask {
             predicate,
             dependencies,
             is_guard,
+            token_report: false,
+        }
+    }
+
+    pub fn with_token_report(mut self) -> Self {
+        self.token_report = true;
+        self
+    }
+
+    fn error_response_status(ctx: &ReqRespCtx) -> Option<u16> {
+        match ctx.get_attribute_ref::<Headers>(&"response.headers".into()) {
+            Ok(AttributeState::Available(Some(headers))) => headers
+                .get(":status")
+                .and_then(|status| status.parse::<u16>().ok())
+                .filter(|status| (100..600).contains(status) && !(200..300).contains(status)),
+            _ => None,
         }
     }
 }
@@ -133,15 +151,34 @@ impl Task for DynamicTask {
             };
 
             let mut cel_ctx = cel::Context::with_env(env);
-            let cel_value = match self.message_builder.eval(ctx, &mut cel_ctx) {
-                Ok(AttributeState::Pending) => {
+            let cel_value = match self
+                .message_builder
+                .eval_with_pending_reason(ctx, &mut cel_ctx)
+            {
+                Ok(ExpressionState::Pending { response_body_only }) => {
                     return if ctx.response_body.is_end_of_stream() {
+                        // Error responses need not contain the report's body fields. Trying
+                        // to replace them with a report failure after headers have been
+                        // sent resets the response and truncates the original error body.
+                        // Successful responses still require usage, and error responses
+                        // that do provide usage continue through the normal report path.
+                        if self.token_report && response_body_only {
+                            if let Some(status) = Self::error_response_status(ctx) {
+                                debug!(
+                                    task_id = self.task_id,
+                                    status,
+                                    "Skipping report: error response lacks required body fields"
+                                );
+                                METRICS.response_reports_skipped().increment();
+                                return TaskOutcome::Done;
+                            }
+                        }
                         TaskOutcome::Failed
                     } else {
                         TaskOutcome::Requeued(vec![self])
                     };
                 }
-                Ok(AttributeState::Available(val)) => val,
+                Ok(ExpressionState::Available(val)) => val,
                 Err(e) => {
                     error!("Failed to evaluate message builder: {e}");
                     return TaskOutcome::Failed;
@@ -372,5 +409,251 @@ fn process_dynamic_response(
         TaskOutcome::Done
     } else {
         TaskOutcome::Requeued(tasks)
+    }
+}
+
+#[cfg(test)]
+mod token_report_tests {
+    use super::*;
+    use crate::configuration::FailureMode;
+    use crate::filter::DescriptorManager;
+    use crate::kuadrant::pipeline::tasks::TokenUsageTask;
+    use crate::kuadrant::MockWasmHost;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn context(status: &str, content_type: &str, body: &[u8], end: bool) -> ReqRespCtx {
+        let host = MockWasmHost::new()
+            .with_map(
+                "response.headers".to_string(),
+                vec![
+                    (":status".to_string(), status.to_string()),
+                    ("content-type".to_string(), content_type.to_string()),
+                ],
+            )
+            .with_response_body(body);
+        let mut ctx = ReqRespCtx::new(Arc::new(host));
+        ctx.response_body.set_buffer_size(body.len(), end);
+        let extraction = Box::new(TokenUsageTask::with_expected_response_fields(vec![
+            "/usage/total_tokens".to_string(),
+        ]));
+        let outcome = extraction.apply(&mut ctx);
+        assert!(matches!(
+            outcome,
+            TaskOutcome::Done | TaskOutcome::Requeued(_)
+        ));
+        ctx
+    }
+
+    fn task(ctx: &ReqRespCtx, token_report: bool) -> Result<Box<DynamicTask>, cel::ParseErrors> {
+        let service = Rc::new(DynamicService::new(
+            "limitador".to_string(),
+            "kuadrant.service.ratelimit.v1.RateLimitService".to_string(),
+            "Report".to_string(),
+            Duration::from_secs(1),
+            FailureMode::Deny,
+            Rc::new(DescriptorManager::default()),
+        ));
+        let mut task = DynamicTask::new_with_attributes(
+            ctx,
+            "report".to_string(),
+            service,
+            "report_response".to_string(),
+            Expression::new(
+                r#"envoy.service.ratelimit.v3.RateLimitRequest {
+                    domain: "test", hits_addend: uint(responseBodyJSON("/usage/total_tokens")),
+                    descriptors: []
+                }"#,
+            )?,
+            vec![],
+            Predicate::new("true")?,
+            vec![],
+            false,
+        );
+        if token_report {
+            task = task.with_token_report();
+        }
+        Ok(Box::new(task))
+    }
+
+    #[test]
+    fn token_report_preserves_http_errors_without_usage() -> Result<(), cel::ParseErrors> {
+        for (status, content_type, body) in [
+            (
+                "400",
+                "application/json",
+                br#"{"error":"invalid max_tokens"}"#.as_slice(),
+            ),
+            ("403", "text/plain", b"routing loop detected".as_slice()),
+            (
+                "503",
+                "text/html",
+                b"<html>backend unavailable</html>".as_slice(),
+            ),
+            ("503", "text/plain", b"".as_slice()),
+        ] {
+            let mut ctx = context(status, content_type, body, true);
+            assert!(
+                matches!(task(&ctx, true)?.apply(&mut ctx), TaskOutcome::Done),
+                "non-success HTTP {status} without usage must retain its original response"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn token_report_success_without_usage_still_fails_closed() -> Result<(), cel::ParseErrors> {
+        for body in [b"{}".as_slice(), b"".as_slice()] {
+            let mut ctx = context("200", "application/json", body, true);
+            assert!(matches!(
+                task(&ctx, true)?.apply(&mut ctx),
+                TaskOutcome::Failed
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn token_report_valid_usage_is_reported_for_success_and_error_responses(
+    ) -> Result<(), cel::ParseErrors> {
+        for status in ["200", "400"] {
+            let mut ctx = context(
+                status,
+                "application/json",
+                br#"{"usage":{"total_tokens":3}}"#,
+                true,
+            );
+            assert!(matches!(
+                task(&ctx, true)?.apply(&mut ctx),
+                TaskOutcome::Deferred { .. }
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn token_report_sse_usage_is_reported() -> Result<(), cel::ParseErrors> {
+        let mut ctx = context(
+            "200",
+            "text/event-stream",
+            b"data: {\"usage\":{\"total_tokens\":3}}\n\ndata: [DONE]\n\n",
+            true,
+        );
+        assert!(matches!(
+            task(&ctx, true)?.apply(&mut ctx),
+            TaskOutcome::Deferred { .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn token_report_waits_for_end_of_stream_before_skipping_missing_usage(
+    ) -> Result<(), cel::ParseErrors> {
+        let mut ctx = context("403", "text/plain", b"routing loop detected", false);
+        assert!(matches!(
+            task(&ctx, true)?.apply(&mut ctx),
+            TaskOutcome::Requeued(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn other_actions_do_not_ignore_missing_response_data_on_errors() -> Result<(), cel::ParseErrors>
+    {
+        let mut ctx = context("403", "text/plain", b"routing loop detected", true);
+        assert!(matches!(
+            task(&ctx, false)?.apply(&mut ctx),
+            TaskOutcome::Failed
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn token_report_preserves_errors_with_other_missing_body_fields() -> Result<(), cel::ParseErrors>
+    {
+        for body in [
+            br#"{"usage":{"total_tokens":3}}"#.as_slice(),
+            b"{}".as_slice(),
+        ] {
+            let mut ctx = context("403", "application/json", body, true);
+            let mut report = task(&ctx, true)?;
+            report.message_builder = Expression::new(
+                r#"envoy.service.ratelimit.v3.RateLimitRequest {
+                    domain: string(responseBodyJSON("/missing")),
+                    hits_addend: uint(responseBodyJSON("/usage/total_tokens")), descriptors: []
+                }"#,
+            )?;
+            assert!(matches!(report.apply(&mut ctx), TaskOutcome::Done));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn token_report_pending_host_attributes_still_fail() -> Result<(), cel::ParseErrors> {
+        for usage_present in [false, true] {
+            let host = MockWasmHost::new()
+                .with_map(
+                    "response.headers".to_string(),
+                    vec![(":status".to_string(), "403".to_string())],
+                )
+                .with_pending_property("metadata.unavailable".into());
+            let mut ctx = ReqRespCtx::new(Arc::new(host));
+            ctx.response_body.set_buffer_size(0, true);
+            if usage_present {
+                ctx.response_body.set_value("/usage/total_tokens", 3u64);
+            }
+            let mut report = task(&ctx, true)?;
+            report.message_builder = Expression::new(
+                r#"envoy.service.ratelimit.v3.RateLimitRequest {
+                    domain: string(metadata.unavailable),
+                    hits_addend: uint(responseBodyJSON("/usage/total_tokens")), descriptors: []
+                }"#,
+            )?;
+            assert!(matches!(report.apply(&mut ctx), TaskOutcome::Failed));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn report_with_split_usage_fields_preserves_only_error_responses(
+    ) -> Result<(), cel::ParseErrors> {
+        for (status, done) in [
+            ("403", true),
+            ("503", true),
+            ("200", false),
+            ("204", false),
+            ("invalid", false),
+        ] {
+            let mut ctx = context(status, "text/plain", b"provider error", true);
+            let mut report = task(&ctx, true)?;
+            report.message_builder = Expression::new(
+                r#"envoy.service.ratelimit.v3.RateLimitRequest {
+                    domain: "test",
+                    hits_addend: uint(responseBodyJSON("/usage/prompt_tokens") + responseBodyJSON("/usage/completion_tokens")),
+                    descriptors: []
+                }"#,
+            )?;
+            let outcome = report.apply(&mut ctx);
+            if done {
+                assert!(matches!(outcome, TaskOutcome::Done));
+            } else {
+                assert!(matches!(outcome, TaskOutcome::Failed));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn report_missing_request_body_is_not_response_body_only() -> Result<(), cel::ParseErrors> {
+        let mut ctx = context("403", "text/plain", b"provider error", true);
+        let mut report = task(&ctx, true)?;
+        report.message_builder = Expression::new(
+            r#"envoy.service.ratelimit.v3.RateLimitRequest {
+                domain: string(requestBodyJSON("/missing")),
+                hits_addend: uint(responseBodyJSON("/usage/total_tokens")), descriptors: []
+            }"#,
+        )?;
+        assert!(matches!(report.apply(&mut ctx), TaskOutcome::Failed));
+        Ok(())
     }
 }
