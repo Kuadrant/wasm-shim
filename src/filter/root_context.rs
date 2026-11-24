@@ -1,6 +1,6 @@
 use super::kuadrant_filter::KuadrantFilter;
 use super::DescriptorManager;
-use crate::configuration::PluginConfiguration;
+use crate::configuration::{encoding::decode_configuration, PluginConfiguration};
 use crate::kuadrant::PipelineFactory;
 use crate::metrics::METRICS;
 use crate::{WASM_SHIM_FEATURES, WASM_SHIM_GIT_HASH, WASM_SHIM_PROFILE, WASM_SHIM_VERSION};
@@ -137,7 +137,18 @@ impl RootContext for FilterRoot {
                 return false;
             }
         };
-        match serde_json::from_slice::<PluginConfiguration>(&configuration) {
+        let decoded = match decode_configuration(&configuration) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                log::error!("failed to load plugin config: {error}");
+                return false;
+            }
+        };
+        let config = serde_json::from_slice::<PluginConfiguration>(&decoded);
+        // Free config buffers before compilation
+        drop(decoded);
+        drop(configuration);
+        match config {
             Ok(config) => {
                 let use_tracing_exporter = config.observability.tracing.is_some();
                 crate::tracing::init_observability(
@@ -145,7 +156,8 @@ impl RootContext for FilterRoot {
                     config.observability.default_level.as_deref(),
                 );
 
-                info!("plugin config parsed: {:?}", config);
+                info!("plugin config parsed");
+                debug!("plugin config: {config:?}");
                 self.process_config(config)
             }
             Err(e) => {

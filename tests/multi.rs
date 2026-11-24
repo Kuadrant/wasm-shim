@@ -389,11 +389,6 @@ fn authenticated_one_ratelimit_action_matches() {
         }]
     }"#;
 
-    module
-        .call_start()
-        .execute_and_expect(ReturnType::None)
-        .unwrap();
-
     let root_context = 1;
 
     module
