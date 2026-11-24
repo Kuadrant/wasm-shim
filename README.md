@@ -68,6 +68,15 @@ actionSets:
 
 Top level fields:
 
+The transport reserves top-level `encoding`, `data`, and `maxDecompressedBytes` for compressed envelopes:
+`{"encoding":"gzip+base64","data":"..."}`. `encoding` and `data` must be present and valid;
+`null` is not omission. Unknown envelope metadata is ignored; only the decoded
+payload supplies the configuration. Metadata requiring reader support needs a new encoding.
+Decompressed configuration defaults to a 32 MiB limit. Optional `maxDecompressedBytes`
+sets your chosen limit in bytes, for example `67108864` for 64 MiB. Values must be
+integers from 1 to 2147483647. The limit is a cap, not a memory reservation;
+raising it allows larger allocations during decompression.
+
 | Field               | Required | Description                                                                                                        |
 |---------------------|----------|----------------------------------------------------------------------------------------------------------------------|
 | `services`          | yes      | Map of service name to service configuration, see [Services](#services)                                             |

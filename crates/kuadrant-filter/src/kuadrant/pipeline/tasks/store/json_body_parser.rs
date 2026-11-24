@@ -24,7 +24,6 @@ pub(crate) struct JsonBodyParser {
     /// except when empty, where total content stays empty).
     string_fields: Arc<Mutex<HashSet<String>>>,
     extracted: HashMap<String, Value>,
-    bytes_consumed: usize,
     complete: bool,
 }
 
@@ -105,7 +104,6 @@ impl JsonBodyParser {
             matched,
             string_fields,
             extracted: HashMap::new(),
-            bytes_consumed: 0,
             complete: false,
         })
     }
@@ -150,10 +148,6 @@ impl JsonBodyParser {
 }
 
 impl BodyParser for JsonBodyParser {
-    fn bytes_consumed(&self) -> usize {
-        self.bytes_consumed
-    }
-
     fn finalize(&mut self) -> Result<(), AttributeError> {
         if let Some(ref mut parser) = self.parser {
             parser
@@ -172,8 +166,6 @@ impl BodyParser for JsonBodyParser {
     }
 
     fn feed(&mut self, chunk: &[u8]) -> Result<(), AttributeError> {
-        self.bytes_consumed += chunk.len();
-
         if self.complete {
             return Ok(());
         }
@@ -350,18 +342,6 @@ mod tests {
             body_ctx.get_value("/usage/total_tokens"),
             Some(&Value::Int(42))
         );
-    }
-
-    #[test]
-    fn bytes_consumed_tracks_fed_bytes() {
-        let mut parser = JsonBodyParser::new(vec![group("/a")]).unwrap();
-        assert_eq!(parser.bytes_consumed(), 0);
-
-        parser.feed(br#"{"a""#).unwrap();
-        assert_eq!(parser.bytes_consumed(), 4);
-
-        parser.feed(br#":1}"#).unwrap();
-        assert_eq!(parser.bytes_consumed(), 7);
     }
 
     #[test]

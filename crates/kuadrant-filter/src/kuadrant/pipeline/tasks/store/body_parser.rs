@@ -15,7 +15,6 @@ pub(super) trait BodyParser {
     /// internal, non-human-readable canonical key.
     fn remaining_fields(&self) -> Vec<&BodyFieldGroup>;
     fn populate(&self, body_ctx: &mut BodyContext);
-    fn bytes_consumed(&self) -> usize;
 }
 
 pub(super) fn parse_json_scalar(raw: &str) -> Value {
